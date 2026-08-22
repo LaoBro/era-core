@@ -122,6 +122,55 @@ class EmueraClient:
             raise EmueraHttpError(status, payload)
         return payload
 
+    def get_compact_view(self, tail: Optional[int] = None, timeout: float = 15.0) -> Dict[str, Any]:
+        """紧凑只读视图：读 GET /snapshot 后做低噪投影（纯文本行 + 按钮 id/label）。
+
+        复用权威 /snapshot 端点（最新当前态、非阻塞、可重复调用），无需服务端改动。
+        投影在 agent 侧完成：每行拼接 segments[].text，按钮抽 {id,label}，去掉颜色/坐标/几何。
+        tail 仅保留最近 N 行（None=全部）；按钮按当前最大 generation 过滤——被翻页留在历史行里的
+        旧代按钮会被丢弃，只保留当前有效代，避免"前几页过时按钮"混入。
+        """
+        snap = self.get_snapshot(timeout=timeout)
+        src_lines = snap.get("lines") or []
+        start = 0
+        if tail is not None and tail > 0 and len(src_lines) > tail:
+            start = len(src_lines) - tail
+        window = src_lines[start:]
+
+        def line_text(line: Dict[str, Any]) -> str:
+            parts = [seg.get("text") for e in (line.get("entries") or []) for seg in (e.get("segments") or [])]
+            return "".join(p for p in parts if p)
+
+        lines = [line_text(ln) for ln in window]
+
+        # 过时按钮过滤判据：快照顶层 generation = console.LastButtonGeneration（当前直播按钮代）。
+        # 被翻页留在历史行里的旧按钮其 button.generation < 该值，据此丢弃；只保留当前有效代。
+        live_gen = snap.get("generation")
+        buttons: list = []
+        seen: set = set()
+        for ln in window:
+            for entry in ln.get("entries") or []:
+                btn = entry.get("button")
+                if not btn or btn.get("value") is None:
+                    continue
+                if live_gen is not None and btn.get("generation") not in (None, live_gen):
+                    continue  # 旧代按钮（前几页残留）
+                val = btn.get("value")
+                if val in seen:
+                    continue
+                seen.add(val)
+                label = "".join(seg.get("text") or "" for seg in entry.get("segments") or []).strip()
+                buttons.append({"id": val, "label": label})
+
+        return {
+            "state": snap.get("state"),
+            "inputType": snap.get("inputType"),
+            "needValue": snap.get("needValue"),
+            "generation": snap.get("generation"),
+            "lines": lines,
+            "buttons": buttons,
+        }
+
     def request(self, method: str, path: str, body: Optional[Dict[str, Any]] = None, timeout: float = 35.0):
         headers = {"Accept": "application/json"}
         data = None

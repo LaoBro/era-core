@@ -33,6 +33,26 @@ def _emit(payload) -> None:
     sys.stdout.flush()
 
 
+def _emit_compact(client, payload, compact: bool, tail: int | None = None) -> None:
+    """compact=True 时用低噪紧凑视图（纯文本行 + 按钮 id/label）替换 diff 输出。
+
+    复用 GET /snapshot 在 agent 侧投影，不要服务端改动。tail 截断最近 N 行。
+    投影失败（如 snapshot 未就绪）时降级为原 diff 输出。
+    """
+    if not compact:
+        _emit(payload)
+        return
+    try:
+        view = client.get_compact_view(tail=tail)
+    except EmueraHttpError:
+        _emit(payload)
+        return
+    # 用 turn/diff 的顶层 inputType/needValue 兜底；紧凑视图自身已带 state/generation。
+    view["inputType"] = (payload or {}).get("inputType") or view.get("inputType")
+    view["needValue"] = (payload or {}).get("needValue")
+    _emit(view)
+
+
 def _base_url(record) -> str:
     host = record.get("host") or "127.0.0.1"
     return f"http://{host}:{record['port']}"
@@ -180,7 +200,27 @@ def cmd_start(args) -> int:
     token = None
     pid = None
 
-    if existing and existing.get("port"):
+    # issue 05（H 缺陷修复）：MAUI 托管 server 发现**优先于**本地记录。
+    # MAUI 是用户正在玩的那一局的权威单实例——它重开时端口/token 都会变，本地 .eracore-server.json
+    # 可能是旧会话残留。先探 MAUI 发现记录（%LOCALAPPDATA%\EmueraCore\eracore-maui-server.json），
+    # 命中即复用（单实例共享，agent 连的是用户正在玩的那一局，不另起 server）。
+    # 只有 MAUI 记录缺失或探活失败时，才回落本地 existing 记录。
+    maui_record = load_maui_server_record()
+    if maui_record and maui_record.get("port"):
+        maui_host = maui_record.get("host") or "127.0.0.1"
+        maui_client = EmueraClient(
+            f"http://{maui_host}:{maui_record['port']}", token=maui_record.get("token"))
+        if _probe(maui_client) is not None:
+            reused = True
+            port = maui_record["port"]
+            host = maui_host
+            token = maui_record.get("token") or secrets.token_urlsafe(24)
+            started_by_agent = False
+            maui_hosted = True
+            pid = None
+            game_dir = maui_record.get("gameDir") or game_dir
+
+    if not reused and existing and existing.get("port"):
         token = existing.get("token")
         probe_client = EmueraClient(_base_url(existing), token=token)
         if _probe(probe_client) is not None:
@@ -192,25 +232,6 @@ def cmd_start(args) -> int:
             maui_hosted = bool(existing.get("mauiHosted"))
             if not token:
                 token = secrets.token_urlsafe(24)
-
-    if not reused:
-        # issue 05：MAUI 托管 server 发现——MAUI 应用跑游戏时在 %LOCALAPPDATA%\EmueraCore 写发现记录
-        # （eracore-maui-server.json，含动态端口 + MAUI 生成的 token + gameDir）。
-        # 探活成功即复用该会话（单实例共享，agent 连的是用户正在玩的那一局），不另起 server。
-        maui_record = load_maui_server_record()
-        if maui_record and maui_record.get("port"):
-            maui_host = maui_record.get("host") or "127.0.0.1"
-            maui_client = EmueraClient(
-                f"http://{maui_host}:{maui_record['port']}", token=maui_record.get("token"))
-            if _probe(maui_client) is not None:
-                reused = True
-                port = maui_record["port"]
-                host = maui_host
-                token = maui_record.get("token") or secrets.token_urlsafe(24)
-                started_by_agent = False
-                maui_hosted = True
-                pid = None
-                game_dir = maui_record.get("gameDir") or game_dir
 
     if not reused:
         probe_client = EmueraClient(f"http://{host}:{port}")
@@ -271,18 +292,19 @@ def cmd_start(args) -> int:
     return 0
 
 
-def cmd_acquire(_args) -> int:
+def cmd_acquire(args) -> int:
     client, _record = _require_server()
     try:
         result = client.acquire_control()
     except EmueraHttpError as exc:
         _fail_http(exc)
-    _emit({
+    payload = {
         "controller": result.get("controller"),
         "state": result.get("state"),
         "turn": result.get("turn"),
         "turnsAdvanced": result.get("turnsAdvanced"),
-    })
+    }
+    _emit_compact(client, payload, not args.full, args.tail)
     return 0
 
 
@@ -300,7 +322,28 @@ def cmd_step(args) -> int:
         turn = _read_turn(client)
     except EmueraHttpError as exc:
         _fail_http(exc)
-    _emit(turn)
+    _emit_compact(client, turn, not args.full, args.tail)
+    return 0
+
+
+def cmd_view(args) -> int:
+    client, _record = _require_server()
+    # 防偷窥 / 排他语义：读取当前画面需先获取控制权，校验己方为 Controller。
+    # 读取后**不自动 release**——保持持有直到任务完成主动 `release`，或 user 强行夺回（CONTROL_LOST）。
+    # 否则"一闪而过"既锁不住画面，也无法支撑用户与 agent 交替操作的真实需求。
+    try:
+        client.acquire_control()
+    except EmueraHttpError as exc:
+        # CONTROL_HELD_BY_USER / CONTROL_HELD 在此即防偷窥拦截——不让无权者读到画面。
+        _fail_http(exc)
+    try:
+        if args.full:
+            view = client.get_snapshot()
+        else:
+            view = client.get_compact_view(tail=args.tail)
+    except EmueraHttpError as exc:
+        _fail_http(exc)
+    _emit(view)
     return 0
 
 
@@ -339,7 +382,12 @@ def cmd_advance(args) -> int:
     except EmueraHttpError as exc:
         _fail_http(exc)
     if not _is_auto_advanceable(snap):
-        _emit({"turns": [], "stopped": snap, "advancedCount": 0, "limitReached": False})
+        # 非翻页：不推进。默认 stopped 用紧凑投影；--full 时原样。
+        if not args.full:
+            stopped = client.get_compact_view(tail=args.tail)
+            _emit({"turns": [], "stopped": stopped, "advancedCount": 0, "limitReached": False})
+        else:
+            _emit({"turns": [], "stopped": snap, "advancedCount": 0, "limitReached": False})
         return 0
 
     turns: list = []
@@ -357,10 +405,10 @@ def cmd_advance(args) -> int:
         if _is_auto_advanceable(turn):
             turns.append(turn)
             continue
-        _emit({"turns": turns, "stopped": turn, "advancedCount": count, "limitReached": False})
+        _emit_compact(client, {"turns": turns, "advancedCount": count, "limitReached": False}, not args.full, args.tail)
         return 0
 
-    _emit({"turns": turns, "stopped": None, "advancedCount": count, "limitReached": True})
+    _emit_compact(client, {"turns": turns, "advancedCount": count, "limitReached": True}, not args.full, args.tail)
     return 0
 
 
@@ -447,16 +495,27 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--eracore-path", default=None, help="EraCore.Cli 二进制路径")
     start.set_defaults(func=cmd_start)
 
-    acquire = sub.add_parser("acquire", help="获取控制权并返回状态确认")
+    acquire = sub.add_parser("acquire", help="获取控制权并返回状态确认（默认低噪紧凑视图）")
+    acquire.add_argument("--full", action="store_true", help="输出完整 diff（默认紧凑视图）")
+    acquire.add_argument("--tail", type=int, default=None, help="紧凑视图仅返回最近 N 行（默认全部）")
     acquire.set_defaults(func=cmd_acquire)
 
-    step = sub.add_parser("step", help="提交输入并读取下一回合")
+    step = sub.add_parser("step", help="提交输入并读取下一回合（默认低噪紧凑视图）")
     step.add_argument("--value", required=True, help="提交给游戏的输入值")
+    step.add_argument("--full", action="store_true", help="输出完整 diff（默认紧凑视图）")
+    step.add_argument("--tail", type=int, default=None, help="紧凑视图仅返回最近 N 行（默认全部）")
     step.set_defaults(func=cmd_step)
 
     advance = sub.add_parser("advance", help="自动代按回车推进翻页，直到需真实输入；返回全部被推进回合")
     advance.add_argument("--max-steps", type=int, default=50, help="推进步数上限（默认 50）")
+    advance.add_argument("--full", action="store_true", help="输出完整 diff（默认紧凑视图）")
+    advance.add_argument("--tail", type=int, default=None, help="紧凑视图仅返回最近 N 行（默认全部）")
     advance.set_defaults(func=cmd_advance)
+
+    view = sub.add_parser("view", help="只读输出当前屏幕低噪紧凑视图（纯文本行 + 按钮 id/label），不推进")
+    view.add_argument("--tail", type=int, default=None, help="仅返回最近 N 行（默认全部）")
+    view.add_argument("--full", action="store_true", help="输出完整 /snapshot 而非低噪紧凑视图")
+    view.set_defaults(func=cmd_view)
 
     release = sub.add_parser("release", help="释放控制权")
     release.set_defaults(func=cmd_release)

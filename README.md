@@ -89,11 +89,15 @@ agent
                  └─ GET /ws  →  Web 旁观（MAUI 托管 server 亦暴露同契约 /ws）
 ```
 
-`start` 自己拉起 `EraCore.Cli --server`，或复用已经在跑的实例（含 MAUI 应用托管的 server——读 `%LOCALAPPDATA%\Emuera\emuera-maui-server.json` 发现记录）。
+`start` 复用或拉起 server。复用优先级（自高到低）：
+1. **MAUI 托管 server**（用户正在 MAUI 应用里玩的那一局——读 `%LOCALAPPDATA%\EmueraCore\eracore-maui-server.json` 发现记录，端口/token/游戏目录动态）；命中即复用，不 load_game 抢占。
+2. **本地记录** `.eracore-server.json`（上次 `start` 拉起的 standalone server）。
+3. `--host:--port` 上已在跑的 server；都没有才用 `--eracore-path` 二进制拉起新 server。
 
 ```bash
 python -m eracore_agent start --game-dir test_game
 python -m eracore_agent acquire
+python -m eracore_agent view          # 低噪紧凑视图（纯文本行 + 按钮 id/label），读取前先获取控制权
 python -m eracore_agent step --value 0
 python -m eracore_agent release
 python -m eracore_agent status
@@ -105,7 +109,9 @@ python -m eracore_agent stop
 |--------|------|
 | `start` | 拉起或复用 server，加载游戏，返回初始 turn |
 | `acquire` | 获取控制权，并返回 drain 后的状态确认 |
-| `step --value X` | 提交输入并读取下一回合 |
+| `view [--tail N] [--full]` | 只读低噪紧凑视图（纯文本行 + 已过滤过时按钮）；读取前先 `acquire` 且读后保持持有。`--full` 输出完整 snapshot |
+| `step --value X [--full] [--tail N]` | 提交输入并读取下一回合；默认输出低噪紧凑视图，`--full` 用完整 diff |
+| `advance [--max-steps N] [--full] [--tail N]` | 自动代按回车推进翻页，直到需真实输入 |
 | `release` | 让出控制权（不关 server） |
 | `status` | 查询当前 Controller 与游戏 state |
 | `watch` | 只读旁观终端输出 |
@@ -116,7 +122,7 @@ python -m eracore_agent stop
 | 文件 | 内容 |
 |------|------|
 | `.eracore-agent.json` | 路径预设（`binaryPath` / `gameDir`） |
-| `.eracore-server.json` | 本次运行记录（`host` / `port` / `pid` / `token` / `gameDir` / `startedByAgent`）。`start` 写入，`stop` 删除，`release` 不删 |
+| `.eracore-server.json` | 本次运行记录（`host` / `port` / `pid` / `token` / `gameDir` / `startedByAgent` / `mauiHosted`）。`start` 写入，`stop` 删除，`release` 不删 |
 
 ### 响应格式
 
@@ -150,6 +156,23 @@ stdout 是一行 JSON。`start` / `step` 输出 turn：
 | `needValue` | `true` 时需要非空输入 |
 | `diff` | 相对上一回合的行级增量；首回合为 `null`，全屏细节用 `GET /snapshot` |
 | `turnsAdvanced` | `acquire` 时 drain 掉的积压回合数 |
+
+`view` 与 `step` / `advance` 默认输出低噪紧凑视图——便于 agent 直接消费，不再携带 diff 的渲染元数据；用 `--full` 可恢复原始 diff / snapshot：
+
+```json
+{
+  "state": "WaitInput",
+  "inputType": "IntValue",
+  "needValue": true,
+  "generation": 10,
+  "lines": ["少女祈祷中...", ".........."],
+  "buttons": [{"id": 123, "label": "[萃香             ]"}, {"id": 11, "label": "[      会見]"}]
+}
+```
+
+- `lines`：每屏文本行（`--tail N` 只保留最近 N 行）。
+- `buttons`：仅保留当前有效代的按钮（同 `generation`），翻页留在历史里的过时按钮已被过滤；直接以 `id` 作为 `step --value` 输入。
+- 语义：`view`/`acquire` 读取前先获取控制权，成功后**保持持有**，直到主动 `release` 或用户强行夺回（`CONTROL_LOST`）。
 
 错误走 stderr + 非零退出码（例如 `CONTROL_LOST`、`CONTROL_HELD_BY_USER`）。回合字段的权威来源是 `TurnRecord` / `AgentJsonlProtocol`。
 
