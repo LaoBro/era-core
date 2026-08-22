@@ -272,7 +272,7 @@ html.pointer-interaction :focus-visible {
    动画只挂在子元素上时会被当成长度 0 瞬间结束（表现为瞬弹）。
    根元素整体淡入出（含 scrim），面板单独 slide。 */
 .drawer-enter-active.drawer-host {
-  animation: fade-in var(--motion-fast) var(--fx-ease-in) both;
+  animation: fade-in var(--motion-slow) var(--fx-ease-in) both;
 }
 .drawer-leave-active.drawer-host {
   animation: fade-out var(--motion-fast) var(--fx-ease-out) forwards;
@@ -290,6 +290,18 @@ html.pointer-interaction :focus-visible {
 }
 .drawer-leave-active.drawer-host .drawer {
   animation: drawer-slide-out var(--motion-fast) var(--fx-ease-out) forwards;
+}
+/* 菜单内容逐项浮现（慢一倍，与 PopupMenu popup-item-in 一致）：面板先整体滑入，
+   内容随后统一淡入 + 上浮，用 backwards 保证首帧从隐藏态开始。 */
+@keyframes drawer-item-in {
+  from { opacity: 0; transform: translateY(var(--fx-rise)); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.drawer-enter-active.drawer-host .drawer-item,
+.drawer-enter-active.drawer-host .drawer-zoom,
+.drawer-enter-active.drawer-host .drawer-separator,
+.drawer-enter-active.drawer-host .drawer-title {
+  animation: drawer-item-in calc(var(--motion-slow) * 2) var(--fx-ease-in) backwards;
 }
 
 /* 无障碍：prefers-reduced-motion 关闭非必要过渡（spec §2.3） */
