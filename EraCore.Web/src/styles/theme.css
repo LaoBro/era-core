@@ -267,7 +267,16 @@ html.pointer-interaction :focus-visible {
 }
 
 /* DrawerMenu 出入场（替换 PopupMenu 浮层）——遮罩淡入淡出、面板横向滑入/滑出。
-   适配 Transition 根元素（.drawer-host）：enter/leave 类挂在 host 上，按子元素分别驱动。 */
+   适配 Transition 根元素（.drawer-host）：enter/leave 类挂在 host 上。
+   根元素自身必须有 animation——Vue 靠探测根元素的动画时长决定过渡周期，
+   动画只挂在子元素上时会被当成长度 0 瞬间结束（表现为瞬弹）。
+   根元素整体淡入出（含 scrim），面板单独 slide。 */
+.drawer-enter-active.drawer-host {
+  animation: fade-in var(--motion-fast) var(--fx-ease-in) both;
+}
+.drawer-leave-active.drawer-host {
+  animation: fade-out var(--motion-fast) var(--fx-ease-out) forwards;
+}
 @keyframes drawer-slide-in {
   from { transform: translateX(100%); }
   to { transform: translateX(0); }
@@ -275,12 +284,6 @@ html.pointer-interaction :focus-visible {
 @keyframes drawer-slide-out {
   from { transform: translateX(0); }
   to { transform: translateX(100%); }
-}
-.drawer-enter-active.drawer-host .drawer-scrim {
-  animation: fade-in var(--motion-fast) var(--fx-ease-in) both;
-}
-.drawer-leave-active.drawer-host .drawer-scrim {
-  animation: fade-out var(--motion-fast) var(--fx-ease-out) forwards;
 }
 .drawer-enter-active.drawer-host .drawer {
   animation: drawer-slide-in var(--motion-slow) var(--fx-ease-in) both;
