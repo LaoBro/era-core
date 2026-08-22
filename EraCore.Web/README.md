@@ -41,7 +41,7 @@ npm run build
 | `src/components/WebGameList.vue` | Web 游戏选择页 wrapper：右上角 ⋮ 菜单与 MAUI 一致（更改目录→手动输入对话框 / 重新扫描 / 主题），传输走 C# server（/game/scan、/game/dirs） |
 | `src/components/TinputCountdown.vue` | TINPUT 倒计时显示 |
 | `src/components/AppShell.vue` | 根布局壳层：全局背景、主内容与全局对话框挂载点 |
-| `src/components/PopupMenu.vue` | 游戏页更多菜单（MAUI/Web 共用）：快速重开、缩放（含恢复）、视图切换、退出 |
+| `src/components/DrawerMenu.vue` | 游戏页更多抽屉菜单（MAUI/Web 共用）：头部游戏标题、快速重开、缩放（含恢复）、视图切换、退出；右滑/点遮罩/Escape 关闭 |
 | `src/components/ConfirmDialog.vue` | 退出 / 确认 Alert Dialog（遮罩 + 危险文字按钮，Escape/返回取消） |
 | `src/components/StatusBanner.vue` | 顶部可关闭提示条：错误 / 警告 / 成功 / 信息 |
 | `src/components/SpectatorBanner.vue` | 旁观横幅（MAUI/Web 共用）：Agent 操控提示 + 接管按钮 |
@@ -92,9 +92,9 @@ npm run build
 | 修改 TINPUT 倒计时 | `components/TinputCountdown.vue`、`stores/game.ts` |
 | 修改终端滚动或缩放 | `composables/useVirtualScroll.ts`、`composables/usePinchZoom.ts`、`TerminalDisplay.vue` |
 | 修改 MAUI 启动和 C# 消息处理 | `composables/useAppInit.ts`、`lib/mauiBridge.ts` |
-| 修改页面导航、顶部按钮或模式分流 | `App.vue`、`components/PopupMenu.vue` |
+| 修改页面导航、顶部按钮或模式分流 | `App.vue`、`components/DrawerMenu.vue` |
 | 修改 UI 主题、颜色、圆角、阴影、动效或字号 | `styles/theme.css`（唯一令牌源，组件一律 `var(--token)`） |
-| 修改弹窗、菜单或确认框 | `components/PopupMenu.vue`、`components/ConfirmDialog.vue` |
+| 修改弹窗、菜单或确认框 | `components/PopupMenu.vue`、`components/DrawerMenu.vue`、`components/ConfirmDialog.vue` |
 
 ## 数据流
 
@@ -102,7 +102,7 @@ npm run build
 
 ```text
 App.vue
-  -> WebGameList（选择页）/ game-shell-controls + PopupMenu（游戏页）
+  -> WebGameList（选择页）/ game-shell-controls + DrawerMenu（游戏页）
   -> connection.ts
   -> WebSocket (turns) + GET /control + GET /control/wait (control events)
   -> parseTurnRecord.ts
@@ -116,7 +116,7 @@ App.vue
 
 ```text
 App.vue
-  -> MauiGameList（选择页）/ game-shell-controls + PopupMenu（游戏页）
+  -> MauiGameList（选择页）/ game-shell-controls + DrawerMenu（游戏页）
   -> mauiBridge.ts
   -> C# BridgeHost / IJsBridge
   -> window.__onTurn / window.__onMessage

@@ -241,10 +241,8 @@ html.pointer-interaction :focus-visible {
   from { opacity: 1; }
   to { opacity: 0; }
 }
-/* Popup Menu 出入场（spec §3.4 / M3 motion）——遮罩与内容体分开动画但同步：
-   遮罩（.popup-root，全屏淡入淡出）作为 Transition 根元素驱动 enter/leave；
-   内容面板（.popup-menu，缩放）与遮罩同帧出入。
-   入场 200ms、退场 150ms，进场用 --fx-ease-in，退场用 --fx-ease-out */
+/* Popup Menu 出入场（spec §3.4 / M3 motion，游戏选择页菜单用）——遮罩淡入出、面板缩放。
+   遮罩（.popup-root）作为 Transition 根元素驱动 enter/leave；内容面板（.popup-menu）同帧出入。 */
 .popup-enter-active.popup-root {
   animation: fade-in var(--motion-slow) var(--fx-ease-in) both;
 }
@@ -257,9 +255,7 @@ html.pointer-interaction :focus-visible {
 .popup-leave-active .popup-menu {
   animation: popup-out var(--motion-fast) var(--fx-ease-out) forwards;
 }
-
-/* 面板先缩放出现，内容随后作为一个整体浮现（非逐项 stagger）：
-   所有项统一 delay = popup-in 时长（200ms），保证面板已呈现再整体淡入内容 */
+/* 面板先缩放出现，内容随后整体浮现（非逐项 stagger） */
 @keyframes popup-item-in {
   from { opacity: 0; transform: translateY(var(--fx-rise)); }
   to { opacity: 1; transform: translateY(0); }
@@ -268,6 +264,29 @@ html.pointer-interaction :focus-visible {
 .popup-menu .popup-zoom,
 .popup-menu .popup-separator {
   animation: popup-item-in calc(var(--motion-slow) * 2) var(--fx-ease-in) backwards;
+}
+
+/* DrawerMenu 出入场（替换 PopupMenu 浮层）——遮罩淡入淡出、面板横向滑入/滑出。
+   适配 Transition 根元素（.drawer-host）：enter/leave 类挂在 host 上，按子元素分别驱动。 */
+@keyframes drawer-slide-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes drawer-slide-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+.drawer-enter-active.drawer-host .drawer-scrim {
+  animation: fade-in var(--motion-fast) var(--fx-ease-in) both;
+}
+.drawer-leave-active.drawer-host .drawer-scrim {
+  animation: fade-out var(--motion-fast) var(--fx-ease-out) forwards;
+}
+.drawer-enter-active.drawer-host .drawer {
+  animation: drawer-slide-in var(--motion-slow) var(--fx-ease-in) both;
+}
+.drawer-leave-active.drawer-host .drawer {
+  animation: drawer-slide-out var(--motion-fast) var(--fx-ease-out) forwards;
 }
 
 /* 无障碍：prefers-reduced-motion 关闭非必要过渡（spec §2.3） */

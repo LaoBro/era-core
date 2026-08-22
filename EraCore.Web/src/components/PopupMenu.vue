@@ -1,42 +1,14 @@
 <script lang="ts">
 /**
- * PopupMenu.vue — Android 风格 Popup Menu（ui-redesign-spec §6.1）。
+ * PopupMenu.vue — 游戏选择页的 Android 风格 Popup Menu（ui-redesign-spec §6.1），
+ * 仍用于 MauiGameList / WebGameList 的「目录 / 更多」浮层菜单；游戏页「更多」已改用 DrawerMenu。
  * 高不透明度 --color-surface-raised、单档 --elevation-menu、--radius-surface(12px)；
  * 菜单项最小高度 48px，左侧图标、右侧文字；缩放作为菜单项（当前百分比 + 缩/放）；
  * 退出项与其它项之间用分隔线；点击外部或按 Escape 关闭（spec §6.1）。
  * 普通菜单项点击后自动关闭；出入场缩放动画由父级 <Transition name="popup"> 驱动。
  */
-export type IconName =
-  | 'sun'
-  | 'moon'
-  | 'restart'
-  | 'terminal'
-  | 'debug'
-  | 'settings'
-  | 'exit';
-
-export type PopupMenuItem =
-  | {
-      type: 'item';
-      id: string;
-      label: string;
-      /** 内联 SVG 图标名——继承 currentColor 渲染，规避 emoji 在 Android 上按彩色字形显示。 */
-      icon?: IconName;
-      danger?: boolean;
-      disabled?: boolean;
-      active?: boolean;
-      onClick: () => void;
-    }
-  | {
-      type: 'zoom';
-      percent: number;
-      canZoomOut: boolean;
-      canZoomIn: boolean;
-      onZoomOut: () => void;
-      onZoomReset: () => void;
-      onZoomIn: () => void;
-    }
-  | { type: 'separator' };
+import type { IconName, PopupMenuItem } from './menuTypes';
+export type { IconName, PopupMenuItem };
 </script>
 
 <script setup lang="ts">

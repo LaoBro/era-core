@@ -7,7 +7,8 @@ import { initAppState } from './composables/useAppInit';
 import { startGameStatusMonitor } from './composables/useGameStatusMonitor';
 import { isMauiEnvironment, loadGameFromPath, exitGame as exitGameBridge } from './lib/mauiBridge';
 import AppShell from './components/AppShell.vue';
-import PopupMenu, { type PopupMenuItem } from './components/PopupMenu.vue';
+import DrawerMenu from './components/DrawerMenu.vue';
+import type { PopupMenuItem } from './components/menuTypes';
 import ConfirmDialog from './components/ConfirmDialog.vue';
 import MauiGameList from './components/MauiGameList.vue';
 import WebGameList from './components/WebGameList.vue';
@@ -81,11 +82,11 @@ const isExiting = computed(() => game.exitStatus === 'exiting');
 /** 退出确认对话框可见性。 */
 const showExitConfirm = ref(false);
 
-/** MAUI 全屏「更多」（⋮）菜单展开状态。 */
+/** 游戏页「更多」（⋮）抽屉菜单（DrawerMenu）展开状态。 */
 const showFloatMenu = ref(false);
 
 /** Android 物理返回键（backButtonPressed 由 C# 投递）——层级语义（spec §6.1）：
- *  更多菜单打开 → 关闭菜单；退出确认打开 → 取消；游戏运行中 → 弹退出确认。 */
+ *  抽屉打开 → 关闭抽屉；退出确认打开 → 取消；游戏运行中 → 弹退出确认。 */
 watch(() => game.backButtonPressedTick, () => {
   if (!isMaui) return;
   if (showFloatMenu.value) {
@@ -243,10 +244,11 @@ const popupItems = computed<PopupMenuItem[]>(() => [
           >⋮</button>
         </div>
 
-        <Transition name="popup">
-          <PopupMenu
+        <Transition name="drawer">
+          <DrawerMenu
             v-if="showFloatMenu"
             :items="popupItems"
+            :title="game.lastPlayedGame || game.gameDir || '更多操作'"
             @close="showFloatMenu = false"
           />
         </Transition>
