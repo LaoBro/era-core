@@ -107,6 +107,14 @@ internal sealed class LoaderTestHarness : IDisposable
 		return path;
 	}
 
+	/// <summary>写入 ERD 文件（与 ERB 同住 ErbDir——PrepareERDFileNames 以 ErbDir 为根收 .erd）。</summary>
+	public string WriteErd(string name, string content)
+	{
+		var path = Path.Combine(ErbDir, name);
+		File.WriteAllText(path, content);
+		return path;
+	}
+
 	/// <summary>写入 CSV 文件。须在 <see cref="InitializeAsync"/> 之前调用（Initialize 内预加载 CSV）。</summary>
 	public string WriteCsv(string name, string content)
 	{
@@ -118,11 +126,13 @@ internal sealed class LoaderTestHarness : IDisposable
 	/// <summary>
 	/// 预加载 erb/csv 目录（EraStreamReader.OpenOnCache 经 Preload.GetFileLines 读缓存）。
 	/// 测试在写入 ERH/ERB 文件后、调用 loader 前必须 await 本方法。
+	/// erb-loader-parallel 02：与启动路径同款 WhenAll 并行。
 	/// </summary>
 	public async Task PreloadAsync()
 	{
-		await Preload.Load(ErbDir, new FileSystemGameDirAccessor());
-		await Preload.Load(CsvDir, new FileSystemGameDirAccessor());
+		await Task.WhenAll(
+			Preload.Load(ErbDir, new FileSystemGameDirAccessor()),
+			Preload.Load(CsvDir, new FileSystemGameDirAccessor()));
 	}
 
 	/// <summary>

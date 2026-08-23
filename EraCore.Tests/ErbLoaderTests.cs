@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Runtime.Config;
@@ -289,5 +290,35 @@ public class ErbLoaderTests
 			.Count(l => l?.ToString()?.Contains("REPEAT, FOR, WHILE, DOの中以外で") == true);
 
 		Assert.Equal(1, breakWarningCount);
+	}
+
+	/// <summary>
+	/// erb-loader-parallel Issue 02 行为锚点：*#* 优先目录（firstDir）文件在主循环枚举里再次出现时
+	/// 须被已加载集合去重（List→HashSet 交换后语义不变）——firstDir 文件只载一次、先于根目录文件，
+	/// 不产生对自身的重名函数假警告。
+	/// </summary>
+	[Fact]
+	public async Task LoadErbDir_firstdir_file_deduped_from_main_enumeration()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		ConfigData.Current!.GetConfigItem(ConfigCode.SearchSubdirectory).SetValue(true);
+		Directory.CreateDirectory(Path.Combine(h.ErbDir, "1#PRI"));
+		File.WriteAllText(Path.Combine(h.ErbDir, "1#PRI", "SUB.ERB"), "@FUNC_SUB\nRETURN\n");
+		h.WriteErb("MAIN.ERB", "@FUNC_MAIN\nRETURN\n");
+		await h.PreloadAsync();
+		var loader = NewLoaderWithSpy(h, new List<LogicalLine?>());
+		var labelDic = new LabelDictionary();
+
+		var ok = await loader.LoadErbDir(h.ErbDir, displayReport: false, labelDic);
+
+		Assert.True(ok);
+		var labels = labelDic.GetAllLabels(false).OrderBy(l => l.Index).ToList();
+		Assert.Equal(2, labels.Count);
+		// firstDir 优先：SUB 先于 MAIN 分配 Index
+		Assert.Equal("FUNC_SUB", labels[0].LabelName);
+		Assert.Equal("FUNC_MAIN", labels[1].LabelName);
+		// 去重失效会双重装载 FUNC_SUB → 主循环重名警告或标签数 > 2
+		Assert.Equal(1, labels.Count(l => l.LabelName == "FUNC_SUB"));
 	}
 }

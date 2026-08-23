@@ -66,7 +66,9 @@ internal sealed class ErbLoader
 		labelDic.Initialized = false;
 		#region EE_ファイル読み込み順拡張
 		var firstDir = env.DirAccessor.GetDirectories(erbDir, "*#*", Config.Config.SearchSubdirectory ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly) ?? [];
-		List<string> loadedFiles = new List<string>();
+		// erb-loader-parallel 02：firstDir 已载文件查重 O(n²)（List 线性扫）→ 集合查找；
+		// 文件系统路径大小写不敏感，与既有 SCIgnoreCase 语义一致
+		HashSet<string> loadedFiles = new(StringComparer.OrdinalIgnoreCase);
 		#endregion
 		var erbFiles = GetErbFilesFromCache(erbDir) ?? Config.Config.GetFiles(erbDir, "*.ERB") ?? [];
 		List<string> isOnlyEvent = [];
@@ -1705,20 +1707,22 @@ internal sealed class ErbLoader
 
 	/// <summary>ADR-0019：从 Preload 缓存获取 ERB 文件列表（SAF 路径专用）。
 	/// 用 Unescape 后的 documentId 前缀过滤（避免 raw URI 上 %2F 前缀匹配失效）；
-	/// Key = 相对 dir 的逻辑相对路径（对齐 Config.getFiles）；Value = 缓存全路径键。</summary>
+	/// Key = 相对 dir 的逻辑相对路径（对齐 Config.getFiles）；Value = 缓存全路径键。
+	/// erb-loader-parallel 02：缓存键只枚举一次——快照后复用（含日志取数）。</summary>
 	private static List<KeyValuePair<string, string>>? GetErbFilesFromCache(string dirPath)
 	{
 		if (!SafPath.IsContentUri(dirPath)) return null;
-		var erbFiles = Preload.GetAllCachedKeys()
+		var cachedKeys = Preload.GetAllCachedKeys().ToList();
+		var erbFiles = cachedKeys
 			.Where(k => k.EndsWith(".ERB", StringComparison.OrdinalIgnoreCase)
 				&& SafPath.IsUnderRoot(dirPath, k))
 			.Select(k => new KeyValuePair<string, string>(
 				SafPath.GetRelativePathFromRoot(dirPath, k), k))
 			.ToList();
-	if (erbFiles.Count == 0)
-		EmueraLog.Info("ErbLoader", $"GetErbFilesFromCache: 0 .ERB under root in {Preload.GetAllCachedKeys().Count()} cached keys");
-	else
-		EmueraLog.Info("ErbLoader", $"GetErbFilesFromCache: {erbFiles.Count} files, firstKey={erbFiles[0].Key}");
+		if (erbFiles.Count == 0)
+			EmueraLog.Info("ErbLoader", $"GetErbFilesFromCache: 0 .ERB under root in {cachedKeys.Count} cached keys");
+		else
+			EmueraLog.Info("ErbLoader", $"GetErbFilesFromCache: {erbFiles.Count} files, firstKey={erbFiles[0].Key}");
 		return erbFiles;
 	}
 

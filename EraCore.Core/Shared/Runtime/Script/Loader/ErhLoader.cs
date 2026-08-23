@@ -416,11 +416,16 @@ internal sealed class ErhLoader
 			AddErdPath(path);
 			fromCache++;
 		}
-		// 桌面 / 缓存未命中时的兜底枚举
-		foreach (var path in env.DirAccessor.GetFiles(env.ErbDir, "*.erd", SearchOption.AllDirectories))
+		// 桌面 / 缓存未命中 .erd 时的兜底枚举。
+		// erb-loader-parallel 02：缓存已含 .erd 时跳过——SAF 路径省一次全树遍历
+		// （Preload 装载的键即 DirAccessor 全树枚举产物，两来源集合一致）
+		if (fromCache == 0)
 		{
-			AddErdPath(path);
-			fromEnum++;
+			foreach (var path in env.DirAccessor.GetFiles(env.ErbDir, "*.erd", SearchOption.AllDirectories))
+			{
+				AddErdPath(path);
+				fromEnum++;
+			}
 		}
 		foreach (var path in env.DirAccessor.GetFiles(env.CsvDir, "*.csv", SearchOption.TopDirectoryOnly))
 			AddErdPath(path);
@@ -439,20 +444,22 @@ internal sealed class ErhLoader
 	}
 
 	/// <summary>ADR-0019：从 Preload 缓存获取 ERH 文件列表（SAF 路径专用）。
-	/// Key = 相对 dir 的逻辑相对路径；Value = 缓存全路径键（OpenOnCache 精确命中）。</summary>
+	/// Key = 相对 dir 的逻辑相对路径；Value = 缓存全路径键（OpenOnCache 精确命中）。
+	/// erb-loader-parallel 02：缓存键只枚举一次——快照后复用（含日志取数）。</summary>
 	private static List<KeyValuePair<string, string>>? GetErhFilesFromCache(string dirPath)
 	{
 		if (!SafPath.IsContentUri(dirPath)) return null;
-		var erhFiles = Preload.GetAllCachedKeys()
+		var cachedKeys = Preload.GetAllCachedKeys().ToList();
+		var erhFiles = cachedKeys
 			.Where(k => k.EndsWith(".ERH", StringComparison.OrdinalIgnoreCase)
 				&& SafPath.IsUnderRoot(dirPath, k))
 			.Select(k => new KeyValuePair<string, string>(
 				SafPath.GetRelativePathFromRoot(dirPath, k), k))
 			.ToList();
-	if (erhFiles.Count == 0)
-		EmueraLog.Info("ErhLoader", $"GetErhFilesFromCache: 0 .ERH under root in {Preload.GetAllCachedKeys().Count()} cached keys");
-	else
-		EmueraLog.Info("ErhLoader", $"GetErhFilesFromCache: {erhFiles.Count} files, firstKey={erhFiles[0].Key}");
-	return erhFiles;
+		if (erhFiles.Count == 0)
+			EmueraLog.Info("ErhLoader", $"GetErhFilesFromCache: 0 .ERH under root in {cachedKeys.Count} cached keys");
+		else
+			EmueraLog.Info("ErhLoader", $"GetErhFilesFromCache: {erhFiles.Count} files, firstKey={erhFiles[0].Key}");
+		return erhFiles;
 	}
 }

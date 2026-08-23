@@ -219,8 +219,10 @@ internal sealed partial class Process(EmueraConsole view)
 
 	public async Task ReloadErb()
 	{
-		await Preload.Load(Program.ErbDir, GamePaths.Current.DirAccessor);
-		await Preload.Load(Program.CsvDir, GamePaths.Current.DirAccessor);
+		// erb-loader-parallel 02：ERB/CSV 两棵树 Preload 并行（与启动路径 ConsoleStateManager.Initialize 同款 WhenAll）
+		await Task.WhenAll(
+			Preload.Load(Program.ErbDir, GamePaths.Current.DirAccessor),
+			Preload.Load(Program.CsvDir, GamePaths.Current.DirAccessor));
 		saveCurrentState(false);
 		state.SystemState = SystemStateCode.System_Reloaderb;
 		// ADR-0012：ErbLoader F2 构造注入，不再传 Process。复用 _loaderEnv。

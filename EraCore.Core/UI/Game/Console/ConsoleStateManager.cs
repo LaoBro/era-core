@@ -59,8 +59,11 @@ internal sealed class ConsoleStateManager
             _state._genericTimerStopwatch.Restart();
 
         Preload.Clear();
-        await Preload.Load(Program.ErbDir, GamePaths.Current.DirAccessor);
-        await Preload.Load(Program.CsvDir, GamePaths.Current.DirAccessor);
+        // erb-loader-parallel 02：ERB/CSV 两棵树的 Preload 并行执行——Load 内部本就
+        // Parallel.ForEach 读文件，串行 await 白付一棵树的墙钟；缓存写入为 ConcurrentDictionary
+        await Task.WhenAll(
+            Preload.Load(Program.ErbDir, GamePaths.Current.DirAccessor),
+            Preload.Load(Program.CsvDir, GamePaths.Current.DirAccessor));
 
         logWriter?.WriteLine("File:Preload:End " + boottimeDebugStopwatch.ElapsedMilliseconds + "ms");
 
