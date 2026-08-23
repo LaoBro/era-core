@@ -5,7 +5,8 @@
 .kilo/*
 EraCore.Maui/Properties/
 .mimocode/*
-.workbuddy*
+.workbuddy/*
+.zcode/*
 .agents/*
 !.agents/skills/
 .agents/skills/*

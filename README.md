@@ -77,7 +77,7 @@ dotnet exec EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.dll --ExeDir test_game --s
 
 ## Agent 集成（CLI + Skill）
 
-Agent 通过中转 CLI `eracore_agent` 操控游戏，不走 MCP。礼仪见 [`.agents/skills/eracore-playtesting/SKILL.md`](.agents/skills/eracore-playtesting/SKILL.md)。
+Agent 通过中转 CLI `eracore_agent` 操控游戏，不走 MCP。原则：一次调用 = 一个回合，stdout 只有一行 JSON，错误走 stderr + 非零退出码；控制权排他（同一时刻一个 Controller），读取画面需先持有控制权，让权以显式 `release` 为准。
 
 ```text
 agent
@@ -94,87 +94,14 @@ agent
 2. **本地记录** `.eracore-server.json`（上次 `start` 拉起的 standalone server）。
 3. `--host:--port` 上已在跑的 server；都没有才用 `--eracore-path` 二进制拉起新 server。
 
-```bash
-python -m eracore_agent start --game-dir test_game
-python -m eracore_agent acquire
-python -m eracore_agent view          # 低噪紧凑视图（纯文本行 + 按钮 id/label），读取前先获取控制权
-python -m eracore_agent step --value 0
-python -m eracore_agent release
-python -m eracore_agent status
-python -m eracore_agent watch
-python -m eracore_agent stop
-```
+具体用法——启动序列、回合循环、紧凑视图的页语义截断、控制权交接礼仪与错误恢复——见 [`.agents/skills/eracore-playtesting/SKILL.md`](.agents/skills/eracore-playtesting/SKILL.md)。该文档自包含，只凭它即可完成操控；回合/按钮字段的权威来源是 `TurnRecord` / `AgentJsonlProtocol`。
 
-| 子命令 | 作用 |
-|--------|------|
-| `start` | 拉起或复用 server，加载游戏，返回初始 turn |
-| `acquire` | 获取控制权，并返回 drain 后的状态确认 |
-| `view [--tail N] [--full]` | 只读低噪紧凑视图（纯文本行 + 已过滤过时按钮）；读取前先 `acquire` 且读后保持持有。`--full` 输出完整 snapshot |
-| `step --value X [--full] [--tail N]` | 提交输入并读取下一回合；默认输出低噪紧凑视图，`--full` 用完整 diff |
-| `advance [--max-steps N] [--full] [--tail N]` | 自动代按回车推进翻页，直到需真实输入 |
-| `release` | 让出控制权（不关 server） |
-| `status` | 查询当前 Controller 与游戏 state |
-| `watch` | 只读旁观终端输出 |
-| `stop` | 结束会话；若由本 CLI 拉起则同时停 server |
-
-配置不要提交：
+运行期产物，不要提交：
 
 | 文件 | 内容 |
 |------|------|
 | `.eracore-agent.json` | 路径预设（`binaryPath` / `gameDir`） |
 | `.eracore-server.json` | 本次运行记录（`host` / `port` / `pid` / `token` / `gameDir` / `startedByAgent` / `mauiHosted`）。`start` 写入，`stop` 删除，`release` 不删 |
-
-### 响应格式
-
-stdout 是一行 JSON。`start` / `step` 输出 turn：
-
-```json
-{
-  "state": "WaitInput",
-  "inputType": "IntValue",
-  "needValue": true,
-  "protocolVersion": 11,
-  "diff": { "lineOps": [], "bgColor": null }
-}
-```
-
-`acquire` 另带控制权确认：
-
-```json
-{
-  "controller": { "kind": "agent" },
-  "state": "WaitInput",
-  "turn": { "state": "WaitInput", "inputType": "IntValue", "needValue": true },
-  "turnsAdvanced": 0
-}
-```
-
-| 字段 | 说明 |
-|------|------|
-| `state` | `WaitInput` / `Running` / `Quit` / `Error` / `Idle` |
-| `inputType` | `IntValue` / `StrValue` / `EnterKey` / `AnyKey` / `AnyValue` / `IntButton` / `StrButton` |
-| `needValue` | `true` 时需要非空输入 |
-| `diff` | 相对上一回合的行级增量；首回合为 `null`，全屏细节用 `GET /snapshot` |
-| `turnsAdvanced` | `acquire` 时 drain 掉的积压回合数 |
-
-`view` 与 `step` / `advance` 默认输出低噪紧凑视图——便于 agent 直接消费，不再携带 diff 的渲染元数据；用 `--full` 可恢复原始 diff / snapshot：
-
-```json
-{
-  "state": "WaitInput",
-  "inputType": "IntValue",
-  "needValue": true,
-  "generation": 10,
-  "lines": ["少女祈祷中...", ".........."],
-  "buttons": [{"id": 123, "label": "[萃香             ]"}, {"id": 11, "label": "[      会見]"}]
-}
-```
-
-- `lines`：每屏文本行（`--tail N` 只保留最近 N 行）。
-- `buttons`：仅保留当前有效代的按钮（同 `generation`），翻页留在历史里的过时按钮已被过滤；直接以 `id` 作为 `step --value` 输入。
-- 语义：`view`/`acquire` 读取前先获取控制权，成功后**保持持有**，直到主动 `release` 或用户强行夺回（`CONTROL_LOST`）。
-
-错误走 stderr + 非零退出码（例如 `CONTROL_LOST`、`CONTROL_HELD_BY_USER`）。回合字段的权威来源是 `TurnRecord` / `AgentJsonlProtocol`。
 
 ---
 
