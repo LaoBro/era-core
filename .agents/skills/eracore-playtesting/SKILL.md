@@ -35,11 +35,13 @@ python -m eracore_agent acquire
 **始终先看画面再动手**。两种读法：
 
 ```bash
-python -m eracore_agent view                 # 低噪紧凑视图：纯文本行 + 按钮({id,label})
-python -m eracore_agent view --tail 80       # 只返回最近 80 行（长历史时避免拖垮上下文）
+python -m eracore_agent view                 # 低噪紧凑视图：最近 3 页文本 + 按钮({id,label}) + 截断元数据
+python -m eracore_agent view --pages 5       # 截取最近 5 页
+python -m eracore_agent view --tail 80       # 绝对行数逃生口：只返回最近 80 行（优先于 --pages）
 ```
 
-- `view` 输出：`{state, inputType, needValue, generation, lines:[string], buttons:[{id,label}]}`。
+- `view` 输出：`{state, inputType, needValue, generation, lines:[string], buttons:[{id,label}], pageRows, totalLines, truncated}`。
+- **截断以页为单位**：`pageRows` = 一屏行数，服务端按游戏 emuera.config 的窗口高度/行高换算（`/state` 的 `visibleRows`；旧 server 无此字段时兜底 40）。`totalLines` = console 全缓冲行数，`truncated` = 本次是否截断——据此判断"看到 N/总 M 行"。确认状态一般 2~3 页足够。
 - **按钮已过滤**：只保留当前有效代（同 `generation` 的按钮），翻页留在历史里的旧按钮不会混入。直接凭 `buttons[].label` 定位可交互项、用 `buttons[].id` 作为 `step --value` 的输入。
 - `--tail N` 只截断文本行；按钮已按代过滤，不受行数影响。
 - **防偷窥 / 排他**：`view` 会先 `acquire`（需成为 Controller 才能读），读后**保持持有**、不自动 release——直到任务完成主动 `release`，或 user 强行夺回（报 `CONTROL_LOST`）。若控制权被 user 持有则报 `CONTROL_HELD_BY_USER` 拒绝读取。
@@ -61,7 +63,7 @@ python -m eracore_agent step --value "0" --full # --full 输出完整 diff（默
 | `Quit` / `Error` | 走第 6 步收尾 |
 | 其它 | `status` 确认后再决定 |
 
-完成标准：每一次 `step` 都对应自己刚提交的输入；不要在未读确认时连打。`acquire`/`step`/`advance` **默认输出低噪紧凑视图**（`lines`+`buttons`），如需原始 diff 结构用 `--full`；`--tail N` 只截断紧凑视图的文本行数。
+完成标准：每一次 `step` 都对应自己刚提交的输入；不要在未读确认时连打。`acquire`/`step`/`advance` **默认输出低噪紧凑视图**（`lines`+`buttons`+`pageRows`/`totalLines`/`truncated` 元数据，最近 3 页），如需原始 diff 结构用 `--full`；`--pages N` 调页数、`--tail N` 用绝对行数（优先于 --pages）。
 
 ### 3.1 自动推进（advance）
 
@@ -71,8 +73,9 @@ python -m eracore_agent step --value "0" --full # --full 输出完整 diff（默
 python -m eracore_agent advance --max-steps 50
 ```
 
-- 返回单行 JSON：`{"turns":[...], "stopped":{...}|null, "advancedCount":N, "limitReached":bool}`，`turns` 是每个被推进回合（含内容），`stopped` 是需要真实输入的回合（`limitReached` 为真时 `stopped` 为 null）。
-- 结束后读 `stopped` 回合再决定下一步；被强夺时 advance 自动停止并报 `CONTROL_LOST`，照第 4 步处理。
+- **默认（紧凑）**：返回单行 JSON = 紧凑视图（同 `view` 契约，含 `pageRows`/`totalLines`/`truncated`）+ `advancedCount`/`limitReached`。**不含 `turns`/`stopped`**——紧凑视图本身就是所停的画面，`limitReached` 区分停因（true=步数用尽，false=停在需真实输入）。
+- `advance --full` 才返回 `{"turns":[...], "stopped":{...}|null, "advancedCount":N, "limitReached":bool}`：`turns` 是每个被推进回合（含内容），`stopped` 是需要真实输入的回合（`limitReached` 为真时为 null）。
+- 结束后读紧凑视图（或 `--full` 的 `stopped`）再决定下一步；被强夺时 advance 自动停止并报 `CONTROL_LOST`，照第 4 步处理。
 - 只在确认是翻页时用；若该 EnterKey 是确认框/剧情节点，就正常 `step` 停下处理。
 
 ## 4. 被强夺
