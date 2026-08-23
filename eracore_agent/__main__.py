@@ -304,7 +304,9 @@ def cmd_acquire(args) -> int:
         "turn": result.get("turn"),
         "turnsAdvanced": result.get("turnsAdvanced"),
     }
-    _emit_compact(client, payload, not args.full, args.tail)
+    # acquire 是「获取控制权 + 返回状态确认」的命令，须输出控制器与末位回合的结构化字段；
+    # 不走 _emit_compact（紧凑屏幕视图会丢弃 controller/turn/turnsAdvanced）。
+    _emit(payload)
     return 0
 
 
