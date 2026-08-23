@@ -298,15 +298,27 @@ def cmd_acquire(args) -> int:
         result = client.acquire_control()
     except EmueraHttpError as exc:
         _fail_http(exc)
-    payload = {
+    confirm = {
         "controller": result.get("controller"),
         "state": result.get("state"),
-        "turn": result.get("turn"),
         "turnsAdvanced": result.get("turnsAdvanced"),
     }
-    # acquire 是「获取控制权 + 返回状态确认」的命令，须输出控制器与末位回合的结构化字段；
-    # 不走 _emit_compact（紧凑屏幕视图会丢弃 controller/turn/turnsAdvanced）。
-    _emit(payload)
+    if args.full:
+        # 完整 turn（可能带复杂布局的 TUI/按钮 JSON），仅 debug 用
+        confirm["turn"] = result.get("turn")
+        _emit(confirm)
+        return 0
+    # 默认：低噪确认 = 紧凑画面(纯文本行+按钮) + 控制确认字段，不含完整 turn JSON，
+    # 避免复杂布局的完整 turn 拖慢 agent 处理。
+    try:
+        view = client.get_compact_view(tail=args.tail)
+    except EmueraHttpError:
+        _emit(confirm)
+        return 0
+    view["controller"] = confirm["controller"]
+    view["state"] = confirm["state"]
+    view["turnsAdvanced"] = confirm["turnsAdvanced"]
+    _emit(view)
     return 0
 
 

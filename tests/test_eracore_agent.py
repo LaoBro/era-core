@@ -176,8 +176,15 @@ def main():
         if acquire_json is not None:
             check(acquire_json.get("controller", {}).get("kind") == "agent", "acquire controller.kind is agent")
             check("state" in acquire_json, "acquire has state")
-            check("turn" in acquire_json, "acquire has turn")
             check("turnsAdvanced" in acquire_json, "acquire has turnsAdvanced")
+            check("turn" not in acquire_json, "acquire default omits full turn record (low-noise)")
+
+        acquire_full = run_agent(["acquire", "--full"], env, timeout=30)
+        acquire_full_json = parse_json_stdout(acquire_full)
+        check(acquire_full.returncode == 0, f"acquire --full exits 0 (got {acquire_full.returncode})")
+        check(acquire_full_json is not None, "acquire --full stdout is JSON")
+        if acquire_full_json is not None:
+            check("turn" in acquire_full_json, "acquire --full includes turn record")
 
         step = run_agent(["step", "--value", "0"], env, timeout=30)
         step_json = parse_json_stdout(step)
