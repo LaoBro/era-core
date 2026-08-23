@@ -151,6 +151,104 @@ public class ImageSizeProbeTests
         Assert.False(ImageSizeProbe.TryParseJpeg(jpeg, out _, out _));
     }
 
+    // ---------- WebP（VP8L / VP8X） ----------
+
+    /// <summary>构造 VP8L（无损）头：RIFF/WEBP + 签名 0x2F + 32 位 LE（宽-1 / 高-1 各 14 位）。</summary>
+    private static byte[] WebpVp8LBytes(int width, int height)
+    {
+        var bytes = new List<byte>();
+        bytes.AddRange(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+        bytes.AddRange(new byte[] { 0, 0, 0, 0 });
+        bytes.AddRange(System.Text.Encoding.ASCII.GetBytes("WEBP"));
+        bytes.AddRange(System.Text.Encoding.ASCII.GetBytes("VP8L"));
+        bytes.AddRange(new byte[] { 0, 0, 0, 0 });
+        bytes.Add(0x2F);
+        uint bits = ((uint)(width - 1) & 0x3FFFu) | (((uint)(height - 1) & 0x3FFFu) << 14);
+        bytes.Add((byte)bits);
+        bytes.Add((byte)(bits >> 8));
+        bytes.Add((byte)(bits >> 16));
+        bytes.Add((byte)(bits >> 24));
+        while (bytes.Count < 40) bytes.Add(0);
+        return bytes.ToArray();
+    }
+
+    /// <summary>构造 VP8X（扩展画布）头：canvas 宽-1/高-1 各 24 位 LE。</summary>
+    private static byte[] WebpVp8XBytes(int width, int height)
+    {
+        var bytes = new List<byte>();
+        bytes.AddRange(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+        bytes.AddRange(new byte[] { 0, 0, 0, 0 });
+        bytes.AddRange(System.Text.Encoding.ASCII.GetBytes("WEBP"));
+        bytes.AddRange(System.Text.Encoding.ASCII.GetBytes("VP8X"));
+        bytes.AddRange(new byte[] { 0, 0, 0, 0 });
+        bytes.Add(0x0A);
+        bytes.Add(0x00); // flags
+        bytes.Add(0x00); // reserved
+        bytes.Add(0x00); // reserved
+        uint w = (uint)(width - 1);
+        uint h = (uint)(height - 1);
+        bytes.Add((byte)w); bytes.Add((byte)(w >> 8)); bytes.Add((byte)(w >> 16));
+        bytes.Add((byte)h); bytes.Add((byte)(h >> 8)); bytes.Add((byte)(h >> 16));
+        while (bytes.Count < 40) bytes.Add(0);
+        return bytes.ToArray();
+    }
+
+    [Fact]
+    public void Webp_vp8l_returns_width_and_height()
+    {
+        var webp = WebpVp8LBytes(1041, 557);
+
+        var ok = ImageSizeProbe.TryParseWebp(webp, out var width, out var height);
+
+        Assert.True(ok);
+        Assert.Equal(1041, width);
+        Assert.Equal(557, height);
+    }
+
+    [Fact]
+    public void Webp_vp8x_returns_width_and_height()
+    {
+        var webp = WebpVp8XBytes(200, 100);
+
+        var ok = ImageSizeProbe.TryParseWebp(webp, out var width, out var height);
+
+        Assert.True(ok);
+        Assert.Equal(200, width);
+        Assert.Equal(100, height);
+    }
+
+    [Fact]
+    public void Webp_bad_magic_returns_false()
+    {
+        var webp = WebpVp8LBytes(200, 100);
+        webp[0] = 0x00;
+
+        Assert.False(ImageSizeProbe.TryParseWebp(webp, out _, out _));
+    }
+
+    [Fact]
+    public void TryGetPixelSize_reads_webp_from_disk()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "emuera-probe-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var file = Path.Combine(dir, "title.webp");
+            File.WriteAllBytes(file, WebpVp8LBytes(1041, 557));
+            var accessor = new FileSystemGameDirAccessor();
+
+            var ok = ImageSizeProbe.TryGetPixelSize(accessor, file, out var w, out var h);
+
+            Assert.True(ok);
+            Assert.Equal(1041, w);
+            Assert.Equal(557, h);
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
     // ---------- 文件读取壳 ----------
 
     [Fact]

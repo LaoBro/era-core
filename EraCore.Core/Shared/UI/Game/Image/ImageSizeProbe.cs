@@ -77,8 +77,60 @@ internal static class ImageSizeProbe
     }
 
     /// <summary>
-    /// 经 <see cref="IGameDirAccessor"/> 读取文件头部并解析尺寸（PNG/JPEG 分发）。
-    /// 只读前 64KB（PNG 头 24B 足够；JPEG SOF 段在 SOS 之前，实际位于文件前部）。
+    /// 解析 WebP 尺寸（RIFF 容器）。支持三种块：VP8X（扩展画布）、VP8L（无损）、VP8（有损关键帧）。
+    /// 全部为纯头字段解析，无需解码像素。
+    /// </summary>
+    public static bool TryParseWebp(ReadOnlySpan<byte> data, out int width, out int height)
+    {
+        width = 0;
+        height = 0;
+        // RIFF(4) + size(4) + WEBP(4) + fourcc(4) + chunkSize(4) = 30 字节头
+        if (data.Length < 30)
+            return false;
+        if (data[0] != (byte)'R' || data[1] != (byte)'I' || data[2] != (byte)'F' || data[3] != (byte)'F')
+            return false;
+        if (data[8] != (byte)'W' || data[9] != (byte)'E' || data[10] != (byte)'B' || data[11] != (byte)'P')
+            return false;
+        // 块负载从 offset 20 开始；按 fourcc（data[12..15]）分派三种块
+        bool vp8x = data[12] == (byte)'V' && data[13] == (byte)'P' && data[14] == (byte)'8' && data[15] == (byte)'X';
+        bool vp8l = data[12] == (byte)'V' && data[13] == (byte)'P' && data[14] == (byte)'8' && data[15] == (byte)'L';
+        bool vp8 = data[12] == (byte)'V' && data[13] == (byte)'P' && data[14] == (byte)'8' && data[15] == (byte)' ';
+        if (vp8x)
+        {
+            // data[20]=0x0A；[21]=flags；[24..26] canvas 宽-1(LE24)；[27..29] canvas 高-1(LE24)
+            width = data[24] | (data[25] << 8) | (data[26] << 16);
+            height = data[27] | (data[28] << 8) | (data[29] << 16);
+            width += 1;
+            height += 1;
+        }
+        else if (vp8l)
+        {
+            // data[20]=0x2F 签名；data[21..24] 32 位 LE：位[0..14) 宽-1，位[14..28) 高-1
+            if (data[20] != 0x2F)
+                return false;
+            uint bits = (uint)(data[21] | (data[22] << 8) | (data[23] << 16) | (data[24] << 24));
+            width = (int)(bits & 0x3FFFu) + 1;
+            height = (int)((bits >> 14) & 0x3FFFu) + 1;
+        }
+        else if (vp8)
+        {
+            // 关键帧：帧标签 data[20..22]，起始码 data[23..25]=9d 01 2a，
+            // 之后 28 位紧排：data[26..27] 低 6 位续宽，data[27](高 2 位)+data[28]+data[29](低 4 位)组成高
+            if (data[23] != 0x9D || data[24] != 0x01 || data[25] != 0x2A)
+                return false;
+            width = data[26] | ((data[27] & 0x3F) << 8);
+            height = ((data[27] >> 6) & 0x03) | (data[28] << 2) | ((data[29] & 0x0F) << 10);
+        }
+        else
+        {
+            return false;
+        }
+        return width > 0 && height > 0;
+    }
+
+    /// <summary>
+    /// 经 <see cref="IGameDirAccessor"/> 读取文件头部并解析尺寸（PNG/JPEG/WebP 分发）。
+    /// 只读前 64KB（PNG 头 24B 足够；JPEG SOF 段在 SOS 之前，实际位于文件前部；WebP 头 30B）。
     /// 文件缺失、非图片、解析失败均返回 false。
     /// </summary>
     public static bool TryGetPixelSize(IGameDirAccessor accessor, string fullPath, out int width, out int height)
@@ -108,6 +160,10 @@ internal static class ImageSizeProbe
         // JPEG SOI: FF D8
         if (buffer[0] == 0xFF && buffer[1] == 0xD8)
             return TryParseJpeg(buffer[..read], out width, out height);
+        // WebP: RIFF....WEBP
+        if (read >= 12 && buffer[0] == (byte)'R' && buffer[1] == (byte)'I' && buffer[2] == (byte)'F' && buffer[3] == (byte)'F'
+            && buffer[8] == (byte)'W' && buffer[9] == (byte)'E' && buffer[10] == (byte)'B' && buffer[11] == (byte)'P')
+            return TryParseWebp(buffer[..read], out width, out height);
         return false;
     }
 }
