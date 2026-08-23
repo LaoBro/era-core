@@ -5,6 +5,10 @@ import urllib.request
 from typing import Any, Dict, Optional
 from urllib.parse import urlencode
 
+# pageRows 兜底值：旧 server 无 /state visibleRows 字段时的页高估计。
+# 有界误差（era 游戏常见 25~45 行），仅供 --pages 换算，输出 pageRows 字段会如实反映。
+DEFAULT_PAGE_ROWS = 40
+
 
 class EmueraHttpError(Exception):
     """Raised when the server returns an HTTP error or cannot be reached."""
@@ -122,33 +126,55 @@ class EmueraClient:
             raise EmueraHttpError(status, payload)
         return payload
 
-    def get_compact_view(self, tail: Optional[int] = None, timeout: float = 15.0) -> Dict[str, Any]:
+    def get_compact_view(self, pages: int = 3, tail: Optional[int] = None, timeout: float = 15.0) -> Dict[str, Any]:
         """紧凑只读视图：读 GET /snapshot 后做低噪投影（纯文本行 + 按钮 id/label）。
 
-        复用权威 /snapshot 端点（最新当前态、非阻塞、可重复调用），无需服务端改动。
-        投影在 agent 侧完成：每行拼接 segments[].text，按钮抽 {id,label}，去掉颜色/坐标/几何。
-        tail 仅保留最近 N 行（None=全部）；按钮按当前最大 generation 过滤——被翻页留在历史行里的
-        旧代按钮会被丢弃，只保留当前有效代，避免"前几页过时按钮"混入。
+        复用权威 /snapshot 端点（最新当前态、非阻塞、可重复调用），投影在 agent 侧完成：
+        每行拼接 segments[].text，按钮抽 {id,label}，去掉颜色/坐标/几何。
+        页高不是投影产物——来自 GET /state 的 visibleRows（服务端 WindowMetrics 换算）。
+
+        截断窗口以"页"为默认单位：pageRows（一屏行数，GET /state 的 visibleRows，
+        服务端按游戏 emuera.config 的 WindowY/LineHeight 换算）× pages。
+        旧 server 无该字段或 /state 不可达时回退 DEFAULT_PAGE_ROWS——有界误差，
+        输出里的 pageRows 字段会如实反映实际生效值，agent 事后可发现兜底生效。
+        tail 显式给出时为绝对行数逃生口，优先于 pages。
+
+        元数据：totalLines（全缓冲行数）、truncated（本次是否截断）、pageRows。
+        按钮按当前最大 generation 过滤——被翻页留在历史行里的旧代按钮会被丢弃。
         """
         snap = self.get_snapshot(timeout=timeout)
         src_lines = snap.get("lines") or []
-        start = 0
-        if tail is not None and tail > 0 and len(src_lines) > tail:
-            start = len(src_lines) - tail
-        window = src_lines[start:]
+        total_lines = len(src_lines)
+
+        page_rows = DEFAULT_PAGE_ROWS
+        try:
+            state = self.get_state(timeout=timeout)
+            visible = state.get("visibleRows")
+            if isinstance(visible, int) and visible >= 1:
+                page_rows = visible
+        except EmueraHttpError:
+            pass
+
+        window = total_lines
+        if tail is not None and tail > 0:
+            window = tail
+        elif pages and pages > 0:
+            window = pages * page_rows
+        start = max(0, total_lines - window) if window < total_lines else 0
+        view_lines = src_lines[start:]
 
         def line_text(line: Dict[str, Any]) -> str:
             parts = [seg.get("text") for e in (line.get("entries") or []) for seg in (e.get("segments") or [])]
             return "".join(p for p in parts if p)
 
-        lines = [line_text(ln) for ln in window]
+        lines = [line_text(ln) for ln in view_lines]
 
         # 过时按钮过滤判据：快照顶层 generation = console.LastButtonGeneration（当前直播按钮代）。
         # 被翻页留在历史行里的旧按钮其 button.generation < 该值，据此丢弃；只保留当前有效代。
         live_gen = snap.get("generation")
         buttons: list = []
         seen: set = set()
-        for ln in window:
+        for ln in view_lines:
             for entry in ln.get("entries") or []:
                 btn = entry.get("button")
                 if not btn or btn.get("value") is None:
@@ -169,6 +195,9 @@ class EmueraClient:
             "generation": snap.get("generation"),
             "lines": lines,
             "buttons": buttons,
+            "pageRows": page_rows,
+            "totalLines": total_lines,
+            "truncated": start > 0,
         }
 
     def request(self, method: str, path: str, body: Optional[Dict[str, Any]] = None, timeout: float = 35.0):

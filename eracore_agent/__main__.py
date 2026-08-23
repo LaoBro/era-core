@@ -33,23 +33,29 @@ def _emit(payload) -> None:
     sys.stdout.flush()
 
 
-def _emit_compact(client, payload, compact: bool, tail: int | None = None) -> None:
-    """compact=True 时用低噪紧凑视图（纯文本行 + 按钮 id/label）替换 diff 输出。
+def _emit_compact(client, payload, compact: bool, pages: int = 3, tail: int | None = None, carry: dict | None = None) -> None:
+    """compact=True 时用低噪紧凑视图（纯文本行 + 按钮 id/label + 截断元数据）替换 diff 输出。
 
-    复用 GET /snapshot 在 agent 侧投影，不要服务端改动。tail 截断最近 N 行。
+    复用 GET /snapshot 在 agent 侧投影（页高取 /state 的 visibleRows）。窗口 = pages × pageRows
+    页语义；tail 显式给出时为绝对行数。
+    carry 为要并回视图的顶层控制字段（acquire 的 controller/turnsAdvanced、advance 的
+    advancedCount/limitReached）——紧凑视图是投影不是原 payload 的子集，控制字段需显式携带，
+    否则会被丢弃（advance 曾因此丢 advancedCount/limitReached）。
     投影失败（如 snapshot 未就绪）时降级为原 diff 输出。
     """
     if not compact:
         _emit(payload)
         return
     try:
-        view = client.get_compact_view(tail=tail)
+        view = client.get_compact_view(pages=pages, tail=tail)
     except EmueraHttpError:
         _emit(payload)
         return
     # 用 turn/diff 的顶层 inputType/needValue 兜底；紧凑视图自身已带 state/generation。
     view["inputType"] = (payload or {}).get("inputType") or view.get("inputType")
     view["needValue"] = (payload or {}).get("needValue")
+    if carry:
+        view.update(carry)
     _emit(view)
 
 
@@ -308,17 +314,15 @@ def cmd_acquire(args) -> int:
         confirm["turn"] = result.get("turn")
         _emit(confirm)
         return 0
-    # 默认：低噪确认 = 紧凑画面(纯文本行+按钮) + 控制确认字段，不含完整 turn JSON，
-    # 避免复杂布局的完整 turn 拖慢 agent 处理。
-    try:
-        view = client.get_compact_view(tail=args.tail)
-    except EmueraHttpError:
-        _emit(confirm)
-        return 0
-    view["controller"] = confirm["controller"]
-    view["state"] = confirm["state"]
-    view["turnsAdvanced"] = confirm["turnsAdvanced"]
-    _emit(view)
+    # 默认：低噪确认 = 紧凑画面(纯文本行+按钮+截断元数据) + 控制确认字段，不含完整 turn JSON，
+    # 避免复杂布局的完整 turn 拖慢 agent 处理。carry 显式列键——confirm 未来加键不应自动进低噪视图。
+    _emit_compact(
+        client, confirm, compact=True, pages=args.pages, tail=args.tail,
+        carry={
+            "controller": confirm["controller"],
+            "state": confirm["state"],
+            "turnsAdvanced": confirm["turnsAdvanced"],
+        })
     return 0
 
 
@@ -336,7 +340,7 @@ def cmd_step(args) -> int:
         turn = _read_turn(client)
     except EmueraHttpError as exc:
         _fail_http(exc)
-    _emit_compact(client, turn, not args.full, args.tail)
+    _emit_compact(client, turn, not args.full, pages=args.pages, tail=args.tail)
     return 0
 
 
@@ -354,7 +358,7 @@ def cmd_view(args) -> int:
         if args.full:
             view = client.get_snapshot()
         else:
-            view = client.get_compact_view(tail=args.tail)
+            view = client.get_compact_view(pages=args.pages, tail=args.tail)
     except EmueraHttpError as exc:
         _fail_http(exc)
     _emit(view)
@@ -390,22 +394,27 @@ def cmd_advance(args) -> int:
     if controller.get("kind") != "agent":
         _die("当前未持有控制权，先 `eracore_agent acquire`")
 
+    turns: list = []
+    count = 0
+
+    def emit_exit(stopped, limit_reached: bool) -> None:
+        """统一出口：--full 原样四键（turns/stopped/advancedCount/limitReached）；
+        默认紧凑 = 视图 + advancedCount/limitReached（两条分支同一形状）。"""
+        _emit_compact(
+            client,
+            {"turns": turns, "stopped": stopped, "advancedCount": count, "limitReached": limit_reached},
+            not args.full, pages=args.pages, tail=args.tail,
+            carry={"advancedCount": count, "limitReached": limit_reached})
+
     # 当前等待态：若已是真实输入（或非翻页），不推进，直接返回当前态。
     try:
         snap = client.get_snapshot()
     except EmueraHttpError as exc:
         _fail_http(exc)
     if not _is_auto_advanceable(snap):
-        # 非翻页：不推进。默认 stopped 用紧凑投影；--full 时原样。
-        if not args.full:
-            stopped = client.get_compact_view(tail=args.tail)
-            _emit({"turns": [], "stopped": stopped, "advancedCount": 0, "limitReached": False})
-        else:
-            _emit({"turns": [], "stopped": snap, "advancedCount": 0, "limitReached": False})
+        emit_exit(snap, limit_reached=False)
         return 0
 
-    turns: list = []
-    count = 0
     max_steps = args.max_steps
     # 循环推进：每次提交空输入（回车），收集被推进回合；直到需真实输入或离开 WaitInput。
     while count < max_steps:
@@ -419,10 +428,11 @@ def cmd_advance(args) -> int:
         if _is_auto_advanceable(turn):
             turns.append(turn)
             continue
-        _emit_compact(client, {"turns": turns, "advancedCount": count, "limitReached": False}, not args.full, args.tail)
+        # 停在需真实输入：--full 的 stopped 即所停回合。
+        emit_exit(turn, limit_reached=False)
         return 0
 
-    _emit_compact(client, {"turns": turns, "advancedCount": count, "limitReached": True}, not args.full, args.tail)
+    emit_exit(None, limit_reached=True)
     return 0
 
 
@@ -498,6 +508,14 @@ def cmd_watch(_args) -> int:
     return watch_session(client)
 
 
+def _add_view_window_args(parser) -> None:
+    """四个紧凑视图命令共用的截断参数：页语义默认 + 绝对行数逃生口。"""
+    parser.add_argument("--pages", type=int, default=3,
+                        help="紧凑视图截取最近 N 页，1 页 = 服务端 visibleRows 行（默认 3）")
+    parser.add_argument("--tail", type=int, default=None,
+                        help="紧凑视图仅返回最近 N 行（绝对行数，优先于 --pages）")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="eracore_agent", description="Emuera 中转 CLI（一次调用 = 一个回合）")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -511,24 +529,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     acquire = sub.add_parser("acquire", help="获取控制权并返回状态确认（默认低噪紧凑视图）")
     acquire.add_argument("--full", action="store_true", help="输出完整 diff（默认紧凑视图）")
-    acquire.add_argument("--tail", type=int, default=None, help="紧凑视图仅返回最近 N 行（默认全部）")
+    _add_view_window_args(acquire)
     acquire.set_defaults(func=cmd_acquire)
 
     step = sub.add_parser("step", help="提交输入并读取下一回合（默认低噪紧凑视图）")
     step.add_argument("--value", required=True, help="提交给游戏的输入值")
     step.add_argument("--full", action="store_true", help="输出完整 diff（默认紧凑视图）")
-    step.add_argument("--tail", type=int, default=None, help="紧凑视图仅返回最近 N 行（默认全部）")
+    _add_view_window_args(step)
     step.set_defaults(func=cmd_step)
 
     advance = sub.add_parser("advance", help="自动代按回车推进翻页，直到需真实输入；返回全部被推进回合")
     advance.add_argument("--max-steps", type=int, default=50, help="推进步数上限（默认 50）")
     advance.add_argument("--full", action="store_true", help="输出完整 diff（默认紧凑视图）")
-    advance.add_argument("--tail", type=int, default=None, help="紧凑视图仅返回最近 N 行（默认全部）")
+    _add_view_window_args(advance)
     advance.set_defaults(func=cmd_advance)
 
     view = sub.add_parser("view", help="只读输出当前屏幕低噪紧凑视图（纯文本行 + 按钮 id/label），不推进")
-    view.add_argument("--tail", type=int, default=None, help="仅返回最近 N 行（默认全部）")
     view.add_argument("--full", action="store_true", help="输出完整 /snapshot 而非低噪紧凑视图")
+    _add_view_window_args(view)
     view.set_defaults(func=cmd_view)
 
     release = sub.add_parser("release", help="释放控制权")

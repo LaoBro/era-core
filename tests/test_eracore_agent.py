@@ -47,6 +47,25 @@ def parse_json_stdout(result):
         return None
 
 
+def check_window_contract(label, obj, *, pages=None, tail=None):
+    """紧凑视图截断契约：窗口行数 == min(totalLines, cap)，truncated == totalLines > cap。
+
+    cap = tail（绝对行数）或 pages × pageRows（页语义）。
+    """
+    page_rows, total = obj.get("pageRows"), obj.get("totalLines")
+    check(isinstance(page_rows, int) and page_rows >= 1,
+          f"{label}: pageRows int >= 1 (got {page_rows!r})")
+    check(isinstance(total, int), f"{label}: totalLines int (got {total!r})")
+    check(isinstance(obj.get("truncated"), bool), f"{label}: truncated is bool")
+    if not (isinstance(page_rows, int) and isinstance(total, int)):
+        return
+    cap = tail if tail is not None else pages * page_rows
+    check(len(obj.get("lines", [])) == min(total, cap),
+          f"{label}: window == min(total, cap={cap})")
+    check(obj.get("truncated") is (total > cap),
+          f"{label}: truncated matches total > cap")
+
+
 def run_agent(args, env, timeout=60):
     return subprocess.run(
         [sys.executable, "-m", "eracore_agent", *args],
@@ -178,6 +197,12 @@ def main():
             check("state" in acquire_json, "acquire has state")
             check("turnsAdvanced" in acquire_json, "acquire has turnsAdvanced")
             check("turn" not in acquire_json, "acquire default omits full turn record (low-noise)")
+            check(isinstance(acquire_json.get("lines"), list), "acquire compact has lines list")
+            check(isinstance(acquire_json.get("buttons"), list), "acquire compact has buttons list")
+            check(isinstance(acquire_json.get("pageRows"), int) and acquire_json.get("pageRows", 0) >= 1,
+                  f"acquire compact has int pageRows >= 1 (got {acquire_json.get('pageRows')!r})")
+            check(isinstance(acquire_json.get("totalLines"), int), "acquire compact has int totalLines")
+            check(isinstance(acquire_json.get("truncated"), bool), "acquire compact has bool truncated")
 
         acquire_full = run_agent(["acquire", "--full"], env, timeout=30)
         acquire_full_json = parse_json_stdout(acquire_full)
@@ -186,22 +211,55 @@ def main():
         if acquire_full_json is not None:
             check("turn" in acquire_full_json, "acquire --full includes turn record")
 
+        # --- 紧凑视图截断契约：页语义 + 绝对行数 + 元数据 ---
+        view = run_agent(["view"], env, timeout=30)
+        view_json = parse_json_stdout(view)
+        check(view.returncode == 0, f"view exits 0 (got {view.returncode})")
+        if view_json is not None:
+            check_window_contract("view default", view_json, pages=3)
+
+        view_pages = run_agent(["view", "--pages", "2"], env, timeout=30)
+        vp_json = parse_json_stdout(view_pages)
+        check(view_pages.returncode == 0, f"view --pages exits 0 (got {view_pages.returncode})")
+        if vp_json is not None:
+            check_window_contract("view --pages 2", vp_json, pages=2)
+
+        view_tail = run_agent(["view", "--tail", "5"], env, timeout=30)
+        vt_json = parse_json_stdout(view_tail)
+        check(view_tail.returncode == 0, f"view --tail exits 0 (got {view_tail.returncode})")
+        if vt_json is not None:
+            check_window_contract("view --tail 5", vt_json, tail=5)
+
         step = run_agent(["step", "--value", "0"], env, timeout=30)
         step_json = parse_json_stdout(step)
         check(step.returncode == 0, f"step exits 0 (got {step.returncode})")
         check(step_json is not None, "step stdout is JSON")
         if step_json is not None:
             check("state" in step_json, "step turn has state")
+            check("pageRows" in step_json and "totalLines" in step_json and "truncated" in step_json,
+                  "step compact has truncation metadata")
 
         advance = run_agent(["advance"], env, timeout=30)
         advance_json = parse_json_stdout(advance)
         check(advance.returncode == 0, f"advance exits 0 (got {advance.returncode})")
         check(advance_json is not None, "advance stdout is JSON")
         if advance_json is not None:
-            check("turns" in advance_json, "advance has turns list")
-            check("stopped" in advance_json, "advance has stopped")
-            check("advancedCount" in advance_json, "advance has advancedCount")
-            check("limitReached" in advance_json, "advance has limitReached")
+            # 紧凑契约：视图 + 计数字段；turns/stopped 仅 --full（视图即所停画面）。
+            check("advancedCount" in advance_json, "advance compact has advancedCount")
+            check("limitReached" in advance_json, "advance compact has limitReached")
+            check("turns" not in advance_json, "advance compact omits turns list (low-noise)")
+            check("stopped" not in advance_json, "advance compact omits stopped (view is the stopped screen)")
+            check("pageRows" in advance_json, "advance compact has pageRows metadata")
+            check("state" in advance_json, "advance compact has state")
+
+        advance_full = run_agent(["advance", "--full"], env, timeout=30)
+        advance_full_json = parse_json_stdout(advance_full)
+        check(advance_full.returncode == 0, f"advance --full exits 0 (got {advance_full.returncode})")
+        if advance_full_json is not None:
+            check("turns" in advance_full_json, "advance --full has turns list")
+            check("stopped" in advance_full_json, "advance --full has stopped")
+            check("advancedCount" in advance_full_json, "advance --full has advancedCount")
+            check("limitReached" in advance_full_json, "advance --full has limitReached")
 
         status = run_agent(["status"], env, timeout=15)
         status_json = parse_json_stdout(status)
