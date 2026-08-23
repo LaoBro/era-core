@@ -57,6 +57,7 @@ public class HttpListenerHostTests
         Assert.Equal("Idle", state.Body?["state"]?.GetValue<string>());
         Assert.Null(state.Body?["gameDir"]);
         Assert.True(state.Body?["windowWidth"] != null, "state has windowWidth");
+        Assert.True(state.Body?["visibleRows"] != null, "state has visibleRows");
 
         // --- 2/3. POST /load-game {test_game} → 200 + 轮询 snapshot 至游戏就绪 ---
         await LoadGameAsync(client);

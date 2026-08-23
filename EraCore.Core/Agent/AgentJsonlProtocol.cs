@@ -7,7 +7,6 @@ using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Runtime;
-using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Server;
 using MinorShift.Emuera.UI.Game;
 
@@ -43,8 +42,6 @@ namespace MinorShift.Emuera.GameView
 
         private readonly SessionIO _io;
         private readonly DisplayState _displayState;
-
-        private int VisibleLineCount => Math.Max(1, ui.ClientHeight / Config.LineHeight);
         private string? _pendingRejectReason;
         /// <summary>
         /// ADR-0016：TINPUT 超时 flag——SubmitTimeoutAsync 路径置 true，

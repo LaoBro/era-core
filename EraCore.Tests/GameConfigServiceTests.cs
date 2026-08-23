@@ -19,6 +19,21 @@ public class GameConfigServiceTests
         return new GameConfigService(new ConfigData());
     }
 
+    /// <summary>临时游戏目录模板：建目录 → 跑用例 → finally 删除。</summary>
+    private static void WithTempGameDir(Action<string> action)
+    {
+        var gameDir = Path.Combine(Path.GetTempPath(), "emuera_tmp_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(gameDir);
+        try
+        {
+            action(gameDir);
+        }
+        finally
+        {
+            Directory.Delete(gameDir, recursive: true);
+        }
+    }
+
     [Fact]
     public void GetValue_reads_default_maxlog()
     {
@@ -37,9 +52,9 @@ public class GameConfigServiceTests
     public void Window_metrics_matches_cli_derivation()
     {
         var svc = CreateService();
-        // 默认配置：WindowX=760, FontSize=18, LineHeight=19, FontName="ＭＳ ゴシック"
+        // 默认配置：WindowX=760, WindowY=480, FontSize=18, LineHeight=19, FontName="ＭＳ ゴシック"
         // shapeShift = Max(2, 18/6=3) = 3；charWidth = Max(18/2=9, 1) = 9
-        // gameColumns = (760 - 3) / 9 = 84
+        // gameColumns = (760 - 3) / 9 = 84；visibleRows = 480 / 19 = 25
         var m = svc.GetWindowMetrics();
 
         Assert.Equal(760, m.WindowWidth);
@@ -47,6 +62,25 @@ public class GameConfigServiceTests
         Assert.Equal(19, m.LineHeight);
         Assert.Equal(84, m.GameColumns);
         Assert.Equal("ＭＳ ゴシック", m.FontName);
+        Assert.Equal(25, m.VisibleRows);
+    }
+
+    [Fact]
+    public void Window_metrics_visible_rows_has_floor_guard()
+    {
+        // 行高大于窗高的异常配置也有下限 1，不产出 0（agent 侧用 pageRows 乘页数）。
+        WithTempGameDir(gameDir =>
+        {
+            File.WriteAllText(
+                Path.Combine(gameDir, "emuera.config"),
+                "; test\nウィンドウ高さ : 10\n一行の高さ : 50\n",
+                System.Text.Encoding.UTF8);
+
+            var svc = CreateService();
+            svc.Reload(gameDir);
+
+            Assert.Equal(1, svc.GetWindowMetrics().VisibleRows);
+        });
     }
 
     [Fact]
@@ -80,9 +114,7 @@ public class GameConfigServiceTests
     [InlineData(false, true)]
     public void Reload_override_display_report(bool overrideReport, bool expected)
     {
-        var gameDir = Path.Combine(Path.GetTempPath(), "emuera_override_" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(gameDir);
-        try
+        WithTempGameDir(gameDir =>
         {
             // 配置行格式：显示名 : 值（; 是注释）。DisplayReport 显示名见 ConfigData.setDefault。
             File.WriteAllText(
@@ -94,11 +126,7 @@ public class GameConfigServiceTests
             var reloaded = svc.Reload(gameDir);
 
             Assert.Equal(expected, reloaded.GetConfigValue<bool>(ConfigCode.DisplayReport));
-        }
-        finally
-        {
-            Directory.Delete(gameDir, recursive: true);
-        }
+        });
     }
 }
 

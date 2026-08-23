@@ -77,6 +77,8 @@ def main():
                   f"windowWidth is int (default ConfigData), got {obj.get('windowWidth')!r}")
             check(isinstance(obj.get("fontSize"), int),
                   f"fontSize is int, got {obj.get('fontSize')!r}")
+            check(isinstance(obj.get("visibleRows"), int) and obj.get("visibleRows", 0) >= 1,
+                  f"visibleRows is int >= 1 (页高), got {obj.get('visibleRows')!r}")
 
         # --- Test 2: 空闲态 POST /session → 503 {"error":"No game loaded"}（D4）---
         print("\n[2] 空闲态 POST /session → 503 No game loaded")

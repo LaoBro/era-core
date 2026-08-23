@@ -202,6 +202,7 @@ internal sealed class GameServerProtocol
         payload["lineHeight"] = m.LineHeight;
         payload["gameColumns"] = m.GameColumns;
         payload["fontName"] = m.FontName;
+        payload["visibleRows"] = m.VisibleRows;
         return Json(payload);
     }
 

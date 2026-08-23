@@ -35,6 +35,7 @@ internal sealed class GameConfigService
     public WindowMetrics GetWindowMetrics()
     {
         var windowWidth = _configData.GetConfigValue<int>(ConfigCode.WindowX);
+        var windowHeight = _configData.GetConfigValue<int>(ConfigCode.WindowY);
         var fontSize = _configData.GetConfigValue<int>(ConfigCode.FontSize);
         var lineHeight = _configData.GetConfigValue<int>(ConfigCode.LineHeight);
         var fontName = _configData.GetConfigValue<string>(ConfigCode.FontName);
@@ -42,7 +43,10 @@ internal sealed class GameConfigService
         int shapeShift = Math.Max(2, fontSize / 6);
         int drawableWidth = windowWidth - shapeShift;
         int gameColumns = drawableWidth / charWidth;
-        return new WindowMetrics(windowWidth, fontSize, lineHeight, gameColumns, fontName);
+        // 一屏可见行数：headless 的 ClientHeight 即 WindowY（HeadlessConsole 构造时快照），
+        // 除以 LineHeight 换算——era 游戏的 emuera.config 各自定义，无通用常量。
+        int visibleRows = Math.Max(1, windowHeight / lineHeight);
+        return new WindowMetrics(windowWidth, fontSize, lineHeight, gameColumns, fontName, visibleRows);
     }
 
     /// <summary>
@@ -68,5 +72,5 @@ internal sealed class GameConfigService
     }
 }
 
-/// <summary>窗口布局元信息（issue 12），供 GET /state 返回。</summary>
-internal sealed record WindowMetrics(int WindowWidth, int FontSize, int LineHeight, int GameColumns, string FontName);
+/// <summary>窗口布局元信息（issue 12），供 GET /state 返回。visibleRows = WindowY / LineHeight（agent 紧凑视图的页高）。</summary>
+internal sealed record WindowMetrics(int WindowWidth, int FontSize, int LineHeight, int GameColumns, string FontName, int VisibleRows);

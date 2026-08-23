@@ -122,6 +122,9 @@ def main():
                   f"gameColumns==84 (default, (760-3)/9), got {obj.get('gameColumns')}")
             check(obj.get("fontName") == "ＭＳ ゴシック",
                   f"fontName=='ＭＳ ゴシック' (default), got {obj.get('fontName')!r}")
+            # visibleRows = 默认 WindowY 480 / LineHeight 19 = 25（整除向下）
+            check(obj.get("visibleRows") == 25,
+                  f"visibleRows==25 (default, 480/19), got {obj.get('visibleRows')!r}")
 
         # --- Test 3: POST /load-game 不存在路径 → 400 DIR_NOT_FOUND ---
         print("\n[3] POST /load-game 不存在路径 → 400 DIR_NOT_FOUND")

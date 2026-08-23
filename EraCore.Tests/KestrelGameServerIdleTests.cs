@@ -131,6 +131,7 @@ public class KestrelGameServerIdleTests
         Assert.True(root.TryGetProperty("lineHeight", out _), "lineHeight present");
         Assert.True(root.TryGetProperty("gameColumns", out _), "gameColumns present");
         Assert.True(root.TryGetProperty("fontName", out _), "fontName present");
+        Assert.True(root.TryGetProperty("visibleRows", out _), "visibleRows present");
     }
 
     /// <summary>
