@@ -291,9 +291,9 @@ describe('handleMauiMessage - config agentLogEnabled (A0)', () => {
   });
 });
 
-// ---------- handleMauiMessage：config 消息（issue 07 启动日志覆盖开关）----------
+// ---------- handleMauiMessage：config 消息（启动日志覆盖三态）----------
 
-describe('handleMauiMessage - config noLoadingReport (issue 07)', () => {
+describe('handleMauiMessage - config displayReportOverride', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
   });
@@ -302,7 +302,7 @@ describe('handleMauiMessage - config noLoadingReport (issue 07)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('config 消息含 noLoadingReport=true → 写入 store（设置页开关渲染依据）', async () => {
+  it('config 消息含 displayReportOverride → 写入 store（设置页分段控件渲染依据）', async () => {
     vi.stubGlobal('window', {
       location: { protocol: 'https:', hostname: 'app.local' },
       chrome: { webview: { postMessage: vi.fn() } },
@@ -311,19 +311,21 @@ describe('handleMauiMessage - config noLoadingReport (issue 07)', () => {
     await initAppState();
 
     const game = useGameStore();
-    expect(game.noLoadingReport).toBe(true); // 默认 true（覆盖启动日志）
+    expect(game.displayReportOverride).toBe('off'); // 默认 off（抑制启动日志，与历史默认一致）
 
     const handler = (window as any).__onMessage as ((msg: unknown) => void) | undefined;
 
-    handler!({ type: 'config', noLoadingReport: false });
-    expect(game.noLoadingReport).toBe(false);
+    handler!({ type: 'config', displayReportOverride: 'auto' });
+    expect(game.displayReportOverride).toBe('auto');
 
-    // 再推 true → 同步开启
-    handler!({ type: 'config', noLoadingReport: true });
-    expect(game.noLoadingReport).toBe(true);
+    // 再推 on / off → 逐个同步
+    handler!({ type: 'config', displayReportOverride: 'on' });
+    expect(game.displayReportOverride).toBe('on');
+    handler!({ type: 'config', displayReportOverride: 'off' });
+    expect(game.displayReportOverride).toBe('off');
   });
 
-  it('config 消息含 noLoadingReport=false → 写入 store', async () => {
+  it('config 消息含非法 displayReportOverride 值 → 忽略不写 store', async () => {
     vi.stubGlobal('window', {
       location: { protocol: 'https:', hostname: 'app.local' },
       chrome: { webview: { postMessage: vi.fn() } },
@@ -334,8 +336,8 @@ describe('handleMauiMessage - config noLoadingReport (issue 07)', () => {
     const game = useGameStore();
     const handler = (window as any).__onMessage as ((msg: unknown) => void) | undefined;
 
-    handler!({ type: 'config', noLoadingReport: false });
-    expect(game.noLoadingReport).toBe(false);
+    handler!({ type: 'config', displayReportOverride: 'bogus' });
+    expect(game.displayReportOverride).toBe('off'); // 保持原值
   });
 });
 

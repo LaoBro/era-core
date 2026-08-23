@@ -19,7 +19,7 @@ internal static class ServerRunner
     /// 用户未显式 --port 时由 HeadlessEntry 传 0）。
     /// <paramref name="openBrowser"/> 为 true 时监听成功后自动打开默认浏览器。
     /// </summary>
-    public static async Task RunAsync(int port, ITerminalSetup terminalSetup, ConfigData configData, bool overrideDisplayReport = false, bool openBrowser = false)
+    public static async Task RunAsync(int port, ITerminalSetup terminalSetup, ConfigData configData, bool? displayReportOverride = null, bool openBrowser = false)
     {
         // Server 模式无交互画面，终端即其日志——把终端阈值提到 Info，
         // 让启动横幅/端口提示等用户可见输出正常显示（CLI 交互保持默认 Warn）。
@@ -33,7 +33,7 @@ internal static class ServerRunner
         EmueraLog.Info("server", $"Emuera {AssemblyData.EmueraVersionText} 服务器模式启动");
         EmueraLog.Info("server", $"监听端口: {port}");
 
-        using var server = new KestrelGameServer(port, terminalSetup, configData, overrideDisplayReport);
+        using var server = new KestrelGameServer(port, terminalSetup, configData, displayReportOverride);
         await server.StartAsync();
 
         if (openBrowser)

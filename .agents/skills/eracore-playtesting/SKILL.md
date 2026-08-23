@@ -125,6 +125,20 @@ python -m eracore_agent release
 
 完成标准：用户侧 Web / MAUI 可以输入；你不再 `step`。
 
+## 8. 启动日志覆盖（DisplayReport override）
+
+游戏配置的加载报告（逐文件加载日志 + `time.log` 阶段计时）默认被 server 启动参数压制为关，排查启动性能/加载问题时用 `start` 的透传参数控制（仅对本次新拉起的 server 生效；复用已运行 server 时以该 server 自己的启动参数为准）：
+
+```bash
+python -m eracore_agent start --game-dir <目录> --display-report on   # 强制开：逐文件报告 + time.log
+python -m eracore_agent start --game-dir <目录> --display-report auto # 跟随游戏配置
+# 缺省 = off（强制关，历史默认——逐文件报告对回合输出是噪音）
+```
+
+- `on` 时 `time.log` 写在**游戏目录**（`File:Preload:End` / `Proc:Init:ERB:End` 等各阶段累计毫秒数）；测完记得 `stop` 并删掉 time.log，别留在用户的游戏目录里。
+- 手动直起 server 也可（`EraCore.Cli.exe --server --port <p> --ExeDir <目录> --loading-report`，与 `--no-loading-report` 互斥），但会绕开 `.eracore-server.json`（无 token / 无 stop 清理），能用 start 就用 start。注意 Release 产物在 `bin-aot/Release/`（不是 `bin/Release/`）。
+- **MAUI 托管会话**（`mauiHosted:true`）：跟随 app 设置「启动日志覆盖」三态——跟随游戏 / 强制关（默认）/ 强制开。测量前先与用户确认 app 内设置。
+
 ## 约束
 
 - 同一时刻一个活跃会话、一个 Controller。第二个 agent 的 `acquire` 得 `CONTROL_HELD`——停下并告诉用户，不要并行开第二局。

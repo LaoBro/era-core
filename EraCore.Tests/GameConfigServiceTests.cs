@@ -107,12 +107,12 @@ public class GameConfigServiceTests
 
     /// <summary>
     /// --no-loading-report 覆盖：临时游戏目录的 emuera.config 把 DisplayReport 置 true，
-    /// Reload 带 overrideDisplayReport=true 时被强制压回 false；不带时保持 true。
+    /// Reload 带 overrideDisplayReport=false（强制关）时被压回 false；不带（null）时保持 true。
     /// </summary>
     [Theory]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public void Reload_override_display_report(bool overrideReport, bool expected)
+    [InlineData(false, false)]
+    [InlineData(null, true)]
+    public void Reload_override_display_report_off(bool? overrideReport, bool expected)
     {
         WithTempGameDir(gameDir =>
         {
@@ -126,6 +126,27 @@ public class GameConfigServiceTests
             var reloaded = svc.Reload(gameDir);
 
             Assert.Equal(expected, reloaded.GetConfigValue<bool>(ConfigCode.DisplayReport));
+        });
+    }
+
+    /// <summary>
+    /// --loading-report 覆盖：emuera.config 未开启 DisplayReport（默认 false）时，
+    /// Reload 带 overrideDisplayReport=true（强制开）被抬起为 true——time.log 阶段计时的入口。
+    /// </summary>
+    [Fact]
+    public void Reload_override_display_report_on()
+    {
+        WithTempGameDir(gameDir =>
+        {
+            File.WriteAllText(
+                Path.Combine(gameDir, "emuera.config"),
+                "; test\n",
+                System.Text.Encoding.UTF8);
+
+            var svc = new GameConfigService(new ConfigData(), displayReportOverride: true);
+            var reloaded = svc.Reload(gameDir);
+
+            Assert.True(reloaded.GetConfigValue<bool>(ConfigCode.DisplayReport));
         });
     }
 }

@@ -2,7 +2,8 @@
 import { ref } from 'vue';
 import { useGameStore } from '../stores/game';
 import { useUiStore } from '../stores/ui';
-import { setAgentLogEnabled, setNoLoadingReport, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
+import { setAgentLogEnabled, setDisplayReportOverride, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
+import type { DisplayReportOverride } from '../lib/mauiBridge';
 
 const game = useGameStore();
 const ui = useUiStore();
@@ -19,14 +20,13 @@ function toggleAgentLog(): void {
 }
 
 /**
- * issue 07：启动日志覆盖开关切换——投递 setNoLoadingReport 请求 C# 覆盖游戏
- * `DisplayReport` 为 off/on + 持久化，本地乐观更新。C# 处理完推回 config 消息
- * （含 noLoadingReport 字段）再次同步——最终显示以 C# 权威状态为准。
+ * 启动日志覆盖三态切换——投递 setDisplayReportOverride 请求 C# 覆盖游戏
+ * `DisplayReport` + 持久化，本地乐观更新。C# 处理完推回 config 消息
+ * （含 displayReportOverride 字段）再次同步——最终显示以 C# 权威状态为准。
  */
-function toggleNoLoadingReport(): void {
-  const next = !game.noLoadingReport;
-  setNoLoadingReport(next);
-  game.noLoadingReport = next;
+function chooseDisplayReportOverride(value: DisplayReportOverride): void {
+  setDisplayReportOverride(value);
+  game.displayReportOverride = value;
 }
 
 /**
@@ -90,20 +90,28 @@ const logCopied = ref(false);
         <h3>其他</h3>
         <div class="setting-row">
           <span class="setting-label">启动日志覆盖</span>
-          <button
-            class="toggle"
-            :class="{ on: game.noLoadingReport }"
-            role="switch"
-            :aria-checked="game.noLoadingReport"
-            @click="toggleNoLoadingReport"
-          >
-            <span class="toggle-knob" />
-          </button>
-          <span class="setting-value">{{ game.noLoadingReport ? '开' : '关' }}</span>
+          <div class="segmented" role="radiogroup" aria-label="启动日志覆盖">
+            <button
+              v-for="opt in [
+                { value: 'auto', label: '跟随游戏' },
+                { value: 'off', label: '强制关' },
+                { value: 'on', label: '强制开' },
+              ]"
+              :key="opt.value"
+              class="segmented-item"
+              :class="{ active: game.displayReportOverride === opt.value }"
+              role="radio"
+              :aria-checked="game.displayReportOverride === opt.value"
+              @click="chooseDisplayReportOverride(opt.value as DisplayReportOverride)"
+            >
+              {{ opt.label }}
+            </button>
+          </div>
         </div>
         <p class="hint-text">
-          覆盖游戏配置的加载时显示报告（DisplayReport）为关闭，隐藏启动时的脚本读取日志。
-          默认开启；若需排查启动问题可临时关闭，按游戏自身配置显示。
+          覆盖游戏配置的加载时显示报告（DisplayReport）：跟随游戏=按游戏自身配置；
+          强制关=隐藏启动时的脚本读取日志（默认）；强制开=输出逐文件加载报告与
+          time.log 阶段计时（排查启动性能用）。当前会话已打印的日志不受切换影响。
         </p>
         <div class="setting-row">
           <span class="setting-label">文件日志 (agent.log)</span>
@@ -235,6 +243,31 @@ h3 {
 .toggle.on .toggle-knob {
   left: 22px;
   background: var(--color-text);
+}
+/* 启动日志覆盖三态——分段控件（radiogroup 语义，激活项高亮） */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.segmented-item {
+  border: none;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+.segmented-item + .segmented-item {
+  border-left: 1px solid var(--color-border);
+}
+.segmented-item.active {
+  background: var(--color-control-hover);
+  color: var(--color-text);
+  font-weight: 600;
 }
 /* A0 补充：查看日志按钮 + 日志展示区（基于 .btn-outline 实心控件，DESIGN.md） */
 .log-view {

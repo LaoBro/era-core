@@ -161,8 +161,10 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
     if (typeof m.maxLog === 'number') game.maxLog = m.maxLog;
     // A0：文件日志开关的 C# 权威状态——设置页据此渲染开关初始值
     if (typeof m.agentLogEnabled === 'boolean') game.agentLogEnabled = m.agentLogEnabled;
-    // issue 07：启动日志覆盖开关的 C# 权威状态——设置页据此渲染开关初始值
-    if (typeof m.noLoadingReport === 'boolean') game.noLoadingReport = m.noLoadingReport;
+    // 启动日志覆盖三态的 C# 权威状态——设置页据此渲染分段控件初始值
+    if (m.displayReportOverride === 'auto' || m.displayReportOverride === 'off' || m.displayReportOverride === 'on') {
+      game.displayReportOverride = m.displayReportOverride;
+    }
     return;
   }
 

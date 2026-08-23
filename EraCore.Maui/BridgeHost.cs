@@ -68,12 +68,35 @@ internal sealed class BridgeHost : IDisposable
     internal const string AgentLogEnabledKey = "app.agentLogEnabled";
 
     /// <summary>
-    /// Preferences key——启动日志覆盖开关（issue 07）。
-    /// 默认 <see langword="true"/>（覆盖游戏 <c>DisplayReport</c> 为 off，隐藏启动读取日志）；
-    /// 设置页开关经 HandleSetNoLoadingReport 写此 key + 即时切换 ConfigData.OverrideDisplayReport。
-    /// 游戏加载（OnReloadGame → Initialize）时读此 key 前置位，让启动日志从一开始就被抑制。
+    /// Preferences key——启动日志覆盖三态（DisplayReport override）。
+    /// 值为 <c>"auto"</c>（跟随游戏配置，默认）/ <c>"off"</c>（强制关，隐藏启动读取日志）/
+    /// <c>"on"</c>（强制开，逐文件报告 + time.log 阶段计时）。
+    /// 设置页经 HandleSetDisplayReportOverride 写此 key + 即时切换 ConfigData.OverrideDisplayReport；
+    /// 游戏加载（OnReloadGame → Initialize）时读此 key 前置位。
+    /// </summary>
+    internal const string DisplayReportOverrideKey = "app.displayReportOverride";
+
+    /// <summary>
+    /// 旧版 bool 开关 key（三态化前的 <c>app.noLoadingReport</c>）——仅作迁移读取：
+    /// <c>true</c>（含缺省）→ <c>"off"</c>；<c>false</c> → <c>"auto"</c>。不再写入。
     /// </summary>
     internal const string NoLoadingReportKey = "app.noLoadingReport";
+
+    /// <summary>三态字符串 ↔ <see cref="ConfigData.OverrideDisplayReport"/> 的映射（纯函数，单测覆盖）。</summary>
+    internal static bool? ParseDisplayReportOverride(string? value) => value switch
+    {
+        "off" => false,
+        "on" => true,
+        _ => null, // "auto" / 未知值 / null 均为不覆盖
+    };
+
+    /// <summary>三态 → 协议字符串（config 消息 / Preferences 存储格式）。</summary>
+    internal static string DisplayReportOverrideToString(bool? value) => value switch
+    {
+        false => "off",
+        true => "on",
+        _ => "auto",
+    };
 
     /// <summary>app 内日志查看器推送 Vue 的内容上限（字符）——超限保留尾部最新（A0 补充，真机无 adb）。</summary>
     private const int AgentLogViewMaxChars = 200_000;
@@ -352,10 +375,10 @@ internal sealed class BridgeHost : IDisposable
                     HandleSetAgentLogEnabled(doc.RootElement);
                     return;
                 }
-                // issue 07：设置页启动日志覆盖开关——写 Preferences + 切换 ConfigData.OverrideDisplayReport
-                if (type == "setNoLoadingReport")
+                // 设置页启动日志覆盖三态——写 Preferences + 切换 ConfigData.OverrideDisplayReport
+                if (type == "setDisplayReportOverride")
                 {
-                    HandleSetNoLoadingReport(doc.RootElement);
+                    HandleSetDisplayReportOverride(doc.RootElement);
                     return;
                 }
                 // A0 补充：app 内日志查看器——读取 agent.log 内容推给 Vue（真机无 adb 场景）
@@ -809,37 +832,44 @@ internal sealed class BridgeHost : IDisposable
     }
 
     /// <summary>
-    /// 接收 <c>{"type":"setNoLoadingReport","enabled":true/false}</c>；持久化到 Preferences
-    /// （游戏加载时 OnReloadGame → Initialize 读同一 key 前置位），并即时切换
-    /// <see cref="ConfigData.OverrideDisplayReport"/>——开启时强制 <c>DisplayReport=false</c>，
-    /// 关闭时恢复游戏自身配置。完成后推回 <c>config</c> 消息同步 UI。
+    /// 接收 <c>{"type":"setDisplayReportOverride","value":"auto"|"off"|"on"}</c>；持久化到
+    /// Preferences（游戏加载时 OnReloadGame → Initialize 读同一 key 前置位），并即时切换
+    /// <see cref="ConfigData.OverrideDisplayReport"/>——off/on 直接压 DisplayReport；
+    /// auto 置 null 后 ReLoadConfig 恢复游戏自身配置（三源重读，含 fixed.config 强制值）。
+    /// 完成后推回 <c>config</c> 消息同步 UI。
     /// <para>
     /// 说明：即时切换只影响后续读取 <c>DisplayReport</c> 的输出；当前会话已打印的启动日志
-    /// 不会回滚（真正抑制发生在游戏加载时）。
+    /// 不会回滚（真正生效发生在游戏加载时）。
     /// </para>
     /// </summary>
-    private void HandleSetNoLoadingReport(JsonElement root)
+    private void HandleSetDisplayReportOverride(JsonElement root)
     {
-        if (!root.TryGetProperty("enabled", out var el)
-            || (el.ValueKind != JsonValueKind.True && el.ValueKind != JsonValueKind.False))
+        if (root.TryGetProperty("value", out var el) && el.ValueKind == JsonValueKind.String)
         {
-            Console.WriteLine("[bridge] HandleSetNoLoadingReport: missing or non-boolean 'enabled' field");
+            var value = el.GetString();
+            if (value is not ("auto" or "off" or "on"))
+            {
+                Console.WriteLine($"[bridge] HandleSetDisplayReportOverride: invalid value '{value}'");
+                return;
+            }
+            try
+            {
+                Preferences.Set(DisplayReportOverrideKey, value);
+            }
+            catch
+            {
+                // Preferences 不可用——运行时切换仍生效，仅持久化失败（下次启动回默认）
+            }
+            _configData.OverrideDisplayReport = ParseDisplayReportOverride(value);
+            if (_configData.OverrideDisplayReport.HasValue)
+                _configData.GetItem(ConfigCode.DisplayReport).SetValue(_configData.OverrideDisplayReport.Value);
+            else
+                _configData.ReLoadConfig();
+            Console.WriteLine($"[bridge] displayReportOverride set to {value}");
+            PushConfigMessage();
             return;
         }
-        var enabled = el.GetBoolean();
-        try
-        {
-            Preferences.Set(NoLoadingReportKey, enabled);
-        }
-        catch
-        {
-            // Preferences 不可用——运行时切换仍生效，仅持久化失败（下次启动回默认）
-        }
-        _configData.OverrideDisplayReport = enabled;
-        if (enabled)
-            _configData.GetItem(ConfigCode.DisplayReport).SetValue(false);
-        Console.WriteLine($"[bridge] noLoadingReport set to {enabled}");
-        PushConfigMessage();
+        Console.WriteLine("[bridge] HandleSetDisplayReportOverride: missing or non-string 'value' field");
     }
 
     /// <summary>
@@ -1044,17 +1074,18 @@ internal sealed class BridgeHost : IDisposable
     /// <summary>
     /// 推送 emuera.config 值给 Vue——让设置页显示当前配置。
     /// <para>
-    /// 消息格式：<c>{"type":"config","maxLog":5000,"agentLogEnabled":false}</c>
+    /// 消息格式：<c>{"type":"config","maxLog":5000,"agentLogEnabled":false,"displayReportOverride":"auto"}</c>
     /// （A0：agentLogEnabled 为文件日志开关的 C# 权威状态——启动时 Start() 推一次，
-    /// 设置页切换后 HandleSetAgentLogEnabled 推回同步）。
+    /// 设置页切换后 HandleSetAgentLogEnabled 推回同步；displayReportOverride 为启动日志
+    /// 覆盖三态的权威状态，切换后 HandleSetDisplayReportOverride 推回同步）。
     /// </para>
     /// </summary>
     private void PushConfigMessage()
     {
         var maxLog = _configData.GetConfigValue<int>(ConfigCode.MaxLog);
-        var noLoadingReport = _configData.OverrideDisplayReport;
+        var displayReportOverride = DisplayReportOverrideToString(_configData.OverrideDisplayReport);
         var msg = JsonSerializer.Serialize(
-            new ConfigMessage("config", maxLog, AgentLog.Instance.Enabled, noLoadingReport),
+            new ConfigMessage("config", maxLog, AgentLog.Instance.Enabled, displayReportOverride),
             MauiJsonContext.Default.ConfigMessage);
         _dispatcher.Dispatch(() => _jsBridge.PostMessage(msg));
     }
@@ -1118,7 +1149,7 @@ internal sealed class BridgeHost : IDisposable
                 port: 0,
                 _terminalSetup,
                 _configData,
-                overrideDisplayReport: _configData.OverrideDisplayReport);
+                displayReportOverride: _configData.OverrideDisplayReport);
             _serverHost = serverHost;
             if (_disposed)
             {

@@ -305,17 +305,18 @@ export function setAgentLogEnabled(enabled: boolean): void {
 }
 
 /**
- * issue 07：设置页「启动日志覆盖」开关——请求 C# 覆盖游戏 `DisplayReport` 为 off/on。
+ * 设置页「启动日志覆盖」三态——请求 C# 覆盖游戏 `DisplayReport`。
  *
- * C# `BridgeHost.HandleSetNoLoadingReport` 收到后：
- * 1. 写 Preferences（key=`app.noLoadingReport`——游戏加载时 OnReloadGame 读同一 key 前置位）
- * 2. 运行时切换 `ConfigData.OverrideDisplayReport`（开启时强制 `DisplayReport=false`）
- * 3. 推回 `config` 消息（含 noLoadingReport 字段）同步设置页开关的权威状态
+ * C# `BridgeHost.HandleSetDisplayReportOverride` 收到后：
+ * 1. 写 Preferences（key=`app.displayReportOverride`——游戏加载时 OnReloadGame 读同一 key 前置位）
+ * 2. 运行时切换 `ConfigData.OverrideDisplayReport`（off/on 直接压值；auto 重读配置恢复游戏自身值）
+ * 3. 推回 `config` 消息（含 displayReportOverride 字段）同步设置页的权威状态
  *
- * @param enabled true=覆盖（隐藏启动读取日志，默认）；false=不覆盖（按游戏自身配置）
+ * @param value 'auto'=跟随游戏配置（默认）；'off'=强制关（隐藏启动读取日志）；'on'=强制开（逐文件报告 + time.log 计时）
  */
-export function setNoLoadingReport(enabled: boolean): void {
-  postInput(JSON.stringify({ type: 'setNoLoadingReport', enabled }));
+export type DisplayReportOverride = 'auto' | 'off' | 'on';
+export function setDisplayReportOverride(value: DisplayReportOverride): void {
+  postInput(JSON.stringify({ type: 'setDisplayReportOverride', value }));
 }
 
 /**

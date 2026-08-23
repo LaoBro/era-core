@@ -10,12 +10,12 @@ namespace MinorShift.Emuera.Server;
 internal sealed class GameConfigService
 {
     private ConfigData _configData;
-    private readonly bool _overrideDisplayReport;
+    private readonly bool? _displayReportOverride;
 
-    public GameConfigService(ConfigData configData, bool overrideDisplayReport = false)
+    public GameConfigService(ConfigData configData, bool? displayReportOverride = null)
     {
         _configData = configData ?? throw new ArgumentNullException(nameof(configData));
-        _overrideDisplayReport = overrideDisplayReport;
+        _displayReportOverride = displayReportOverride;
     }
 
     /// <summary>
@@ -62,9 +62,9 @@ internal sealed class GameConfigService
     public ConfigData Reload(string exeDir)
     {
         var newConfig = new ConfigData();
-        // --no-loading-report：在 LoadConfigCore 三源合并前置位，让拦截生效
+        // --loading-report / --no-loading-report：在 LoadConfigCore 三源合并前置位，让拦截生效
         //（配置在 LoadConfig(exeDir) 内读取，须先设标志再读）。
-        newConfig.OverrideDisplayReport = _overrideDisplayReport;
+        newConfig.OverrideDisplayReport = _displayReportOverride;
         newConfig.LoadConfig(exeDir);
         ConfigData.SetCurrent(newConfig);
         _configData = newConfig;

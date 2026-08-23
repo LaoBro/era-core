@@ -50,11 +50,12 @@ internal static class EmueraRuntimeInitializer
     /// </summary>
     /// <param name="paths">已 Resolve 的游戏路径对象（通常由调用方在调本方法前 <c>GamePaths.Resolve(exeDir)</c>）。</param>
     /// <param name="dirAccessor">ADR-0019：游戏目录访问抽象。Windows 传 <see cref="FileSystemGameDirAccessor"/>（或 null 降级），Android 传 SAF 实现。</param>
-    /// <param name="overrideDisplayReport">是否在加载时覆盖游戏配置的 <c>DisplayReport</c> 为 off
-    /// （MAUI「启动日志覆盖」开关 / Cli <c>--no-loading-report</c>）。须在 <see cref="ConfigData.LoadConfig()"/>
-    /// 前置位，<see cref="LoadConfigCore"/> 三源合并后据此压 <c>DisplayReport=false</c>。</param>
+    /// <param name="displayReportOverride">加载时对游戏配置 <c>DisplayReport</c> 的三态覆盖：
+    /// null=不覆盖（默认）；false=强制关（Cli <c>--no-loading-report</c> / MAUI「启动日志覆盖」开关）；
+    /// true=强制开（Cli <c>--loading-report</c>）。须在 <see cref="ConfigData.LoadConfig()"/>
+    /// 前置位，<see cref="LoadConfigCore"/> 三源合并后据此压值。</param>
     /// <returns>已加载配置的 <see cref="ConfigData"/> 与已启用 ANSI 的 <see cref="ITerminalSetup"/>。</returns>
-    internal static (ConfigData ConfigData, ITerminalSetup TerminalSetup) Initialize(GamePaths paths, IGameDirAccessor dirAccessor, bool overrideDisplayReport = false)
+    internal static (ConfigData ConfigData, ITerminalSetup TerminalSetup) Initialize(GamePaths paths, IGameDirAccessor dirAccessor, bool? displayReportOverride = null)
     {
         paths.DirAccessor = dirAccessor;
         // === encoding ===
@@ -87,8 +88,8 @@ internal static class EmueraRuntimeInitializer
         // 此处先 SetCurrent 让 Lang.SetLanguage（scope 外）能读到 ConfigData.Current / Config.Current。
         // 后续 GlobalStatic.OpenScope(configData) 会重新 SetCurrent（幂等覆盖）。
         ConfigData configData = new();
-        // --no-loading-report / MAUI 开关：在 LoadConfigCore 三源合并前置位，让拦截生效。
-        configData.OverrideDisplayReport = overrideDisplayReport;
+        // --loading-report / --no-loading-report / MAUI 开关：在 LoadConfigCore 三源合并前置位，让拦截生效。
+        configData.OverrideDisplayReport = displayReportOverride;
         configData.LoadConfig();
         ConfigData.SetCurrent(configData);
         Config.SetCurrent(configData);

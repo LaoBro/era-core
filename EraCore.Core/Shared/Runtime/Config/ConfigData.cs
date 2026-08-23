@@ -43,13 +43,13 @@ internal sealed class ConfigData
 	public int Language { get; private set; }
 
 	/// <summary>
-	/// 覆盖游戏配置的加载时显示报告（<see cref="ConfigCode.DisplayReport"/>）。
-	/// agent 场景下启动读取日志（ErbLoader/ErhLoader 的逐文件报告）对回合输出是噪音，
-	/// 由 Server 拉起参数 <c>--no-loading-report</c> 置位；<see cref="LoadConfigCore"/> 
-	/// 在三源（default/emuera/fixed.config）合并并应用 post-load 后压过一切来源。
-	/// 默认 <see langword="false"/>（不覆盖，保持游戏作者行为）。
+	/// 覆盖游戏配置的加载时显示报告（<see cref="ConfigCode.DisplayReport"/>）——三态：
+	/// null=不覆盖（默认，保持游戏作者行为）；false=强制关（<c>--no-loading-report</c>，
+	/// agent 场景逐文件报告对回合输出是噪音）；true=强制开（<c>--loading-report</c>，
+	/// 性能测量需要 time.log 阶段计时时用）。
+	/// <see cref="LoadConfigCore"/> 三源合并后压过一切来源；仅内存覆盖，不落盘。
 	/// </summary>
-	public bool OverrideDisplayReport { get; set; }
+	public bool? OverrideDisplayReport { get; set; }
 
 	internal ConfigData()
 	{
@@ -762,11 +762,11 @@ internal sealed class ConfigData
 		// 无副本可刷新；clamp/语言/存档目录逻辑下沉为实例方法 ApplyPostLoadEffects。
 		ApplyPostLoadEffects();
 
-		// --no-loading-report 覆盖：三源（default/emuera/fixed.config）已合并且 post-load 已应用，
-		// 此时压 DisplayReport=false 能盖过一切来源（含 fixed.config 的强制值）。
+		// DisplayReport 覆盖：三源（default/emuera/fixed.config）已合并且 post-load 已应用，
+		// 此时压 DisplayReport 能盖过一切来源（含 fixed.config 的强制值）。
 		// 仅内存覆盖，不落盘（不影响下方 needSave/SaveConfig 逻辑）。
-		if (OverrideDisplayReport)
-			GetItem(ConfigCode.DisplayReport).SetValue(false);
+		if (OverrideDisplayReport.HasValue)
+			GetItem(ConfigCode.DisplayReport).SetValue(OverrideDisplayReport.Value);
 
 		bool needSave = false;
 		// Issue 12：使用当前实际读取的 config 文件路径判断是否需要创建默认 config。

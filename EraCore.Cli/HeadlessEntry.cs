@@ -39,7 +39,7 @@ internal static class HeadlessEntry
         // 这样 Validate 失败时调用方仍持有已加载的 configData + 已启用 ANSI 的 terminalSetup，
         // Server 空闲模式 fallback 复用这两者，避免 "AsyncLocal 指向已加载 config 而本地变量是空 config"
         // 的 split-brain 与 ANSI 丢失回归（重构前行为）。
-        var (configData, terminalSetup) = EmueraRuntimeInitializer.Initialize(paths, new FileSystemGameDirAccessor(), options.NoLoadingReport);
+        var (configData, terminalSetup) = EmueraRuntimeInitializer.Initialize(paths, new FileSystemGameDirAccessor(), options.DisplayReportOverride);
 
         // T-025 D1/D2：GamePaths.Validate 失败按模式分流——
         // - server 模式：降级 warn 继续（空闲启动，浏览器可打开选择器，真正的加载推迟到 /load-game）
@@ -85,7 +85,7 @@ internal static class HeadlessEntry
 #if !ANDROID_NO_SERVER
             // --open-browser 便捷模式且未显式 --port → 传 0，由 ServerRunner 自动挑空闲端口。
             var port = options.OpenBrowser && !options.PortExplicit ? 0 : options.Port;
-            await ServerRunner.RunAsync(port, terminalSetup, configData, options.NoLoadingReport, options.OpenBrowser);
+            await ServerRunner.RunAsync(port, terminalSetup, configData, options.DisplayReportOverride, options.OpenBrowser);
 #else
             // android 交叉产物（3.2 验证）：无 Kestrel（AspNetCore 无 android runtime pack），
             // server 模式不可用——明确提示后走 CLI 模式，避免静默忽略 --server。

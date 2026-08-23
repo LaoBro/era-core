@@ -142,6 +142,19 @@ def main():
         )
         check((missing.stdout or "").strip() == "", "status error does not write to stdout")
 
+        # --display-report 三态映射（纯函数检查，不依赖 server）
+        sys.path.insert(0, str(ROOT_DIR))
+        from eracore_agent.__main__ import _display_report_flags
+        check(_display_report_flags("off") == ["--no-loading-report"],
+              "display-report off → --no-loading-report (历史默认)")
+        check(_display_report_flags("on") == ["--loading-report"],
+              "display-report on → --loading-report (逐文件报告 + time.log)")
+        check(_display_report_flags("auto") == [],
+              "display-report auto → 不传 flag（跟随游戏配置）")
+        bad_report = run_agent(
+            ["start", "--display-report", "bogus", "--game-dir", str(game_dir)], env, timeout=15)
+        check(bad_report.returncode != 0, "start rejects invalid --display-report (argparse choices)")
+
         start = run_agent(
             [
                 "start",

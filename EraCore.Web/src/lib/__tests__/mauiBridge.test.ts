@@ -8,7 +8,7 @@ import {
   pickGameFolder,
   loadGameFromPath,
   setAgentLogEnabled,
-  setNoLoadingReport,
+  setDisplayReportOverride,
   getAgentLog,
   exportAgentLog,
 } from '../mauiBridge';
@@ -355,33 +355,33 @@ describe('mauiBridge (issue 07 / spec ID7)', () => {
     });
   });
 
-  // ===== setNoLoadingReport (issue 07：启动日志覆盖) =====
+  // ===== setDisplayReportOverride（启动日志覆盖三态） =====
 
-  describe('setNoLoadingReport', () => {
-    it('true → 投递 {"type":"setNoLoadingReport","enabled":true} 消息（Windows chrome.webview）', () => {
+  describe('setDisplayReportOverride', () => {
+    it("'on' → 投递 {\"type\":\"setDisplayReportOverride\",\"value\":\"on\"} 消息（Windows chrome.webview）", () => {
       const postMessage = vi.fn();
       mockWindow.chrome = { webview: { postMessage } };
 
-      setNoLoadingReport(true);
+      setDisplayReportOverride('on');
 
       expect(postMessage).toHaveBeenCalledOnce();
       const sent = postMessage.mock.calls[0][0];
-      expect(JSON.parse(sent)).toEqual({ type: 'setNoLoadingReport', enabled: true });
+      expect(JSON.parse(sent)).toEqual({ type: 'setDisplayReportOverride', value: 'on' });
     });
 
-    it('false → 投递 {"type":"setNoLoadingReport","enabled":false} 消息（Android appBridge）', () => {
+    it("'auto' → 投递 {\"type\":\"setDisplayReportOverride\",\"value\":\"auto\"} 消息（Android appBridge）", () => {
       const postMessage = vi.fn();
       mockWindow.appBridge = { postMessage };
 
-      setNoLoadingReport(false);
+      setDisplayReportOverride('auto');
 
       expect(postMessage).toHaveBeenCalledOnce();
       const sent = postMessage.mock.calls[0][0];
-      expect(JSON.parse(sent)).toEqual({ type: 'setNoLoadingReport', enabled: false });
+      expect(JSON.parse(sent)).toEqual({ type: 'setDisplayReportOverride', value: 'auto' });
     });
 
     it('无桥接对象时静默 no-op（不抛错）', () => {
-      expect(() => setNoLoadingReport(true)).not.toThrow();
+      expect(() => setDisplayReportOverride('off')).not.toThrow();
     });
   });
 

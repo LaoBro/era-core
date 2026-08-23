@@ -200,19 +200,23 @@ public partial class MainPage : ContentPage
     }
 
     /// <summary>
-    /// 读取启动日志覆盖开关（issue 07）。默认 <see langword="true"/>（覆盖游戏 <c>DisplayReport</c> 为 off，
-    /// 隐藏启动读取日志）；用户在设置页关闭后持久化到 Preferences，此处读取供游戏加载时前置位。
+    /// 读取启动日志覆盖三态（DisplayReport override）。返回 <c>"auto"/"off"/"on"</c>；
+    /// 新 key 缺失时迁移旧 bool key（true/缺省 → off；false → auto）。
+    /// Preferences 不可用（极少见）时回退默认 off（抑制启动日志）。
     /// </summary>
-    private static bool ReadNoLoadingReportPreference()
+    private static string ReadDisplayReportOverridePreference()
     {
         try
         {
-            return Preferences.Get(BridgeHost.NoLoadingReportKey, true);
+            var value = Preferences.Get(BridgeHost.DisplayReportOverrideKey, null);
+            if (value is "auto" or "off" or "on")
+                return value;
+            var legacy = Preferences.Get(BridgeHost.NoLoadingReportKey, true);
+            return legacy ? "off" : "auto";
         }
         catch
         {
-            // Preferences 不可用（极少见）——保持默认开启覆盖
-            return true;
+            return "off";
         }
     }
 
@@ -286,7 +290,8 @@ public partial class MainPage : ContentPage
                 (newConfig, newTerminal) = EmueraRuntimeInitializer.Initialize(
                     paths,
                     dirAccessor,
-                    ReadNoLoadingReportPreference());
+                    // 三态偏好（auto/off/on）→ bool?（null/false/true）
+                    BridgeHost.ParseDisplayReportOverride(ReadDisplayReportOverridePreference()));
                 var hasWrite = dirAccessor.HasWriteAccess();
                 Console.WriteLine($"[maui] OnReloadGame init completed: ExeDir={paths.ExeDir}, hasWrite={hasWrite}");
 #if ANDROID

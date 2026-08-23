@@ -46,9 +46,9 @@ internal sealed class HttpListenerHost : IDisposable
     /// <summary>测试接缝：会话注册表（供测试经此访问当前 session）。</summary>
     internal SessionRegistry Sessions => _sessions;
 
-    public HttpListenerHost(int port, ITerminalSetup terminalSetup, ConfigData configData, bool overrideDisplayReport = false)
+    public HttpListenerHost(int port, ITerminalSetup terminalSetup, ConfigData configData, bool? displayReportOverride = null)
     {
-        _config = new GameConfigService(configData, overrideDisplayReport);
+        _config = new GameConfigService(configData, displayReportOverride);
         _sessions = new SessionRegistry(terminalSetup, _config, GameServerProtocol.ReadAgentLease());
         _protocol = new GameServerProtocol(_sessions, _config);
         _dispatcher = new HttpRouteDispatcher(_protocol);

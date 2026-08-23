@@ -13,11 +13,12 @@ internal sealed class HeadlessOptions
     public int Port { get; }
     public string TermWidthHint { get; }
     public bool NoLoadingReport { get; }
+    public bool LoadingReport { get; }
     public bool OpenBrowser { get; }
     /// <summary>用户是否显式传了 --port——open-browser 便捷模式下未显式指定时自动挑空闲端口。</summary>
     public bool PortExplicit { get; }
 
-    private HeadlessOptions(string? exeDir, string protocol, bool server, int port, string termWidthHint, bool noLoadingReport, bool openBrowser, bool portExplicit)
+    private HeadlessOptions(string? exeDir, string protocol, bool server, int port, string termWidthHint, bool noLoadingReport, bool loadingReport, bool openBrowser, bool portExplicit)
     {
         ExeDir = exeDir;
         Protocol = protocol;
@@ -25,9 +26,13 @@ internal sealed class HeadlessOptions
         Port = port;
         TermWidthHint = termWidthHint;
         NoLoadingReport = noLoadingReport;
+        LoadingReport = loadingReport;
         OpenBrowser = openBrowser;
         PortExplicit = portExplicit;
     }
+
+    /// <summary>DisplayReport 三态覆盖：null=随游戏配置；false=--no-loading-report 强制关；true=--loading-report 强制开。</summary>
+    public bool? DisplayReportOverride => LoadingReport ? true : NoLoadingReport ? false : null;
 
     // 2.0 GA API：构造器直接接收 name + 别名，描述与默认值通过初始化器设置
     internal static readonly Option<string> ExeDirOption = new(
@@ -69,6 +74,12 @@ internal sealed class HeadlessOptions
         Description = "覆盖游戏配置的加载时显示报告（DisplayReport）为 off，隐藏启动读取日志（agent 用）"
     };
 
+    internal static readonly Option<bool> LoadingReportOption = new(
+        "--loading-report")
+    {
+        Description = "覆盖游戏配置的加载时显示报告（DisplayReport）为 on，输出逐文件报告与 time.log 阶段计时（性能测量用）"
+    };
+
     internal static readonly Option<bool> OpenBrowserOption = new(
         "--open-browser")
     {
@@ -84,6 +95,7 @@ internal sealed class HeadlessOptions
         rootCommand.Options.Add(PortOption);
         rootCommand.Options.Add(TermWidthHintOption);
         rootCommand.Options.Add(NoLoadingReportOption);
+        rootCommand.Options.Add(LoadingReportOption);
         rootCommand.Options.Add(OpenBrowserOption);
 
         var result = rootCommand.Parse(args);
@@ -112,7 +124,15 @@ internal sealed class HeadlessOptions
         var port = result.GetValue(PortOption);
         var termWidthHint = result.GetValue(TermWidthHintOption) ?? "auto";
         var noLoadingReport = result.GetValue(NoLoadingReportOption);
+        var loadingReport = result.GetValue(LoadingReportOption);
         var openBrowser = result.GetValue(OpenBrowserOption);
+
+        // 互斥：强制开/关同时给出时无意义，直接报错退出（对齐解析错误的既有处理）。
+        if (noLoadingReport && loadingReport)
+        {
+            EmueraLog.Error("options", "--no-loading-report 与 --loading-report 互斥，只能传其中一个");
+            return null;
+        }
         var portExplicit = ArgsContainPort(args);
 
         if (server && ArgsContainProtocol(args))
@@ -122,7 +142,7 @@ internal sealed class HeadlessOptions
             return null;
         }
 
-        return new HeadlessOptions(exeDir, protocol, server, port, termWidthHint, noLoadingReport, openBrowser, portExplicit);
+        return new HeadlessOptions(exeDir, protocol, server, port, termWidthHint, noLoadingReport, loadingReport, openBrowser, portExplicit);
     }
 
     private static bool ArgsContainPort(string[] args)

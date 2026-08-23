@@ -122,7 +122,22 @@ def _find_binary(explicit: str | None) -> str | None:
     return None
 
 
-def _start_eracore_server(binary_path: str, game_dir: str | None, port: int) -> subprocess.Popen:
+def _display_report_flags(value: str) -> list[str]:
+    """加载报告覆盖三态 → EraCore.Cli 启动 flag。
+
+    off=--no-loading-report（强制关，默认——逐文件报告对回合输出是噪音）；
+    on=--loading-report（强制开——逐文件报告 + 游戏目录 time.log 阶段计时，性能排查用）；
+    auto=不传 flag（跟随游戏 emuera.config）。两 flag 在 Cli 侧互斥，此处单选不会冲突。
+    """
+    if value == "on":
+        return ["--loading-report"]
+    if value == "off":
+        return ["--no-loading-report"]
+    return []
+
+
+def _start_eracore_server(binary_path: str, game_dir: str | None, port: int,
+                          display_report: str = "off") -> subprocess.Popen:
     """Launch Emuera.Headless.Cli --server in the background."""
     if binary_path.lower().endswith(".dll"):
         cmd = ["dotnet", "exec", binary_path]
@@ -131,9 +146,9 @@ def _start_eracore_server(binary_path: str, game_dir: str | None, port: int) -> 
     cmd.extend(["--server", "--port", str(port)])
     if game_dir:
         cmd.extend(["--ExeDir", game_dir])
-    # 隐藏启动读取日志（agent 用）：覆盖游戏配置 DisplayReport=false，见 spec「启动日志覆盖」。
-    # 仅对 agent 自己拉起的 server 生效；复用已运行 server 时不受影响。
-    cmd.extend(["--no-loading-report"])
+    # 加载报告覆盖：见 spec「启动日志覆盖」。仅对 agent 自己拉起的 server 生效；
+    # 复用已运行 server 时以该 server 自己的启动参数为准。
+    cmd.extend(_display_report_flags(display_report))
 
     kwargs = {
         "stdout": subprocess.DEVNULL,
@@ -253,7 +268,7 @@ def cmd_start(args) -> int:
             if not os.path.isdir(game_dir):
                 _die(f"游戏目录不存在: {game_dir}")
             token = secrets.token_urlsafe(24)
-            proc = _start_eracore_server(binary, game_dir, port)
+            proc = _start_eracore_server(binary, game_dir, port, args.display_report)
             if proc.poll() is not None:
                 _die("Emuera server 启动后立即退出")
             pid = proc.pid
@@ -525,6 +540,9 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--host", default="127.0.0.1", help="server 主机（默认 127.0.0.1）")
     start.add_argument("--game-dir", default=None, help="游戏目录")
     start.add_argument("--eracore-path", default=None, help="EraCore.Cli 二进制路径")
+    start.add_argument("--display-report", choices=["auto", "off", "on"], default="off",
+                       help="加载报告覆盖（仅对本次新拉起的 server 生效）：off=强制关（默认，隐藏启动读取日志）；"
+                            "on=强制开（逐文件报告 + 游戏目录 time.log 阶段计时）；auto=跟随游戏配置")
     start.set_defaults(func=cmd_start)
 
     acquire = sub.add_parser("acquire", help="获取控制权并返回状态确认（默认低噪紧凑视图）")
