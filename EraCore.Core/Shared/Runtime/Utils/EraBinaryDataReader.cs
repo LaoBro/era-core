@@ -152,7 +152,9 @@ internal abstract class EraBinaryDataReader : IDisposable
 				reader = new BinaryReader(ms, Encoding.Unicode);
 			}
 			else
-				reader = new BinaryReader(reader.BaseStream, Encoding.Unicode, leaveOpen: true);
+				// 对齐上游：leaveOpen=false，bReader.Close() 连带关闭底层 fs。
+				// 若 leaveOpen=true，fs 句柄泄漏会锁住存档，导致紧随 SAVEGLOBAL 打开写时 IOException。
+				reader = new BinaryReader(reader.BaseStream, Encoding.Unicode);
 			#endregion
 
 			if (version == EraBDConst.Version1808)

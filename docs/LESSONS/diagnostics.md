@@ -11,6 +11,7 @@
 | 3 | Process.Initialize 返回 false 缺少异常诊断 | catch 里被 handleException 的异常不进 logcat；显式 Console.WriteLine | — |
 | 4 | 运行时脚本 File.* 是全量迁移最后一块 | 初始化路径与运行时脚本路径两层，后者易忽略 | — |
 | 5 | logcat 时间线 + DebugView 定位"假冻结" | 卡死先定性四类；lastTurnJson 是一手证据 | 2026-07-31 |
+| 6 | 存档写失败的真实异常被统一 CodeEE 掩蔽 | 宽 catch 吞内层异常只留外皮；透出 `ex` 类型+消息后一举定位句柄泄漏 | 2026-08-22 |
 
 ---
 
@@ -87,3 +88,27 @@ internal static bool FileExists(string path)
 4. **线程 TID 消失 + 进程 CPU≈0%**：async 任务挂起在 await（如等输入），不是死锁也不是忙转；`/proc/<pid>/task/<tid>` 不存在不代表进程死了
 
 **教训**：游戏"卡死"先定性——忙转（CPU 高）/ 阻塞 IO（wchan=binder_thread_read）/ 等输入（TID 消失、CPU 低）/ 会话已结束前端没收到通知（game loop completed normally + 前端停在旧帧）。DebugView 的 `lastTurnJson` 是最快的一手证据，`[bridge]` / `SaveTo` / `OpenWrite` 日志是拆时间线的骨架。
+
+## 6. 存档写失败的真实异常被统一 CodeEE 掩蔽——透出内层才是一举定位的关键（2026-08-22）
+
+**场景**：`TW4.881shoess` 首次进标题即报 `グローバルデータの保存中にエラーが発生しました`（`@SYSTEM_TITLE` 的 `SAVEGLOBAL`）。多处 `出し 経過時間` 后标题画面崩溃。仅看表面无法判断根因属于「IO/文件层」还是「数据层」。
+
+**掩蔽链**：`VariableEvaluator.SaveGlobal()` 用一个**很宽的 `catch (SystemException ex)`** 把存档序列化路径里抛出的**任何** `SystemException` 一律转译成统一 CodeEE（`ErrorSavingGlobalData`），原始 `ex` 被丢弃。关键是 `EmueraException`（`FileEE`/`CodeEE` 基类）声明为 `ApplicationException : SystemException`——所以**内部 `FileEE`（InvalidArray/InvalidStream）与真实 .NET `IOException` 全都汇成同一句外皮**，从外皮完全无法反推。原内层异常只在 `#if HEADLESS` 的 `EmueraLog.Debug` 里打，而 agent.log 为空/被覆盖，`emuera.log` 只有转译后的 CodeEE → 根因不可见。
+
+**定位步骤**：
+1. **透出内层异常**：在 catch 里加 `EmueraLog.Error("SaveGlobal", $"path=… ex={ex.GetType().FullName}: {ex.Message}")`（Error 级别全构建可见，不再缩进 `#if HEADLESS`）。
+2. **复现**：本仓库与上游 `SaveGlobal`/写出层/变量登记全部逐字一致，只有 `SafCompat.OpenWrite` vs 上游 `new FileStream` 不同 → 怀疑文件层。用 CLI `--ExeDir` 指向该游戏复现，首回合 `state=Error`；agent.log 拿到：
+```
+System.IO.IOException: The process cannot access the file '...\sav\global.sav'
+because it is being used by another process.  at ... SafCompat.OpenWrite(...)
+```
+日志时序 `[LoadGlobal] ok → [SaveGlobal] ex=IOException` 直接定位：**读句柄未释放挡住了紧随的写**。
+
+**根因**：`EraBinaryDataReader.CreateReader` 相对上游多加 `new BinaryReader(reader.BaseStream, Encoding.Unicode, leaveOpen:true)` → `bReader.Close()` **不再关闭底层 `fs`**；而各 Load 路径 `finally` 是 `if/else if`，二进制分支只 `bReader.Close()` 不关 `fs`——读句柄（`FileShare.Read`）泄漏，锁住 `sav/global.sav`。跟随其后的 `SAVEGLOBAL` 用 `SafCompat.OpenWrite`（`FileShare.None`）打开写 → 共享冲突 `IOException`。上游 `leaveOpen=false`，`bReader.Close()` 连带释放 `fs`，故不炸。只有**带已存在存档**的二进制游戏才会走到 `LOADGLOBAL→SAVEGLOBAL` 触发序列，所以「引入更多游戏后」才暴露。
+
+**修复**：CreateReader 恢复 `leaveOpen=false`（一条，一次修全部 Load 路径）；LoadGlobal `finally` 防御性显式 `fs?.Close()`（幂等）。复现首回合由 `Error` → `WaitInput`，`SAVEGLOBAL` 过。
+
+**教训**：
+- **宽异常袋是定位毒瘤**：`catch(SystemException)`/`catch(Exception)` 里若只抛统一转译、不落内层，线上几乎无从定位。修复前先透出 `ex` 类型+消息，比猜「数据层 vs IO层」高效得多。
+- **`leaveOpen` 语义牢记**：`BinaryReader`/`BinaryWriter` 构造多一个 `leaveOpen` 参数就会改变「Close 是否释放底层流」；凡是 `leaveOpen:true`，调用方**必须**显式关底层流。改动读取器共享构造函数最容易埋这类跨调用方的句柄泄漏。
+- **文件锁问题的判断抓手**：`IOException: the process cannot access ... because it is being used by another process` + 时间线上前一步刚 `OpenRead/ok`，优先查「读句柄有没有释放」而非文件只读/权限。

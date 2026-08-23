@@ -2277,6 +2277,8 @@ internal sealed class VariableEvaluator : IVariableEvaluator, IDisposable
 		}
 		catch (SystemException ex)
 		{
+			// 诊断：透出被统一 CodeEE 掩蔽的真实异常（类型+消息），避免仅剩“保存全局数据出错”无从定位
+			EmueraLog.Error("SaveGlobal", $"path={filepath} ex={ex.GetType().FullName}: {ex.Message}");
 #if HEADLESS
 			EmueraLog.Debug("SaveGlobal", $"path={filepath} ex={ex}");
 #endif
@@ -2362,12 +2364,12 @@ internal sealed class VariableEvaluator : IVariableEvaluator, IDisposable
 		}
 		finally
 		{
-			if (reader != null)
-				reader.Close();
-			else if (bReader != null)
-				bReader.Close();
-			else if (fs != null)
-				fs.Close();
+			// 防御性显式关闭 fs：读句柄若泄漏会锁住存档文件，导致紧随的
+			// SAVEGLOBAL（FileShare.None 打开写）IOException。Close 幂等，
+			// 与 reader/bReader 同时关闭安全。
+			reader?.Close();
+			bReader?.Close();
+			fs?.Close();
 		}
 	}
 
