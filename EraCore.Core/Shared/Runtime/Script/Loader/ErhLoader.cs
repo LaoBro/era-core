@@ -443,5 +443,5 @@ internal sealed class ErhLoader
 		//idDic.AddRefMethod(UserDefinedRefMethod.Create(data));
 	}
 
-	/// <summary>erb-loader-parallel 03：孪生实现收敛至 Preload.GetFilesFromCache（扩展名 + 日志标签参数化）。</summary>
+	// erb-loader-parallel 03：原 GetErhFilesFromCache 孪生实现收敛至 Preload.GetFilesFromCache（扩展名 + 日志标签参数化）。
 }
