@@ -8,13 +8,23 @@ using MinorShift.Emuera.Runtime.Utils;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using trerror = MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.Error;
 
 namespace MinorShift.Emuera.Runtime.Script.Parser;
 
 internal static class LogicalLineParser
 {
-	public static bool ParseSharpLine(FunctionLabelLine label, CharStream st, ScriptPosition? position, List<string> OnlyLabel)
+	// erb-loader-parallel 01：VARI 初期值解析处 scaningLine 写的 per-file 镜像。
+	// 全局写保持不动——生成期 runtime 读者（IdentifierDictionary.GetVariableToken 私有变量解析、
+	// ExpressionParser/LexicalAnalyzer/VariableLocal 警告位置）仍读 Process.scaningLine，
+	// 重定向该写会改变它们所见（ADR-0012 后续已记录）。镜像仅供文件产物记录终值，合并阶段回放。
+	internal static readonly AsyncLocal<Action<LogicalLine>?> ScanLineMirror = new();
+
+	/// <param name="mergedOnlyDeclarations">已合并入共享列表的 #ONLY 宣言（生成期只读，合并序快照）。</param>
+	/// <param name="fileOnlyDeclarations">本文件新宣言的落点（文件产物字段，合并阶段 AddRange 进共享列表）。</param>
+	public static bool ParseSharpLine(FunctionLabelLine label, CharStream st, ScriptPosition? position,
+		List<string> mergedOnlyDeclarations, List<string> fileOnlyDeclarations)
 	{
 		st.ShiftNext();//'#'を飛ばす
 		var token = LexicalAnalyzer.ReadSingleIdentifier(st);//#～自体にはマクロ非適用
@@ -117,9 +127,9 @@ internal static class LogicalLineParser
 						ParserMediator.Warn(trerror.DuplicateOnly.Text, position, 1);
 						break;
 					}
-					else if (OnlyLabel.Contains(label.LabelName))
+					else if (mergedOnlyDeclarations.Contains(label.LabelName) || fileOnlyDeclarations.Contains(label.LabelName))
 						ParserMediator.Warn(string.Format(trerror.AlreadyDeclaredOnly.Text, label.LabelName), position, 1);
-					OnlyLabel.Add(label.LabelName);
+					fileOnlyDeclarations.Add(label.LabelName);
 					label.IsOnly = true;
 					if (label.IsPri)
 					{
@@ -282,7 +292,12 @@ internal static class LogicalLineParser
 		return ParseLine(stream, position, console);
 	}
 
-	public static LogicalLine ParseLabelLine(CharStream stream, ScriptPosition? position, EmueraConsole console)
+	/// <param name="analysisConsoleOps">
+	/// erb-loader-parallel 01：AnalysisMode 的 PrintC 输出改写进该缓冲（合并阶段按序回放），
+	/// 生成期不直接触碰控制台；为 null（runtime 路径）时保持原样直写。
+	/// </param>
+	public static LogicalLine ParseLabelLine(CharStream stream, ScriptPosition? position, EmueraConsole console,
+		List<Action<EmueraConsole>>? analysisConsoleOps = null)
 	{
 		bool isFunction = stream.Current == '@';
 		//int lineNo = Position.Value.LineNo;
@@ -345,7 +360,12 @@ internal static class LogicalLineParser
 			//WordCollection wc = null;
 			//wc = LexicalAnalyzer.Analyse(stream, LexEndWith.EoL, LexAnalyzeFlag.AllowAssignment);
 			if (Program.AnalysisMode)
-				console.PrintC("@" + labelName, false);
+			{
+				if (analysisConsoleOps != null)
+					analysisConsoleOps.Add(c => c.PrintC("@" + labelName, false));
+				else
+					console.PrintC("@" + labelName, false);
+			}
 			FunctionLabelLine funclabelLine = new(position, labelName, wc);
 			if (IdentifierDictionary.IsEventLabelName(labelName))
 			{
@@ -469,6 +489,7 @@ internal static class LogicalLineParser
 								if (!right.IsWhiteSpace())
 								{
 									GlobalStatic.Process.scaningLine = line;
+									ScanLineMirror.Value?.Invoke(line);
 									var wc = LexicalAnalyzer.Analyse(new CharStream(right.ToString()), LexEndWith.EoL, LexAnalyzeFlag.None);
 									exp = ExpressionParser.ReduceIntegerTerm(wc, TermEndWith.EoL);
 								}

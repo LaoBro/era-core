@@ -38,19 +38,27 @@ internal sealed class LabelDictionary
 	/// </summary>
 	public bool Initialized { get; set; }
 	#region Initialized 前用
-	public FunctionLabelLine GetSameNameLabel(FunctionLabelLine point)
-	{
-		string id = point.LabelName;
-		if (!labelAtDic.TryGetValue(id, out List<FunctionLabelLine>? value))
-			return null!;
-		if (point.IsError)
-			return null!;
-		List<FunctionLabelLine> labelList = value;
-		if (labelList.Count <= 1)
-			return null!;
-		return labelList[0];
-	}
 
+	/// <summary>
+	/// erb-loader-parallel 01：生成期重载检查的合并序只读视图。
+	/// 语义等价于旧路径“先 IfFileLoadClearLabelWithPath 清同名旧标签、AddLabel 后取 list[0]”：
+	/// 返回与 labelName 同名的已合并标签中最早的一个，无同名返回 null。
+	/// <paramref name="excludingFilename"/> 排除该文件名的标签（重载场景下尚未被合并阶段
+	/// IfFileLoadClearLabelWithPath 清掉的旧标签），调用方需自行叠加本文件内已出现的同名标签。
+	/// </summary>
+	internal FunctionLabelLine? GetEarliestLabelWithName(string labelName, string? excludingFilename = null)
+	{
+		if (!labelAtDic.TryGetValue(labelName, out List<FunctionLabelLine>? value) || value.Count == 0)
+			return null;
+		if (excludingFilename == null)
+			return value[0];
+		foreach (FunctionLabelLine label in value)
+		{
+			if (!string.Equals(label.Position!.Value.Filename, excludingFilename, Config.Config.SCIgnoreCase))
+				return label;
+		}
+		return null;
+	}
 
 	Dictionary<string, List<FunctionLabelLine>[]> eventLabelDic = new(Config.Config.StrComper);
 	Dictionary<string, FunctionLabelLine> noneventLabelDic = new(Config.Config.StrComper);

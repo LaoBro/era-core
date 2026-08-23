@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace MinorShift.Emuera;
 
@@ -79,6 +80,49 @@ internal partial class ParserMediator
 
 	static object warningListLock = new();
 
+	// erb-loader-parallel 01：per-file 警告缓冲。生成阶段（ErbLoader.GenerateErbFile）经
+	// BeginWarningBuffer 把 Warn 重定向到文件产物自己的列表，合并阶段 EmitWarningBuffer
+	// 按原文件顺序搬回全局 warningList——警告内容与顺序不变，仅落点延后。
+	// 契约：单个缓冲同一时刻只有一个写入者（串行逐文件 / 03 并行时每文件各自一缓冲）。
+	static readonly AsyncLocal<List<ParserWarning>?> warningBuffer = new();
+
+	internal static void BeginWarningBuffer(List<ParserWarning> buffer)
+	{
+		warningBuffer.Value = buffer;
+	}
+
+	internal static void EndWarningBuffer()
+	{
+		warningBuffer.Value = null;
+	}
+
+	/// <summary>把 per-file 缓冲的警告按原顺序并入全局警告列表（合并阶段调用）。</summary>
+	internal static void EmitWarningBuffer(List<ParserWarning> buffer)
+	{
+		if (buffer.Count == 0)
+			return;
+		lock (warningListLock)
+		{
+			warningList.AddRange(buffer);
+		}
+		buffer.Clear();
+	}
+
+	/// <summary>写入一条警告：缓冲激活时进 per-file 缓冲，否则锁加进全局列表。</summary>
+	static void AddWarning(ParserWarning warning)
+	{
+		var buffer = warningBuffer.Value;
+		if (buffer != null)
+		{
+			buffer.Add(warning);
+			return;
+		}
+		lock (warningListLock)
+		{
+			warningList.Add(warning);
+		}
+	}
+
 	public static void Warn(string str, ScriptPosition? pos, int level)
 	{
 		Warn(str, pos, level, null!);
@@ -89,12 +133,7 @@ internal partial class ParserMediator
 		if (level < Config.DisplayWarningLevel && !Program.AnalysisMode)
 			return;
 		if (console != null && !console.RunERBFromMemory)
-		{
-			lock (warningListLock)
-			{
-				warningList.Add(new ParserWarning(str, pos, level, stack));
-			}
-		}
+			AddWarning(new ParserWarning(str, pos, level, stack));
 	}
 
 	/// <summary>
@@ -121,11 +160,8 @@ internal partial class ParserMediator
 			return;
 		if (console != null && !console.RunERBFromMemory)
 		{
-			// 决策七：补锁 — 与 Warn(string, ScriptPosition?, ...) 重载一致，为决策六并行化铺路。
-			lock (warningListLock)
-			{
-				warningList.Add(new ParserWarning(str, line.Position, level, stack));
-			}
+			// 决策七：无缓冲时加锁写入 — 与 Warn(string, ScriptPosition?, ...) 重载一致，为决策六并行化铺路。
+			AddWarning(new ParserWarning(str, line.Position, level, stack));
 		}
 		//				console.PrintWarning(str, line.Position, level);
 	}
@@ -156,7 +192,7 @@ internal partial class ParserMediator
 		warningList.Clear();
 	}
 
-	private sealed class ParserWarning
+	internal sealed class ParserWarning
 	{
 		public ParserWarning(string mes, ScriptPosition? pos, int level, string stackTrace)
 		{

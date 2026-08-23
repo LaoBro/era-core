@@ -79,7 +79,7 @@ internal sealed class ErbLoader
 			#region EE_ファイル読み込み順拡張
 			foreach (var dir in firstDir)
 			{
-			var firstErbFiles = GetErbFilesFromCache(dir) ?? Config.Config.GetFiles(dir, erbDir, "*.ERB");
+				var firstErbFiles = GetErbFilesFromCache(dir) ?? Config.Config.GetFiles(dir, erbDir, "*.ERB");
 				foreach (var erb in firstErbFiles)
 				{
 
@@ -94,7 +94,9 @@ internal sealed class ErbLoader
 					if (displayReport)
 						output.PrintSystemLine(string.Format(trsl.LoadingFile.Text, filename));
 #endif
-					await Task.Run(() => loadErb(file, filename, isOnlyEvent));
+					// erb-loader-parallel 01：逐文件“生成产物 → 按序合并”两步（03 并行化的前置结构）
+					var art = await Task.Run(() => GenerateErbFile(file, filename, isOnlyEvent));
+					MergeErbFile(art, isOnlyEvent);
 				};
 			};
 			#endregion
@@ -112,7 +114,8 @@ internal sealed class ErbLoader
 				if (displayReport)
 					output.PrintSystemLine(string.Format(trsl.LoadingFile.Text, filename));
 #endif
-				await Task.Run(() => loadErb(file, filename, isOnlyEvent));
+				var art = await Task.Run(() => GenerateErbFile(file, filename, isOnlyEvent));
+				MergeErbFile(art, isOnlyEvent);
 			};
 			ParserMediator.FlushWarningList();
 #if DEBUG
@@ -198,7 +201,9 @@ internal sealed class ErbLoader
 				{
 					output.PrintSystemLine(string.Format(trsl.LoadingFile.Text, fname));
 				}
-				loadErb(fpath, fname, isOnlyEvent);
+				// erb-loader-parallel 01：与 LoadErbDir 同款“生成 → 按序合并”两步
+				var art = GenerateErbFile(fpath, fname, isOnlyEvent);
+				MergeErbFile(art, isOnlyEvent);
 			};
 		});
 		if (env.AnalysisMode)
@@ -382,18 +387,68 @@ internal sealed class ErbLoader
 	}
 
 	/// <summary>
-	/// ファイル一つを読む
+	/// 单文件解析产物（erb-loader-parallel Issue 01）。
+	/// 生成阶段（<see cref="GenerateErbFile"/>）只写本对象：行链挂在各标签线上、警告经
+	/// ParserMediator 重定向进 <see cref="Warnings"/>、控制台输出（AnalysisMode PrintC/间隔行、
+	/// 开文件失败 PrintError）缓冲为 <see cref="ConsoleOps"/>——生成期间无任何 LabelDictionary
+	/// 写入 / 控制台直写 / 共享计数写。合并阶段（<see cref="MergeErbFile"/>）按原文件顺序执行
+	/// 全部共享状态写入与警告发射，03 并行化以本对象为执行单元。
 	/// </summary>
-	/// <param name="filepath"></param>
-	private void loadErb(string filepath, string filename, List<string> isOnlyEvent)
+	private sealed class ErbFileArtifact
 	{
-		//一部ファイルの再読み込み時の処理用
-		labelDic.IfFileLoadClearLabelWithPath(filename);
+		public string Filename = null!;
+		/// <summary>@ 标签（含 InvalidLabelLine），按出现序；合并阶段逐个 AddLabel / AddInvalidLabel。</summary>
+		public readonly List<FunctionLabelLine> FunctionLabels = [];
+		/// <summary>$ 标签（ParentLabelLine 生成期已设），按出现序；仅收录 parent 非空者。</summary>
+		public readonly List<GotoLabelLine> GotoLabels = [];
+		/// <summary>#ONLY 宣言名，按出现序；合并阶段 AddRange 进共享 isOnlyEvent 列表。</summary>
+		public readonly List<string> OnlyDeclarations = [];
+		/// <summary>逐文件缓冲的 ParserMediator 警告，合并阶段按序发射。</summary>
+		public readonly List<ParserMediator.ParserWarning> Warnings = [];
+		/// <summary>控制台输出回放（AnalysisMode PrintC/间隔行、开文件失败 PrintError）。</summary>
+		public readonly List<Action<EmueraConsole>> ConsoleOps = [];
+		/// <summary>本文件最后一次 scaningLine 写（VARI 初期值解析镜像）；null = 本文件未写。</summary>
+		public LogicalLine? ScaningLine;
+		public int EnabledLineCount;
+		public bool HasError;
+	}
+
+	/// <summary>
+	/// ファイル一つを読む（生成阶段）：产出全部收进文件产物，不触碰 LabelDictionary / 控制台 / 共享计数。
+	/// 串行路径下紧随 <see cref="MergeErbFile"/>；生成期对共享状态只读（labelDic 重载检查的合并序
+	/// 快照、isOnlyEvent 已合并宣言、IdentifierDictionary 宏表）。
+	/// </summary>
+	private ErbFileArtifact GenerateErbFile(string filepath, string filename, List<string> isOnlyEvent)
+	{
+		var art = new ErbFileArtifact { Filename = filename };
+		ParserMediator.BeginWarningBuffer(art.Warnings);
+		LogicalLineParser.ScanLineMirror.Value = line => art.ScaningLine = line;
+		try
+		{
+			GenerateErbFileCore(filepath, filename, isOnlyEvent, art);
+		}
+		catch
+		{
+			// 异常路径输出与旧路径一致：已产生的控制台输出与警告照常发射（旧路径为直写/直入全局列表）
+			ReplayConsoleOps(art);
+			ParserMediator.EmitWarningBuffer(art.Warnings);
+			throw;
+		}
+		finally
+		{
+			LogicalLineParser.ScanLineMirror.Value = null;
+			ParserMediator.EndWarningBuffer();
+		}
+		return art;
+	}
+
+	private void GenerateErbFileCore(string filepath, string filename, List<string> isOnlyEvent, ErbFileArtifact art)
+	{
 		using var eReader = new EraStreamReader(Config.Config.UseRenameFile && ParserMediator.RenameDic != null);
 
 		if (!eReader.OpenOnCache(filepath, filename))
 		{
-			output.PrintError(string.Format(trerror.FailedOpenFile.Text, eReader.Filename));
+			art.ConsoleOps.Add(c => c.PrintError(string.Format(trerror.FailedOpenFile.Text, eReader.Filename)));
 			return; // ADR-0019：文件打不开直接跳过，避免空 eReader 进入解析循环
 		}
 		var ppstate = new PPState(env, idDic);
@@ -403,8 +458,11 @@ internal sealed class ErbLoader
 		CharStream st = null!;
 		ScriptPosition? position = null;
 		int funcCount = 0;
+		// 生成期重名判定的文件内视图：跨文件同名经 labelDic.GetEarliestLabelWithName 按合并序读
+		var firstValidLabelByName = new Dictionary<string, FunctionLabelLine>(Config.Config.StrComper);
+		var firstGotoByParent = new Dictionary<FunctionLabelLine, Dictionary<string, GotoLabelLine>>();
 		if (env.AnalysisMode)
-			output.PrintSystemLine(" ");
+			art.ConsoleOps.Add(c => c.PrintSystemLine(" "));
 		while ((st = eReader.ReadEnabledLine(ppstate.Disabled)) != null)
 		{
 			position = new ScriptPosition(eReader.Filename, eReader.LineNo);
@@ -437,31 +495,34 @@ internal sealed class ErbLoader
 					ParserMediator.Warn(trerror.InvalidSharp.Text, position, 1);
 					continue;
 				}
-				if (!LogicalLineParser.ParseSharpLine(funcLine, st, position, isOnlyEvent))
-					noError = false;
+				if (!LogicalLineParser.ParseSharpLine(funcLine, st, position, isOnlyEvent, art.OnlyDeclarations))
+					art.HasError = true;
 				continue;
 			}
 			if (st.Current == '$' || st.Current == '@')
 			{
 				bool isFunction = st.Current == '@';
-				nextLine = LogicalLineParser.ParseLabelLine(st, position, output);
+				nextLine = LogicalLineParser.ParseLabelLine(st, position, output, art.ConsoleOps);
 				if (isFunction)
 				{
 					var label = nextLine as FunctionLabelLine;
 					lastLabelLine = label!;
+					art.FunctionLabels.Add(label!);
 					if (label is InvalidLabelLine)
 					{
-						noError = false;
+						art.HasError = true;
 
 						ParserMediator.Warn(nextLine.ErrMes, position, 2);
-						labelDic.AddInvalidLabel(label);
 					}
 					else// if (label is FunctionLabelLine)
 					{
-						labelDic.AddLabel(label!);
 						if (!label!.IsEvent && (Config.Config.WarnNormalFunctionOverloading || env.AnalysisMode))
 						{
-							FunctionLabelLine seniorLabel = labelDic.GetSameNameLabel(label);
+							// 重载检查（生成期合并序只读视图 + 文件内首现表，与旧“先清同文件旧标签、
+							// AddLabel 后 GetSameNameLabel 取最早同名”语义一致：
+							// excludingFilename = 本文件——重载场景旧标签要到合并阶段才被清掉，须排除）
+							FunctionLabelLine? seniorLabel = labelDic.GetEarliestLabelWithName(label.LabelName, filename);
+							seniorLabel ??= firstValidLabelByName.GetValueOrDefault(label.LabelName);
 							if (seniorLabel != null)
 							{
 								//output.NewLine();
@@ -470,10 +531,11 @@ internal sealed class ErbLoader
 							}
 						}
 						funcCount++;
+						firstValidLabelByName.TryAdd(label.LabelName, label);
 						if (env.AnalysisMode && Config.Config.PrintCPerLine > 0 && funcCount % Config.Config.PrintCPerLine == 0)
 						{
-							output.NewLine();
-							output.PrintSystemLine(" ");
+							art.ConsoleOps.Add(c => c.NewLine());
+							art.ConsoleOps.Add(c => c.PrintSystemLine(" "));
 						}
 					}
 				}
@@ -482,16 +544,28 @@ internal sealed class ErbLoader
 					if (nextLine is GotoLabelLine gotoLabel)
 					{
 						gotoLabel.ParentLabelLine = lastLabelLine!;
-						if (lastLabelLine != null && !labelDic.AddLabelDollar(gotoLabel))
+						if (lastLabelLine != null)
 						{
-							ScriptPosition? pos = labelDic.GetLabelDollar(gotoLabel.LabelName, lastLabelLine).Position;
-							ParserMediator.Warn(string.Format(trerror.LabelIsAlreadyDefined.Text, gotoLabel.LabelName, pos!.Value.Filename, pos!.Value.LineNo.ToString()), position, 2);
+							art.GotoLabels.Add(gotoLabel);
+							// 同関数内 $ 重複判定（AddLabelDollar 的 TryAdd 语义：同 parent+名保留首个）
+							if (!firstGotoByParent.TryGetValue(lastLabelLine, out var byName))
+							{
+								byName = new Dictionary<string, GotoLabelLine>(Config.Config.StrComper);
+								firstGotoByParent.Add(lastLabelLine, byName);
+							}
+							if (byName.TryGetValue(gotoLabel.LabelName, out GotoLabelLine? firstGoto))
+							{
+								ScriptPosition pos = firstGoto.Position!.Value;
+								ParserMediator.Warn(string.Format(trerror.LabelIsAlreadyDefined.Text, gotoLabel.LabelName, pos.Filename, pos.LineNo.ToString()), position, 2);
+							}
+							else
+								byName.Add(gotoLabel.LabelName, gotoLabel);
 						}
 					}
 				}
 				if (nextLine is InvalidLine)
 				{
-					noError = false;
+					art.HasError = true;
 					ParserMediator.Warn(nextLine.ErrMes, position, 2);
 				}
 			}
@@ -516,7 +590,7 @@ internal sealed class ErbLoader
 					continue;
 				if (nextLine is InvalidLine)
 				{
-					noError = false;
+					art.HasError = true;
 					ParserMediator.Warn(nextLine.ErrMes, position, 2);
 				}
 				else if (JSONConfig.Data.UseNewRandom &&
@@ -540,19 +614,59 @@ internal sealed class ErbLoader
 			}
 			nextLine.ParentLabelLine = lastLabelLine!;
 
-			lastLine = addLine(nextLine, lastLine!);
+			lastLine = addLine(art, nextLine, lastLine!);
 		}
-		addLine(new NullLine(), lastLine!);
+		addLine(art, new NullLine(), lastLine!);
 		position = new ScriptPosition(eReader.Filename, -1);
 		ppstate.FileEnd(position);
 		return;
 	}
 
-	private LogicalLine addLine(LogicalLine nextLine, LogicalLine lastLine)
+	/// <summary>
+	/// 合并阶段（erb-loader-parallel Issue 01）：按原文件顺序把文件产物并入共享状态——
+	/// 缓冲警告按序发射、全部 LabelDictionary 写入（IfFileLoadClearLabelWithPath / AddLabel /
+	/// AddInvalidLabel / AddLabelDollar）、#ONLY 宣言入共享列表、控制台输出回放、计数聚合。
+	/// Index / FileIndex 分配序与警告顺序由“逐文件生成后立即按序合并”保证与旧串行路径一致。
+	/// </summary>
+	private void MergeErbFile(ErbFileArtifact art, List<string> isOnlyEvent)
+	{
+		// 警告最先入列：等价于旧路径“解析期即入全局列表”（共享写入若异常也不丢已产出警告）
+		ParserMediator.EmitWarningBuffer(art.Warnings);
+		labelDic.IfFileLoadClearLabelWithPath(art.Filename);
+		ReplayConsoleOps(art);
+		var labels = art.FunctionLabels;
+		for (int i = 0; i < labels.Count; i++)
+		{
+			if (labels[i] is InvalidLabelLine)
+				labelDic.AddInvalidLabel(labels[i]);
+			else
+				labelDic.AddLabel(labels[i]);
+		}
+		var gotoLabels = art.GotoLabels;
+		for (int i = 0; i < gotoLabels.Count; i++)
+			labelDic.AddLabelDollar(gotoLabels[i]);
+		if (art.OnlyDeclarations.Count > 0)
+			isOnlyEvent.AddRange(art.OnlyDeclarations);
+		if (art.ScaningLine != null)
+			setScanLine(art.ScaningLine);
+		enabledLineCount += art.EnabledLineCount;
+		if (art.HasError)
+			noError = false;
+	}
+
+	private void ReplayConsoleOps(ErbFileArtifact art)
+	{
+		var ops = art.ConsoleOps;
+		for (int i = 0; i < ops.Count; i++)
+			ops[i](output);
+		ops.Clear();
+	}
+
+	private static LogicalLine addLine(ErbFileArtifact art, LogicalLine nextLine, LogicalLine lastLine)
 	{
 		if (nextLine == null)
 			return null!;
-		enabledLineCount++;
+		art.EnabledLineCount++;
 		lastLine.NextLine = nextLine;
 		return nextLine;
 	}

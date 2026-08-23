@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Script.Data;
 using MinorShift.Emuera.Runtime.Script.Loader;
 using MinorShift.Emuera.Runtime.Script.Statements;
@@ -93,6 +94,163 @@ public class ErbLoaderTests
 		Assert.True(labelDic.Count >= 2);
 		Assert.Contains(spy, l => l is FunctionLabelLine fl && fl.LabelName == "FUNC_A");
 		Assert.Contains(spy, l => l is FunctionLabelLine fl && fl.LabelName == "FUNC_B");
+	}
+
+	/// <summary>
+	/// erb-loader-parallel Issue 01 行为锚点：同一文件内警告按行序出现。
+	/// $LAB 重複警告（3 行目）必须先于 #ONLY on 非イベント関数警告（5 行目）。
+	/// 产物化重构（生成→合并两步）不得改变文件内警告相对顺序。
+	/// </summary>
+	[Fact]
+	public async Task LoadErbDir_warning_order_within_file_follows_line_order()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		h.WriteErb("ORDER.ERB", "@FOO\n$LAB\n$LAB\nRETURN\n@BAR\n#ONLY\nRETURN\n");
+		await h.PreloadAsync();
+		var loader = NewLoaderWithSpy(h, new List<LogicalLine?>());
+		var labelDic = new LabelDictionary();
+
+		await loader.LoadErbDir(h.ErbDir, displayReport: false, labelDic);
+
+		var lines = h.Console.DisplayLineList.Select(l => l?.ToString() ?? "").ToList();
+		var dupDollar = lines.FindIndex(s => s.Contains("既に同じ関数内"));
+		var onlyOnNonEvent = lines.FindIndex(s => s.Contains("イベント関数以外では#ONLY"));
+		Assert.True(dupDollar >= 0, "LabelIsAlreadyDefined warning missing");
+		Assert.True(onlyOnNonEvent >= 0, "UsableOnlyEventFunc warning missing");
+		Assert.True(dupDollar < onlyOnNonEvent, "warnings within one file must keep line order");
+		// 重複 $ 警告恰好一次（合并不得重复检测）
+		Assert.Equal(1, lines.Count(s => s.Contains("既に同じ関数内")));
+	}
+
+	/// <summary>
+	/// erb-loader-parallel Issue 01 行为锚点：跨文件警告按文件加载序出现，
+	/// 且重名函数警告（FuncIsAlreadyDefined）在其文件内保持位置。
+	/// AnalysisMode 打开重载检查门（env.AnalysisMode 替代 WarnNormalFunctionOverloading）。
+	/// </summary>
+	[Fact]
+	public async Task AnalysisMode_overload_and_cross_file_warning_order_preserved()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		h.WriteErb("A.ERB", "@FOO\n@FOO\nRETURN\n");
+		h.WriteErb("B.ERB", "@FB\n$LAB\n$LAB\nRETURN\n");
+		await h.PreloadAsync();
+		var analysisEnv = new LoaderEnv(h.CsvDir, h.ErbDir, analysisMode: true,
+			analysisFiles: new List<string>(), debugMode: false) { DirAccessor = new FileSystemGameDirAccessor() };
+		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, analysisEnv, _ => { });
+		var labelDic = new LabelDictionary();
+
+		await loader.LoadErbDir(h.ErbDir, displayReport: false, labelDic);
+
+		var lines = h.Console.DisplayLineList.Select(l => l?.ToString() ?? "").ToList();
+		var overload = lines.FindIndex(s => s.Contains("は既に定義"));
+		var dupDollar = lines.FindIndex(s => s.Contains("既に同じ関数内"));
+		Assert.True(overload >= 0, "FuncIsAlreadyDefined warning missing");
+		Assert.True(dupDollar >= 0, "LabelIsAlreadyDefined warning missing");
+		Assert.True(overload < dupDollar, "A.ERB warnings must precede B.ERB warnings");
+	}
+
+	/// <summary>
+	/// erb-loader-parallel Issue 01 行为锚点：#ONLY 跨文件重複宣言只对第二个文件警告一次。
+	/// </summary>
+	[Fact]
+	public async Task LoadErbDir_only_declaration_dup_across_files_warns_once()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		h.WriteErb("A.ERB", "@EVENTTRAIN\n#ONLY\nRETURN\n");
+		h.WriteErb("B.ERB", "@EVENTTRAIN\n#ONLY\nRETURN\n");
+		await h.PreloadAsync();
+		var loader = NewLoaderWithSpy(h, new List<LogicalLine?>());
+		var labelDic = new LabelDictionary();
+
+		await loader.LoadErbDir(h.ErbDir, displayReport: false, labelDic);
+
+		var count = h.Console.DisplayLineList.Count(l => l?.ToString()?.Contains("すでに#ONLYが宣言されています") == true);
+		Assert.Equal(1, count);
+	}
+
+	/// <summary>
+	/// erb-loader-parallel Issue 01 行为锚点：标签 Index / FileIndex 按文件加载序分配。
+	/// 合并阶段按原文件顺序执行全部 LabelDictionary 写入必须复现该分配序。
+	/// </summary>
+	[Fact]
+	public async Task LoadErbDir_label_index_follows_file_order()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		h.WriteErb("A.ERB", "@FUNC_A\nRETURN\n");
+		h.WriteErb("B.ERB", "@FUNC_B\nRETURN\n");
+		await h.PreloadAsync();
+		var loader = NewLoaderWithSpy(h, new List<LogicalLine?>());
+		var labelDic = new LabelDictionary();
+
+		await loader.LoadErbDir(h.ErbDir, displayReport: false, labelDic);
+
+		var labels = labelDic.GetAllLabels(false).OrderBy(l => l.Index).ToList();
+		Assert.Equal(2, labels.Count);
+		Assert.Equal("FUNC_A", labels[0].LabelName);
+		Assert.Equal("FUNC_B", labels[1].LabelName);
+		Assert.True(labels[0].Index < labels[1].Index);
+		Assert.True(labels[0].FileIndex < labels[1].FileIndex);
+	}
+
+	/// <summary>
+	/// erb-loader-parallel Issue 01 行为锚点：LoadErbList（部分重载入口）同样装载标签并保留跨文件警告序。
+	/// </summary>
+	[Fact]
+	public async Task LoadErbList_loads_labels_and_keeps_warning_order()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		var pathA = h.WriteErb("A.ERB", "@FUNC_A\n#ONLY\nRETURN\n");
+		var pathB = h.WriteErb("B.ERB", "@FUNC_B\n$LAB\n$LAB\nRETURN\n");
+		await h.PreloadAsync();
+		var loader = NewLoaderWithSpy(h, new List<LogicalLine?>());
+		var labelDic = new LabelDictionary();
+
+		var ok = await loader.LoadErbList([pathA, pathB], labelDic);
+
+		Assert.True(ok);
+		Assert.True(labelDic.Count >= 2);
+		var lines = h.Console.DisplayLineList.Select(l => l?.ToString() ?? "").ToList();
+		var onlyOnNonEvent = lines.FindIndex(s => s.Contains("イベント関数以外では#ONLY"));
+		var dupDollar = lines.FindIndex(s => s.Contains("既に同じ関数内"));
+		Assert.True(onlyOnNonEvent >= 0);
+		Assert.True(dupDollar >= 0);
+		Assert.True(onlyOnNonEvent < dupDollar);
+	}
+
+	/// <summary>
+	/// erb-loader-parallel Issue 01 行为锚点：部分重载（LoadErbList，非 AnalysisMode 时
+	/// fname 为相对路径、与初载标签的 Position.Filename 一致）同一文件不产生对自身旧标签的
+	/// FuncIsAlreadyDefined 假警告——旧路径解析前 IfFileLoadClearLabelWithPath 先清掉同文件名
+	/// 旧标签；产物化后该清理在合并阶段，生成期检查必须排除（excludingFilename）。
+	/// </summary>
+	[Fact]
+	public async Task LoadErbList_reload_same_file_no_spurious_overload_warning()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		var path = h.WriteErb("RELOAD.ERB", "@FOO\nRETURN\n");
+		await h.PreloadAsync();
+		// 打开重载检查门（非 AnalysisMode 路径走 WarnNormalFunctionOverloading 配置）
+		ConfigData.Current!.GetConfigItem(ConfigCode.WarnNormalFunctionOverloading).SetValue(true);
+		var loader = NewLoaderWithSpy(h, new List<LogicalLine?>());
+		var labelDic = new LabelDictionary();
+
+		await loader.LoadErbDir(h.ErbDir, displayReport: false, labelDic);
+
+		var before = h.Console.DisplayLineCount;
+		var ok = await loader.LoadErbList([path], labelDic);
+
+		Assert.True(ok);
+		Assert.True(labelDic.Count >= 1);
+		var spurious = h.Console.DisplayLineList
+			.Skip(before)
+			.Count(l => l?.ToString()?.Contains("は既に定義") == true);
+		Assert.Equal(0, spurious);
 	}
 
 	/// <summary>
