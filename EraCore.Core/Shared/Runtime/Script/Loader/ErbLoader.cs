@@ -15,6 +15,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using trerror = MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.Error;
 using trsl = MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.SystemLine;
@@ -53,6 +54,10 @@ internal sealed class ErbLoader
 	int enabledLineCount;
 	LabelDictionary labelDic = null!;
 
+	/// <summary>erb-loader-parallel 03：并行生成度上限——窗口内产物同时驻留 = 上限文件数的解析产物，
+	/// 封顶防内存峰值（spec 实测 eraTW 规模 12 核理想并行度 ~8-10x，取 8；默认度 = ProcessorCount）。</summary>
+	internal const int MaxParallelErbFiles = 8;
+
 	bool noError = true;
 	/// <summary>
 	/// 複数のファイルを読む
@@ -67,58 +72,49 @@ internal sealed class ErbLoader
 		#region EE_ファイル読み込み順拡張
 		var firstDir = env.DirAccessor.GetDirectories(erbDir, "*#*", Config.Config.SearchSubdirectory ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly) ?? [];
 		// erb-loader-parallel 02：firstDir 已载文件查重 O(n²)（List 线性扫）→ 集合查找；
-		// 文件系统路径大小写不敏感，与既有 SCIgnoreCase 语义一致
+		// 文件系统路径大小写不敏感，与既有 SCIgnore 语义一致
 		HashSet<string> loadedFiles = new(StringComparer.OrdinalIgnoreCase);
 		#endregion
-		var erbFiles = GetErbFilesFromCache(erbDir) ?? Config.Config.GetFiles(erbDir, "*.ERB") ?? [];
+		var erbFiles = Preload.GetFilesFromCache(erbDir, ".ERB", "ErbLoader") ?? Config.Config.GetFiles(erbDir, "*.ERB") ?? [];
 		List<string> isOnlyEvent = [];
 		noError = true;
 		var starttime = DateTime.Now;
 		EmueraLog.Info("ErbLoader", $"LoadErbDir start: dir={erbDir}, files={erbFiles.Count}, firstDirs={firstDir.Length}");
+		// erb-loader-parallel 03：统一有序待载清单（firstDir 目录序在前、主枚举去重序在后），
+		// 串行 / 并行两条调度共用同一清单与合并序
+		List<(string Filename, string File)> pending = [];
 		try
 		{
 			labelDic.RemoveAll();
 			#region EE_ファイル読み込み順拡張
 			foreach (var dir in firstDir)
 			{
-				var firstErbFiles = GetErbFilesFromCache(dir) ?? Config.Config.GetFiles(dir, erbDir, "*.ERB");
-				foreach (var erb in firstErbFiles)
+				var firstErbFiles = Preload.GetFilesFromCache(dir, ".ERB", "ErbLoader") ?? Config.Config.GetFiles(dir, erbDir, "*.ERB");
+				foreach (var erb in firstErbFiles ?? [])
 				{
-
-					string filename = erb.Key;
-					string file = erb.Value;
-					loadedFiles.Add(file);
-
-#if DEBUG
-					if (displayReport)
-						output.PrintSystemLine(string.Format(trsl.ElapsedTimeLoad.Text, (DateTime.Now - starttime).TotalMilliseconds, filename));
-#else
-					if (displayReport)
-						output.PrintSystemLine(string.Format(trsl.LoadingFile.Text, filename));
-#endif
-					// erb-loader-parallel 01：逐文件“生成产物 → 按序合并”两步（03 并行化的前置结构）
-					var art = await Task.Run(() => GenerateErbFile(file, filename, isOnlyEvent));
-					MergeErbFile(art, isOnlyEvent);
+					loadedFiles.Add(erb.Value);
+					pending.Add((erb.Key, erb.Value));
 				};
 			};
 			#endregion
 
 			foreach (var erb in erbFiles)
 			{
-				string filename = erb.Key;
-				string file = erb.Value;
-				if (loadedFiles.Contains(file))
+				if (loadedFiles.Contains(erb.Value))
 					continue;
-#if DEBUG
-				if (displayReport)
-					output.PrintSystemLine(string.Format(trsl.ElapsedTimeLoad.Text, (DateTime.Now - starttime).TotalMilliseconds, filename));
-#else
-				if (displayReport)
-					output.PrintSystemLine(string.Format(trsl.LoadingFile.Text, filename));
-#endif
-				var art = await Task.Run(() => GenerateErbFile(file, filename, isOnlyEvent));
-				MergeErbFile(art, isOnlyEvent);
+				pending.Add((erb.Key, erb.Value));
 			};
+			// erb-loader-parallel 03：默认并行；配置串行或 AnalysisMode 时走 01 完成时的串行路径
+			//（fallback = 语义偏差排查 / 单线程调试的 abort 杠杆；AnalysisMode 的 PrintC 输出与
+			// funcCount 进度节奏依赖串行即时检查，一律强制串行）
+			// erb-loader-parallel 03：阶段计时（genmerge = 生成+合并，与 ParseScript 分开观测）
+			var phaseSw = Stopwatch.StartNew();
+			if (Config.Config.ParallelErbLoad && !env.AnalysisMode)
+				await LoadPendingParallel(pending, isOnlyEvent, displayReport, starttime);
+			else
+				await LoadPendingSerial(pending, isOnlyEvent, displayReport, starttime);
+			phaseSw.Stop();
+			EmueraLog.Info("ErbLoader", $"phase=genmerge parallel={Config.Config.ParallelErbLoad && !env.AnalysisMode} files={pending.Count} ms={phaseSw.ElapsedMilliseconds}");
 			ParserMediator.FlushWarningList();
 #if DEBUG
 			output.PrintSystemLine(string.Format(trsl.ElapsedTime.Text, (DateTime.Now - starttime).TotalMilliseconds));
@@ -138,6 +134,7 @@ internal sealed class ErbLoader
 			var parseSw = Stopwatch.StartNew();
 			await Task.Run(() => ParseScript());
 			parseSw.Stop();
+			EmueraLog.Info("ErbLoader", $"phase=parsescript ms={parseSw.ElapsedMilliseconds}");
 			if (displayReport)
 				output.PrintSystemLine(string.Format(trsl.ElapsedTime.Text, parseSw.ElapsedMilliseconds));
 
@@ -203,8 +200,9 @@ internal sealed class ErbLoader
 				{
 					output.PrintSystemLine(string.Format(trsl.LoadingFile.Text, fname));
 				}
-				// erb-loader-parallel 01：与 LoadErbDir 同款“生成 → 按序合并”两步
-				var art = GenerateErbFile(fpath, fname, isOnlyEvent);
+				// erb-loader-parallel 01/03：与 LoadErbDir 串行调度同款“生成 → 按序合并”两步
+				//（部分重载文件数少，不参与并行化；跨文件检查保持串行即时）
+				var art = GenerateErbFile(fpath, fname, isOnlyEvent, deferCrossFileChecks: false);
 				MergeErbFile(art, isOnlyEvent);
 			};
 		});
@@ -389,6 +387,17 @@ internal sealed class ErbLoader
 	}
 
 	/// <summary>
+	/// 并行生成期的跨文件重名检查待办（erb-loader-parallel 03）。并行阶段 labelDic 不接受并发读，
+	/// 该检查延后到合并期（<see cref="ErbLoader.MergeErbFile"/>）执行；为保证警告仍出现在
+	/// 原 @ 行的行序位置，生成期先在 <see cref="ErbFileArtifact.Warnings"/> 放占位槽，
+	/// 合并期替换为真实警告或删除。
+	/// </summary>
+	internal readonly record struct PendingOverloadCheck(int Slot, FunctionLabelLine Label, FunctionLabelLine? InFileSenior);
+
+	/// <summary>并行生成期的跨文件 #ONLY 重複宣言检查待办（同上，占位槽机制）。</summary>
+	internal readonly record struct PendingOnlyCheck(int Slot, string LabelName, ScriptPosition Position);
+
+	/// <summary>
 	/// 单文件解析产物（erb-loader-parallel Issue 01）。
 	/// 生成阶段（<see cref="GenerateErbFile"/>）只写本对象：行链挂在各标签线上、警告经
 	/// ParserMediator 重定向进 <see cref="Warnings"/>、控制台输出（AnalysisMode PrintC/间隔行、
@@ -411,6 +420,10 @@ internal sealed class ErbLoader
 		public readonly List<Action<EmueraConsole>> ConsoleOps = [];
 		/// <summary>本文件最后一次 scaningLine 写（VARI 初期值解析镜像）；null = 本文件未写。</summary>
 		public LogicalLine? ScaningLine;
+		/// <summary>并行生成期的跨文件重名检查待办（占位槽）；串行路径恒空。</summary>
+		public readonly List<PendingOverloadCheck> PendingOverloads = [];
+		/// <summary>并行生成期的跨文件 #ONLY 重複宣言检查待办（占位槽）；串行路径恒空。</summary>
+		public readonly List<PendingOnlyCheck> PendingOnlys = [];
 		public int EnabledLineCount;
 		public bool HasError;
 	}
@@ -420,20 +433,28 @@ internal sealed class ErbLoader
 	/// 串行路径下紧随 <see cref="MergeErbFile"/>；生成期对共享状态只读（labelDic 重载检查的合并序
 	/// 快照、isOnlyEvent 已合并宣言、IdentifierDictionary 宏表）。
 	/// </summary>
-	private ErbFileArtifact GenerateErbFile(string filepath, string filename, List<string> isOnlyEvent)
+	/// <param name="deferCrossFileChecks">erb-loader-parallel 03：并行调度下为 true——跨文件重名与
+	/// #ONLY 重複检查延后到合并期（占位槽保行序），生成期不读 labelDic / isOnlyEvent 共享快照。</param>
+	/// <param name="replayOnFailure">串行调度为 true（异常时本方法内回放控制台输出与警告再抛，与旧路径
+	/// 一致）；并行调度为 false（缓冲清理照常，回放由主线程按窗口序统一执行，避免并发控制台写）。</param>
+	private ErbFileArtifact GenerateErbFile(string filepath, string filename, List<string> isOnlyEvent,
+		bool deferCrossFileChecks, bool replayOnFailure = true)
 	{
 		var art = new ErbFileArtifact { Filename = filename };
 		ParserMediator.BeginWarningBuffer(art.Warnings);
 		LogicalLineParser.ScanLineMirror.Value = line => art.ScaningLine = line;
 		try
 		{
-			GenerateErbFileCore(filepath, filename, isOnlyEvent, art);
+			GenerateErbFileCore(filepath, filename, isOnlyEvent, art, deferCrossFileChecks);
 		}
 		catch
 		{
 			// 异常路径输出与旧路径一致：已产生的控制台输出与警告照常发射（旧路径为直写/直入全局列表）
-			ReplayConsoleOps(art);
-			ParserMediator.EmitWarningBuffer(art.Warnings);
+			if (replayOnFailure)
+			{
+				ReplayConsoleOps(art);
+				ParserMediator.EmitWarningBuffer(art.Warnings);
+			}
 			throw;
 		}
 		finally
@@ -444,7 +465,8 @@ internal sealed class ErbLoader
 		return art;
 	}
 
-	private void GenerateErbFileCore(string filepath, string filename, List<string> isOnlyEvent, ErbFileArtifact art)
+	private void GenerateErbFileCore(string filepath, string filename, List<string> isOnlyEvent, ErbFileArtifact art,
+		bool deferCrossFileChecks)
 	{
 		using var eReader = new EraStreamReader(Config.Config.UseRenameFile && ParserMediator.RenameDic != null);
 
@@ -454,6 +476,9 @@ internal sealed class ErbLoader
 			return; // ADR-0019：文件打不开直接跳过，避免空 eReader 进入解析循环
 		}
 		var ppstate = new PPState(env, idDic);
+		// 并行调度：跨文件 #ONLY 重複检查延后（共享 isOnlyEvent 是同窗口其他文件未合并的不完整快照），
+		// 传独立空视图禁用即时检查；串行调度传共享快照即时检查（01 行为）。
+		List<string> mergedOnlyView = deferCrossFileChecks ? [] : isOnlyEvent;
 		LogicalLine nextLine = new NullLine();
 		LogicalLine lastLine = new NullLine();
 		FunctionLabelLine lastLabelLine = null!;
@@ -497,8 +522,22 @@ internal sealed class ErbLoader
 					ParserMediator.Warn(trerror.InvalidSharp.Text, position, 1);
 					continue;
 				}
-				if (!LogicalLineParser.ParseSharpLine(funcLine, st, position, isOnlyEvent, art.OnlyDeclarations))
+				// 占位锚：本 # 行首个警告的槽位（跨文件 ONLY 检查占位须插到这里——
+				// 串行路径该警告在 ParseSharpLine 的 Contains 检查点发射，先于同行的 BeIgnore* 警告）
+				int lineWarnStart = art.Warnings.Count;
+				int onlyCountBefore = art.OnlyDeclarations.Count;
+				if (!LogicalLineParser.ParseSharpLine(funcLine, st, position, mergedOnlyView, art.OnlyDeclarations))
 					art.HasError = true;
+				if (deferCrossFileChecks && art.OnlyDeclarations.Count > onlyCountBefore)
+				{
+					int insertAt = lineWarnStart;
+					for (int j = onlyCountBefore; j < art.OnlyDeclarations.Count; j++)
+					{
+						art.Warnings.Insert(insertAt, PlaceholderWarning());
+						art.PendingOnlys.Add(new PendingOnlyCheck(insertAt, art.OnlyDeclarations[j], position!.Value));
+						insertAt++;
+					}
+				}
 				continue;
 			}
 			if (st.Current == '$' || st.Current == '@')
@@ -518,18 +557,30 @@ internal sealed class ErbLoader
 					}
 					else// if (label is FunctionLabelLine)
 					{
+						var inFileSenior = firstValidLabelByName.GetValueOrDefault(label!.LabelName);
 						if (!label!.IsEvent && (Config.Config.WarnNormalFunctionOverloading || env.AnalysisMode))
 						{
-							// 重载检查（生成期合并序只读视图 + 文件内首现表，与旧“先清同文件旧标签、
-							// AddLabel 后 GetSameNameLabel 取最早同名”语义一致：
-							// excludingFilename = 本文件——重载场景旧标签要到合并阶段才被清掉，须排除）
-							FunctionLabelLine? seniorLabel = labelDic.GetEarliestLabelWithName(label.LabelName, filename);
-							seniorLabel ??= firstValidLabelByName.GetValueOrDefault(label.LabelName);
-							if (seniorLabel != null)
+							if (deferCrossFileChecks)
 							{
-								//output.NewLine();
-								ParserMediator.Warn(string.Format(trerror.FuncIsAlreadyDefined.Text, label.LabelName, seniorLabel.Position!.Value.Filename, seniorLabel.Position!.Value.LineNo.ToString()), position, 1);
-								funcCount = -1;
+								// 并行调度：跨文件 senior 合并期查 labelDic（此处不可并发读）；
+								// 文件内首现表作 InFileSenior 一并延后——合并期 senior 判定序
+								// （跨文件最早 ?? 文件内首现）与串行即时检查一致，警告仍在 @ 行行序位置
+								art.PendingOverloads.Add(new PendingOverloadCheck(art.Warnings.Count, label, inFileSenior));
+								art.Warnings.Add(PlaceholderWarning());
+							}
+							else
+							{
+								// 重载检查（生成期合并序只读视图 + 文件内首现表，与旧“先清同文件旧标签、
+								// AddLabel 后 GetSameNameLabel 取最早同名”语义一致：
+								// excludingFilename = 本文件——重载场景旧标签要到合并阶段才被清掉，须排除）
+								FunctionLabelLine? seniorLabel = labelDic.GetEarliestLabelWithName(label.LabelName, filename);
+								seniorLabel ??= inFileSenior;
+								if (seniorLabel != null)
+								{
+									//output.NewLine();
+									ParserMediator.Warn(string.Format(trerror.FuncIsAlreadyDefined.Text, label.LabelName, seniorLabel.Position!.Value.Filename, seniorLabel.Position!.Value.LineNo.ToString()), position, 1);
+									funcCount = -1;
+								}
 							}
 						}
 						funcCount++;
@@ -629,9 +680,11 @@ internal sealed class ErbLoader
 	/// 缓冲警告按序发射、全部 LabelDictionary 写入（IfFileLoadClearLabelWithPath / AddLabel /
 	/// AddInvalidLabel / AddLabelDollar）、#ONLY 宣言入共享列表、控制台输出回放、计数聚合。
 	/// Index / FileIndex 分配序与警告顺序由“逐文件生成后立即按序合并”保证与旧串行路径一致。
+	/// 03：并行产物先经 <see cref="ResolvePendingCrossFileChecks"/> 补齐跨文件检查（占位槽替换）。
 	/// </summary>
 	private void MergeErbFile(ErbFileArtifact art, List<string> isOnlyEvent)
 	{
+		ResolvePendingCrossFileChecks(art, isOnlyEvent);
 		// 警告最先入列：等价于旧路径“解析期即入全局列表”（共享写入若异常也不丢已产出警告）
 		ParserMediator.EmitWarningBuffer(art.Warnings);
 		labelDic.IfFileLoadClearLabelWithPath(art.Filename);
@@ -656,12 +709,138 @@ internal sealed class ErbLoader
 			noError = false;
 	}
 
+	/// <summary>并行产物的跨文件检查占位（合并期由 <see cref="ResolvePendingCrossFileChecks"/> 替换或删除）。</summary>
+	private static ParserMediator.ParserWarning PlaceholderWarning() => new("", null, 1, null!);
+
+	/// <summary>
+	/// erb-loader-parallel 03：合并期补检——并行生成期延后的跨文件重名（FuncIsAlreadyDefined）与
+	/// #ONLY 重複宣言（AlreadyDeclaredOnly）检查。此时 labelDic / isOnlyEvent 恰含“更早合并文件”
+	/// 的全部内容（本文件的 IfFileLoadClearLabelWithPath 尚未执行、宣言尚未 AddRange），与串行路径
+	/// 生成期快照的可见性一致，判定结果与警告序（占位槽位置）均与串行一致。串行产物无待办，no-op。
+	/// </summary>
+	private void ResolvePendingCrossFileChecks(ErbFileArtifact art, List<string> isOnlyEvent)
+	{
+		if (art.PendingOverloads.Count == 0 && art.PendingOnlys.Count == 0)
+			return;
+		List<int> deadSlots = [];
+		foreach (var check in art.PendingOverloads)
+		{
+			// senior 判定序与串行即时检查一致：跨文件最早（排除本文件名，重载场景旧标签
+			// 由本文件稍后的 IfFileLoadClearLabelWithPath 清理）?? 文件内首现
+			FunctionLabelLine? seniorLabel = labelDic.GetEarliestLabelWithName(check.Label.LabelName, art.Filename);
+			seniorLabel ??= check.InFileSenior;
+			if (seniorLabel != null)
+			{
+				art.Warnings[check.Slot] = new ParserMediator.ParserWarning(
+					string.Format(trerror.FuncIsAlreadyDefined.Text, check.Label.LabelName,
+						seniorLabel.Position!.Value.Filename, seniorLabel.Position!.Value.LineNo.ToString()),
+					check.Label.Position, 1, null!);
+			}
+			else
+				deadSlots.Add(check.Slot);
+		}
+		foreach (var check in art.PendingOnlys)
+		{
+			if (isOnlyEvent.Contains(check.LabelName))
+			{
+				art.Warnings[check.Slot] = new ParserMediator.ParserWarning(
+					string.Format(trerror.AlreadyDeclaredOnly.Text, check.LabelName), check.Position, 1, null!);
+			}
+			else
+				deadSlots.Add(check.Slot);
+		}
+		deadSlots.Sort();
+		for (int i = deadSlots.Count - 1; i >= 0; i--)
+			art.Warnings.RemoveAt(deadSlots[i]);
+	}
+
 	private void ReplayConsoleOps(ErbFileArtifact art)
 	{
 		var ops = art.ConsoleOps;
 		for (int i = 0; i < ops.Count; i++)
 			ops[i](output);
 		ops.Clear();
+	}
+
+	/// <summary>displayReport 逐文件进度行（原两处内联打印收敛；DEBUG 构建带累计耗时）。</summary>
+	private void PrintLoadingProgress(bool displayReport, DateTime starttime, string filename)
+	{
+		if (!displayReport)
+			return;
+#if DEBUG
+		output.PrintSystemLine(string.Format(trsl.ElapsedTimeLoad.Text, (DateTime.Now - starttime).TotalMilliseconds, filename));
+#else
+		output.PrintSystemLine(string.Format(trsl.LoadingFile.Text, filename));
+#endif
+	}
+
+	/// <summary>
+	/// 串行调度（erb-loader-parallel 03 fallback）：逐文件“生成 → 按序合并”，与 01 完成时的行为
+	/// 完全一致——进度行在生成前打印、跨文件检查生成期即时、异常即回放再抛。
+	/// </summary>
+	private async Task LoadPendingSerial(List<(string Filename, string File)> pending, List<string> isOnlyEvent,
+		bool displayReport, DateTime starttime)
+	{
+		foreach (var (filename, file) in pending)
+		{
+			PrintLoadingProgress(displayReport, starttime, filename);
+			var art = await Task.Run(() => GenerateErbFile(file, filename, isOnlyEvent, deferCrossFileChecks: false));
+			MergeErbFile(art, isOnlyEvent);
+		}
+	}
+
+	/// <summary>
+	/// 并行调度（erb-loader-parallel 03）：全部文件入池生成，经 <see cref="MaxParallelErbFiles"/> 封顶的
+	/// 信号量限流（并发生成中的文件数 = degree，防内存峰值）；本方法按原文件序逐个 await 产物并合并——
+	/// 无窗口 barrier，最慢文件的长尾不再阻塞后续文件的合并（流水线）。生成期经 per-task AsyncLocal
+	/// （警告缓冲 / ScanLineMirror / Config scope 由 Task.Run 快照 ExecutionContext 各自独立）做到无共享写；
+	/// 全部 LabelDictionary 写入与警告发射都在本方法（主线程 async 流）按序执行。进度行随合并按序补发——
+	/// 输出内容与顺序与串行一致（PR 决策：按序补发而非聚合行）。异常任务不在任务内回放控制台输出，
+	/// 由本方法按序单线程回放后抛首个异常（避免并发控制台写）。
+	/// </summary>
+	private async Task LoadPendingParallel(List<(string Filename, string File)> pending, List<string> isOnlyEvent,
+		bool displayReport, DateTime starttime)
+	{
+		int degree = Math.Min(Environment.ProcessorCount, MaxParallelErbFiles);
+		EmueraLog.Info("ErbLoader", $"LoadPendingParallel: files={pending.Count}, degree={degree}");
+		var arts = new ErbFileArtifact?[pending.Count];
+		var errors = new Exception?[pending.Count];
+		using var gate = new SemaphoreSlim(degree, degree);
+		var tasks = new Task[pending.Count];
+		for (int i = 0; i < pending.Count; i++)
+		{
+			int idx = i; // for 循环变量闭包陷阱：任务体必须捕获本迭代的独立副本
+			tasks[i] = Task.Run(async () =>
+			{
+				await gate.WaitAsync();
+				try
+				{
+					arts[idx] = GenerateErbFile(pending[idx].File, pending[idx].Filename, isOnlyEvent,
+						deferCrossFileChecks: true, replayOnFailure: false);
+				}
+				catch (Exception ex) { errors[idx] = ex; }
+				finally
+				{
+					gate.Release();
+				}
+			});
+		}
+		for (int i = 0; i < pending.Count; i++)
+		{
+			await tasks[i];
+			if (errors[i] != null)
+			{
+				if (arts[i] != null)
+				{
+					// 复刻串行路径 GenerateErbFile 的异常回放语义（单线程执行）
+					ReplayConsoleOps(arts[i]!);
+					ParserMediator.EmitWarningBuffer(arts[i]!.Warnings);
+				}
+				throw errors[i]!;
+			}
+			PrintLoadingProgress(displayReport, starttime, pending[i].Filename);
+			MergeErbFile(arts[i]!, isOnlyEvent);
+		}
 	}
 
 	private static LogicalLine addLine(ErbFileArtifact art, LogicalLine nextLine, LogicalLine lastLine)
@@ -1705,25 +1884,6 @@ internal sealed class ErbLoader
 		}
 	}
 
-	/// <summary>ADR-0019：从 Preload 缓存获取 ERB 文件列表（SAF 路径专用）。
-	/// 用 Unescape 后的 documentId 前缀过滤（避免 raw URI 上 %2F 前缀匹配失效）；
-	/// Key = 相对 dir 的逻辑相对路径（对齐 Config.getFiles）；Value = 缓存全路径键。
-	/// erb-loader-parallel 02：缓存键只枚举一次——快照后复用（含日志取数）。</summary>
-	private static List<KeyValuePair<string, string>>? GetErbFilesFromCache(string dirPath)
-	{
-		if (!SafPath.IsContentUri(dirPath)) return null;
-		var cachedKeys = Preload.GetAllCachedKeys().ToList();
-		var erbFiles = cachedKeys
-			.Where(k => k.EndsWith(".ERB", StringComparison.OrdinalIgnoreCase)
-				&& SafPath.IsUnderRoot(dirPath, k))
-			.Select(k => new KeyValuePair<string, string>(
-				SafPath.GetRelativePathFromRoot(dirPath, k), k))
-			.ToList();
-		if (erbFiles.Count == 0)
-			EmueraLog.Info("ErbLoader", $"GetErbFilesFromCache: 0 .ERB under root in {cachedKeys.Count} cached keys");
-		else
-			EmueraLog.Info("ErbLoader", $"GetErbFilesFromCache: {erbFiles.Count} files, firstKey={erbFiles[0].Key}");
-		return erbFiles;
-	}
+	/// <summary>erb-loader-parallel 03：孪生实现收敛至 Preload.GetFilesFromCache（扩展名 + 日志标签参数化）。</summary>
 
 }

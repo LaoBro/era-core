@@ -95,6 +95,8 @@ internal sealed class Config
 	public static bool WarnFunctionOverloading => Current!._data.GetConfigValue<bool>(ConfigCode.WarnFunctionOverloading);
 	public static int DisplayWarningLevel => Current!._data.GetConfigValue<int>(ConfigCode.DisplayWarningLevel);
 	public static bool DisplayReport => Current!._data.GetConfigValue<bool>(ConfigCode.DisplayReport);
+	/// <summary>erb-loader-parallel 03：ERB 并行加载开关（默认 true）。false = 串行 fallback（排查语义偏差/单线程调试）；AnalysisMode 一律强制串行。</summary>
+	public static bool ParallelErbLoad => Current!._data.GetConfigValue<bool>(ConfigCode.ParallelErbLoad);
 	public static ReduceArgumentOnLoadFlag ReduceArgumentOnLoad => Current!._data.GetConfigValue<ReduceArgumentOnLoadFlag>(ConfigCode.ReduceArgumentOnLoad);
 	public static bool IgnoreUncalledFunction => Current!._data.GetConfigValue<bool>(ConfigCode.IgnoreUncalledFunction);
 	public static DisplayWarningFlag FunctionNotFoundWarning => Current!._data.GetConfigValue<DisplayWarningFlag>(ConfigCode.FunctionNotFoundWarning);

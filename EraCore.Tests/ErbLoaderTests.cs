@@ -321,4 +321,129 @@ public class ErbLoaderTests
 		// 去重失效会双重装载 FUNC_SUB → 主循环重名警告或标签数 > 2
 		Assert.Equal(1, labels.Count(l => l.LabelName == "FUNC_SUB"));
 	}
+
+	// ===== erb-loader-parallel Issue 03：并行解析 + 按序合并 =====
+	// 默认配置 ParallelErbLoad=true，上方既有锚点测试已直接覆盖并行路径；
+	// 以下测试针对并行化的独有风险面：跨文件检查占位槽、displayReport 按序补发、串行 fallback 等价。
+
+	/// <summary>
+	/// 03 行为锚点：并行路径下跨文件重名检查经合并期补检（占位槽）——警告仍发射、
+	/// 行序位置正确（本文件更早行的警告在前）、senior 引用跨文件最早标签（优先于文件内首现）。
+	/// </summary>
+	[Fact]
+	public async Task LoadErbDir_parallel_cross_file_overload_keeps_order_and_senior()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		ConfigData.Current!.GetConfigItem(ConfigCode.WarnNormalFunctionOverloading).SetValue(true);
+		// B 的 #ONLY 警告（2 行目）必须先于 B 的 @FOO 跨文件重名警告（4 行目）
+		h.WriteErb("A.ERB", "@FOO\nRETURN\n");
+		h.WriteErb("B.ERB", "@BAR\n#ONLY\nRETURN\n@FOO\nRETURN\n");
+		// C 文件内重名（InFileSenior 路径）+ D 跨文件重名（senior 引用 C 的首现）
+		h.WriteErb("C.ERB", "@DUP\n@DUP\nRETURN\n");
+		h.WriteErb("D.ERB", "@DUP\nRETURN\n");
+		await h.PreloadAsync();
+		var loader = NewLoaderWithSpy(h, new List<LogicalLine?>());
+		var labelDic = new LabelDictionary();
+
+		var ok = await loader.LoadErbDir(h.ErbDir, displayReport: false, labelDic);
+
+		Assert.True(ok);
+		var lines = h.Console.DisplayLineList.Select(l => l?.ToString() ?? "").ToList();
+		var onlyOnNonEvent = lines.FindIndex(s => s.Contains("イベント関数以外では#ONLY"));
+		var overloadFoo = lines.FindIndex(s => s.Contains("FOO") && s.Contains("は既に定義"));
+		Assert.True(onlyOnNonEvent >= 0, "UsableOnlyEventFunc warning missing");
+		Assert.True(overloadFoo >= 0, "cross-file FuncIsAlreadyDefined warning missing (placeholder not resolved)");
+		Assert.True(onlyOnNonEvent < overloadFoo, "overload warning must sit at its line position (after #ONLY line)");
+		Assert.Contains("A.ERB", lines[overloadFoo]);
+		var overloadDup = lines.Where(s => s.Contains("DUP") && s.Contains("は既に定義")).ToList();
+		Assert.Equal(2, overloadDup.Count); // C 内 1 处 + D 跨文件 1 处
+		Assert.Contains("C.ERB", overloadDup[0]);
+		Assert.Contains("C.ERB", overloadDup[1]);
+	}
+
+	/// <summary>
+	/// 03 行为锚点：并行路径下跨文件 #ONLY 重複宣言（AlreadyDeclaredOnly）仍只对第二个文件警告一次。
+	/// </summary>
+	[Fact]
+	public async Task LoadErbDir_parallel_cross_file_only_dup_warns_once()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		h.WriteErb("A.ERB", "@EVENTTRAIN\n#ONLY\nRETURN\n");
+		h.WriteErb("B.ERB", "@EVENTTRAIN\n#ONLY\nRETURN\n");
+		await h.PreloadAsync();
+		var loader = NewLoaderWithSpy(h, new List<LogicalLine?>());
+		var labelDic = new LabelDictionary();
+
+		var ok = await loader.LoadErbDir(h.ErbDir, displayReport: false, labelDic);
+
+		Assert.True(ok);
+		var count = h.Console.DisplayLineList.Count(l => l?.ToString()?.Contains("すでに#ONLYが宣言されています") == true);
+		Assert.Equal(1, count);
+	}
+
+	/// <summary>
+	/// 03 等价性（spec 接缝 2 单测版）：同一游戏分别以并行 / 串行 fallback 加载，
+	/// 标签签名（名:Index:FileIndex 序列）与警告输出（逐字）完全一致。
+	/// </summary>
+	[Fact]
+	public async Task LoadErbDir_serial_fallback_equivalent_to_parallel()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		ConfigData.Current!.GetConfigItem(ConfigCode.WarnNormalFunctionOverloading).SetValue(true);
+		ConfigData.Current!.GetConfigItem(ConfigCode.SearchSubdirectory).SetValue(true);
+		Directory.CreateDirectory(Path.Combine(h.ErbDir, "1#PRI"));
+		File.WriteAllText(Path.Combine(h.ErbDir, "1#PRI", "SUB.ERB"), "@FOO\nRETURN\n");
+		// 覆盖面：firstDir 优先序 / 跨文件重名 / 文件内重名 / #ONLY 跨文件重複 / $ 重複 / 标签引数
+		h.WriteErb("A.ERB", "@FOO\nRETURN\n@EVENTTRAIN\n#ONLY\nRETURN\n@SYS\nRETURN\n");
+		h.WriteErb("B.ERB", "@FOO\n$LAB\n$LAB\nRETURN\n@EVENTTRAIN\n#ONLY\nRETURN\n@BFOO(X, Y)\nRETURN\n@BFOO\nRETURN\n");
+		await h.PreloadAsync();
+
+		var beforeParallel = h.Console.DisplayLineCount;
+		var labelDicParallel = new LabelDictionary();
+		await NewLoaderWithSpy(h, new List<LogicalLine?>()).LoadErbDir(h.ErbDir, displayReport: false, labelDicParallel);
+		// DEBUG 构建有阶段性 ElapsedTime 计时行（毫秒数值天然不稳定），比对前过滤
+		var parallelLines = h.Console.DisplayLineList.Skip(beforeParallel)
+			.Select(l => l?.ToString() ?? "").Where(s => !s.StartsWith("経過時間:")).ToList();
+
+		var before = h.Console.DisplayLineCount;
+		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelErbLoad).SetValue(false);
+		var labelDicSerial = new LabelDictionary();
+		await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { })
+			.LoadErbDir(h.ErbDir, displayReport: false, labelDicSerial);
+		var serialLines = h.Console.DisplayLineList.Skip(before)
+			.Select(l => l?.ToString() ?? "").Where(s => !s.StartsWith("経過時間:")).ToList();
+
+		static List<string> Signature(LabelDictionary dic) =>
+			dic.GetAllLabels(false).OrderBy(l => l.Index)
+				.Select(l => $"{l.LabelName}:{l.Index}:{l.FileIndex}").ToList();
+		Assert.Equal(Signature(labelDicSerial), Signature(labelDicParallel));
+		Assert.Equal(serialLines, parallelLines);
+	}
+
+	/// <summary>
+	/// 03 行为锚点：displayReport 逐文件进度行在并行模式下按文件序补发（PR 决策：按序补发而非聚合行），
+	/// 跨窗口（文件数 > 并行度上限 8）不乱序。
+	/// </summary>
+	[Fact]
+	public async Task LoadErbDir_parallel_progress_lines_follow_file_order()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		for (int i = 0; i < 10; i++)
+			h.WriteErb($"F{i:D2}.ERB", $"@FUNC_{i}\nRETURN\n");
+		await h.PreloadAsync();
+		var loader = NewLoaderWithSpy(h, new List<LogicalLine?>());
+		var labelDic = new LabelDictionary();
+
+		await loader.LoadErbDir(h.ErbDir, displayReport: true, labelDic);
+
+		var lines = h.Console.DisplayLineList.Select(l => l?.ToString() ?? "").ToList();
+		var idx = Enumerable.Range(0, 10).Select(i => lines.FindIndex(s => s.Contains($"F{i:D2}.ERB"))).ToArray();
+		Assert.All(idx, v => Assert.True(v >= 0, "progress line missing for some file"));
+		for (int i = 1; i < idx.Length; i++)
+			Assert.True(idx[i - 1] < idx[i], $"progress lines out of order at F{i:D2}");
+	}
 }

@@ -192,4 +192,7 @@ internal enum ConfigCode
 	CBScrollCount,
 	CBMinTimer,
 	#endregion
+	#region erb-loader-parallel
+	ParallelErbLoad,
+	#endregion
 }

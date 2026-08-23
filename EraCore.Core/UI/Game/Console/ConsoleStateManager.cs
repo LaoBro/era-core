@@ -59,11 +59,8 @@ internal sealed class ConsoleStateManager
             _state._genericTimerStopwatch.Restart();
 
         Preload.Clear();
-        // erb-loader-parallel 02：ERB/CSV 两棵树的 Preload 并行执行——Load 内部本就
-        // Parallel.ForEach 读文件，串行 await 白付一棵树的墙钟；缓存写入为 ConcurrentDictionary
-        await Task.WhenAll(
-            Preload.Load(Program.ErbDir, GamePaths.Current.DirAccessor),
-            Preload.Load(Program.CsvDir, GamePaths.Current.DirAccessor));
+        // erb-loader-parallel 03：两棵树并行预载收敛为单一入口（02 引入 WhenAll，03 收敛调用方）
+        await Preload.LoadTreesAsync(Program.ErbDir, Program.CsvDir, GamePaths.Current.DirAccessor);
 
         logWriter?.WriteLine("File:Preload:End " + boottimeDebugStopwatch.ElapsedMilliseconds + "ms");
 

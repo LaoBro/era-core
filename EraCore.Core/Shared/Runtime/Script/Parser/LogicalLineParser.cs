@@ -21,6 +21,15 @@ internal static class LogicalLineParser
 	// 重定向该写会改变它们所见（ADR-0012 后续已记录）。镜像仅供文件产物记录终值，合并阶段回放。
 	internal static readonly AsyncLocal<Action<LogicalLine>?> ScanLineMirror = new();
 
+	// erb-loader-parallel 03：生成期 scaningLine 值的 per-task 落点。本方法（ParseSharpLine 的
+	// #DIM 初期值解析）是加载期唯一非 sink 写点；并行生成期间多任务并发写共享的
+	// GlobalStatic.Process.scaningLine 会互相覆盖，使生成期读者（Creator.Method.String 的
+	// InvalidUnicode 警告等）拿到别的文件刚写的行。改为写本 AsyncLocal：任务内写后读语义
+	// 与旧全局字段一致（生成期读者都在同一任务内同步执行），跨任务天然隔离，合并阶段仍由
+	// ScanLineMirror 终值回放到全局 sink（串行语义不变）。加载期之外的读者走
+	/// <see cref="GlobalStatic"/>.Process.scaningLine（runtime 不变）。
+	internal static readonly AsyncLocal<LogicalLine?> ScanLineLocal = new();
+
 	/// <param name="mergedOnlyDeclarations">已合并入共享列表的 #ONLY 宣言（生成期只读，合并序快照）。</param>
 	/// <param name="fileOnlyDeclarations">本文件新宣言的落点（文件产物字段，合并阶段 AddRange 进共享列表）。</param>
 	public static bool ParseSharpLine(FunctionLabelLine label, CharStream st, ScriptPosition? position,
@@ -488,7 +497,10 @@ internal static class LogicalLineParser
 								//初期値がある
 								if (!right.IsWhiteSpace())
 								{
-									GlobalStatic.Process.scaningLine = line;
+									// erb-loader-parallel 03：写 ScanLineLocal（per-task），不再直写共享全局——
+									// 生成期读者读本 AsyncLocal（同任务写后读，语义与旧全局直写一致），
+									// 全局终值由合并阶段经 ScanLineMirror 回放 sink 补齐（Issue 01 既有机制）
+									ScanLineLocal.Value = line;
 									ScanLineMirror.Value?.Invoke(line);
 									var wc = LexicalAnalyzer.Analyse(new CharStream(right.ToString()), LexEndWith.EoL, LexAnalyzeFlag.None);
 									exp = ExpressionParser.ReduceIntegerTerm(wc, TermEndWith.EoL);

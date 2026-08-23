@@ -41,7 +41,7 @@ internal sealed class ErhLoader
 	/// <returns></returns>
 	public bool LoadHeaderFiles(string headerDir, bool displayReport)
 	{
-		List<KeyValuePair<string, string>>? headerFiles = GetErhFilesFromCache(headerDir);
+		List<KeyValuePair<string, string>>? headerFiles = Preload.GetFilesFromCache(headerDir, ".ERH", "ErhLoader");
 		if (headerFiles == null)
 			headerFiles = Config.Config.GetFiles(headerDir, "*.ERH");
 		headerFiles ??= [];
@@ -443,23 +443,5 @@ internal sealed class ErhLoader
 		//idDic.AddRefMethod(UserDefinedRefMethod.Create(data));
 	}
 
-	/// <summary>ADR-0019：从 Preload 缓存获取 ERH 文件列表（SAF 路径专用）。
-	/// Key = 相对 dir 的逻辑相对路径；Value = 缓存全路径键（OpenOnCache 精确命中）。
-	/// erb-loader-parallel 02：缓存键只枚举一次——快照后复用（含日志取数）。</summary>
-	private static List<KeyValuePair<string, string>>? GetErhFilesFromCache(string dirPath)
-	{
-		if (!SafPath.IsContentUri(dirPath)) return null;
-		var cachedKeys = Preload.GetAllCachedKeys().ToList();
-		var erhFiles = cachedKeys
-			.Where(k => k.EndsWith(".ERH", StringComparison.OrdinalIgnoreCase)
-				&& SafPath.IsUnderRoot(dirPath, k))
-			.Select(k => new KeyValuePair<string, string>(
-				SafPath.GetRelativePathFromRoot(dirPath, k), k))
-			.ToList();
-		if (erhFiles.Count == 0)
-			EmueraLog.Info("ErhLoader", $"GetErhFilesFromCache: 0 .ERH under root in {cachedKeys.Count} cached keys");
-		else
-			EmueraLog.Info("ErhLoader", $"GetErhFilesFromCache: {erhFiles.Count} files, firstKey={erhFiles[0].Key}");
-		return erhFiles;
-	}
+	/// <summary>erb-loader-parallel 03：孪生实现收敛至 Preload.GetFilesFromCache（扩展名 + 日志标签参数化）。</summary>
 }

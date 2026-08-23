@@ -123,17 +123,15 @@ internal sealed class LoaderTestHarness : IDisposable
 		return path;
 	}
 
-	/// <summary>
-	/// 预加载 erb/csv 目录（EraStreamReader.OpenOnCache 经 Preload.GetFileLines 读缓存）。
-	/// 测试在写入 ERH/ERB 文件后、调用 loader 前必须 await 本方法。
-	/// erb-loader-parallel 02：与启动路径同款 WhenAll 并行。
-	/// </summary>
-	public async Task PreloadAsync()
-	{
-		await Task.WhenAll(
-			Preload.Load(ErbDir, new FileSystemGameDirAccessor()),
-			Preload.Load(CsvDir, new FileSystemGameDirAccessor()));
-	}
+		/// <summary>
+		/// 预加载 erb/csv 目录（EraStreamReader.OpenOnCache 经 Preload.GetFileLines 读缓存）。
+		/// 测试在写入 ERH/ERB 文件后、调用 loader 前必须 await 本方法。
+		/// erb-loader-parallel 03：与启动路径共用 Preload.LoadTreesAsync 单一入口。
+		/// </summary>
+		public async Task PreloadAsync()
+		{
+			await Preload.LoadTreesAsync(ErbDir, CsvDir, new FileSystemGameDirAccessor());
+		}
 
 	/// <summary>
 	/// 引擎静态初始化一次性预热：FunctionIdentifier 静态构造器读 JSONConfig.Data 与 Config.IgnoreCase；

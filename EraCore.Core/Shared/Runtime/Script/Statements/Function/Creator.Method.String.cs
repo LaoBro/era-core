@@ -483,7 +483,9 @@ internal static partial class FunctionMethodCreator
 						GlobalStatic.Process.getCurrentLine.Position!.Value.LineNo,
 						string.Format(trerror.InvalidUnicode.Text, Name, i)));
 				else
-					ParserMediator.Warn(string.Format(trerror.InvalidUnicode.Text, Name, i), GlobalStatic.Process.scaningLine, 1, false, false, null!);
+					// erb-loader-parallel 03：生成期（#DIM 初期值解析任务内）读 ScanLineLocal，
+					// 避免并行任务间共享全局 scaningLine 错位；加载期之外（无 AsyncLocal 值）回落全局
+					ParserMediator.Warn(string.Format(trerror.InvalidUnicode.Text, Name, i), LogicalLineParser.ScanLineLocal.Value ?? GlobalStatic.Process.scaningLine, 1, false, false, null!);
 				return "";
 			}
 			string s = new(new char[] { (char)i });

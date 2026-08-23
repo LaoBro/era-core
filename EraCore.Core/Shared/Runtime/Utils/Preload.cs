@@ -74,6 +74,37 @@ static partial class Preload
 
     public static void Clear() => files.Clear();
 
+    /// <summary>ADR-0019 / erb-loader-parallel 03：从 Preload 缓存获取指定扩展名的文件列表
+    /// （ErbLoader.GetErbFilesFromCache 与 ErhLoader.GetErhFilesFromCache 孪生收敛，SAF 路径专用，
+    /// 非缓存键路径返回 null 由调用方走文件系统枚举）。
+    /// Key = 相对 dir 的逻辑相对路径（对齐 Config.getFiles）；Value = 缓存全路径键（OpenOnCache 精确命中）。
+    /// 用 Unescape 后的 documentId 前缀过滤（避免 raw URI 上 %2F 前缀匹配失效）。
+    /// 02：缓存键只枚举一次——快照后复用（含日志取数）。</summary>
+    public static List<KeyValuePair<string, string>>? GetFilesFromCache(string dirPath, string extension, string logTag)
+    {
+        if (!SafPath.IsContentUri(dirPath)) return null;
+        var cachedKeys = files.Keys.ToList();
+        var result = cachedKeys
+            .Where(k => k.EndsWith(extension, StringComparison.OrdinalIgnoreCase)
+                && SafPath.IsUnderRoot(dirPath, k))
+            .Select(k => new KeyValuePair<string, string>(
+                SafPath.GetRelativePathFromRoot(dirPath, k), k))
+            .ToList();
+        if (result.Count == 0)
+            EmueraLog.Info(logTag, $"GetFilesFromCache: 0 {extension} under root in {cachedKeys.Count} cached keys");
+        else
+            EmueraLog.Info(logTag, $"GetFilesFromCache: {result.Count} files, firstKey={result[0].Key}");
+        return result;
+    }
+
+    /// <summary>erb-loader-parallel 02/03：ERB/CSV 两棵树并行预载的单一入口
+    /// （原 Process.ReloadErb / ConsoleStateManager.Initialize / LoaderTestHarness.PreloadAsync
+    /// 三处 Task.WhenAll 配对收敛——Load 内部本就 Parallel.ForEach 读文件，串行 await 白付一棵树的墙钟）。</summary>
+    public static Task LoadTreesAsync(string erbDir, string csvDir, IGameDirAccessor dirAccessor) =>
+        Task.WhenAll(
+            Load(erbDir, dirAccessor),
+            Load(csvDir, dirAccessor));
+
     private static string[] ReadAllLinesViaAccessor(string path, IGameDirAccessor dirAccessor)
     {
         try
