@@ -1720,13 +1720,8 @@ internal sealed class ErbLoader
 		if (logical.Length == 0
 			|| !_filePathByLogical.TryGetValue(logical, out string? physical) || string.IsNullOrEmpty(physical))
 		{
-			stub.IsStub = false;
-			if (!stub.IsError)
-			{
-				stub.IsError = true;
-				stub.ErrMes = trerror.CalledFailedFunc.Text; // 占位报错（ADR-0023 决策二三态先例）
-			}
-			return;
+			DegradeToPlaceholderError(stub);
+			return; // 三态①：源路径不可得 → 占位报错
 		}
 		FunctionLabelLine? reparse;
 		try
@@ -1736,31 +1731,32 @@ internal sealed class ErbLoader
 		catch (Exception exc)
 		{
 			// 物化期单函数重解析不应向调用方抛新异常（「首调用无新异常」门禁）——等价于 eager
-			// ParseFunctionWithCatch 的 catch：告警 + 降级为占位报错。
+			// ParseFunctionWithCatch 的 catch：告警 + 降级为占位报错（三态③）。
 			string errmes = exc is EmueraException ? exc.Message : exc.GetType().ToString() + ":" + exc.Message;
 			ParserMediator.Warn(string.Format(trerror.FuncAnalysisError.Text, stub.LabelName, errmes), stub, 2, true, false, exc.StackTrace!);
-			stub.IsStub = false;
-			if (!stub.IsError)
-			{
-				stub.IsError = true;
-				stub.ErrMes = trerror.CalledFailedFunc.Text;
-			}
+			DegradeToPlaceholderError(stub);
 			return;
 		}
 		if (reparse == null)
 		{
-			stub.IsStub = false;
-			if (!stub.IsError)
-			{
-				stub.IsError = true;
-				stub.ErrMes = trerror.CalledFailedFunc.Text; // 源不可得 → 占位报错，不崩
-			}
-			return;
+			DegradeToPlaceholderError(stub);
+			return; // 三态②：桩行已不在文件中 → 占位报错
 		}
 		// 行链挂桩：只替换函数体行链与复位桩标记；标签头（Position/Arg/Def/IsMethod/私有变量）在惰性
 		// 生成期已与 eager 逐位一致，LocalLength/LocalsLength 亦已由生成期 #LOCALSIZE / SortLabels 置位。
 		stub.NextLine = reparse.NextLine;
 		stub.IsStub = false;
+	}
+
+	/// <summary>物化失败降级为占位报错：清桩标记（停止重试）+ 一次性标 IsError/ErrMes，不抛新异常（ADR-0023 决策二三态先例）。</summary>
+	private static void DegradeToPlaceholderError(FunctionLabelLine stub)
+	{
+		stub.IsStub = false;
+		if (!stub.IsError)
+		{
+			stub.IsError = true;
+			stub.ErrMes = trerror.CalledFailedFunc.Text;
+		}
 	}
 
 	/// <summary>
