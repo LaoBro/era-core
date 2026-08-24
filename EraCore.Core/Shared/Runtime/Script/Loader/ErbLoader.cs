@@ -1729,9 +1729,21 @@ internal sealed class ErbLoader
 		// setScanLine(label) 提供 scan-line 上下文（对齐 eager setLabelsArg），供 setArgument/nestCheck/
 		// setJumpTo 内 body 行私有变量解析使用（ScanLine 逐行覆盖）。
 		setScanLine(label);
-		setArgument(label);
-		nestCheck(label);
-		setJumpTo(label);
+		// lazy-function-load（Issue 06 实机）：对齐 eager ParseFunctionWithCatch 的 finally 收尾——
+		// nestCheck 对函数体终止 NullLine 也会 ScanLine，物化路径若不重置，运行期 scaningLine 会残留为
+		// 尾部 NullLine（ParentLabelLine=null）；其后再经 GetScaningLine 解析本函数私有变量时被跳过 →
+		// 落入 privateDimList → 误报「変数Xはこの関数中では定義されていません」。eager 由 finally
+		// ScanLine(null!) 收尾，物化路径必须同样复位（含主循环物化、运行时物化与三步抛异常路径）。
+		try
+		{
+			setArgument(label);
+			nestCheck(label);
+			setJumpTo(label);
+		}
+		finally
+		{
+			ScanLine(null!);
+		}
 		return label;
 	}
 

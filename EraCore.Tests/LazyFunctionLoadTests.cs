@@ -483,4 +483,67 @@ $HOGE
 			}
 		}
 	}
+
+	/// <summary>
+	/// Issue 06 实机回归（TW4.881shoess 初次遊玩崩溃）：运行时物化后 scaningLine 不得残留为陈旧行。
+	/// eager 的 ParseFunctionWithCatch 以 finally ScanLine(null!) 收尾复位；物化路径（ReparseFunction）
+	/// 此前漏掉复位——nestCheck/setJumpTo 的三遍扫描会把 GlobalStatic.Process.scaningLine 留在最后物化
+	/// 函数体末尾（尾部 NullLine 或末行）。其后运行期再经 GetScaningLine 解析本函数私有变量时，scaningLine
+	/// 优先于 state.ErrorLine 被读到 → 指向错误函数/无 ParentLabelLine → 私有变量查找被跳过 → 落入
+	/// privateDimList → 误报「この関数中では定義されていません」（真实例：@SET_EXIST 的
+	/// RETURNF OBJ_EXIST("SET", CLASS_NAME, O_ID) 在 @SETLIST_EXIST 先物化 EXIST_角色データ1 后崩溃）。
+	/// 注：必须用真实 scan-line 接线（line =&gt; h.Process.scaningLine = line），空接线无法复现。
+	/// </summary>
+	[Fact]
+	public async Task Lazy_runtime_materialization_does_not_poison_scaningline_for_private_resolution()
+	{
+		const string corpus = """
+@EVENTFIRST
+	CALL CALLED(0)
+	RETURN
+
+@CALLED,CID
+#DIM CID
+	PRINTFORML face={CID}
+	RETURN
+
+@UNCALLED
+	PRINTL uncalled
+	RETURN
+""";
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		ConfigData.Current!.GetConfigItem(ConfigCode.LazyFunctionLoad).SetValue(true);
+		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelErbLoad).SetValue(false);
+		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
+		await h.PreloadAsync();
+		h.WriteErb("LAZYSCAN.ERB", corpus);
+		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		var ok = await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		Assert.True(ok, "LoadErbDir failed\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+
+		// 加载收尾 scaningLine 已复位（对齐 eager）。
+		Assert.Null(h.Process.scaningLine);
+
+		var called = Find(h.LabelDic, "CALLED");
+		var uncalled = Find(h.LabelDic, "UNCALLED");
+		Assert.False(called.IsStub, "CALLED should be materialized (called from EVENTFIRST)");
+		Assert.True(uncalled.IsStub, "UNCALLED should remain a stub in lazy mode");
+
+		// 模拟运行期执行 CALLED 的某行（其私有变量 CID 需可解析）——state.ErrorLine 提供正确上下文。
+		LogicalLine execLine = called.NextLine;
+		while (execLine is not InstructionLine)
+			execLine = execLine.NextLine;
+		h.Process.getCurrentState.CurrentLine = execLine;
+
+		// 运行期物化未调用桩（模拟动态 CALLFORM 命中）——此前会把 scaningLine 残留为陈旧行。
+		ErbLoader.MaterializeOnRuntime(uncalled);
+		Assert.False(uncalled.IsStub);
+		Assert.Null(h.Process.scaningLine);
+
+		// 修复前：scaningLine 残留最后物化函数体末行 → GetScaningLine 优先返回它 → 私有变量查找跳过 →
+		// CID 落入 privateDimList → 抛「この関数中では定義されていません」；修复后不抛。
+		var ex = Record.Exception(() => h.Process.IdentifierDictionary.GetVariableToken("CID", null, true));
+		Assert.Null(ex);
+	}
 }
