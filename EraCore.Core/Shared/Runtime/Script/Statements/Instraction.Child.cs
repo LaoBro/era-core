@@ -1204,7 +1204,31 @@ internal sealed partial class FunctionIdentifier
 			else
 			{
 				labelName = func.Argument.ConstStr;
-				mToken = ((SpCallFArgment)func.Argument).FuncTerm;
+				SpCallFArgment callfArg = (SpCallFArgment)func.Argument;
+				mToken = callfArg.FuncTerm;
+				// 防御性兜底：缓存缺失（重载/缓存被清等极端路径）时按 SetJumpTo 同款逻辑现场解析并写回缓存，
+				// 与 CALL 侧 `arg == null` 兜底对齐。
+				if (mToken == null)
+				{
+					try
+					{
+						callfArg.FuncTerm = GlobalStatic.IdentifierDictionary.GetFunctionMethod(GlobalStatic.LabelDictionary, callfArg.ConstStr, callfArg.RowArgs, true);
+						mToken = callfArg.FuncTerm;
+					}
+					catch (CodeEE e)
+					{
+						ParserMediator.Warn(e.Message, func, 2, true, false);
+						return;
+					}
+					if (mToken == null)
+					{
+						if (!Program.AnalysisMode)
+							ParserMediator.Warn(string.Format(trerror.NotDefinedFunc.Text, labelName), func, 2, true, false);
+						else
+							ParserMediator.Warn(labelName, func, 2, true, false);
+						return;
+					}
+				}
 			}
 			if (mToken == null)
 				throw new CodeEE(string.Format(trerror.NotDefinedUserFunc.Text, labelName));
@@ -1332,7 +1356,24 @@ internal sealed partial class FunctionIdentifier
 			else
 			{
 				labelName = func.Argument.ConstStr;
-				mToken = ((SpCallFArgment)func.Argument).FuncTerm;
+				SpCallFArgment callfArg = (SpCallFArgment)func.Argument;
+				mToken = callfArg.FuncTerm;
+				// 防御性兜底：缓存缺失（重载/缓存被清等极端路径）时按 SetJumpTo 同款逻辑现场解析并写回缓存，
+				// 与 CALLF 侧兜底对齐；错误处理保持 TRYCALLF 的 try 静默语义（失败即跳过，不告警）。
+				if (mToken == null)
+				{
+					try
+					{
+						callfArg.FuncTerm = GlobalStatic.IdentifierDictionary.GetFunctionMethod(GlobalStatic.LabelDictionary, callfArg.ConstStr, callfArg.RowArgs, true);
+						mToken = callfArg.FuncTerm;
+					}
+					catch
+					{
+						return;
+					}
+					if (mToken == null)
+						return;
+				}
 			}
 			if (mToken == null)
 				return;

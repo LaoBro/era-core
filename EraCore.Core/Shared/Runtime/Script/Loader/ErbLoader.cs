@@ -1630,10 +1630,32 @@ internal sealed class ErbLoader
 		LogicalLine tail = null!;
 		var onlyView = new List<string>();
 		var dummies = new List<string>();
+		// lazy-function-load 修复：物化重解析必须处理 [ 预处理指令（[SKIPSTART]/[SKIPEND]/
+		// [IF]/[ELSE]/[ENDIF]/[IF_DEBUG]/[IF_NDEBUG]）——主加载经 PPState 评估并禁用其内容；
+		// 惰性下桩跳过函数体，物化若漏掉这步，[SKIPSTART]...[SKIPEND] 包着的「故意不平衡」嵌套块
+		// 会被误解析 → 嵌套错乱误报（IF/ENDIF/SELECTCASE/ENDSELECT 错配）。
+		var ppstate = new PPState(env, idDic);
 		CharStream st;
-		while ((st = eReader.ReadEnabledLine()) != null)
+		while ((st = eReader.ReadEnabledLine(ppstate.Disabled)) != null)
 		{
 			var position = new ScriptPosition(eReader.Filename, eReader.LineNo);
+			// [ 预处理指令（与主加载同款，先于 @/$ 判定）
+			if (st.Current == '[' && st.Next != '[')
+			{
+				st.ShiftNext();
+				string token = LexicalAnalyzer.ReadSingleIdentifier(st);
+				LexicalAnalyzer.SkipWhiteSpace(st);
+				string token2 = LexicalAnalyzer.ReadSingleIdentifier(st);
+				if (string.IsNullOrEmpty(token) || st.Current != ']')
+					ParserMediator.Warn(trerror.InvalidSBrackets.Text, position, 1);
+				ppstate.AddKeyWord(token, token2, position);
+				st.ShiftNext();
+				if (!st.EOS)
+					ParserMediator.Warn(string.Format(trerror.IgnoreAfterPreprosessor.Text, token), position, 1);
+				continue;
+			}
+			if (ppstate.Disabled)
+				continue;
 			if (st.Current == '@')
 			{
 				if (label == null)
@@ -1656,6 +1678,10 @@ internal sealed class ErbLoader
 				if (LogicalLineParser.ParseLabelLine(st, position, output, null) is GotoLabelLine g)
 				{
 					g.ParentLabelLine = label;
+					// lazy-function-load 修复：惰性下桩跳过 $ 标签、加载期不注册，物化必须补注册，
+					// 否则 GOTO 的 SetJumpTo 经 GetLabelDollar 解析失败 → 误报
+					// 「指定されたラベル名"$X"は現在の関数内に存在しません」。
+					labelDic.AddLabelDollar(g);
 					tail.NextLine = g;
 					tail = g;
 				}
@@ -1698,6 +1724,13 @@ internal sealed class ErbLoader
 			return null;
 		tail.NextLine = new NullLine();
 
+		// lazy-function-load 修复：物化重解析缺 eager setLabelsArg 的 scan-line 上下文——
+		// 新建标签需自指 ParentLabelLine（load 注册标签即如此；ParseLabelLine 不设），并 setScanLine(label)，
+		// 否则 parseLabel 解析 @ 参数时 GetVariableToken 取不到本函数私有变量（落入永不清理的 privateDimList，
+		// 误报「変数Xはこの関数中では定義されていません」）。对齐 eager 后物化期不再出现该假阳性。
+		if (label.ParentLabelLine == null)
+			label.ParentLabelLine = label;
+		setScanLine(label);
 		parseLabel(label);
 		setArgument(label);
 		nestCheck(label);

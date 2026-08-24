@@ -269,4 +269,163 @@ public class LazyFunctionLoadTests
 		}
 		return null!;
 	}
+
+	/// <summary>
+	/// 物化期 scan-line 上下文回归（Issue 05）：`@FUNC,CID` + `#DIM CID` 是合法写法——@ 参数就是本函数
+	/// 私有变量。eager 经 setLabelsArg 的 setScanLine(label) 提供上下文；惰性物化（ReparseFunction）此前缺这步、
+	/// 且新建标签不自指 ParentLabelLine，导致 GetVariableToken 够不到本函数私有变量 → 落入永不清理的
+	/// privateDimList → 误报「この関数中では定義されていません」。修复后 eager/lazy 都必须零误报。
+	/// 注：本测试必须用真实 scan-line 接线（line =&gt; Process.scaningLine = line），`_ =&gt; {}` 空接线会重现 bug。
+	/// </summary>
+	[Fact]
+	public async Task Lazy_materialization_resolves_private_arg_without_false_warning()
+	{
+		const string argCorpus = """
+@EVENTFIRST
+	CALL PRINT_FACE(0)
+	RETURN
+
+@PRINT_FACE,CID
+#DIM CID
+	PRINTFORML face={CID}
+	RETURN
+""";
+		foreach (bool lazy in new[] { false, true })
+		{
+			using var h = new LoaderTestHarness();
+			await h.InitializeAsync();
+			if (lazy)
+			{
+				ConfigData.Current!.GetConfigItem(ConfigCode.LazyFunctionLoad).SetValue(true);
+				ConfigData.Current!.GetConfigItem(ConfigCode.ParallelErbLoad).SetValue(false);
+				ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
+			}
+			await h.PreloadAsync();
+			h.WriteErb("LAZYARG.ERB", argCorpus);
+			// 真实引擎接线（Process.cs 同款）；空接线会重现物化期误报。
+			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+			var ok = await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+			Assert.True(ok, "LoadErbDir failed (lazy=" + lazy + ")\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+
+			var pf = Find(h.LabelDic, "PRINT_FACE");
+			Assert.NotNull(pf);
+			Assert.False(pf.IsError, "PRINT_FACE must not be flagged as error (lazy=" + lazy + ")");
+			Assert.False(pf.IsStub, "PRINT_FACE should be materialized (called from EVENTFIRST) (lazy=" + lazy + ")");
+			Assert.Equal(1, pf.Arg?.Length ?? -1);
+
+			var falsePositives = h.Console.DisplayLineList
+				.Select(l => l?.ToString() ?? "")
+				.Where(s => s.Contains("この関数中では定義されていません"))
+				.ToList();
+			Assert.Empty(falsePositives);
+		}
+	}
+
+	/// <summary>
+	/// 物化期 $ 标签注册回归（Issue 05b）：惰性下桩跳过函数体（含 $ 标签），加载期不注册；物化
+	/// （ReparseFunction）解析出 $ 标签但此前未补注册 labelDic → GOTO 的 SetJumpTo 经 GetLabelDollar
+	/// 解析失败 → 误报「指定されたラベル名"$X"は現在の関数内に存在しません」。修复后 eager/lazy 零误报。
+	/// </summary>
+	[Fact]
+	public async Task Lazy_materialization_registers_dollar_labels_without_false_warning()
+	{
+		const string gotoCorpus = """
+@EVENTFIRST
+	CALL HASGOTO(0)
+	RETURN
+
+@HASGOTO,CID
+#DIM CID
+	IF CID == 0
+		GOTO HOGE
+	ENDIF
+	RETURN
+$HOGE
+	PRINTFORML hoge
+	RETURN
+""";
+		foreach (bool lazy in new[] { false, true })
+		{
+			using var h = new LoaderTestHarness();
+			await h.InitializeAsync();
+			if (lazy)
+			{
+				ConfigData.Current!.GetConfigItem(ConfigCode.LazyFunctionLoad).SetValue(true);
+				ConfigData.Current!.GetConfigItem(ConfigCode.ParallelErbLoad).SetValue(false);
+				ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
+			}
+			await h.PreloadAsync();
+			h.WriteErb("LAZYGOTO.ERB", gotoCorpus);
+			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+			var ok = await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+			Assert.True(ok, "LoadErbDir failed (lazy=" + lazy + ")\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+
+			var hasgoto = Find(h.LabelDic, "HASGOTO");
+			Assert.NotNull(hasgoto);
+			Assert.False(hasgoto.IsError, "HASGOTO must not be flagged as error (lazy=" + lazy + ")");
+			Assert.False(hasgoto.IsStub, "HASGOTO should be materialized (called from EVENTFIRST) (lazy=" + lazy + ")");
+
+			var falsePositives = h.Console.DisplayLineList
+				.Select(l => l?.ToString() ?? "")
+				.Where(s => s.Contains("存在しません"))
+				.ToList();
+			Assert.Empty(falsePositives);
+		}
+	}
+
+	/// <summary>
+	/// 物化期 [ 预处理回归（Issue 05c）：eraTW 惯用 [SKIPSTART]...[SKIPEND] 包「故意不平衡」的嵌套
+	/// （IF 无 ENDIF / SELECTCASE 无 ENDSELECT），由预处理禁用使其不被解析。惰性下桩跳过函数体，
+	/// 物化（ReparseFunction）此前不处理 [ 指令 → 块内容被误解析 → 嵌套错乱误报（IF/ENDIF/SELECTCASE/ENDSELECT 错配）。
+	/// 修复后 eager/lazy 零误报。
+	/// </summary>
+	[Fact]
+	public async Task Lazy_materialization_processes_preprocessor_blocks_without_false_warning()
+	{
+		const string skipCorpus = """
+@EVENTFIRST
+	CALL SKIPFUNC(0)
+	RETURN
+
+@SKIPFUNC,CID
+#DIM CID
+	PRINTFORML before
+	[SKIPSTART]
+	IF CID == 1
+		SELECTCASE CID
+		CASE 1
+			PRINTFORML one
+	ENDIF
+	[SKIPEND]
+	PRINTFORML after
+	RETURN
+""";
+		foreach (bool lazy in new[] { false, true })
+		{
+			using var h = new LoaderTestHarness();
+			await h.InitializeAsync();
+			if (lazy)
+			{
+				ConfigData.Current!.GetConfigItem(ConfigCode.LazyFunctionLoad).SetValue(true);
+				ConfigData.Current!.GetConfigItem(ConfigCode.ParallelErbLoad).SetValue(false);
+				ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
+			}
+			await h.PreloadAsync();
+			h.WriteErb("LAZYSKIP.ERB", skipCorpus);
+			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+			var ok = await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+			Assert.True(ok, "LoadErbDir failed (lazy=" + lazy + ")\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+
+			var skipfunc = Find(h.LabelDic, "SKIPFUNC");
+			Assert.NotNull(skipfunc);
+			Assert.False(skipfunc.IsError, "SKIPFUNC must not be flagged as error (lazy=" + lazy + ")");
+			Assert.False(skipfunc.IsStub, "SKIPFUNC should be materialized (called from EVENTFIRST) (lazy=" + lazy + ")");
+
+			var falsePositives = h.Console.DisplayLineList
+				.Select(l => l?.ToString() ?? "")
+				.Where(s => s.Contains("対応する") || s.Contains("分岐の外"))
+				.ToList();
+			Assert.Empty(falsePositives);
+		}
+	}
 }
