@@ -12,6 +12,9 @@
 - fatal turn 脚本异常路径（THROW）。
 - I-11 脚本退出后 server 存活。
 - `/assets` 资源通道（issue 03）：路径消毒、扩展名白名单、缓存/CORS 头、协议帧 image segment 几何。
+- ERB 加载并行/串行等价性（erb-loader-parallel issue 04）：同一游戏分别以并行（默认）与串行
+  fallback 加载，断言 ParseScript 三数统计（非注释行数 / 全函数合计 / 被呼出函数数）与规范化警告
+  列表（按文件 + 行号排序）完全一致，并自检「注入标签差异能变红」以证明套件区分能力。
 
 ## 测试游戏目录
 
@@ -63,7 +66,8 @@ python tests/run_all.py --binary EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe -
 6. fatal turn 测试（脚本异常路径）。
 7. I-11 exit survival 测试。
 8. `/assets` 资源通道测试（issue 03）。
-9. CLI 交互模式基础测试（happy path + ConPTY smoke tests）。
+9. ERB 加载并行/串行等价性测试（issue 04，`test_erbloader_equivalence.py`）。
+10. CLI 交互模式基础测试（happy path + ConPTY smoke tests）。
 
 在 Windows 命令行中，如果相对路径启动失败，请使用绝对路径，例如：
 
