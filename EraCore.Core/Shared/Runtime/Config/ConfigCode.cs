@@ -73,7 +73,7 @@ internal enum ConfigCode
 	FunctionNotFoundWarning = 31,
 	FunctionNotCalledWarning = 32,
 	//IgnoreWarningFiles = 33,
-	// lazy-function-load（B 线 B1）：函数级惰性物化；AnalysisMode 一律强制 eager。默认值由 Issue 04 门禁后定。
+	// lazy-function-load（B 线 B1）：函数级惰性物化；AnalysisMode 一律强制 eager。Issue 04 全绿即默认 true。
 	LazyFunctionLoad = 300,
 	ChangeMasterNameIfDebug = 34,
 	LastKey = 35,

@@ -85,6 +85,7 @@ internal sealed class LoaderTestHarness : IDisposable
 		GamePaths.Resolve(TempRoot, new FileSystemGameDirAccessor());
 		// Preload.Clear 复刻 ConsoleStateManager.Initialize 的清理——避免跨测试 stale 缓存。
 		Preload.Clear();
+		ForceEagerMode();
 		var ok = await Process.Initialize(Env, null);
 		if (!ok)
 		{
@@ -92,6 +93,14 @@ internal sealed class LoaderTestHarness : IDisposable
 			throw new InvalidOperationException("Process.Initialize failed in test harness.\nConsole output:\n" + lines);
 		}
 	}
+
+	/// <summary>
+	/// 强制 Loader 测试使用 eager 模式。
+	/// Issue 04 后产品默认 LazyFunctionLoad=true，但既有等价性/重解析套件的对照语义都基于 eager 行为；
+	/// 本方法在 Initialize 入口自动调用一次，lazy 行为专由 <see cref="LazyFunctionLoadTests"/> 在测试体内显式 <c>SetValue(true)</c> 覆盖。
+	/// </summary>
+	private void ForceEagerMode()
+		=> ConfigData.Current!.GetConfigItem(ConfigCode.LazyFunctionLoad).SetValue(false);
 
 	public string WriteErh(string name, string content)
 	{

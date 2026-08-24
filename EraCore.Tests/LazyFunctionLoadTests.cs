@@ -116,7 +116,7 @@ public class LazyFunctionLoadTests
 			lazyLocal = called.LocalLength;
 			lazyLocals = called.LocalsLength;
 		}
-		// eager 对照（默认 LazyFunctionLoad=false）
+		// eager 对照（harness 默认 eager；本测试 lazy 块上方已显式 SetValue(true)，需独立 harness 退出 eager 上下文）
 		string? eagerChain = null;
 		int eagerLocal = -1, eagerLocals = -1;
 		{

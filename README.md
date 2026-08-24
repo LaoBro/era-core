@@ -254,6 +254,42 @@ IPA 字体许可见 `src/assets/fonts/IPA_Font_License_Agreement_v1.0.txt`（IPA
 
 ---
 
+## 性能与加载开关（erb-loader-parallel + lazy-function-load）
+
+游戏目录下的 `emuera.config`（格式 `名前:値`，支持日文/英文双名）控制引擎启动性能。两项加载优化项目（erb-loader-parallel 阶段一/二 + lazy-function-load B1）合计贡献 **eraTW 活堆 -583.9 MiB / 冷启 Init -1.1s**，对应三个正交的开关，**默认全部 `true` 开启**，AnalysisMode 下一律强制串行/eager。
+
+关闭顺序（排查语义偏差时，逐层回退到原始串行形态）：`LazyFunctionLoad:NO` → `ParallelParseScript:NO` → `ParallelErbLoad:NO`。
+
+| 开关（日文键名） | 英文键名（等价） | 默认值 | 功能 | 设为 NO 时的效果 |
+|---|---|---|---|---|
+| ERBファイルを並列して読み込む | Load ERB files in parallel | YES | erb-loader-parallel 03：ERB **文件级并行加载**（分词/解析按文件粒度并发，跨文件警告序按文件名回放到串行等价） | 退化为单线程逐文件加载；等价性与加载期警告逐字节一致 |
+| 未呼び出し関数の解析を並列して行う | Parse uncalled functions in parallel | YES | erb-loader-parallel 08（ADR-0024）：ParseScript 三步（setArgument / nestCheck / setJumpTo）对**未调用函数集**并行遍历；主循环 BFS 按层仍保持串行 | 三步退化为单线程串行遍历；警告序不变、语义等价 |
+| 未呼び出し関数の本体解析を遅延する | Defer uncalled function body parsing | YES | lazy-function-load（ADR-0025）：加载期**不为未调用函数做 ParseScript**，只注册标签桩 + 行号引用；**首调用时单函数重解析物化**（幂等：二次调用直接命中已物化链） | 回退为加载期 eager 全量 ParseScript；与 `ParallelErbLoad:NO` + `ParallelParseScript:NO` 组合即为原始串行 eager 形态 |
+
+### 关联警告与忽略开关
+
+与两项目正交，但常联动使用：
+
+| 开关（日文键名） | 英文键名（等价） | 默认值 | 取值/说明 |
+|---|---|---|---|
+| 呼び出されなかった関数を無視する | Ignore uncalled functions | YES | 语义上忽略未被任何路径调用到的函数（加载期仍写入 LabelDictionary 保证跳转解析，只是 ParseScript 不再对其执行语义检查）。与 `LazyFunctionLoad` 正交——后者只**延迟**解析，本开关决定**是否**解析。 |
+| 関数が見つからない警告の扱い | Function is not found warning | IGNORE | `IGNORE` / `LATER` / `WARN` / `DISPLAY`。`LazyFunctionLoad:YES` 下，未定义函数的报错仍在加载期跳转解析阶段即刻抛出（不延迟到物化）。 |
+| 関数が呼び出されなかった警告の扱い | Function not called warning | IGNORE | `IGNORE` / `LATER` / `WARN` / `DISPLAY`。警告发射时机：加载期 eager 全量 ParseScript 时即刻发射；`LazyFunctionLoad:YES` 下按 `Depth==-1` 深差集零解析导出，**与 eager 同集但可能延迟**（定义性行为，不断言逐字节相等）。 |
+
+### 实测参考（eraTW Release CLI，本机 2026-08-24，3 轮稳态后 2 轮）
+
+| 项 | 三开关全关（原始串行 eager） | 三开关全开（出厂默认） | Δ |
+|---|---|---|---|
+| 活堆（`dumpheap -stat -live`） | 701.7 MiB | **117.8 MiB** | **-583.9 MiB** |
+| 冷启 Init:End（Stopwatch 段） | 3449ms | **2315ms** | **-1134ms** |
+| 冷启 Proc:Init:ERB 段 | 2647ms | **1554ms** | **-1093ms** |
+
+验收门禁：Init ≤ 3.0s / 活堆 ≤ 350 MiB（lazy 形态下分别为 2.3s / 117.8 MiB，均通过）。**CI 不加入性能/内存断言**：跨机硬件差异大，以上数值仅作本机复测判读基准（沿 erb-loader-parallel 先例）。
+
+详细测量与门禁见 `.scratch/lazy-function-load/spec.md` 复测节，决策见 [ADR-0024](docs/adr/0024-parsescript-parallel-uncalled-sweep.md) 与 [ADR-0025](docs/adr/0025-lazy-function-materialization.md)。erb-loader-parallel 阶段三候选池因 lazy-function-load 落地已**实质归档**，其 P1（单遍遍历融合）重启触发相应改写为「③ **被否决且仍需压启动**」，见 `.scratch/erb-loader-parallel/spec-phase3.md`。
+
+---
+
 ## 测试
 
 测试分三层：**C# 单元测试**（xUnit）、**Python 端到端**（CLI/HTTP/WebSocket）、**前端测试**（Vitest）。
