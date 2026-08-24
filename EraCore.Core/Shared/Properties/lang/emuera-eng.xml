@@ -394,6 +394,7 @@ Settings apply only at start]]></tr>
     <tr id="Error.UseArgVarInHasNotArgFunc"><![CDATA[Function declaration argument variable "{0}" is being used inside the function that is not using them (This behavior is not recommended, consider using #DIM instead)]]></tr>
     <tr id="Error.UseArgVarInSystemFunc"><![CDATA[{1} is being used inside of a system function "{0}" (This behavior is not recommended, consider using #DIM instead)]]></tr>
     <tr id="Error.FailedOpenFile"><![CDATA[Failed to open {0}]]></tr>
+    <tr id="Error.SourceLineUnavailable"><![CDATA[(source line unavailable: {0} line {1})]]></tr>
     <tr id="Error.UnexpectedError"><![CDATA[An unexpected error has occurred]]></tr>
     <tr id="Error.MissingComma"><![CDATA[, is required]]></tr>
     <tr id="Error.CanNotInterpretVarName"><![CDATA[The {0} value cannot be interpreted as a variable name]]></tr>

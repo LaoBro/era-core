@@ -172,6 +172,11 @@ internal sealed class ErbLoader
 
 			ParserMediator.FlushWarningList();
 
+			// preload-cache-lifecycle 01（ADR-0023）：加载管线收尾清空源文本缓存。
+			// 位于并行解析合并与 ParseScript 全部完成之后、单线程执行；ERH/CSV 条目随同一扫清空
+			//（它们在更早阶段已消费完毕）。失败路径（上方 catch）不清空——保留新鲜缓存辅助排障。
+			Preload.ClearCachedLines();
+
 #if DEBUG
 			output.PrintSystemLine(string.Format(trsl.ElapsedTime.Text, (DateTime.Now - starttime).TotalMilliseconds));
 #endif
@@ -254,6 +259,8 @@ internal sealed class ErbLoader
 
 		ParserMediator.FlushWarningList();
 		setScanLine(null!);
+		// preload-cache-lifecycle 01：部分重载收尾同款清空（范围同 LoadErbDir——全量，见 spec 清空范围）
+		Preload.ClearCachedLines();
 		isOnlyEvent.Clear();
 		return noError;
 	}

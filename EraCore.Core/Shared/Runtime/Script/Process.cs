@@ -513,17 +513,49 @@ internal sealed partial class Process(EmueraConsole view)
 	{
 		// 决策二：错误路径改用 Preload 缓存，消除 File.ReadLines + DetectEncoding 的重复 I/O。
 		// 同时修复原 .csv 分支误传 Program.ErbDir 给 DetectEncoding 的复制粘贴 bug。
+		// preload-cache-lifecycle 01（ADR-0023）：加载收尾清空缓存后未命中 → 查路径索引按需回读；
+		// 失败三态（文件不存在 / IO 异常 / 行号越界）返回占位文本，不得抛新异常。
+		// LineNo <= 0 保持返回 ""（合成位置，如 Preload 警告的 ScriptPosition(path, 0)——
+		// PrintWarning 对 LineNo >= 0 均调 printRawLine，占位会污染加载期警告输出）。
 		string extents = position!.Value.Filename[^4..].ToLower();
 		if (extents != ".erb" && extents != ".csv")
 			return "";
+		string filename = position!.Value.Filename;
 		string fullPath = GamePaths.Current.DirAccessor.CombinePath(
 			extents == ".csv" ? Program.CsvDir : Program.ErbDir,
-			position!.Value.Filename);
+			filename);
 		string[]? lines = Preload.TryGetFileLines(fullPath);
+		lines ??= ReadSourceLinesForErrorEcho(filename, fullPath);
 		int lineNo = position!.Value.LineNo;
-		return lines != null && lineNo > 0 && lineNo <= lines.Length
-			? lines[lineNo - 1]
-			: "";
+		if (lineNo <= 0)
+			return "";
+		if (lines != null && lineNo <= lines.Length)
+			return lines[lineNo - 1];
+		return string.Format(trerror.SourceLineUnavailable.Text, filename, lineNo);
+	}
+
+	/// <summary>
+	/// preload-cache-lifecycle 01：报错回显的按需回读（缓存未命中时）。
+	/// 查路径索引定位全路径（索引未命中退回 CombinePath 重构值），经 DirAccessor 读字节 +
+	/// EncodingHandler 解码拆行。任何失败返回 null（由调用方落占位文本），不抛新异常。
+	/// </summary>
+	static string[]? ReadSourceLinesForErrorEcho(string filename, string fallbackFullPath)
+	{
+		try
+		{
+			var fullPath = Preload.TryGetFullPath(filename, out var indexed) ? indexed : fallbackFullPath;
+			var accessor = GamePaths.Current?.DirAccessor;
+			if (accessor == null)
+				return null;
+			var bytes = accessor.ReadAllBytes(fullPath);
+			return bytes == null ? null : EncodingHandler.ReadAllLinesFromBytes(bytes);
+		}
+		catch (Exception ex)
+		{
+			// IO 异常等一律降级占位（三态失败不抛新异常）；留 Warn 供排障区分"文件不在"与"IO 异常"
+			EmueraLog.Warn("preload", $"readback FAILED: {filename} → {ex.GetType().Name}: {ex.Message}");
+			return null;
+		}
 	}
 
 	/// <summary>

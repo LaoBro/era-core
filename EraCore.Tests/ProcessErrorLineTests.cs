@@ -51,8 +51,9 @@ public class ProcessErrorLineTests
 	}
 
 	[Fact]
-	public async Task GetRawText_out_of_range_line_returns_empty()
+	public async Task GetRawText_out_of_range_line_returns_placeholder()
 	{
+		// preload-cache-lifecycle 01（ADR-0023）：行号越界从返回 "" 改为占位文本（三态失败之一）。
 		using var h = new LoaderTestHarness();
 		await h.InitializeAsync();
 		h.WriteErb("SMALL.ERB", "PRINTL only line\n");
@@ -61,7 +62,7 @@ public class ProcessErrorLineTests
 		var pos = new ScriptPosition("SMALL.ERB", 99);
 		var result = MinorShift.Emuera.GameProc.Process.getRawTextFormFilewithLine(pos);
 
-		Assert.Equal("", result);
+		PlaceholderAssert.IsPlaceholder(result, "SMALL.ERB", "100");
 	}
 
 	[Fact]

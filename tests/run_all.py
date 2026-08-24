@@ -244,6 +244,24 @@ def main():
 
     results.append(
         (
+            "preload readback",
+            _run_script(
+                "preload readback",
+                [
+                    sys.executable,
+                    str(TESTS_DIR / "test_preload_readback.py"),
+                    "--binary",
+                    str(binary_path),
+                    "--game-dir",
+                    str(game_dir),
+                ],
+                timeout=180,
+            ),
+        )
+    )
+
+    results.append(
+        (
             "I-11 exit survival",
             _run_script(
                 "I-11 exit survival",

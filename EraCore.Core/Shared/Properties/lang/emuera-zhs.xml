@@ -391,6 +391,7 @@ Emuera的历史版本有效的内容变得无效等等现象而设置的。
     <tr id="Error.UseArgVarInHasNotArgFunc"><![CDATA[函数没有声明参数"{0}"而直接使用了"{0}"(不推荐这种用法，请考虑使用#DIM)]]></tr>
     <tr id="Error.UseArgVarInSystemFunc"><![CDATA[在系统函数"{0}"中使用了"{1}"(不推荐这种用法，请考虑使用#DIM)]]></tr>
     <tr id="Error.FailedOpenFile"><![CDATA[打开{0}失败]]></tr>
+    <tr id="Error.SourceLineUnavailable"><![CDATA[(无法显示源码行: {0} 第{1}行)]]></tr>
     <tr id="Error.UnexpectedError"><![CDATA[发生了预期以外的错误]]></tr>
     <tr id="Error.MissingComma"><![CDATA[必须包含","]]></tr>
     <tr id="Error.CanNotInterpretVarName"><![CDATA[无法将{0}解析为变量名]]></tr>

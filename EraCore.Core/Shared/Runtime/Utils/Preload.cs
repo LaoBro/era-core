@@ -15,6 +15,14 @@ static partial class Preload
 {
     static readonly ConcurrentDictionary<string, string[]> files = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// preload-cache-lifecycle 01（ADR-0023）：相对文件名 → 全路径的路径索引。
+    /// 源文本缓存清空后常驻（~2.7K 条目），供运行期报错回读按需定位源文件。
+    /// 键 = 相对根目录的逻辑相对路径（<see cref="SafPath.GetRelativePathFromRoot"/>，与 ScriptPosition.Filename 同构）；
+    /// 同根内相对名唯一（firstDir 文件含子目录前缀，优先序语义照旧）。
+    /// </summary>
+    static readonly ConcurrentDictionary<string, string> pathIndex = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>ADR-0019：返回所有已缓存文件路径键，保证与 ErbLoader/ErhLoader 查找键一致。</summary>
     public static IEnumerable<string> GetAllCachedKeys() => files.Keys;
 
@@ -24,6 +32,13 @@ static partial class Preload
     {
         files.TryGetValue(path, out var lines);
         return lines;
+    }
+
+    /// <summary>preload-cache-lifecycle 01：按相对文件名查全路径（缓存清空后的报错回读定位通道）。</summary>
+    public static bool TryGetFullPath(string relativeName, out string fullPath)
+    {
+        pathIndex.TryGetValue(relativeName, out fullPath!);
+        return fullPath != null;
     }
 
     /// <summary>ADR-0019：通过 DirAccessor 加载路径下所有 ERB/CSV/ERH/ERD/ALS 文件到缓存。</summary>
@@ -52,6 +67,10 @@ static partial class Preload
                 {
                     var value = ReadAllLinesViaAccessor(filePath, dirAccessor);
                     files[filePath] = value;
+                    // preload-cache-lifecycle 01：顺手构建路径索引（相对名 → 全路径）。
+                    // 同根内相对名唯一无竞争；重载时同键刷新（新枚举值覆盖旧值，无幽灵条目可被读出——
+                    // 回读永远从磁盘取文，陈旧条目最坏退化为读失败 → 占位）。
+                    pathIndex[SafPath.GetRelativePathFromRoot(path, filePath)] = filePath;
                 });
             });
         }
@@ -60,6 +79,7 @@ static partial class Preload
             EmueraLog.Warn("preload", $"DirExists FAILED: {path} → caching single entry");
             var value = ReadAllLinesViaAccessor(path, dirAccessor);
             files[path] = value;
+            pathIndex[SafPath.GetRelativePathFromRoot(path, path)] = path;
         }
 
         EmueraLog.Debug("preload", $"Load: {path} : End in {(DateTime.Now - startTime).TotalMilliseconds}ms");
@@ -72,7 +92,18 @@ static partial class Preload
             await Load(path, dirAccessor);
     }
 
-    public static void Clear() => files.Clear();
+    public static void Clear()
+    {
+        files.Clear();
+        pathIndex.Clear();
+    }
+
+    /// <summary>
+    /// preload-cache-lifecycle 01（ADR-0023）：加载管线收尾清空源文本缓存（~180 MiB @ eraTW 规模）。
+    /// 路径索引保留——运行期报错回读（getRawTextFormFilewithLine）经它定位源文件后按需回读。
+    /// 全量重置（含索引）仍走 <see cref="Clear"/>（轮首 / 会话拆除）。
+    /// </summary>
+    public static void ClearCachedLines() => files.Clear();
 
     /// <summary>ADR-0019 / erb-loader-parallel 03：从 Preload 缓存获取指定扩展名的文件列表
     /// （ErbLoader.GetErbFilesFromCache 与 ErhLoader.GetErhFilesFromCache 孪生收敛，SAF 路径专用，

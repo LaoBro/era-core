@@ -620,6 +620,8 @@ internal sealed partial class Lang
 		[Managed] public static TranslatableString UseArgVarInHasNotArgFunc { get; } = new TranslatableString("関数宣言に引数変数\"{0}\"が使われていない関数中で\"{0}\"が使われています(関数の引数以外の用途に使うことは推奨されません。代わりに#DIMの使用を検討してください)");
 		[Managed] public static TranslatableString UseArgVarInSystemFunc { get; } = new TranslatableString("システム関数\"{0}\"中で\"{1}\"が使われています(関数の引数以外の用途に使うことは推奨されません。代わりに#DIMの使用を検討してください)");
 		[Managed] public static TranslatableString FailedOpenFile { get; } = new TranslatableString("{0}のオープンに失敗しました");
+		// preload-cache-lifecycle 01：报错回读降级占位（ADR-0023——缓存清空后源文件不存在 / IO 异常 / 行号越界三态）
+		[Managed] public static TranslatableString SourceLineUnavailable { get; } = new TranslatableString("(ソース行を表示できません: {0} {1}行目)");
 		//[Managed] public static TranslatableString LoadingFile { get; } = new TranslatableString("{0}読み込み中・・・");//こいつはエラーメッセージじゃないけどここに置いておく
 		[Managed] public static TranslatableString UnexpectedError { get; } = new TranslatableString("予期しないエラーが発生しました");
 		[Managed] public static TranslatableString MissingComma { get; } = new TranslatableString("\",\"が必要です");
