@@ -194,5 +194,6 @@ internal enum ConfigCode
 	#endregion
 	#region erb-loader-parallel
 	ParallelErbLoad,
+	ParallelParseScript,
 	#endregion
 }

@@ -11,6 +11,7 @@ using MinorShift.Emuera.Runtime.Script.Statements.Variable;
 using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.Sub;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -57,6 +58,30 @@ internal sealed class ErbLoader
 	/// <summary>erb-loader-parallel 03：并行生成度上限——窗口内产物同时驻留 = 上限文件数的解析产物，
 	/// 封顶防内存峰值（spec 实测 eraTW 规模 12 核理想并行度 ~8-10x，取 8；默认度 = ProcessorCount）。</summary>
 	internal const int MaxParallelErbFiles = 8;
+
+	/// <summary>
+	/// erb-loader-parallel 06：WP0 局部性实验用 GC 快照（累计分配量 / 各代收集次数）。
+	/// <see cref="Diff"/> 输出段内增量 + 当前堆大小，挂在 phase=genmerge / phase=parsescript
+	/// 日志行尾——判别"ParseScript 回归来自 GC 压力还是堆布局交错"（两段 GC 增量相近而耗时
+	/// 持续偏高 ⇒ GC 压力说排除）。调用均为廉价计数器读取，常态开销可忽略。
+	/// </summary>
+	private readonly struct GcSnapshot
+	{
+		readonly long _alloc;
+		readonly int _g0, _g1, _g2;
+
+		GcSnapshot(long alloc, int g0, int g1, int g2) { _alloc = alloc; _g0 = g0; _g1 = g1; _g2 = g2; }
+
+		internal static GcSnapshot Take() => new(
+			GC.GetTotalAllocatedBytes(precise: false),
+			GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2));
+
+		internal static string Diff(in GcSnapshot before)
+		{
+			var after = Take();
+			return $"gc dAllocMB={(after._alloc - before._alloc) >> 20} dG0={after._g0 - before._g0} dG1={after._g1 - before._g1} dG2={after._g2 - before._g2} heapMB={GC.GetTotalMemory(false) >> 20}";
+		}
+	}
 
 	bool noError = true;
 	/// <summary>
@@ -108,13 +133,18 @@ internal sealed class ErbLoader
 			//（fallback = 语义偏差排查 / 单线程调试的 abort 杠杆；AnalysisMode 的 PrintC 输出与
 			// funcCount 进度节奏依赖串行即时检查，一律强制串行）
 			// erb-loader-parallel 03：阶段计时（genmerge = 生成+合并，与 ParseScript 分开观测）
+			// erb-loader-parallel 06：WP0 结论落地——附 GC 增量统计（分配量 / 各代收集次数）。
+			// 机制实验已证并行 ParseScript 回归来自线程池分配上下文交错（GC 增量与串行一致而耗时
+			// 高 25-45%，紧凑化 GC 修复证伪），接受回归；统计留作后续并行化工作的观测基线。
+			//（详见 .scratch/erb-loader-parallel/spec-phase2.md WP0 机制结论节）
 			var phaseSw = Stopwatch.StartNew();
+			var gcBeforeGenmerge = GcSnapshot.Take();
 			if (Config.Config.ParallelErbLoad && !env.AnalysisMode)
 				await LoadPendingParallel(pending, isOnlyEvent, displayReport, starttime);
 			else
 				await LoadPendingSerial(pending, isOnlyEvent, displayReport, starttime);
 			phaseSw.Stop();
-			EmueraLog.Info("ErbLoader", $"phase=genmerge parallel={Config.Config.ParallelErbLoad && !env.AnalysisMode} files={pending.Count} ms={phaseSw.ElapsedMilliseconds}");
+			EmueraLog.Info("ErbLoader", $"phase=genmerge parallel={Config.Config.ParallelErbLoad && !env.AnalysisMode} files={pending.Count} ms={phaseSw.ElapsedMilliseconds} {GcSnapshot.Diff(gcBeforeGenmerge)}");
 			ParserMediator.FlushWarningList();
 #if DEBUG
 			output.PrintSystemLine(string.Format(trsl.ElapsedTime.Text, (DateTime.Now - starttime).TotalMilliseconds));
@@ -131,10 +161,12 @@ internal sealed class ErbLoader
 				output.PrintSystemLine(trsl.CheckingSyntax.Text);
 
 			// 决策四：ParseScript 阶段计时（Stopwatch 精度，displayReport 时可见）
+			// erb-loader-parallel 06：附 GC 增量统计（WP0 判别数据：期间 GC 增量 vs 耗时）
 			var parseSw = Stopwatch.StartNew();
+			var gcBeforeParse = GcSnapshot.Take();
 			await Task.Run(() => ParseScript());
 			parseSw.Stop();
-			EmueraLog.Info("ErbLoader", $"phase=parsescript ms={parseSw.ElapsedMilliseconds}");
+			EmueraLog.Info("ErbLoader", $"phase=parsescript ms={parseSw.ElapsedMilliseconds} {GcSnapshot.Diff(gcBeforeParse)}");
 			if (displayReport)
 				output.PrintSystemLine(string.Format(trsl.ElapsedTime.Text, parseSw.ElapsedMilliseconds));
 
@@ -1024,6 +1056,85 @@ internal sealed class ErbLoader
 
 	public bool useCallForm;
 
+	// ===== erb-loader-parallel 08：ParseScript 未调用遍历并行化（spec-phase2 D4/D5，ADR-0024）=====
+
+	/// <summary>
+	/// D5#6：未调用遍并行期间的 per-线程当前解析行（写点见 <see cref="ScanLine"/>）。
+	/// ThreadLocal 而非 AsyncLocal：写点 per-line 高频（eraTW 1.7M 行 × 3 步），AsyncLocal 每次 set 的
+	/// copy-on-write 开销不可接受；sweep body 是纯同步代码（无 await / 上下文流动），ThreadLocal 语义足够。
+	/// 读者经 <see cref="LogicalLineParser.GetLoadScaningLine"/> 统一入口。
+	/// </summary>
+	internal static readonly ThreadLocal<LogicalLine?> SweepScanLine = new();
+
+	/// <summary>
+	/// D5#2：未调用遍并行期间的 per-label 产物落点——printFunctionNotFoundWarning 的 FNF 事件拦截用
+	///（ONCE 去重 / 计数必须回放段串行重走）。label 级设置（每 label 2 次写），AsyncLocal 开销可忽略，
+	/// 但与 <see cref="SweepScanLine"/> 同机制更简单。
+	/// </summary>
+	private static readonly ThreadLocal<UncalledSweepArt?> SweepArtCurrent = new();
+
+	/// <summary>sweep 期间为 true（实例字段，主线程在 Parallel.ForEach 前后设置）：<see cref="ScanLine"/> 写点切换与 nestCheck 集合局部化的 fast path。</summary>
+	private bool _sweepParallelActive;
+
+	/// <summary>
+	/// sweep 期间为 true（静态 volatile）：读者 fast path——<see cref="LogicalLineParser.GetLoadScaningLine"/>
+	/// 常态（非 sweep，含 runtime 热路径）直接短路 null 回落全局，免去 AsyncLocal/ThreadLocal 读
+	///（eraTW 复测实测该读点在变量解析热路径上被调数百万次）。
+	/// </summary>
+	internal static volatile bool SweepActive;
+
+	/// <summary>D5#2：FNF 事件缓冲（回放段重走 printFunctionNotFoundWarning 的 ONCE 决策）。</summary>
+	private readonly record struct FnfEvent(string Str, LogicalLine Line, int Level, bool IsError);
+
+	/// <summary>
+	/// 未调用遍 per-label 产物。警告（含 FNF 占位）按原串行发射序进 <see cref="Warnings"/>，
+	/// 回放段按序消费（<see cref="ReplaySweepArt"/>）——普通警告直发、FNF 占位重走原决策，
+	/// 交错序与串行一致（FNF 与普通警告在 setJumpTo 行序上天然交错）。
+	/// </summary>
+	private sealed class UncalledSweepArt
+	{
+		public FunctionLabelLine Label = null!;
+		public readonly List<ParserMediator.ParserWarning> Warnings = [];
+		public readonly List<FnfEvent> FnfEvents = [];
+		/// <summary>FNF 占位标记 level（普通警告 level 0-3，-1 安全保留）。</summary>
+		public const int FnfPlaceholderLevel = -1;
+		public void AddFnfEvent(string str, LogicalLine line, int level, bool isError)
+		{
+			Warnings.Add(new ParserMediator.ParserWarning("", null!, FnfPlaceholderLevel, null!));
+			FnfEvents.Add(new FnfEvent(str, line, level, isError));
+		}
+	}
+
+	/// <summary>
+	/// D5#6：解析行写点。串行路径直写全局 sink（行为不变）；未调用遍并行期间写 per-线程
+	/// <see cref="SweepScanLine"/>（全局 sink 无并发写；sweep 收尾 setScanLine(null!) 对齐串行终态——
+	/// 串行下每个 ParseFunctionWithCatch 的 finally 都写 null，中间行值仅解析期读者可见，已由
+	/// GetLoadScaningLine 重定向覆盖）。
+	/// </summary>
+	private void ScanLine(LogicalLine line)
+	{
+		if (_sweepParallelActive)
+			SweepScanLine.Value = line;
+		else
+			setScanLine(line);
+	}
+
+	/// <summary>
+	/// ParseScript 诊断累计（erb-loader-parallel 05）：仅 DisplayReport 开启时创建，默认路径零开销。
+	/// 三步分段（setArgument/nestCheck/setJumpTo）按"主循环 / 未调用遍历"两桶累计 Tick，
+	/// 供 D4 策略预注册判据（spec-phase2 R2-Q2）取数。
+	/// </summary>
+	private ParseScriptDiag? _parseDiag;
+
+	private sealed class ParseScriptDiag
+	{
+		internal readonly Stopwatch Sw = new();
+		/// <summary>当前 ParseFunctionWithCatch 的三步耗时计入哪一桶（主循环=false / 未调用遍历=true）。</summary>
+		internal bool InUncalled;
+		internal long MainSetArgTicks, MainNestTicks, MainJumpTicks;
+		internal long UncalledSetArgTicks, UncalledNestTicks, UncalledJumpTicks;
+	}
+
 	/// <summary>
 	/// 事前処理したファイルをさらに解析し実行可能な状態にする
 	/// </summary>
@@ -1032,6 +1143,12 @@ internal sealed class ErbLoader
 		int usedLabelCount = 0;
 		int labelDepth = -1;
 		List<FunctionLabelLine> labelList = labelDic.GetAllLabels(true);
+		// erb-loader-parallel 05：DisplayReport 开启时采集三组诊断（层宽直方图 / 三步分段 / 主循环 vs 未调用遍切分）
+		ParseScriptDiag? diag = Config.Config.DisplayReport ? new ParseScriptDiag() : null;
+		_parseDiag = diag;
+		long mainTicks = 0, callFormTicks = 0, uncalledTicks = 0;
+		SortedDictionary<int, int>? depthHist = null;
+		Stopwatch? mainSw = diag != null ? Stopwatch.StartNew() : null;
 		while (true)
 		{
 			labelDepth++;
@@ -1050,7 +1167,21 @@ internal sealed class ErbLoader
 			if (countInDepth == 0)
 				break;
 		}
+		mainSw?.Stop();
+		mainTicks = mainSw?.ElapsedTicks ?? 0;
 		labelDepth = -1;
+		if (diag != null)
+		{
+			// 层宽直方图（d-1 = 未调用标签数）：D4 判据②（p90 层宽 vs 目标并行度）取数源
+			depthHist = [];
+			foreach (FunctionLabelLine label in labelList)
+			{
+				if (depthHist.TryGetValue(label.Depth, out int count))
+					depthHist[label.Depth] = count + 1;
+				else
+					depthHist[label.Depth] = 1;
+			}
+		}
 		var ignoredFNCWarningFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 		int ignoredFNCWarningCount = 0;
 
@@ -1063,20 +1194,48 @@ internal sealed class ErbLoader
 				ignoreAll = true;
 				break;
 		}
+		// erb-loader-parallel 08 D4-1：未调用遍历并行化（C-only）——callform / else 两分支同票同套
+		//（D4-3）。门控：ParallelParseScript 且非 AnalysisMode（warningDic/tempDic 路径强制串行，D5 前提）。
+		bool parallelSweep = Config.Config.ParallelParseScript && !env.AnalysisMode;
+		bool sweepParallelRan = false;
 		if (useCallForm)
 		{//callform系が使われたら全ての関数が呼び出されたとみなす。
 			if (env.AnalysisMode)
 				output.PrintSystemLine(trerror.BeNotFuncCheckBecauseUseCallform.Text);
-			foreach (FunctionLabelLine label in labelList)
+			Stopwatch? callFormSw = diag != null ? Stopwatch.StartNew() : null;
+			if (diag != null)
+				diag.InUncalled = true;
+			if (parallelSweep)
 			{
-				if (label.Depth != labelDepth)
-					continue;
-				ParseFunctionWithCatch(label);
+				// 并行段：解析体全部入 per-label 缓冲（警告 / FNF 事件），回放段按 labelList 序重放
+				ReplayUncalledSweep(RunUncalledSweepParallel(labelList, labelDepth));
+				sweepParallelRan = true;
 			}
+			else
+			{
+				foreach (FunctionLabelLine label in labelList)
+				{
+					if (label.Depth != labelDepth)
+						continue;
+					ParseFunctionWithCatch(label);
+				}
+			}
+			callFormSw?.Stop();
+			callFormTicks = callFormSw?.ElapsedTicks ?? 0;
 		}
 		else
 		{
 			bool ignoreUncalledFunction = Config.Config.IgnoreUncalledFunction;
+			Stopwatch? uncalledSw = diag != null ? Stopwatch.StartNew() : null;
+			if (diag != null)
+				diag.InUncalled = true;
+			// else 分支（D4-3 同票同套）：解析体（!ignoreUncalledFunction 时才有）并行化同 callform 分支；
+			// FNC ONCE 去重 / FuncNeverCalled 发射 / IsError 标记是序敏感决策——全部留在下方原循环体内
+			// 串行重走（回放体 = 原串行循环体的重放，解析位置替换为 ReplaySweepArt 按序回放缓冲）。
+			UncalledSweepArt[]? sweepArts = parallelSweep && !ignoreUncalledFunction
+				? RunUncalledSweepParallel(labelList, labelDepth)
+				: null;
+			int artIdx = 0;
 			foreach (FunctionLabelLine label in labelList)
 			{
 				if (label.Depth != labelDepth)
@@ -1107,25 +1266,37 @@ internal sealed class ErbLoader
 					ignoredFNCWarningCount++;
 				else
 					ParserMediator.Warn(string.Format(trerror.FuncNeverCalled.Text, label.LabelName), label, 1, false, false);
-				// 决策七：AnalysisMode 已在上方 L775 调用过 ParseFunctionWithCatch，
+				// 决策七：AnalysisMode 已在上方调用过 ParseFunctionWithCatch，
 				// nestCheck/setJumpTo 不幂等会重复发射警告。此处跳过避免重复解析。
 				if (!ignoreUncalledFunction)
 				{
 					if (!env.AnalysisMode)
-						ParseFunctionWithCatch(label);
+					{
+						if (sweepArts != null)
+						{
+							// 原 ParseFunctionWithCatch(label) 的位置：按序回放该 label 的缓冲
+							ReplaySweepArt(sweepArts[artIdx]);
+							artIdx++;
+						}
+						else
+							ParseFunctionWithCatch(label);
+					}
 				}
 				else
+			{
+				if (!(label.NextLine is NullLine) && !(label.NextLine is FunctionLabelLine))
 				{
-					if (!(label.NextLine is NullLine) && !(label.NextLine is FunctionLabelLine))
+					if (!label.NextLine.IsError)
 					{
-						if (!label.NextLine.IsError)
-						{
-							label.NextLine.IsError = true;
-							label.NextLine.ErrMes = "呼び出されないはずの関数が呼ばれた";
-						}
+						label.NextLine.IsError = true;
+						label.NextLine.ErrMes = "呼び出されないはずの関数が呼ばれた";
 					}
 				}
 			}
+		}
+			uncalledSw?.Stop();
+			uncalledTicks = uncalledSw?.ElapsedTicks ?? 0;
+			sweepParallelRan = sweepArts != null;
 		}
 		if (env.AnalysisMode && (warningDic.Keys.Count > 0 || GlobalStatic.tempDic.Keys.Count > 0))
 		{
@@ -1157,6 +1328,19 @@ internal sealed class ErbLoader
 		ParserMediator.FlushWarningList();
 		if (Config.Config.DisplayReport)
 			output.PrintError(string.Format(trerror.TotalFunc.Text, enabledLineCount, labelDic.Count, usedLabelCount));
+		if (diag != null && depthHist != null)
+		{
+			// erb-loader-parallel 05：三组诊断发射（server 模式 stderr 可见，bench 脚本解析留存）
+			static double TicksToMs(long ticks) => ticks * 1000.0 / Stopwatch.Frequency;
+			depthHist.TryGetValue(-1, out int uncalledLabels);
+			EmueraLog.Info("ErbLoader",
+				$"parsescript_diag phases main_ms={TicksToMs(mainTicks):F0} callform_ms={TicksToMs(callFormTicks):F0} uncalled_ms={TicksToMs(uncalledTicks):F0} labels_main={usedLabelCount} labels_uncalled={uncalledLabels} uncalled_parallel={sweepParallelRan}");
+			EmueraLog.Info("ErbLoader",
+				$"parsescript_diag steps main_setargument_ms={TicksToMs(diag.MainSetArgTicks):F0} main_nestcheck_ms={TicksToMs(diag.MainNestTicks):F0} main_setjumpto_ms={TicksToMs(diag.MainJumpTicks):F0} uncalled_setargument_ms={TicksToMs(diag.UncalledSetArgTicks):F0} uncalled_nestcheck_ms={TicksToMs(diag.UncalledNestTicks):F0} uncalled_setjumpto_ms={TicksToMs(diag.UncalledJumpTicks):F0}");
+			EmueraLog.Info("ErbLoader",
+				$"parsescript_diag depth_hist {string.Join(' ', depthHist.Select(static kv => $"d{kv.Key}={kv.Value}"))}");
+		}
+		_parseDiag = null;
 		if (Config.Config.AllowFunctionOverloading && Config.Config.WarnFunctionOverloading)
 		{
 			List<string> overloadedList = idDic.GetOverloadedList(labelDic);
@@ -1183,6 +1367,20 @@ internal sealed class ErbLoader
 	public Dictionary<string, long> warningDic = [];
 	private void printFunctionNotFoundWarning(string str, LogicalLine line, int level, bool isError)
 	{
+		// erb-loader-parallel 08 D5#2：未调用遍并行期间缓冲 FNF 事件（含被忽略的——回放时决策原样重走）。
+		// ONCE 去重（ignoredFNFWarningFiles）与 ignoredFNFWarningCount 必须串行序，故整个决策延后到回放段；
+		// IsError/ErrMes 行内写先行（幂等无害，回放重走时再写一次 no-op）。
+		var sweepArt = SweepArtCurrent.Value;
+		if (sweepArt != null)
+		{
+			if (isError)
+			{
+				line.IsError = true;
+				line.ErrMes = str;
+			}
+			sweepArt.AddFnfEvent(str, line, level, isError);
+			return;
+		}
 		if (env.AnalysisMode)
 		{
 			if (warningDic.TryGetValue(str, out long value))
@@ -1229,13 +1427,161 @@ internal sealed class ErbLoader
 		ParserMediator.Warn(str, line, level, isError, false);
 	}
 
+	/// <summary>
+	/// erb-loader-parallel 08：未调用遍历并行段（spec-phase2 D4-1 / 调度框架 R3-Q5）。
+	/// <see cref="Parallel"/>.ForEach(Partitioner 范围分区, Min(ProcessorCount, 8))——Partitioner 均载 +
+	/// 度数封顶（度数硬编码不可配，R3-Q11）；per-label 产物（警告缓冲 / FNF 事件）按 labelList 序
+	/// 存入返回数组，回放段串行重放。共享状态处置对照 D5 清单：#1 警告 per-label 缓冲（Begin/EndWarningBuffer）；
+	/// #2 FNF 事件拦截（printFunctionNotFoundWarning 开头）；#3 useCallForm 良性竞争直写（不改）；
+	/// #5 nestCheck 集合局部化（nestCheck 内部）；#6 scaningLine 写点切换（ScanLine()）；
+	/// #7 Depth check-then-set 同层同值良性竞争（事实 B）；#8 并行段跳过 per-label 分步计时（_parseDiag 置 null，
+	/// phases 总时长计时在调用方）。异常语义（R3-Q9）：先按序回放已产生的缓冲（已解析 label 的警告不丢）
+	/// 再重抛 InnerExceptions[0]，由外层 LoadErbDir 既有 catch 统一处理。
+	/// </summary>
+	private UncalledSweepArt[] RunUncalledSweepParallel(List<FunctionLabelLine> labelList, int labelDepth)
+	{
+		List<FunctionLabelLine> targets = [];
+		foreach (FunctionLabelLine label in labelList)
+		{
+			if (label.Depth != labelDepth)
+				continue;
+			targets.Add(label);
+		}
+		var arts = new UncalledSweepArt[targets.Count];
+		if (arts.Length == 0)
+			return arts;
+		_parseDiag = null;
+		_sweepParallelActive = true;
+		SweepActive = true;
+		// 度数封顶 8 与 MaxParallelErbFiles（文件数语义）恰同值而语义不同——spec-phase2 调度框架（R3-Q5）
+		// 度数硬编码不可配（R3-Q11），不复用度数常量也不新增开关，取同值字面语义注释锚定
+		var opts = new ParallelOptions { MaxDegreeOfParallelism = Math.Min(Environment.ProcessorCount, MaxParallelErbFiles) };
+		try
+		{
+			// 小 chunk 动态均载：eraTW 函数大小长尾，静态大 range 会把巨型函数聚在同一分区拖成长尾
+			int chunk = Math.Max(1, targets.Count / (opts.MaxDegreeOfParallelism * 16));
+			Parallel.ForEach(Partitioner.Create(0, targets.Count, chunk), opts, range =>
+			{
+				try
+				{
+					for (int i = range.Item1; i < range.Item2; i++)
+					{
+						var art = new UncalledSweepArt { Label = targets[i] };
+						arts[i] = art;
+						ParserMediator.BeginWarningBuffer(art.Warnings);
+						SweepArtCurrent.Value = art;
+						try
+						{
+							ParseFunctionWithCatch(targets[i]);
+						}
+						finally
+						{
+							SweepArtCurrent.Value = null;
+							ParserMediator.EndWarningBuffer();
+						}
+					}
+				}
+				finally
+				{
+					// 线程池线程复用防残留：本 range 结束后清 per-线程 slot（否则该线程后续跑 runtime
+					// 代码时 SweepScanLine.Value 非 null，读者会读到 stale 行）
+					SweepScanLine.Value = null;
+					SweepArtCurrent.Value = null;
+				}
+			});
+		}
+		catch (AggregateException agg)
+		{
+			ReplayUncalledSweep(arts);
+			throw agg.InnerExceptions[0];
+		}
+		finally
+		{
+			_sweepParallelActive = false;
+			SweepActive = false;
+			// Parallel.ForEach 内联执行会污染调用线程的 ThreadLocal slot——显式复位；终态对齐串行
+			//（串行下最后一个 ParseFunctionWithCatch 的 finally 写 null）
+			SweepScanLine.Value = null;
+			SweepArtCurrent.Value = null;
+			setScanLine(null!);
+		}
+		return arts;
+	}
+
+	/// <summary>按 labelList 序回放 per-label 产物（null 元素跳过——并行段异常时部分 label 未调度）。</summary>
+	private void ReplayUncalledSweep(UncalledSweepArt[] arts)
+	{
+		for (int i = 0; i < arts.Length; i++)
+		{
+			if (arts[i] != null)
+				ReplaySweepArt(arts[i]);
+		}
+	}
+
+	/// <summary>
+	/// 回放单个 label 的缓冲（回放协议：回放体 = 原串行循环体的重放，不写镜像逻辑）：
+	/// 普通警告按序直发全局列表；FNF 占位按序重走 printFunctionNotFoundWarning 原决策
+	///（ONCE 去重 / ignoredFNFWarningCount / Warn 发射，警告/事件从缓冲读，决策逻辑原样重走）。
+	/// </summary>
+	private void ReplaySweepArt(UncalledSweepArt art)
+	{
+		var warnings = art.Warnings;
+		if (warnings.Count == 0)
+			return;
+		int fnfIdx = 0;
+		for (int i = 0; i < warnings.Count; i++)
+		{
+			var w = warnings[i];
+			if (w.WarningLevel == UncalledSweepArt.FnfPlaceholderLevel)
+			{
+				var ev = art.FnfEvents[fnfIdx++];
+				printFunctionNotFoundWarning(ev.Str, ev.Line, ev.Level, ev.IsError);
+			}
+			else
+			{
+				ParserMediator.EmitWarning(w);
+			}
+		}
+		warnings.Clear();
+		art.FnfEvents.Clear();
+	}
+
 	private void ParseFunctionWithCatch(FunctionLabelLine label)
 	{//ここでエラーを捕まえることは本来はないはず。ExeEE相当。
 		try
 		{
-			setArgument(label);
-			nestCheck(label);
-			setJumpTo(label);
+			if (_parseDiag is { } diag)
+			{
+				// erb-loader-parallel 05：三步分段计时（按 InUncalled 分桶累计）
+				var sw = diag.Sw;
+				sw.Restart();
+				setArgument(label);
+				long setArg = sw.ElapsedTicks;
+				sw.Restart();
+				nestCheck(label);
+				long nest = sw.ElapsedTicks;
+				sw.Restart();
+				setJumpTo(label);
+				long jump = sw.ElapsedTicks;
+				if (diag.InUncalled)
+				{
+					diag.UncalledSetArgTicks += setArg;
+					diag.UncalledNestTicks += nest;
+					diag.UncalledJumpTicks += jump;
+				}
+				else
+				{
+					diag.MainSetArgTicks += setArg;
+					diag.MainNestTicks += nest;
+					diag.MainJumpTicks += jump;
+				}
+			}
+			else
+			{
+				setArgument(label);
+				nestCheck(label);
+				setJumpTo(label);
+			}
 		}
 		catch (Exception exc)
 		{
@@ -1254,7 +1600,7 @@ internal sealed class ErbLoader
 		}
 		finally
 		{
-			setScanLine(null!);
+			ScanLine(null!);
 		}
 
 	}
@@ -1268,7 +1614,7 @@ internal sealed class ErbLoader
 		while (true)
 		{
 			nextLine = nextLine.NextLine;
-			setScanLine(nextLine);
+			ScanLine(nextLine);
 			if (nextLine is not InstructionLine func)
 			{
 				if (nextLine is NullLine or FunctionLabelLine)
@@ -1294,18 +1640,32 @@ internal sealed class ErbLoader
 		//IF-ELSEIF-ENDIF、REPEAT-RENDの対応チェックなど
 		//PRINTDATA系もここでチェック
 		// 决策三-a：复用 ErbLoader 实例字段，避免每函数分配 3 个容器（1000 函数 = 3000+ 次分配）
+		// erb-loader-parallel 08 D5#5：未调用遍并行期间实例字段复用会互踩——改局部实例
+		//（eraTW 63k label × 小集合，分配成本可忽略）；串行路径保持字段复用。
 		LogicalLine nextLine = label;
-		var tempLineList = _tempLineListReuse;
-		var nestStack = _nestStackReuse;
-		var SelectcaseStack = _selectcaseStackReuse;
-		tempLineList.Clear();
-		nestStack.Clear();
-		SelectcaseStack.Clear();
+		List<InstructionLine> tempLineList;
+		Stack<InstructionLine> nestStack;
+		Stack<InstructionLine> SelectcaseStack;
+		if (_sweepParallelActive)
+		{
+			tempLineList = [];
+			nestStack = new();
+			SelectcaseStack = new();
+		}
+		else
+		{
+			tempLineList = _tempLineListReuse;
+			nestStack = _nestStackReuse;
+			SelectcaseStack = _selectcaseStackReuse;
+			tempLineList.Clear();
+			nestStack.Clear();
+			SelectcaseStack.Clear();
+		}
 		InstructionLine pairLine = null!;
 		while (true)
 		{
 			nextLine = nextLine.NextLine;
-			setScanLine(nextLine);
+			ScanLine(nextLine);
 			if (nextLine is NullLine or FunctionLabelLine)
 				break;
 			if (nextLine is not InstructionLine)
@@ -1856,7 +2216,7 @@ internal sealed class ErbLoader
 			}
 			if (func.IsError)
 				continue;
-			setScanLine(func);
+			ScanLine(func);
 
 			if (func.Function.Instruction != null)
 			{

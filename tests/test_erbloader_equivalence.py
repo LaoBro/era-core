@@ -172,15 +172,22 @@ def _warnings(lines):
     return entries
 
 
-def _set_parallel(cfg_path, parallel):
-    """改写临时语料 emuera.config 的『并行加载』开关（新增/覆盖既有行）。"""
-    flag = "YES" if parallel else "NO"
+def _set_config_lines(cfg_path, overrides):
+    """改写临时语料 emuera.config：overrides = [(key, value), ...]，删旧键行后追加（与 _set_parallel 同款语义）。"""
+    keys = [k for k, _ in overrides]
     lines = [l for l in cfg_path.read_text(encoding="utf-8").splitlines()
-             if l.strip()
-             and not l.startswith("ERBファイルを並列して読み込む")
-             and not l.startswith("Load ERB files in parallel")]
-    lines.append(f"ERBファイルを並列して読み込む:{flag}")
+             if l.strip() and not any(l.startswith(k) for k in keys)]
+    lines.extend(f"{k}:{v}" for k, v in overrides)
     cfg_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _set_parallel(cfg_path, parallel):
+    """改写临时语料 emuera.config 的并行加载双开关（erb-loader-parallel 08：ParallelErbLoad + ParallelParseScript）。"""
+    flag = "YES" if parallel else "NO"
+    _set_config_lines(cfg_path, [
+        ("ERBファイルを並列して読み込む", flag),
+        ("未呼び出し関数の解析を並列して行う", flag),
+    ])
 
 
 def _build_corpus(src_game, inject_warnings):
@@ -197,13 +204,19 @@ def _build_corpus(src_game, inject_warnings):
         (erb / "B.ERB").write_text(
             "@FOO\n$LAB\n$LAB\nRETURN\n@EVENTTRAIN\n#ONLY\nRETURN\n@BFOO(X, Y)\nRETURN\n@BFOO\nRETURN\n",
             encoding="utf-8")
+        # erb-loader-parallel 08：else 分支真解析语料（未调用函数 + FNF + nestCheck 警告）——
+        # 默认 IgnoreUncalledFunction:YES 下未调用遍无解析体，等价性覆盖不到并行 sweep
+        (erb / "C.ERB").write_text(
+            "@UNCALLED_C1\nBREAK\nCALL NOEXIST_FUNC_C\nRETURN\n@UNCALLED_C2\nCALL NOEXIST_FUNC_C2\nRETURN\n",
+            encoding="utf-8")
         cfg = game / "emuera.config"
         if cfg.exists():
-            txt = cfg.read_text(encoding="utf-8")
-            txt = txt.replace(
-                "同名の非イベント関数が複数定義されたとき警告する:NO",
-                "同名の非イベント関数が複数定義されたとき警告する:YES")
-            cfg.write_text(txt, encoding="utf-8")
+            _set_config_lines(cfg, [
+                ("同名の非イベント関数が複数定義されたとき警告する", "YES"),
+                ("呼び出されなかった関数を無視する", "NO"),
+                ("関数が見つからない警告の扱い", "ONCE"),
+                ("関数が呼び出されなかった警告の扱い", "ONCE"),
+            ])
     return game
 
 

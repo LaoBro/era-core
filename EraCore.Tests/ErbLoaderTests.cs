@@ -446,4 +446,135 @@ public class ErbLoaderTests
 		for (int i = 1; i < idx.Length; i++)
 			Assert.True(idx[i - 1] < idx[i], $"progress lines out of order at F{i:D2}");
 	}
+
+	// ===== erb-loader-parallel Issue 08：ParseScript 未调用遍历并行化（else / callform 两分支同票同套）=====
+
+	/// <summary>else 分支等价性语料：未调用函数真解析（IgnoreUncalledFunction:NO）+ FNC ONCE + FNF ONCE + nestCheck 警告。
+	/// 注意 harness 语义：CALL 解析查 GlobalStatic.LabelDictionary（与传入 labelDic 分离），语料不可 CALL 已定义函数。</summary>
+	private static void WriteUncalledSweepCorpus(LoaderTestHarness h)
+	{
+		h.WriteErb("A.ERB", "@EVENTTRAIN\nRETURN\n"
+			+ "@UNCALLED_A\nBREAK\nCALL NOEXIST_FUNC\nRETURN\n");
+		// B 文件内两个 FNF：首个发射、同文件第二个被 ONCE 去重（ignoredFNFWarningCount 路径）
+		h.WriteErb("B.ERB", "@UNCALLED_B\nCALL NOEXIST_FUNC_B\nCALL NOEXIST_FUNC_B2\nBREAK\nRETURN\n");
+	}
+
+	/// <summary>
+	/// 08 等价性（else 分支）：ParallelParseScript 并行（默认）与串行 fallback 输出逐字一致。
+	/// 覆盖 D5 处置：#1 警告 per-label 缓冲回放、#2 FNF 事件缓冲 + 回放段 ONCE 决策重走
+	///（ignoredFNFWarningFiles 按文件先到先得）、#4 FNC ONCE（ignoredFNCWarningFiles）、
+	/// #5 nestCheck 集合局部化（BREAK 循环外警告）、#6 scaningLine 写点切换。
+	/// </summary>
+	[Fact]
+	public async Task LoadErbDir_parsescript_parallel_equivalent_to_serial_uncalled_branch()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		WriteUncalledSweepCorpus(h);
+		// 未调用函数真解析 + FNC/FNF ONCE
+		ConfigData.Current!.GetConfigItem(ConfigCode.IgnoreUncalledFunction).SetValue(false);
+		ConfigData.Current!.GetConfigItem(ConfigCode.FunctionNotCalledWarning).SetValue(DisplayWarningFlag.ONCE);
+		ConfigData.Current!.GetConfigItem(ConfigCode.FunctionNotFoundWarning).SetValue(DisplayWarningFlag.ONCE);
+		await h.PreloadAsync();
+
+		var beforeParallel = h.Console.DisplayLineCount;
+		var labelDicParallel = new LabelDictionary();
+		await NewLoaderWithSpy(h, new List<LogicalLine?>()).LoadErbDir(h.ErbDir, displayReport: false, labelDicParallel);
+		var parallelLines = h.Console.DisplayLineList.Skip(beforeParallel)
+			.Select(l => l?.ToString() ?? "").Where(s => !s.StartsWith("経過時間:")).ToList();
+
+		var before = h.Console.DisplayLineCount;
+		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
+		var labelDicSerial = new LabelDictionary();
+		await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { })
+			.LoadErbDir(h.ErbDir, displayReport: false, labelDicSerial);
+		var serialLines = h.Console.DisplayLineList.Skip(before)
+			.Select(l => l?.ToString() ?? "").Where(s => !s.StartsWith("経過時間:")).ToList();
+
+		// sanity：语料确实触发了 FNC / FNF / ONCE 去重计数路径（并行路径已完整回放）
+		Assert.Contains(parallelLines, s => s.Contains("UNCALLED_A") && s.Contains("一度も呼び出されません"));
+		Assert.Contains(parallelLines, s => s.Contains("NOEXIST_FUNC") && s.Contains("存在しません"));
+		Assert.Contains(parallelLines, s => s.Contains("REPEAT, FOR, WHILE, DOの中以外で"));
+		Assert.Contains(parallelLines, s => s.Contains("呼び出した事に関する警告を")); // IgnoredUndefinedFuncCall（B 文件第二个 FNF 被去重）
+
+		static List<string> Signature(LabelDictionary dic) =>
+			dic.GetAllLabels(false).OrderBy(l => l.Index)
+				.Select(l => $"{l.LabelName}:{l.Index}:{l.FileIndex}:{l.Depth}").ToList();
+		Assert.Equal(Signature(labelDicSerial), Signature(labelDicParallel));
+		Assert.Equal(serialLines, parallelLines);
+	}
+
+	/// <summary>
+	/// 08 等价性（callform 分支）：TRYCALLLIST 使 useCallForm=true → 未调用遍历走 callform 分支并行解析。
+	/// eraTW 真机同款分支（spec D4-3 双保险：单测验 else、真机验 callform，此处反向补齐单测面）。
+	/// </summary>
+	[Fact]
+	public async Task LoadErbDir_parsescript_parallel_equivalent_to_serial_callform_branch()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		h.WriteErb("A.ERB", "@EVENTTRAIN\nTRYCALLLIST\n\tFUNC FOO\nENDFUNC\nRETURN\n"
+			+ "@UNCALLED_A\nBREAK\nCALL NOEXIST_FUNC\nRETURN\n");
+		h.WriteErb("B.ERB", "@UNCALLED_B\nCALL NOEXIST_FUNC_B\nCALL NOEXIST_FUNC_B2\nBREAK\nRETURN\n");
+		ConfigData.Current!.GetConfigItem(ConfigCode.FunctionNotFoundWarning).SetValue(DisplayWarningFlag.ONCE);
+		await h.PreloadAsync();
+
+		var beforeParallel = h.Console.DisplayLineCount;
+		var labelDicParallel = new LabelDictionary();
+		await NewLoaderWithSpy(h, new List<LogicalLine?>()).LoadErbDir(h.ErbDir, displayReport: false, labelDicParallel);
+		var parallelLines = h.Console.DisplayLineList.Skip(beforeParallel)
+			.Select(l => l?.ToString() ?? "").Where(s => !s.StartsWith("経過時間:")).ToList();
+
+		var before = h.Console.DisplayLineCount;
+		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
+		var labelDicSerial = new LabelDictionary();
+		await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { })
+			.LoadErbDir(h.ErbDir, displayReport: false, labelDicSerial);
+		var serialLines = h.Console.DisplayLineList.Skip(before)
+			.Select(l => l?.ToString() ?? "").Where(s => !s.StartsWith("経過時間:")).ToList();
+
+		// sanity：callform 分支确实在解析未调用函数（nestCheck/FNF 警告出现；FNC 警告不该出现）
+		Assert.Contains(parallelLines, s => s.Contains("REPEAT, FOR, WHILE, DOの中以外で"));
+		Assert.Contains(parallelLines, s => s.Contains("NOEXIST_FUNC") && s.Contains("存在しません"));
+		Assert.DoesNotContain(parallelLines, s => s.Contains("一度も呼び出されません"));
+
+		static List<string> Signature(LabelDictionary dic) =>
+			dic.GetAllLabels(false).OrderBy(l => l.Index)
+				.Select(l => $"{l.LabelName}:{l.Index}:{l.FileIndex}:{l.Depth}").ToList();
+		Assert.Equal(Signature(labelDicSerial), Signature(labelDicParallel));
+		Assert.Equal(serialLines, parallelLines);
+	}
+
+	/// <summary>
+	/// 08 行为锚点：IgnoreUncalledFunction=true（默认）时未调用函数不解析、NextLine 标记 IsError
+	///（"呼び出されないはずの関数が呼ばれた"），并行 / 串行输出一致且标记生效。
+	/// </summary>
+	[Fact]
+	public async Task LoadErbDir_parsescript_parallel_uncalled_iserror_equivalent()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		h.WriteErb("A.ERB", "@FOO\nRETURN\n@UNCALLED_A\nRETURN\n");
+		await h.PreloadAsync();
+
+		var beforeParallel = h.Console.DisplayLineCount;
+		var labelDicParallel = new LabelDictionary();
+		await NewLoaderWithSpy(h, new List<LogicalLine?>()).LoadErbDir(h.ErbDir, displayReport: false, labelDicParallel);
+		var parallelLines = h.Console.DisplayLineList.Skip(beforeParallel)
+			.Select(l => l?.ToString() ?? "").Where(s => !s.StartsWith("経過時間:")).ToList();
+
+		var before = h.Console.DisplayLineCount;
+		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
+		var labelDicSerial = new LabelDictionary();
+		await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { })
+			.LoadErbDir(h.ErbDir, displayReport: false, labelDicSerial);
+		var serialLines = h.Console.DisplayLineList.Skip(before)
+			.Select(l => l?.ToString() ?? "").Where(s => !s.StartsWith("経過時間:")).ToList();
+
+		// IsError 标记生效（并行路径：else 分支 ignoreUncalledFunction 路径，解析集为空）
+		var uncalled = labelDicParallel.GetAllLabels(false).First(l => l.LabelName == "UNCALLED_A");
+		Assert.True(uncalled.NextLine.IsError);
+		Assert.Equal("呼び出されないはずの関数が呼ばれた", uncalled.NextLine.ErrMes);
+		Assert.Equal(serialLines, parallelLines);
+	}
 }

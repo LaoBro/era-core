@@ -1,5 +1,6 @@
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Script.Data;
+using MinorShift.Emuera.Runtime.Script.Parser;
 using MinorShift.Emuera.Runtime.Script.Statements;
 using MinorShift.Emuera.Runtime.Script.Statements.Variable;
 using MinorShift.Emuera.Runtime.Utils;
@@ -1419,7 +1420,8 @@ internal sealed partial class VariableData
 		}
 		public override string GetStrValue(ExpressionMediator exm, long[] arguments)
 		{
-			LogicalLine line = exm.Process.GetScaningLine();
+			// erb-loader-parallel 08：加载期读者统一经 GetLoadScaningLine
+			LogicalLine line = LogicalLineParser.GetLoadScaningLine() ?? exm.Process.GetScaningLine();
 			if ((line == null) || (line.Position == null))
 				return "";
 			return line.Position.Value.Filename;
@@ -1435,7 +1437,8 @@ internal sealed partial class VariableData
 		}
 		public override string GetStrValue(ExpressionMediator exm, long[] arguments)
 		{
-			LogicalLine line = exm.Process.GetScaningLine();
+			// erb-loader-parallel 08：加载期读者统一经 GetLoadScaningLine
+			LogicalLine line = LogicalLineParser.GetLoadScaningLine() ?? exm.Process.GetScaningLine();
 			if ((line == null) || (line.ParentLabelLine == null))
 				return "";//システム待機中のデバッグモードから呼び出し
 			return line.ParentLabelLine.LabelName;
@@ -1450,7 +1453,8 @@ internal sealed partial class VariableData
 		}
 		public override long GetIntValue(ExpressionMediator exm, long[] arguments)
 		{
-			LogicalLine line = exm.Process.GetScaningLine();
+			// erb-loader-parallel 08：加载期读者统一经 GetLoadScaningLine
+			LogicalLine line = LogicalLineParser.GetLoadScaningLine() ?? exm.Process.GetScaningLine();
 			if ((line == null) || (line.Position == null))
 				return -1L;
 			return line.Position.Value.LineNo;

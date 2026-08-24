@@ -604,7 +604,8 @@ internal static partial class FunctionMethodCreator
 		}
 		public override string GetStrValue(ExpressionMediator exm, List<AExpression> arguments)
 		{
-			LogicalLine line = exm.Process.GetScaningLine();
+			// erb-loader-parallel 08：加载期读者统一经 GetLoadScaningLine
+			LogicalLine line = LogicalLineParser.GetLoadScaningLine() ?? exm.Process.GetScaningLine();
 			if ((line == null) || (line.ParentLabelLine == null))
 				return "";//システム待機中のデバッグモードから呼び出し
 			return line.ParentLabelLine.LabelName;

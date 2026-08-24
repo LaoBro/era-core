@@ -1,4 +1,5 @@
 using MinorShift.Emuera.GameData.Variable;
+using MinorShift.Emuera.Runtime.Script.Parser;
 using System.Collections.Generic;
 using trerror = MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.Error;
 
@@ -54,7 +55,8 @@ internal sealed class VariableLocal
 		else
 		{
 			ret = creater(varCode, subKey, size);
-			LogicalLine line = GlobalStatic.Process.GetScaningLine();
+			// erb-loader-parallel 08：加载期读者统一经 GetLoadScaningLine（并行 sweep 期间全局 scaningLine 无写）
+			LogicalLine line = LogicalLineParser.GetLoadScaningLine() ?? GlobalStatic.Process.GetScaningLine();
 			if (line != null)
 			{
 				if (!func.IsSystem)

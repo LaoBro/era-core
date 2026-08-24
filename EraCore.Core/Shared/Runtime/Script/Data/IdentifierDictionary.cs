@@ -4,6 +4,7 @@ using MinorShift.Emuera.GameProc.Function;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Config.JSON;
 using MinorShift.Emuera.Runtime.Script.Data;
+using MinorShift.Emuera.Runtime.Script.Parser;
 using MinorShift.Emuera.Runtime.Script.Statements;
 using MinorShift.Emuera.Runtime.Script.Statements.Expression;
 using MinorShift.Emuera.Runtime.Script.Statements.Function;
@@ -488,7 +489,8 @@ internal partial class IdentifierDictionary
 		//	key = key.ToUpper();
 		if (allowPrivate)
 		{
-			LogicalLine line = GlobalStatic.Process.GetScaningLine();
+			// erb-loader-parallel 08：加载期读者统一经 GetLoadScaningLine（并行 sweep 期间全局 scaningLine 无写）
+			LogicalLine line = LogicalLineParser.GetLoadScaningLine() ?? GlobalStatic.Process.GetScaningLine();
 			if ((line != null) && (line.ParentLabelLine != null))
 			{
 				ret = line.ParentLabelLine.GetPrivateVariable(key);
@@ -506,7 +508,7 @@ internal partial class IdentifierDictionary
 			{
 				throw new CodeEE(string.Format(treer.UsedProhibitedVar.Text, key));
 			}
-			LogicalLine line = GlobalStatic.Process.GetScaningLine();
+			LogicalLine line = LogicalLineParser.GetLoadScaningLine() ?? GlobalStatic.Process.GetScaningLine();
 			if (string.IsNullOrEmpty(subKey))
 			{
 				//システムの入力待ち中にデバッグコマンドからLOCALを呼んだとき。
@@ -518,8 +520,15 @@ internal partial class IdentifierDictionary
 			{
 				ParserMediator.Warn(treer.CannotRecommendCallLocalVar.Text, line, 1, false, false);
 			}
-			LocalVariableToken retLocal = value.GetExistLocalVariableToken(subKey);
-			retLocal ??= value.GetNewLocalVariableToken(subKey, line.ParentLabelLine);
+			// erb-loader-parallel 08：未调用遍并行期 LOCAL 族 token 首建是共享字典并发写
+			//（TryGetValue + Add 竞态）——双重检查加锁（GetNewLocalVariableToken 内部的 Add 也在
+			// 临界区内；每函数每变量族一次，争用可忽略）
+			LocalVariableToken retLocal;
+			lock (value)
+			{
+				retLocal = value.GetExistLocalVariableToken(subKey);
+				retLocal ??= value.GetNewLocalVariableToken(subKey, line.ParentLabelLine);
+			}
 			return retLocal;
 		}
 		if (varTokenDic.TryGetValue(key, out ret))

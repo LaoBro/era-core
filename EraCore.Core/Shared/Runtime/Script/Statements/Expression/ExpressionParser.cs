@@ -444,9 +444,10 @@ internal static class ExpressionParser
 						{
 							if (op == OperatorCode.Equal || op == OperatorCode.Greater || op == OperatorCode.Less
 							|| op == OperatorCode.GreaterEqual || op == OperatorCode.LessEqual || op == OperatorCode.NotEqual)
-							{
-								ParserMediator.Warn(trerror.ComparisonOpContinuous.Text, GlobalStatic.Process.GetScaningLine(), 0, false, false);
-							}
+						{
+							// erb-loader-parallel 08：加载期读者统一经 GetLoadScaningLine
+							ParserMediator.Warn(trerror.ComparisonOpContinuous.Text, LogicalLineParser.GetLoadScaningLine() ?? GlobalStatic.Process.GetScaningLine(), 0, false, false);
+						}
 						}
 						stack.Add(op);
 						formerOp = op;

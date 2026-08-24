@@ -108,6 +108,15 @@ internal partial class ParserMediator
 		buffer.Clear();
 	}
 
+	/// <summary>把单条缓冲警告并入全局警告列表（erb-loader-parallel 08 未调用遍回放段按序调用）。</summary>
+	internal static void EmitWarning(ParserWarning warning)
+	{
+		lock (warningListLock)
+		{
+			warningList.Add(warning);
+		}
+	}
+
 	/// <summary>写入一条警告：缓冲激活时进 per-file 缓冲，否则锁加进全局列表。</summary>
 	static void AddWarning(ParserWarning warning)
 	{

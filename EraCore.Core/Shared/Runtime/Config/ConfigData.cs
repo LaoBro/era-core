@@ -112,6 +112,8 @@ internal sealed class ConfigData
 		configArray.Add(new ConfigItem<bool>(ConfigCode.DisplayReport, "ロード時にレポートを表示する", "Display loading report", false));
 		// erb-loader-parallel 03：ERB 並列読み込み（false = 直列フォールバック、AnalysisMode は常に直列）
 		configArray.Add(new ConfigItem<bool>(ConfigCode.ParallelErbLoad, "ERBファイルを並列して読み込む", "Load ERB files in parallel", true));
+		// erb-loader-parallel 08：ParseScript 未呼び出し関数の解析並列化（false = 直列フォールバック、AnalysisMode は常に直列）
+		configArray.Add(new ConfigItem<bool>(ConfigCode.ParallelParseScript, "未呼び出し関数の解析を並列して行う", "Parse uncalled functions in parallel", true));
 		configArray.Add(new ConfigItem<ReduceArgumentOnLoadFlag>(ConfigCode.ReduceArgumentOnLoad, "ロード時に引数を解析する", "Reduce argument on load", ReduceArgumentOnLoadFlag.NO));
 
 		configArray.Add(new ConfigItem<bool>(ConfigCode.IgnoreUncalledFunction, "呼び出されなかった関数を無視する", "Ignore uncalled functions", true));

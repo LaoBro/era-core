@@ -97,6 +97,8 @@ internal sealed class Config
 	public static bool DisplayReport => Current!._data.GetConfigValue<bool>(ConfigCode.DisplayReport);
 	/// <summary>erb-loader-parallel 03：ERB 并行加载开关（默认 true）。false = 串行 fallback（排查语义偏差/单线程调试）；AnalysisMode 一律强制串行。</summary>
 	public static bool ParallelErbLoad => Current!._data.GetConfigValue<bool>(ConfigCode.ParallelErbLoad);
+	/// <summary>erb-loader-parallel 08：ParseScript 未调用遍历并行开关（默认 true，与 ParallelErbLoad 正交）。false = 串行 fallback；AnalysisMode 一律强制串行。</summary>
+	public static bool ParallelParseScript => Current!._data.GetConfigValue<bool>(ConfigCode.ParallelParseScript);
 	public static ReduceArgumentOnLoadFlag ReduceArgumentOnLoad => Current!._data.GetConfigValue<ReduceArgumentOnLoadFlag>(ConfigCode.ReduceArgumentOnLoad);
 	public static bool IgnoreUncalledFunction => Current!._data.GetConfigValue<bool>(ConfigCode.IgnoreUncalledFunction);
 	public static DisplayWarningFlag FunctionNotFoundWarning => Current!._data.GetConfigValue<DisplayWarningFlag>(ConfigCode.FunctionNotFoundWarning);

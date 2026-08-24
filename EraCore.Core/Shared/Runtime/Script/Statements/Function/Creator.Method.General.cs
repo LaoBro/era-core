@@ -435,7 +435,10 @@ internal static partial class FunctionMethodCreator
 			if (arguments.Count > 0)
 				return string.Format(trerror.TooManyFuncArgs.Text, name);
 			if (warn)
-				ParserMediator.Warn(string.Format(trerror.FuncDeprecated.Text, name, "MESSKIP"), GlobalStatic.Process.GetScaningLine(), 1, false, false, null!);
+			{
+				// erb-loader-parallel 08：加载期读者统一经 GetLoadScaningLine
+				ParserMediator.Warn(string.Format(trerror.FuncDeprecated.Text, name, "MESSKIP"), LogicalLineParser.GetLoadScaningLine() ?? GlobalStatic.Process.GetScaningLine(), 1, false, false, null!);
+			}
 			return null!;
 		}
 		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
