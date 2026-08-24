@@ -187,12 +187,18 @@ internal sealed class GameServerProtocol
         {
             payload["state"] = "Idle";
             payload["isRunning"] = false;
+            payload["threadAlive"] = false;
             payload["gameDir"] = null;
         }
         else
         {
             payload["state"] = session.StateString;
             payload["isRunning"] = session.IsRunning;
+            // 目标 3：threadAlive 显式别名（游戏循环 Task 是否存活），替代 agent 侧脆弱推导；
+            // lastError 仅在非空时透出（正常 Quit 无未料异常该键缺失）。
+            payload["threadAlive"] = session.IsRunning;
+            if (session.LastError is not null)
+                payload["lastError"] = session.LastError;
             payload["sessionId"] = session.Id;
             payload["createdAt"] = session.CreatedAt;
             payload["gameDir"] = GamePaths.Current.ExeDir;

@@ -251,6 +251,8 @@ def main():
             check("state" in step_json, "step turn has state")
             check("pageRows" in step_json and "totalLines" in step_json and "truncated" in step_json,
                   "step compact has truncation metadata")
+            # 协议稳定性：非错误 turn 不携带 errorInfo（WhenWritingNull）
+            check("errorInfo" not in step_json, "step non-error turn has no errorInfo")
 
         advance = run_agent(["advance"], env, timeout=30)
         advance_json = parse_json_stdout(advance)
@@ -281,6 +283,30 @@ def main():
         if status_json is not None:
             check(status_json.get("controller", {}).get("kind") == "agent", "status shows agent controller")
             check("game" in status_json or "state" in status_json, "status includes game state")
+            # 目标 3：显式崩溃/退出信号
+            check("threadAlive" in status_json, "status has threadAlive")
+            check(status_json.get("threadAlive") in (True, False), "status threadAlive is bool")
+            check("lastError" in status_json, "status has lastError key (may be None)")
+
+        # --- 目标 2：logs 直读诊断日志（无需 server 在线也能取） ---
+        logs = run_agent(["logs", "--tail", "3"], env, timeout=15)
+        logs_json = parse_json_stdout(logs)
+        check(logs.returncode == 0, f"logs exits 0 (got {logs.returncode})")
+        check(logs_json is not None, "logs stdout is JSON")
+        if logs_json is not None:
+            check(isinstance(logs_json.get("lines"), list), "logs has lines list")
+            check(logs_json.get("tail") == 3 or logs_json.get("totalLines", 0) <= 3,
+                  f"logs tail yields <= 3 lines (tail={logs_json.get('tail')}, total={logs_json.get('totalLines')})")
+            check(isinstance(logs_json.get("totalLines"), int), "logs has int totalLines")
+            check(isinstance(logs_json.get("truncated"), bool), "logs has bool truncated")
+
+        # 负参 tail 钳制到空而非"全量却截断标志为真"（审查修复）
+        logs_neg = run_agent(["logs", "--tail", "-1"], env, timeout=15)
+        logs_neg_json = parse_json_stdout(logs_neg)
+        check(logs_neg.returncode == 0, f"logs --tail -1 exits 0 (got {logs_neg.returncode})")
+        if logs_neg_json is not None:
+            check(logs_neg_json.get("tail") == 0, "logs negative tail clamps to 0")
+            check(logs_neg_json.get("lines") == [], "logs negative tail yields empty lines")
 
         release = run_agent(["release"], env, timeout=15)
         release_json = parse_json_stdout(release)

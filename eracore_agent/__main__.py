@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from .config import (
     PROJECT_DIR,
@@ -56,6 +57,11 @@ def _emit_compact(client, payload, compact: bool, pages: int = 3, tail: int | No
     view["needValue"] = (payload or {}).get("needValue")
     if carry:
         view.update(carry)
+    # 目标 1：错误 turn 的异常信息（error/errorInfo）是诊断核心，低噪投影不得丢弃。
+    # 紧凑视图读 /snapshot，不含 turn 顶层错误字段——这里显式并回。
+    for key in ("error", "errorInfo"):
+        if key in (payload or {}) and payload.get(key) is not None:
+            view[key] = payload[key]
     _emit(view)
 
 
@@ -510,8 +516,49 @@ def cmd_status(_args) -> int:
         "controller": control.get("controller"),
         "controlState": control.get("state"),
         "state": state.get("state"),
+        # 目标 3：显式信号——threadAlive（游戏循环 Task 存活）+ lastError（崩溃因果）
+        "isRunning": state.get("isRunning"),
+        "threadAlive": state.get("threadAlive"),
+        "lastError": state.get("lastError"),
         "game": state,
         "activeSession": _session_active(state),
+    })
+    return 0
+
+
+def _logs_path() -> Path:
+    """agent.log 路径，与 C# AppDataPaths.Directory 默认值对齐（%LOCALAPPDATA%/Emuera/agent.log）。
+
+    注意：假定服务端未改 AppDataPaths 目录（CLI/Server 均未调 Configure，走默认目录）。
+    若未来引入平台注入目录，此处需要同步获取方式，避免与真实日志文件失配。
+    """
+    base = os.environ.get("LOCALAPPDATA") or ""
+    root = Path(base) if base else Path.home()
+    return root / "Emuera" / "agent.log"
+
+
+def cmd_logs(args) -> int:
+    """直读 agent.log 诊断日志（目标 2）。纯本地文件操作，无需 server 在线——崩溃后也能取现场。"""
+    path = _logs_path()
+    if not path.is_file():
+        _die(f"未找到 agent.log（{path}）——server 尚未产生诊断日志？")
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        _die(f"读取 agent.log 失败: {exc}")
+    lines = text.splitlines()
+    total = len(lines)
+    # 单一钳制：want → 归一化 tail（0..2000 且不超过 total）。
+    # 负参／0 → tail=0（空列表），不再因 max(0) 落到"返回全量却截断标志为真"的边界 bug。
+    want = args.tail if args.tail is not None else total
+    tail = max(0, min(want, 2000, total))
+    part = lines[total - tail:] if tail else []
+    _emit({
+        "file": str(path),
+        "tail": tail,
+        "totalLines": total,
+        "truncated": tail < total,
+        "lines": part,
     })
     return 0
 
@@ -575,6 +622,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = sub.add_parser("status", help="汇总控制权与游戏状态")
     status.set_defaults(func=cmd_status)
+
+    logs = sub.add_parser("logs", help="读取 agent.log 诊断日志（直读本机文件，无需 server 在线）")
+    logs.add_argument("--tail", type=int, default=None,
+                      help="仅返回最近 N 行（默认全量，上限 2000）")
+    logs.set_defaults(func=cmd_logs)
 
     watch = sub.add_parser("watch", help="只读旁观终端输出")
     watch.set_defaults(func=cmd_watch)

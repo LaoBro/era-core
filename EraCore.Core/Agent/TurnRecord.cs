@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace MinorShift.Emuera.GameView;
@@ -16,7 +17,10 @@ internal record TurnRecord(
     bool? displayTime = null,
     string? timeUpMessage = null,
     bool timedOut = false,
-    long generation = 0
+    long generation = 0,
+    // 诊断：暂停运行期异常的结构化信息（type/message/inner），供 agent 一次性定位。
+    // 纯增量 nullable 字段 + WhenWritingNull → 非异常 turn 不出现，不升协议版本。
+    ErrorInfo? errorInfo = null
 )
 {
     /// <summary>
@@ -39,6 +43,42 @@ internal record TurnRecord(
     /// 现按 ERB 位契约（位4=删除线、位8=下划线）对称补齐 strikeout 字段。
     /// </summary>
     internal const int CurrentProtocolVersion = 11;
+}
+
+/// <summary>
+/// 结构化异常信息（诊断用，目标 1）：type（完整类型名）+ message + 可选 inner。
+/// 供 agent 一次定位崩溃；对比裸 <c>error</c> 文本串，避免在长堆栈里手工挖类型与信息。
+/// </summary>
+internal record ErrorInfo(
+    string type,
+    string message,
+    ErrorInfo? inner = null
+)
+{
+    public const int MaxDepth = 4;
+
+    /// <summary>从异常构造（递归 inner，最深 <see cref="MaxDepth"/> 层防过度展开）。</summary>
+    internal static ErrorInfo? From(Exception? ex, int depth = 0)
+    {
+        if (ex == null)
+            return null;
+        return new ErrorInfo(
+            ex.GetType().FullName ?? ex.GetType().Name,
+            ex.Message,
+            depth < MaxDepth ? From(ex.InnerException, depth + 1) : null);
+    }
+
+    /// <summary>
+    /// 转为 JsonObject（NativeAOT 安全：JsonNode 手拼，不走匿名类型反射序列化）。
+    /// 供 Session 游戏循环异常的 errorInfo 兜底分支使用（该路径不经 TurnRecord 源生成序列化）。
+    /// </summary>
+    internal JsonObject ToJsonObject()
+    {
+        var node = new JsonObject { [nameof(type)] = type, [nameof(message)] = message };
+        if (inner != null)
+            node[nameof(inner)] = inner.ToJsonObject();
+        return node;
+    }
 }
 
 /// <summary>

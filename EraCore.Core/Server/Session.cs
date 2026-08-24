@@ -15,15 +15,17 @@ internal sealed class Session : IDisposable
     public string Id { get; } = Guid.NewGuid().ToString("N")[..8];
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
     public bool IsRunning => _gameTask != null && !_gameTask.IsCompleted;
-    /// <summary>
-    /// 游戏循环是否已结束（runLoop 回调 finally 置位）。
-    /// volatile 字段实现：游戏循环 Task 线程写、HTTP 线程读。当前两处读
-    /// （SessionRegistry.CreateNewSessionAsync / TryGetWsSubscriptionAsync）均在 _sessionLock 内，
-    /// SemaphoreSlim 获取/释放自带内存屏障，volatile 在此处非必需——保留为防御性：
-    /// 防止未来出现无锁读路径（如轮询/WS 直读）时被 JIT 提升缓存读到旧值。
-    /// </summary>
+    /// <summary>游戏循环是否已结束（runLoop 回调 finally 置位）。</summary>
     private volatile bool _hasEnded;
     public bool HasEnded => _hasEnded;
+
+    /// <summary>
+    /// 游戏循环最后一次未料异常（如 SAVEGLOBAL IOException）。崩溃/退出因果的诊断字段，
+    /// GET /state 据此透出 lastError；null 表示无未料异常（正常 Quit 不记录）。
+    /// volatile：游戏循环 Task 线程写、HTTP 线程读（对标 _hasEnded）。
+    /// </summary>
+    private volatile string? _lastError;
+    public string? LastError => _lastError;
     public HttpSessionIO IO => _io;
     public Controller Controller { get; }
     /// <summary>
@@ -135,8 +137,17 @@ internal sealed class Session : IDisposable
                 catch (Exception ex)
                 {
                     AgentLog.Instance.Write("session game loop exception: " + ex);
-                    // 3.3（NativeAOT）：JsonObject.ToJsonString()——匿名类型在 AOT 下反射序列化被禁用
-                    _io.WriteLine(new JsonObject { ["error"] = ex.ToString(), ["state"] = _console!.State.ToString() }.ToJsonString());
+                    // 目标 3：记录 LastError，GET /state 透出 lastError（threadAlive=false 的因果）。
+                    _lastError = ex.ToString();
+                    // 3.3（NativeAOT）：JsonObject.ToJsonString()——匿名类型在 AOT 下反射序列化被禁用。
+                    // 目标 1：errorInfo 结构化（type/message/inner），agent 一次定位；error 保留完整串兼容既有消费者。
+                    var structured = ErrorInfo.From(ex);
+                    _io.WriteLine(new JsonObject
+                    {
+                        ["error"] = ex.ToString(),
+                        ["errorInfo"] = structured?.ToJsonObject(),
+                        ["state"] = _console!.State.ToString()
+                    }.ToJsonString());
                 }
                 finally
                 {

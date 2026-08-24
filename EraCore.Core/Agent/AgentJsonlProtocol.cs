@@ -107,7 +107,8 @@ namespace MinorShift.Emuera.GameView
                     inputType: null,
                     needValue: false,
                     diff: null,
-                    error: ex.Message
+                    error: ex.Message,
+                    errorInfo: ErrorInfo.From(ex)
                 ));
                 Stop();
                 return errorTurn;

@@ -106,7 +106,14 @@ namespace MinorShift.Emuera.GameView
                 string dir = AppDataPaths.Directory;
                 Directory.CreateDirectory(dir);
                 FilePath = AppDataPaths.CombinePath("agent.log");
-                // append:false 覆盖式，每次进程启动清空，只保留最后一次运行日志
+                // 诊断保留策略：agent.log 仍覆盖式（进程启动清空，只保留最近一次运行），
+                // 但截断前先把旧文件拷为 agent.prev.log——崩溃现场不至于随下次启动被抹掉。
+                // 文件数上限 2（本次 + 上次），有界。拷贝失败不阻断启动（目录可能被非本进程独占）。
+                if (File.Exists(FilePath))
+                {
+                    try { File.Copy(FilePath, AppDataPaths.CombinePath("agent.prev.log"), overwrite: true); }
+                    catch (Exception) { /* 保留失败静默：不因日志保留打断启动 */ }
+                }
                 _writer = new StreamWriter(FilePath, append: false) { AutoFlush = false };
                 AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
             }
