@@ -1626,10 +1626,13 @@ internal sealed class ErbLoader
 		// 以「@标签名」定位本函数（不依赖行号——eReader.LineNo 与 Position.LineNo 的基/空行跳过
 		// 语义在重开户下会漂移；函数名在单文件内唯一，改名/截断后找不到同名 @ 即返回 null）。
 		StringComparer nameEq = Config.Config.StrComper;
+		// lazy-function-load 修复：直接以「桩」作为重解析目标（不新建瞬态标签）——桩在惰性生成期已保有
+		// 全部签名状态（Arg/Def/私有变量/IsMethod/LocalLength/…）。此前在新建标签上重解析导致 body 的
+		// 变量引用绑定到瞬态标签的私有变量 token，与参数赋值（写桩的私有变量）不一致：ReduceArgumentOnLoad=NO
+		// 时经 ParentLabelLine 运行期解析读到空值；YES 时 FORML 等参数在解析期就绑定瞬态 token
+		// （如 TK 的 %LINE% → DRAWLINE 空串崩溃）。用桩作目标后 body 绑定桩的 token，读写一致。
 		FunctionLabelLine? label = null;
 		LogicalLine tail = null!;
-		var onlyView = new List<string>();
-		var dummies = new List<string>();
 		// lazy-function-load 修复：物化重解析必须处理 [ 预处理指令（[SKIPSTART]/[SKIPEND]/
 		// [IF]/[ELSE]/[ENDIF]/[IF_DEBUG]/[IF_NDEBUG]）——主加载经 PPState 评估并禁用其内容；
 		// 惰性下桩跳过函数体，物化若漏掉这步，[SKIPSTART]...[SKIPEND] 包着的「故意不平衡」嵌套块
@@ -1660,12 +1663,12 @@ internal sealed class ErbLoader
 			{
 				if (label == null)
 				{
-					// 解析 @ 标签行，仅在目标函数时采用（得到全新 label，含 wc 供 parseLabel PopRowArgs）
+					// 解析 @ 行仅用于匹配标签名；不采用其新建标签（body 直接解析进桩，见上方说明）。
 					if (LogicalLineParser.ParseLabelLine(st, position, output, null) is FunctionLabelLine lbl
 						&& nameEq.Equals(lbl.LabelName, stub.LabelName))
 					{
-						label = lbl;
-						tail = label;
+						label = stub;
+						tail = stub;
 					}
 					continue;
 				}
@@ -1689,10 +1692,9 @@ internal sealed class ErbLoader
 			}
 			if (st.Current == '#')
 			{
-				// 属性声明（#DIM/#DIMS/#FUNCTION/#SINGLE/#PRI/#LATER/#ONLY…）：只作用于本标签；
-				// 跨文件 #ONLY 已由初次加载定局，此处以空视图即时检查即可。
-				if (!LogicalLineParser.ParseSharpLine(label, st, position, onlyView, dummies))
-					label.IsError = true;
+				// 跳过：桩在惰性生成期已处理全部 # 签名行（#DIM/#DIMS/#FUNCTION/#SINGLE/#PRI/#LATER/#ONLY/
+				// #LOCALSIZE…），Arg/Def/私有变量/IsMethod/LocalLength 与 eager 逐位一致；重解析只需重建
+				// 函数体行链。重复 AddPrivateVariable 反而会误报「変数名Xは既に使われています」。
 				continue;
 			}
 			var parsed = LogicalLineParser.ParseLine(st, position, output, label);
@@ -1723,15 +1725,10 @@ internal sealed class ErbLoader
 		if (label == null)
 			return null;
 		tail.NextLine = new NullLine();
-
-		// lazy-function-load 修复：物化重解析缺 eager setLabelsArg 的 scan-line 上下文——
-		// 新建标签需自指 ParentLabelLine（load 注册标签即如此；ParseLabelLine 不设），并 setScanLine(label)，
-		// 否则 parseLabel 解析 @ 参数时 GetVariableToken 取不到本函数私有变量（落入永不清理的 privateDimList，
-		// 误报「変数Xはこの関数中では定義されていません」）。对齐 eager 后物化期不再出现该假阳性。
-		if (label.ParentLabelLine == null)
-			label.ParentLabelLine = label;
+		// 不重跑 parseLabel：桩已在加载期经 setLabelsArg 解析 Arg/Def（与 eager 逐位一致）。
+		// setScanLine(label) 提供 scan-line 上下文（对齐 eager setLabelsArg），供 setArgument/nestCheck/
+		// setJumpTo 内 body 行私有变量解析使用（ScanLine 逐行覆盖）。
 		setScanLine(label);
-		parseLabel(label);
 		setArgument(label);
 		nestCheck(label);
 		setJumpTo(label);
@@ -1775,7 +1772,8 @@ internal sealed class ErbLoader
 			DegradeToPlaceholderError(stub);
 			return; // 三态②：桩行已不在文件中 → 占位报错
 		}
-		// 行链挂桩：只替换函数体行链与复位桩标记；标签头（Position/Arg/Def/IsMethod/私有变量）在惰性
+		// ReparseFunction 直接在桩上重建行链（ParentLabelLine 已指向桩自身、$ 标签已注册、body 变量引用
+		// 绑定桩的私有变量 token），此处只需复位桩标记；标签头（Position/Arg/Def/IsMethod/私有变量）在惰性
 		// 生成期已与 eager 逐位一致，LocalLength/LocalsLength 亦已由生成期 #LOCALSIZE / SortLabels 置位。
 		stub.NextLine = reparse.NextLine;
 		stub.IsStub = false;

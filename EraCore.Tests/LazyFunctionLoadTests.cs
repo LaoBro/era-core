@@ -428,4 +428,59 @@ $HOGE
 			Assert.Empty(falsePositives);
 		}
 	}
+
+	/// <summary>
+	/// 物化 body 与桩私有变量一致性回归（Issue 06，重构后）：ReparseFunction 直接以桩为解析目标，
+	/// body 各行的 ParentLabelLine 必须指向桩自身、且绑定桩的私有变量 token——否则运行期参数赋值（写桩
+	/// 私有变量）与 body 读取不一致：ReduceArgumentOnLoad=NO 时经 ParentLabelLine 运行期解析读到空值，
+	/// YES 时 FORML 等参数解析期即绑定错 token（TK1.29.3 的 @SINGLE_DRAWLINE(LINE="-") 默认参 → DRAWLINE
+	/// 空串崩溃；RESETDATA → SetDefaultLocalValue NRE 同根）。
+	/// </summary>
+	[Fact]
+	public async Task Lazy_materialization_reparents_body_chain_to_stub()
+	{
+		const string defCorpus = """
+@EVENTFIRST
+	CALL SINGLE_DRAWLINE
+	RETURN
+
+@SINGLE_DRAWLINE(LINE = "-", COLOR = -1)
+#DIM COLOR
+#DIMS LINE
+	DRAWLINEFORM %LINE%
+	RETURN
+""";
+		foreach (bool lazy in new[] { false, true })
+		{
+			using var h = new LoaderTestHarness();
+			await h.InitializeAsync();
+			if (lazy)
+			{
+				ConfigData.Current!.GetConfigItem(ConfigCode.LazyFunctionLoad).SetValue(true);
+				ConfigData.Current!.GetConfigItem(ConfigCode.ParallelErbLoad).SetValue(false);
+				ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
+			}
+			await h.PreloadAsync();
+			h.WriteErb("LAZYDF.ERB", defCorpus);
+			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+			var ok = await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+			Assert.True(ok, "LoadErbDir failed (lazy=" + lazy + ")\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+
+			var sd = h.LabelDic.GetNonEventLabel("SINGLE_DRAWLINE");
+			Assert.NotNull(sd);
+			Assert.False(sd.IsStub, "SINGLE_DRAWLINE should be materialized (called from EVENTFIRST) (lazy=" + lazy + ")");
+			Assert.False(sd.IsError);
+			// 默认参必须保留（@FUNC(LINE = "-") 的 "-" 与 -1）
+			Assert.Equal(2, sd.Def?.Length ?? -1);
+			Assert.Equal("-", sd.Def?[0]?.ToString());
+			// 行链每一行必须指向桩自身（运行期私有变量解析与参数赋值同一目标；此前指向瞬态 reparse 标签）
+			LogicalLine cur = sd.NextLine;
+			int guard = 0;
+			while (cur != null && cur is not NullLine && guard++ < 50)
+			{
+				Assert.Same(sd, cur.ParentLabelLine);
+				cur = cur.NextLine;
+			}
+		}
+	}
 }
