@@ -1553,6 +1553,109 @@ internal sealed class ErbLoader
 		art.FnfEvents.Clear();
 	}
 
+	/// <summary>
+	/// 02 抽取：单函数体重解析件（纯重构，零运行期接线；03 物化接缝复用）。
+	/// 给定一个已在 labelDic 注册的未物化标签桩 <paramref name="stub"/> 与源文件物理路径
+	/// <paramref name="filepath"/>，沿 <see cref="EraStreamReader"/>（Preload 缓存 / DirAccessor /
+	/// EncodingHandler，ADR-0023 决策二回读通道）重开源文件，定位本函数行区间
+	///（stub.Position.LineNo 起、至下一 @ 行止），复用 <see cref="LogicalLineParser"/>
+	/// 重建 label + 行链，再跑 parseLabel + setArgument/nestCheck/setJumpTo 三遍，
+	/// 得到与全量加载对该函数逐行等价的新 FunctionLabelLine（含已解析行链）。
+	/// 返回全新标签（不修改原桩）；源文件不可读 / 桩行已不在文件中 → 返回 null
+	///（沿 ADR-0023 决策二三态占位先例，不抛新异常——03 据此降级为占位报错）。幂等。
+	/// </summary>
+	internal FunctionLabelLine? ReparseFunction(FunctionLabelLine stub, string filepath)
+	{
+		var pos = stub.Position;
+		if (pos == null)
+			return null;
+
+		using var eReader = new EraStreamReader(Config.Config.UseRenameFile && ParserMediator.RenameDic != null);
+		if (!eReader.OpenOnCache(filepath, pos.Value.Filename))
+			return null; // 三态：源文件打不开（被移动/删除）→ 占位，不抛
+
+		// 以「@标签名」定位本函数（不依赖行号——eReader.LineNo 与 Position.LineNo 的基/空行跳过
+		// 语义在重开户下会漂移；函数名在单文件内唯一，改名/截断后找不到同名 @ 即返回 null）。
+		StringComparer nameEq = Config.Config.StrComper;
+		FunctionLabelLine? label = null;
+		LogicalLine tail = null!;
+		var onlyView = new List<string>();
+		var dummies = new List<string>();
+		CharStream st;
+		while ((st = eReader.ReadEnabledLine()) != null)
+		{
+			var position = new ScriptPosition(eReader.Filename, eReader.LineNo);
+			if (st.Current == '@')
+			{
+				if (label == null)
+				{
+					// 解析 @ 标签行，仅在目标函数时采用（得到全新 label，含 wc 供 parseLabel PopRowArgs）
+					if (LogicalLineParser.ParseLabelLine(st, position, output, null) is FunctionLabelLine lbl
+						&& nameEq.Equals(lbl.LabelName, stub.LabelName))
+					{
+						label = lbl;
+						tail = label;
+					}
+					continue;
+				}
+				break; // 下一个函数 = 本函数体边界
+			}
+			if (label == null)
+				continue; // 尚未到达目标函数
+			if (st.Current == '$')
+			{
+				if (LogicalLineParser.ParseLabelLine(st, position, output, null) is GotoLabelLine g)
+				{
+					g.ParentLabelLine = label;
+					tail.NextLine = g;
+					tail = g;
+				}
+				continue;
+			}
+			if (st.Current == '#')
+			{
+				// 属性声明（#DIM/#DIMS/#FUNCTION/#SINGLE/#PRI/#LATER/#ONLY…）：只作用于本标签；
+				// 跨文件 #ONLY 已由初次加载定局，此处以空视图即时检查即可。
+				if (!LogicalLineParser.ParseSharpLine(label, st, position, onlyView, dummies))
+					label.IsError = true;
+				continue;
+			}
+			var parsed = LogicalLineParser.ParseLine(st, position, output, label);
+			if (parsed == null)
+				continue;
+			if (parsed is InvalidLine)
+				parsed.IsError = true;
+			else if (JSONConfig.Data.UseNewRandom && parsed is InstructionLine instruction)
+			{
+				// 与 GenerateErbFileCore 同款 RANDOMIZE/DUMPRAND/INITRAND 抑制警告（结构无关，仅对齐现有发射）
+				switch (instruction.FunctionCode)
+				{
+					case FunctionCode.RANDOMIZE:
+						ParserMediator.Warn(trerror.IgnoreRandomize.Text, position, 0);
+						break;
+					case FunctionCode.DUMPRAND:
+						ParserMediator.Warn(trerror.CanNotUseDumprand.Text, position, 0);
+						break;
+					case FunctionCode.INITRAND:
+						ParserMediator.Warn(trerror.CanNotUseInitrand.Text, position, 0);
+						break;
+				}
+			}
+			parsed.ParentLabelLine = label;
+			tail.NextLine = parsed;
+			tail = parsed;
+		}
+		if (label == null)
+			return null;
+		tail.NextLine = new NullLine();
+
+		parseLabel(label);
+		setArgument(label);
+		nestCheck(label);
+		setJumpTo(label);
+		return label;
+	}
+
 	private void ParseFunctionWithCatch(FunctionLabelLine label)
 	{//ここでエラーを捕まえることは本来はないはず。ExeEE相当。
 		try
