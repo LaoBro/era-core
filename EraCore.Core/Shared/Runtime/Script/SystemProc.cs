@@ -206,9 +206,10 @@ internal sealed class SystemProc
 				console.ThrowTitleError(true);
 				return;
 			}
+			//SYSTEM_TITLE中にSAVEGAME/LOADGAME/BEGINを使えるよう、実行前にNormalへ遷移させる
+			state.SystemState = SystemStateCode.Normal;
 			if (CallFunction("SYSTEM_TITLE", false, false))
 			{
-				state.SystemState = SystemStateCode.Normal;
 				return;
 			}
 			console.PrintBar();

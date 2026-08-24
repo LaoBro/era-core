@@ -59,7 +59,11 @@ internal sealed partial class Process(EmueraConsole view)
 	// ADR-0011：6 引擎字段之一，实例持有，不再写回 GlobalStatic。
 	public IdentifierDictionary IdentifierDictionary { get { return idDic; } }
 	LoaderEnv _loaderEnv = null!;
-	ProcessState state = null!;
+	// ADR-0011 回归修复：state 不再是独立字段，而是 executionState.CurrentState 的别名。
+	// 上游（emuera.em）在 saveCurrentState 里直接 state = state.Clone()（同一引用），本仓库曾用独立字段，
+	// 导致 SAVEGAME/LOADGAME 后 DoScript（用本字段）与 ScriptProc/SystemProc（用 CurrentState）读到不同
+	// ProcessState，LOADGAME 后无法转入存档界面而陷入死循环。
+	ProcessState state => (ProcessState)executionState.CurrentState;
 	ProcessState originalState = null!;//リセットする時のために
 	internal ExecutionState executionState = null!;
 	internal SystemProc _systemProc = null!;
@@ -74,10 +78,9 @@ internal sealed partial class Process(EmueraConsole view)
 		var stopWatch = new Stopwatch();
 		stopWatch.Start();
 		LexicalAnalyzer.UseMacro = false;
-		state = new ProcessState(console);
-		originalState = state;
+		originalState = new ProcessState(console);
 		executionState = new ExecutionState();
-		executionState.CurrentState = state;
+		executionState.CurrentState = originalState;
 		initialiing = true;
 		_loaderEnv = env;
 		try
@@ -325,7 +328,7 @@ internal sealed partial class Process(EmueraConsole view)
 	public void BeginTitle()
 	{
 		vEvaluator.ResetData();
-		state = originalState;
+		executionState.CurrentState = originalState;
 		state.Begin(BeginType.TITLE);
 	}
 

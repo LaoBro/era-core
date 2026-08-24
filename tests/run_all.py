@@ -286,6 +286,18 @@ def main():
 
     results.append(
         (
+            "title LOADGAME regression",
+            _run_script(
+                "title LOADGAME regression",
+                [sys.executable, str(TESTS_DIR / "test_title_loadgame.py")],
+                env=env,
+                timeout=180,
+            ),
+        )
+    )
+
+    results.append(
+        (
             "CLI basic",
             _run_script(
                 "CLI basic",
