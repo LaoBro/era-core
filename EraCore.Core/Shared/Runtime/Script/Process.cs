@@ -36,6 +36,9 @@ internal sealed partial class Process(EmueraConsole view)
 	LabelDictionary labelDic = null!;
 	public LabelDictionary LabelDictionary { get { return labelDic; } }
 
+	/// <summary>lazy-function-load（B 线 B1）：主加载完成后保留的 loader，供运行时物化接缝复用（物理路径映射 / env / scanLine）。</summary>
+	internal ErbLoader? RuntimeLoader { get; set; }
+
 	/// <summary>
 	/// 変数全部。スクリプト中で必要になる変数は（ユーザーが直接触れないものも含め）この中にいれる
 	/// </summary>

@@ -55,6 +55,10 @@ internal sealed class ErbLoader
 	int enabledLineCount;
 	LabelDictionary labelDic = null!;
 
+	// lazy-function-load（B 线 B1）：逻辑文件名 → 物理路径映射，供物化接缝回读源文件用。
+	// 在 LoadErbDir / LoadErbList 构建（fname 即 Position.Filename 同源），运行时物化据此取 filepath。
+	private Dictionary<string, string> _filePathByLogical = new(StringComparer.OrdinalIgnoreCase);
+
 	/// <summary>erb-loader-parallel 03：并行生成度上限——窗口内产物同时驻留 = 上限文件数的解析产物，
 	/// 封顶防内存峰值（spec 实测 eraTW 规模 12 核理想并行度 ~8-10x，取 8；默认度 = ProcessorCount）。</summary>
 	internal const int MaxParallelErbFiles = 8;
@@ -94,6 +98,9 @@ internal sealed class ErbLoader
 		//checkScript();の時点でExpressionPerserがProcess.instance.LabelDicを必要とするから。
 		labelDic = labelDictionary;
 		labelDic.Initialized = false;
+		// lazy-function-load：加载开始即失效运行时物化桥（首次加载本就 null；重载期间禁用运行时物化，
+		// 主循环用「本实例」就地物化；成功结束再重新挂载）。失败路径不清——保留旧桥状态亦无害。
+		GlobalStatic.Process!.RuntimeLoader = null;
 		#region EE_ファイル読み込み順拡張
 		var firstDir = env.DirAccessor.GetDirectories(erbDir, "*#*", Config.Config.SearchSubdirectory ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly) ?? [];
 		// erb-loader-parallel 02：firstDir 已载文件查重 O(n²)（List 线性扫）→ 集合查找；
@@ -111,6 +118,7 @@ internal sealed class ErbLoader
 		try
 		{
 			labelDic.RemoveAll();
+			_filePathByLogical = new(StringComparer.OrdinalIgnoreCase);
 			#region EE_ファイル読み込み順拡張
 			foreach (var dir in firstDir)
 			{
@@ -129,6 +137,9 @@ internal sealed class ErbLoader
 					continue;
 				pending.Add((erb.Key, erb.Value));
 			};
+			// lazy-function-load：建立 逻辑文件名→物理路径 映射（Position.Filename 与 fname 同源）。
+			foreach (var (logical, physical) in pending)
+				_filePathByLogical[logical] = physical;
 			// erb-loader-parallel 03：默认并行；配置串行或 AnalysisMode 时走 01 完成时的串行路径
 			//（fallback = 语义偏差排查 / 单线程调试的 abort 杠杆；AnalysisMode 的 PrintC 输出与
 			// funcCount 进度节奏依赖串行即时检查，一律强制串行）
@@ -210,6 +221,8 @@ internal sealed class ErbLoader
 		}
 		EmueraLog.Info("ErbLoader", $"LoadErbDir done: noError={noError}, labels={labelDic?.Count ?? 0}");
 		isOnlyEvent.Clear();
+		// lazy-function-load：保留本 loader（含 _filePathByLogical / env / setScanLine）供运行时物化接缝复用。
+		GlobalStatic.Process.RuntimeLoader = this;
 		return noError;
 	}
 
@@ -224,6 +237,8 @@ internal sealed class ErbLoader
 		noError = true;
 		labelDic = labelDictionary;
 		labelDic.Initialized = false;
+		// lazy-function-load：部分重载加载期间禁用运行时物化桥（成功结束再挂载，见方法尾部）。
+		GlobalStatic.Process!.RuntimeLoader = null;
 
 		await Task.Run(() =>
 		{
@@ -237,6 +252,8 @@ internal sealed class ErbLoader
 				{
 					output.PrintSystemLine(string.Format(trsl.LoadingFile.Text, fname));
 				}
+				// lazy-function-load：部分重载路径的物理路径回读映射
+				_filePathByLogical[fname] = fpath;
 				// erb-loader-parallel 01/03：与 LoadErbDir 串行调度同款“生成 → 按序合并”两步
 				//（部分重载文件数少，不参与并行化；跨文件检查保持串行即时）
 				var art = GenerateErbFile(fpath, fname, isOnlyEvent, deferCrossFileChecks: false);
@@ -262,6 +279,8 @@ internal sealed class ErbLoader
 		// preload-cache-lifecycle 01：部分重载收尾同款清空（范围同 LoadErbDir——全量，见 spec 清空范围）
 		Preload.ClearCachedLines();
 		isOnlyEvent.Clear();
+		// lazy-function-load：部分重载后保留最新 loader 供运行时物化接缝复用。
+		GlobalStatic.Process.RuntimeLoader = this;
 		return noError;
 	}
 
@@ -527,6 +546,9 @@ internal sealed class ErbLoader
 		// 生成期重名判定的文件内视图：跨文件同名经 labelDic.GetEarliestLabelWithName 按合并序读
 		var firstValidLabelByName = new Dictionary<string, FunctionLabelLine>(Config.Config.StrComper);
 		var firstGotoByParent = new Dictionary<FunctionLabelLine, Dictionary<string, GotoLabelLine>>();
+		// lazy-function-load（B 线 B1）：惰性模式 = 开 LazyFunctionLoad 且非 AnalysisMode（AnalysisMode 强制 eager）。
+		// 惰性下函数体行链不解析——labelDic 只注册全量标签桩（IsStub），仅 # 签名行处理（保 Argument/Def/IsMethod）。
+		bool lazy = Config.Config.LazyFunctionLoad && !env.AnalysisMode;
 		if (env.AnalysisMode)
 			art.ConsoleOps.Add(c => c.PrintSystemLine(" "));
 		while ((st = eReader.ReadEnabledLine(ppstate.Disabled)) != null)
@@ -582,11 +604,16 @@ internal sealed class ErbLoader
 			if (st.Current == '$' || st.Current == '@')
 			{
 				bool isFunction = st.Current == '@';
+				if (!isFunction && lazy)
+					continue; // 惰性：$ goto 属函数体，物化时随 ReparseFunction 重建，此处跳过
 				nextLine = LogicalLineParser.ParseLabelLine(st, position, output, art.ConsoleOps);
 				if (isFunction)
 				{
 					var label = nextLine as FunctionLabelLine;
 					lastLabelLine = label!;
+					// 惰性：注册标签桩——保签名头、函数体行链留空；函数体在首调用/主循环时物化。
+					if (lazy)
+						label!.IsStub = true;
 					art.FunctionLabels.Add(label!);
 					if (label is InvalidLabelLine)
 					{
@@ -663,6 +690,9 @@ internal sealed class ErbLoader
 			}
 			else
 			{
+				// 惰性：函数体指令行不解析（物化时随 ReparseFunction 重建），直接跳过
+				if (lazy)
+					continue;
 				//1808alpha006 処理位置変更
 				////全置換はここで対応
 				////1756beta1+++ 最初に全置換してしまうと関数定義を_Renameでとか論外なことができてしまうので永久封印した
@@ -1149,6 +1179,9 @@ internal sealed class ErbLoader
 	{
 		int usedLabelCount = 0;
 		int labelDepth = -1;
+		// lazy-function-load（B 线 B1）：主循环按层 BFS 保持零结构变化；only 兜底——若某层函数体尚未
+		// 物化（根=事件/系统被惰性记为桩），先就地物化再跑三步，使 setJumpTo 能继续向下发现子层 Depth。
+		bool lazyMode = Config.Config.LazyFunctionLoad && !env.AnalysisMode;
 		List<FunctionLabelLine> labelList = labelDic.GetAllLabels(true);
 		// erb-loader-parallel 05：DisplayReport 开启时采集三组诊断（层宽直方图 / 三步分段 / 主循环 vs 未调用遍切分）
 		ParseScriptDiag? diag = Config.Config.DisplayReport ? new ParseScriptDiag() : null;
@@ -1169,7 +1202,12 @@ internal sealed class ErbLoader
 				//    useCallForm = true;
 				usedLabelCount++;
 				countInDepth++;
-				ParseFunctionWithCatch(label);
+				// 惰性 + 桩：就地物化（含 ReparseFunction 内建三步，逐位等价于 eager 对本标签的唯一一次三遍解析），
+				// 故此处物化后不再叠加 ParseFunctionWithCatch；非桩（已物化 / eager）走原三步。
+				if (lazyMode && label.IsStub)
+					MaterializeLabel(label);
+				else
+					ParseFunctionWithCatch(label);
 			}
 			if (countInDepth == 0)
 				break;
@@ -1212,19 +1250,24 @@ internal sealed class ErbLoader
 			Stopwatch? callFormSw = diag != null ? Stopwatch.StartNew() : null;
 			if (diag != null)
 				diag.InUncalled = true;
-			if (parallelSweep)
+			// lazy-function-load（B 线 B1）：惰性下 callform 分支的未调用解析体整体跳过（未调用函数保持桩），
+			// 被调用主循环已按其 Depth 物化过；callform 分支本就无 FNC 导出，故跳过零损失。
+			if (!lazyMode)
 			{
-				// 并行段：解析体全部入 per-label 缓冲（警告 / FNF 事件），回放段按 labelList 序重放
-				ReplayUncalledSweep(RunUncalledSweepParallel(labelList, labelDepth));
-				sweepParallelRan = true;
-			}
-			else
-			{
-				foreach (FunctionLabelLine label in labelList)
+				if (parallelSweep)
 				{
-					if (label.Depth != labelDepth)
-						continue;
-					ParseFunctionWithCatch(label);
+					// 并行段：解析体全部入 per-label 缓冲（警告 / FNF 事件），回放段按 labelList 序重放
+					ReplayUncalledSweep(RunUncalledSweepParallel(labelList, labelDepth));
+					sweepParallelRan = true;
+				}
+				else
+				{
+					foreach (FunctionLabelLine label in labelList)
+					{
+						if (label.Depth != labelDepth)
+							continue;
+						ParseFunctionWithCatch(label);
+					}
 				}
 			}
 			callFormSw?.Stop();
@@ -1239,7 +1282,9 @@ internal sealed class ErbLoader
 			// else 分支（D4-3 同票同套）：解析体（!ignoreUncalledFunction 时才有）并行化同 callform 分支；
 			// FNC ONCE 去重 / FuncNeverCalled 发射 / IsError 标记是序敏感决策——全部留在下方原循环体内
 			// 串行重走（回放体 = 原串行循环体的重放，解析位置替换为 ReplaySweepArt 按序回放缓冲）。
-			UncalledSweepArt[]? sweepArts = parallelSweep && !ignoreUncalledFunction
+			// lazy-function-load（B 线 B1）：惰性下不跑未调用解析体（sweepArts 恒 null），
+			// 只保留下方 FNC 免解析导出（Depth==-1 深差集，零解析）；IgnoreUncalledFunction 的 IsError 被 supersede。
+			UncalledSweepArt[]? sweepArts = !lazyMode && parallelSweep && !ignoreUncalledFunction
 				? RunUncalledSweepParallel(labelList, labelDepth)
 				: null;
 			int artIdx = 0;
@@ -1275,32 +1320,36 @@ internal sealed class ErbLoader
 					ParserMediator.Warn(string.Format(trerror.FuncNeverCalled.Text, label.LabelName), label, 1, false, false);
 				// 决策七：AnalysisMode 已在上方调用过 ParseFunctionWithCatch，
 				// nestCheck/setJumpTo 不幂等会重复发射警告。此处跳过避免重复解析。
-				if (!ignoreUncalledFunction)
+				// lazy-function-load：惰性下跳过未调用解析体（含 IsError supersede），桩保持未物化。
+				if (!lazyMode)
 				{
-					if (!env.AnalysisMode)
+					if (!ignoreUncalledFunction)
 					{
-						if (sweepArts != null)
+						if (!env.AnalysisMode)
 						{
-							// 原 ParseFunctionWithCatch(label) 的位置：按序回放该 label 的缓冲
-							ReplaySweepArt(sweepArts[artIdx]);
-							artIdx++;
+							if (sweepArts != null)
+							{
+								// 原 ParseFunctionWithCatch(label) 的位置：按序回放该 label 的缓冲
+								ReplaySweepArt(sweepArts[artIdx]);
+								artIdx++;
+							}
+							else
+								ParseFunctionWithCatch(label);
 						}
-						else
-							ParseFunctionWithCatch(label);
 					}
-				}
-				else
-			{
-				if (!(label.NextLine is NullLine) && !(label.NextLine is FunctionLabelLine))
-				{
-					if (!label.NextLine.IsError)
+					else
 					{
-						label.NextLine.IsError = true;
-						label.NextLine.ErrMes = "呼び出されないはずの関数が呼ばれた";
+						if (!(label.NextLine is NullLine) && !(label.NextLine is FunctionLabelLine))
+						{
+							if (!label.NextLine.IsError)
+							{
+								label.NextLine.IsError = true;
+								label.NextLine.ErrMes = "呼び出されないはずの関数が呼ばれた";
+							}
+						}
 					}
 				}
 			}
-		}
 			uncalledSw?.Stop();
 			uncalledTicks = uncalledSw?.ElapsedTicks ?? 0;
 			sweepParallelRan = sweepArts != null;
@@ -1654,6 +1703,76 @@ internal sealed class ErbLoader
 		nestCheck(label);
 		setJumpTo(label);
 		return label;
+	}
+
+	/// <summary>
+	/// lazy-function-load（B 线 B1）：就地物化——把惰性桩 <paramref name="stub"/> 的行链替换为
+	/// <see cref="ReparseFunction"/> 产出的真实函数体（in-place 更新桩对象本身，labelDic / JumpTo 等引用
+	/// 自动一致，无需重路由字典）。幂等：已物化（非桩）直接返回。
+	/// 失败路径三态（源打不开 / 桩行已不在文件中 → ReparseFunction 返回 null）降级为占位报错：
+	/// 标记 IsError+ErrMes、清桩标记（停止重试），不抛新异常——该函数按「已定义但解析不可得」处理。
+	/// </summary>
+	private void MaterializeLabel(FunctionLabelLine stub)
+	{
+		if (!stub.IsStub)
+			return; // 幂等
+		string logical = stub.Position?.Filename ?? "";
+		if (logical.Length == 0
+			|| !_filePathByLogical.TryGetValue(logical, out string? physical) || string.IsNullOrEmpty(physical))
+		{
+			stub.IsStub = false;
+			if (!stub.IsError)
+			{
+				stub.IsError = true;
+				stub.ErrMes = trerror.CalledFailedFunc.Text; // 占位报错（ADR-0023 决策二三态先例）
+			}
+			return;
+		}
+		FunctionLabelLine? reparse;
+		try
+		{
+			reparse = ReparseFunction(stub, physical);
+		}
+		catch (Exception exc)
+		{
+			// 物化期单函数重解析不应向调用方抛新异常（「首调用无新异常」门禁）——等价于 eager
+			// ParseFunctionWithCatch 的 catch：告警 + 降级为占位报错。
+			string errmes = exc is EmueraException ? exc.Message : exc.GetType().ToString() + ":" + exc.Message;
+			ParserMediator.Warn(string.Format(trerror.FuncAnalysisError.Text, stub.LabelName, errmes), stub, 2, true, false, exc.StackTrace!);
+			stub.IsStub = false;
+			if (!stub.IsError)
+			{
+				stub.IsError = true;
+				stub.ErrMes = trerror.CalledFailedFunc.Text;
+			}
+			return;
+		}
+		if (reparse == null)
+		{
+			stub.IsStub = false;
+			if (!stub.IsError)
+			{
+				stub.IsError = true;
+				stub.ErrMes = trerror.CalledFailedFunc.Text; // 源不可得 → 占位报错，不崩
+			}
+			return;
+		}
+		// 行链挂桩：只替换函数体行链与复位桩标记；标签头（Position/Arg/Def/IsMethod/私有变量）在惰性
+		// 生成期已与 eager 逐位一致，LocalLength/LocalsLength 亦已由生成期 #LOCALSIZE / SortLabels 置位。
+		stub.NextLine = reparse.NextLine;
+		stub.IsStub = false;
+	}
+
+	/// <summary>
+	/// lazy-function-load：运行时物化接缝入口（<see cref="CalledFunction"/> 命中桩时调用）。
+	/// 复用会话主加载保留的 <see cref="GlobalStatic.Process.RuntimeLoader"/>（含物理路径映射 / env / scanLine）。
+	/// eager（无桩）下恒 no-op，运行期路径零侵入。
+	/// </summary>
+	internal static void MaterializeOnRuntime(FunctionLabelLine label)
+	{
+		if (label == null || !label.IsStub)
+			return;
+		GlobalStatic.Process?.RuntimeLoader?.MaterializeLabel(label);
 	}
 
 	private void ParseFunctionWithCatch(FunctionLabelLine label)

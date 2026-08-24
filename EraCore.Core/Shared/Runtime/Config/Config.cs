@@ -101,6 +101,8 @@ internal sealed class Config
 	public static bool ParallelParseScript => Current!._data.GetConfigValue<bool>(ConfigCode.ParallelParseScript);
 	public static ReduceArgumentOnLoadFlag ReduceArgumentOnLoad => Current!._data.GetConfigValue<ReduceArgumentOnLoadFlag>(ConfigCode.ReduceArgumentOnLoad);
 	public static bool IgnoreUncalledFunction => Current!._data.GetConfigValue<bool>(ConfigCode.IgnoreUncalledFunction);
+	/// <summary>lazy-function-load（B 线 B1）：函数级惰性物化开关，与 IgnoreUncalledFunction 正交；AnalysisMode 一律强制 eager。</summary>
+	public static bool LazyFunctionLoad => Current!._data.GetConfigValue<bool>(ConfigCode.LazyFunctionLoad);
 	public static DisplayWarningFlag FunctionNotFoundWarning => Current!._data.GetConfigValue<DisplayWarningFlag>(ConfigCode.FunctionNotFoundWarning);
 	public static DisplayWarningFlag FunctionNotCalledWarning => Current!._data.GetConfigValue<DisplayWarningFlag>(ConfigCode.FunctionNotCalledWarning);
 	public static bool ChangeMasterNameIfDebug => Current!._data.GetConfigValue<bool>(ConfigCode.ChangeMasterNameIfDebug);

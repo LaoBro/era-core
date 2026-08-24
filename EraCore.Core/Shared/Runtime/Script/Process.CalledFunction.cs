@@ -3,6 +3,7 @@ using MinorShift.Emuera.GameData.Variable;
 using MinorShift.Emuera.GameProc;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Script.Data;
+using MinorShift.Emuera.Runtime.Script.Loader;
 using MinorShift.Emuera.Runtime.Script.Statements;
 using MinorShift.Emuera.Runtime.Script.Statements.Expression;
 using MinorShift.Emuera.Runtime.Script.Statements.Function;
@@ -92,9 +93,12 @@ internal sealed class CalledFunction
 		if (called.eventLabelList == null)
 		{
 			FunctionLabelLine line = labelDic.GetNonEventLabel(label);
-			if (labelDic.GetNonEventLabel(label) != null)
+			// lazy-function-load：若同名非事件函数是惰性桩，先物化再判定（保证 Position/IsMethod 为已解析真实态）。
+			if (line != null && line.IsStub)
+				ErbLoader.MaterializeOnRuntime(line);
+			if (labelDic.GetNonEventLabel(label) is { } n)
 			{
-				throw new CodeEE(string.Format(trerror.CalleventToNonEventFunc.Text, label, line.Position!.Value.Filename, line.Position!.Value.LineNo));
+				throw new CodeEE(string.Format(trerror.CalleventToNonEventFunc.Text, label, n.Position!.Value.Filename, n.Position!.Value.LineNo));
 			}
 			return null!;
 		}
@@ -114,6 +118,10 @@ internal sealed class CalledFunction
 			Finished = false
 		};
 		FunctionLabelLine labelline = labelDic.GetNonEventLabel(label);
+		// lazy-function-load（B 线 B1）：命中惰性桩 → 物化接缝。幂等；eager（无桩）恒 no-op；
+		// 加载期 setJumpTo 也走此静态，但 GlobalStatic.Process.RuntimeLoader 在加载中为 null → 自动跳过。
+		if (labelline != null && labelline.IsStub)
+			ErbLoader.MaterializeOnRuntime(labelline);
 		if (labelline == null)
 		{
 			if (labelDic.GetEventLabels(label) != null)

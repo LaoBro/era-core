@@ -268,6 +268,8 @@ internal class FunctionLabelLine : LogicalLine, IComparable<FunctionLabelLine>
 	public SingleTerm[] Def { get; set; } = null!;
 	//public SingleTerm[] SubNames { get; set; }
 	public int Depth { get; set; }
+	/// <summary>lazy-function-load：true = 惰性桩（只有标签头、函数体行链未物化）；首次被调用时经物化接缝在输入端替换 NextLine 并复位。eager 一律 false。</summary>
+	public bool IsStub { get; set; }
 
 	#region IComparable<FunctionLabelLine> メンバ
 	//ソート用情報

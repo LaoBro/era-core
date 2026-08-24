@@ -119,6 +119,8 @@ internal sealed class ConfigData
 		configArray.Add(new ConfigItem<bool>(ConfigCode.IgnoreUncalledFunction, "呼び出されなかった関数を無視する", "Ignore uncalled functions", true));
 		configArray.Add(new ConfigItem<DisplayWarningFlag>(ConfigCode.FunctionNotFoundWarning, "関数が見つからない警告の扱い", "Function is not found warning", DisplayWarningFlag.IGNORE));
 		configArray.Add(new ConfigItem<DisplayWarningFlag>(ConfigCode.FunctionNotCalledWarning, "関数が呼び出されなかった警告の扱い", "Function not called warning", DisplayWarningFlag.IGNORE));
+		// lazy-function-load（B 线 B1）：默认 false 保持 eager 等价（Issue 04 门禁后定默认）。
+		configArray.Add(new ConfigItem<bool>(ConfigCode.LazyFunctionLoad, "未呼び出し関数の本体解析を遅延する", "Defer uncalled function body parsing", false));
 
 
 		configArray.Add(new ConfigItem<bool>(ConfigCode.ChangeMasterNameIfDebug, "デバッグコマンドを使用した時にMASTERの名前を変更する", "Change MASTER mame in debug", true));
@@ -279,6 +281,8 @@ internal sealed class ConfigData
 		configArray[i++] = new ConfigItem<bool>(ConfigCode.IgnoreUncalledFunction, "呼び出されなかった関数を無視する", true);
 		configArray[i++] = new ConfigItem<DisplayWarningFlag>(ConfigCode.FunctionNotFoundWarning, "関数が見つからない警告の扱い", DisplayWarningFlag.IGNORE);
 		configArray[i++] = new ConfigItem<DisplayWarningFlag>(ConfigCode.FunctionNotCalledWarning, "関数が呼び出されなかった警告の扱い", DisplayWarningFlag.IGNORE);
+		// lazy-function-load（B 线 B1）：默认 false 保持 eager 等价（Issue 04 门禁后定默认）。
+		configArray[i++] = new ConfigItem<bool>(ConfigCode.LazyFunctionLoad, "未呼び出し関数の本体解析を遅延する", false);
 		//configArray[i++] = new ConfigItem<List<string>>(ConfigCode.IgnoreWarningFiles, "指定したファイル中の警告を無視する", new List<string>());
 		configArray[i++] = new ConfigItem<bool>(ConfigCode.ChangeMasterNameIfDebug, "デバッグコマンドを使用した時にMASTERの名前を変更する", true);
 		configArray[i++] = new ConfigItem<bool>(ConfigCode.ButtonWrap, "ボタンの途中で行を折りかえさない", false);
