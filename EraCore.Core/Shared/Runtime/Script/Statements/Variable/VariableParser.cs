@@ -18,6 +18,19 @@ internal static class VariableParser
 	public static SingleTerm ZeroTerm { get; private set; } = null!;
 	public static VariableTerm TARGET { get; private set; } = null!;
 
+	/// <summary>
+	/// mem-leak-fix：清空静态缓存。游戏会话结束（GlobalStatic.Scope.Dispose）时调用。
+	/// <see cref="Initialize"/> 用当前游戏 VariableData 的 TARGET token 构造静态
+	/// <see cref="TARGET"/>（VariableTerm）——静态字段反向钉住 VariableData → EmueraConsole →
+	/// Process 整张游戏对象图（实测 gcroot 定位 <c>&lt;ZeroTerm&gt;k__BackingField</c> 链）。
+	/// 清空后下次游戏加载时 Process.Initialize 会重新调 <see cref="Initialize"/> 重建。
+	/// </summary>
+	internal static void ClearStaticCache()
+	{
+		ZeroTerm = null!;
+		TARGET = null!;
+	}
+
 	public static bool IsVariable(string ids)
 	{
 		if (string.IsNullOrEmpty(ids))

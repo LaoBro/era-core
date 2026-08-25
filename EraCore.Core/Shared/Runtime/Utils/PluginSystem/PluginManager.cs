@@ -508,5 +508,24 @@ namespace MinorShift.Emuera.Runtime.Utils.PluginSystem
 		public GlobalConstString1dWrapper SAVESTRNAME = null!;
 		public GlobalConstString1dWrapper GLOBALNAME = null!;
 		public GlobalConstString1dWrapper GLOBALSNAME = null!;
+
+		/// <summary>
+		/// 是否已加载到插件方法（<see cref="LoadPlugins"/> 之后判定）。
+		/// mem-leak-fix：无插件游戏据此在启动时回收插件系统的运行时静态持有。
+		/// </summary>
+		internal bool HasPlugins => methods.Count > 0;
+
+		/// <summary>
+		/// mem-leak-fix：重置单例。释放单例对游戏运行时（Process / ProcessState /
+		/// ExpressionMediator / VariableData wrapper）的静态持有，让游戏对象图可被 GC 回收。
+		/// 调用时机：游戏会话结束（GlobalStatic.Scope.Dispose）；或无插件游戏启动时
+		/// （Process.Initialize 检测 HasPlugins == false）。
+		/// 下次游戏加载时 Process.Initialize 会经 <see cref="GetInstance"/> 重建单例并
+		/// 重新 SetParent + LoadPlugins，无需手动恢复。
+		/// </summary>
+		internal static void ResetInstance()
+		{
+			instance = null!;
+		}
 	}
 }

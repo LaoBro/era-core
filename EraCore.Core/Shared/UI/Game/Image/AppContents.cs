@@ -82,8 +82,19 @@ static class AppContents
 	public static void CreateSpriteG(string imgName, GraphicsImage parent, EmuRectangle rect) { }
 	internal static void CreateSpriteAnime(string imgName, int w, int h) { }
 	public static Exception LoadContents(bool reload) => null!;
-	public static void UnloadContents() { foreach (var graph in gList.Values) graph.GDispose(); gList.Clear(); }
-	public static void UnloadGraphicList() { foreach (var graph in gList.Values) graph.GDispose(); gList.Clear(); }
+	public static void UnloadContents()
+	{
+		foreach (var graph in gList.Values) graph.GDispose();
+		gList.Clear();
+		// mem-leak-fix：_stubs 替身缓存退出游戏后仍驻留静态——随 UnloadContents 一并清（锁内，与 GetSprite 互斥）。
+		lock (_stubSync) { _stubRoot = null; _stubs.Clear(); }
+	}
+	public static void UnloadGraphicList()
+	{
+		foreach (var graph in gList.Values) graph.GDispose();
+		gList.Clear();
+		lock (_stubSync) { _stubRoot = null; _stubs.Clear(); }
+	}
 	public static void UnloadTempLoadedConstImageNames() { }
 	public static void UnloadTempLoadedGraphicsImageNames() { }
 

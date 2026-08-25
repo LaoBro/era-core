@@ -31,8 +31,12 @@ internal partial class ParserMediator
 		warningList.Add(new ParserWarning(str, pos, level, stack));
 	}
 
-	static EmueraConsole console = null!;
-	public static void Initialize(EmueraConsole console)
+	static EmueraConsole? console;
+	/// <summary>
+	/// 绑定/解绑静态 console 引用。传 null 即解绑（mem-leak-fix：scope 退出时
+	/// GlobalStatic.Scope.Dispose 调 <c>Initialize(null)</c> 清静态根，让游戏运行时对象图可回收）。
+	/// </summary>
+	public static void Initialize(EmueraConsole? console)
 	{
 		ParserMediator.console = console;
 	}
@@ -185,6 +189,13 @@ internal partial class ParserMediator
 
 	public static void FlushWarningList()
 	{
+		// mem-leak-fix：scope 退出后静态根已置 null（GlobalStatic.Scope.Dispose 调
+		// ParserMediator.Initialize(null)）——警告无处可打，清空列表即可，避免对 null console NRE。
+		if (console == null)
+		{
+			warningList.Clear();
+			return;
+		}
 		for (int i = 0; i < warningList.Count; i++)
 		{
 			ParserWarning warning = warningList[i];
@@ -221,7 +232,8 @@ internal partial class ParserMediator
 
 	public static void SingleLine(string str)
 	{
-		console.PrintSingleLine(str);
+		// mem-leak-fix：静态根可能已清（scope 外调用）——null 安全打印
+		console?.PrintSingleLine(str);
 	}
 
 }

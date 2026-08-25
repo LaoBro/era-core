@@ -602,6 +602,16 @@ internal sealed partial class Process(EmueraConsole view)
 
 			PluginManager.GetInstance().SetParent(process, process.state, process.exm);
 			PluginManager.GetInstance().LoadPlugins();
+			// mem-leak-fix：无插件游戏——插件系统在启动时即回收。SetParent 无条件把
+			// Process/ExpressionMediator/VariableData wrapper 缓存进 PluginManager 单例与
+			// PluginAPICharContext 静态字段（跨会话泄漏源）；LoadPlugins 后若未加载到任何
+			// 插件方法，立即清空这些静态持有，游戏循环运行期不再保留。
+			// 有插件游戏保留（运行时需要），退出时由 GlobalStatic.Scope.Dispose 统一清理。
+			if (!PluginManager.GetInstance().HasPlugins)
+			{
+				PluginManager.ResetInstance();
+				PluginAPICharContext.ClearStaticCache();
+			}
 
 			logWriter?.WriteLine($"Proc:Init:ERH:Start {stopWatch.ElapsedMilliseconds}ms");
 			EmueraLog.Info("Initialize", "stage=ERH+ERB start");

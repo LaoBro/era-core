@@ -49,6 +49,25 @@ namespace MinorShift.Emuera.Runtime.Utils.PluginSystem
 			PluginAPICharContext.exm = exm;
 		}
 
+		/// <summary>
+		/// mem-leak-fix：清空静态缓存。游戏会话结束（GlobalStatic.Scope.Dispose）时调用，
+		/// 释放对 VariableData token / ExpressionMediator / 用户自定义变量的静态持有，
+		/// 配合 <see cref="PluginManager.ResetInstance"/> 让游戏对象图可被 GC 回收。
+		/// 下次游戏加载时 <see cref="CacheVariables"/> 会重新填充。
+		/// </summary>
+		internal static void ClearStaticCache()
+		{
+			exm = null!;
+			_BASE = null!; _MAXBASE = null!; _ABL = null!; _TALENT = null!;
+			_EXP = null!; _MARK = null!; _PALAM = null!; _SOURCE = null!;
+			_EX = null!; _CFLAG = null!; _JUEL = null!; _RELATION = null!;
+			_EQUIP = null!; _TEQUIP = null!; _STAIN = null!; _GOTJUEL = null!;
+			_NOWEX = null!; _DOWNBASE = null!; _CUP = null!; _CDOWN = null!;
+			_TCVAR = null!; _NAME = null!; _CALLNAME = null!; _NICKNAME = null!;
+			_MASTERNAME = null!; _CSTR = null!; _CDFLAG = null!;
+			_UserDefinedVars.Clear();
+		}
+
 		//Cached Int[] variables
 		static VariableToken _BASE = null!;
 		static VariableToken _MAXBASE = null!;

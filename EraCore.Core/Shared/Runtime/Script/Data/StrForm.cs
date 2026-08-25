@@ -52,6 +52,26 @@ internal sealed class StrForm
 		CallnameTarget = new FunctionMethodTerm(formatPercent, [callnametarget, null!, null!]);
 	}
 
+	/// <summary>
+	/// mem-leak-fix：清空静态缓存。游戏会话结束（GlobalStatic.Scope.Dispose）时调用。
+	/// <see cref="Initialize"/> 用当前游戏的 VariableData token 构造 NameTarget / CallnameMaster /
+	/// CallnamePlayer / NameAssi / CallnameTarget（%TARGET% / /// 等格式化），静态字段经
+	/// VariableTerm → VariableToken 反向钉住 VariableData → EmueraConsole → Process 整张游戏对象图
+	/// （实测 gcroot：FunctionMethodTerm.NameAssi 是残留 ~177MB 的根）。清空后下次游戏加载时
+	/// Process.Initialize 会重新调 <see cref="Initialize"/> 重建，无需手动恢复。
+	/// </summary>
+	internal static void ClearStaticCache()
+	{
+		formatCurlyBrace = null!;
+		formatPercent = null!;
+		formatYenAt = null!;
+		NameTarget = null!;
+		CallnameMaster = null!;
+		CallnamePlayer = null!;
+		NameAssi = null!;
+		CallnameTarget = null!;
+	}
+
 	public static StrForm FromWordToken(StrFormWord wt)
 	{
 		StrForm ret = new()

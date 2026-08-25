@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
@@ -81,6 +82,14 @@ internal sealed class BridgeHost : IDisposable
     /// <c>true</c>（含缺省）→ <c>"off"</c>；<c>false</c> → <c>"auto"</c>。不再写入。
     /// </summary>
     internal const string NoLoadingReportKey = "app.noLoadingReport";
+
+    /// <summary>
+    /// Preferences key——退出游戏后主动 Full GC 开关（mem-leak-fix，默认 true）。
+    /// 作用：host.Dispose 完成（游戏循环已 join、静态根已清理）后在后台线程触发
+    /// GC.Collect(2) + WaitForPendingFinalizers + 二次收集，让已释放的游戏运行时内存
+    /// 在任务管理器中可见回落（.NET GC 默认不把 Gen2 堆段归还 OS）。
+    /// </summary>
+    internal const string ActiveGcOnExitKey = "app.activeGcOnExit";
 
     /// <summary>三态字符串 ↔ <see cref="ConfigData.OverrideDisplayReport"/> 的映射（纯函数，单测覆盖）。</summary>
     internal static bool? ParseDisplayReportOverride(string? value) => value switch
@@ -1521,6 +1530,15 @@ internal sealed class BridgeHost : IDisposable
             return;
         _disposed = true;
         _jsBridge.InputReceived -= OnInputFromJs;
+#if ANDROID
+        // mem-leak-fix：构造时（ctor）订阅的 AndroidJsBridge 静态事件/委托必须对称退订，
+        // 否则被 Dispose 的旧 BridgeHost 实例被静态根钉住（每次进出游戏泄漏一个 host 及其引用链）。
+        // FallbackInputHandler 是共享静态委托——仅当仍指向本实例的处理器时才置 null，
+        // 避免误清新 host 已赋值的处理器（RecreateHost 先 Dispose 旧 host 再 new 新 host，时序安全）。
+        AndroidJsBridge.BridgeUrlReceived -= OnBridgeUrl;
+        if (ReferenceEquals(AndroidJsBridge.FallbackInputHandler, OnInputFromJs))
+            AndroidJsBridge.FallbackInputHandler = null;
+#endif
 
         // 1. 取消泵（turn/control）——Task.Run 的泵读 _cts.Token，取消即退出
         try
@@ -1566,7 +1584,59 @@ internal sealed class BridgeHost : IDisposable
                     AgentLog.Instance.Write($"[bridge] server host dispose failed: {ex.Message}");
                     Console.WriteLine($"[bridge] server host dispose failed: {ex}");
                 }
+                // mem-leak-fix：host.Dispose 已 join 游戏循环（Session.Dispose 内 GetAwaiter().GetResult()），
+                // 此时 GlobalStatic.Scope.Dispose 的静态根清理必然已完成——在此触发 Full GC，
+                // 让已释放的游戏运行时内存可见回落（Preferences 开关默认 true）。
+                TryCollectAfterGameExit();
             });
+        }
+    }
+
+    /// <summary>
+    /// mem-leak-fix：退出游戏后主动 Full GC + 等待终结器 + 二次收集。
+    /// <para>
+    /// 调用时机：仅限 <see cref="Dispose"/> 内 host.Dispose 完成后（游戏循环已 join、
+    /// scope 静态根清理已执行）。后台线程执行，不阻塞 UI。
+    /// Preferences key：<see cref="ActiveGcOnExitKey"/>，默认 true；false 时跳过。
+    /// </para>
+    /// </summary>
+    private static void TryCollectAfterGameExit()
+    {
+        bool enabled = true;
+        try
+        {
+            enabled = Preferences.Get(ActiveGcOnExitKey, true);
+        }
+        catch
+        {
+            // Preferences 不可用（极少见）——保持默认开启
+        }
+        if (!enabled)
+            return;
+        try
+        {
+            // 切到 Batch（无延迟调优）模式再做 Full GC——比默认交互模式更彻底：
+            // Forced 强制压缩 Gen2 + LOH，配合 compacting 触发堆段修剪归还 OS。
+            // 完成后恢复原 LatencyMode（进程全局设置，仅退出瞬间短暂生效）。
+            var prevLatency = GCSettings.LatencyMode;
+            GCSettings.LatencyMode = GCLatencyMode.Batch;
+            try
+            {
+                // 先回收一轮 + 终结器，再压缩收集——确保已无引用的游戏对象图（含终结点对象）被回收，
+                // 并触发 Gen2 堆段修剪让内存归还 OS。
+                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+                GC.WaitForPendingFinalizers();
+                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+            }
+            finally
+            {
+                GCSettings.LatencyMode = prevLatency;
+            }
+            Console.WriteLine("[bridge] post-exit GC completed");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[bridge] post-exit GC failed: {ex}");
         }
     }
 }

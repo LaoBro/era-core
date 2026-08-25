@@ -5,7 +5,10 @@ using MinorShift.Emuera.Runtime.Script.Data;
 using MinorShift.Emuera.Runtime.Script.Statements;
 using MinorShift.Emuera.Runtime.Script.Statements.Variable;
 using MinorShift.Emuera.Runtime.Utils;
+using MinorShift.Emuera.Runtime.Utils.EvilMask;
+using MinorShift.Emuera.Runtime.Utils.PluginSystem;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.UI.Game.Image;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -179,6 +182,31 @@ internal sealed class GlobalStatic
             try
             {
                 instance._pfc.Dispose();
+                // mem-leak-fix：静态根清理。ParserMediator.console 静态字段持 EmueraConsole→Process
+                // 整张游戏对象图（CSV 数据 / 变量表 / ERB 编译产物），不清则退出游戏后 GC 无法回收。
+                // WinForms 旧版退出路径有 ParserMediator.Initialize(null) + ClearWarningList +
+                // GlobalStatic.Reset()（Emuera\Program.cs），Headless/MAUI 路径此前缺失等价清理。
+                // 一并清理 AppContents 图片缓存 / Preload 路径索引 / ConsoleEscapedParts 显示节点缓存——
+                // 对齐 Server /load-game 语义（Preload.Clear）与 WinForms 退出语义。均幂等安全。
+                ParserMediator.ClearWarningList();
+                ParserMediator.Initialize(null);
+                // mem-leak-fix：PluginManager 静态单例持有 Process/ExpressionMediator/VariableData wrapper、
+                // PluginAPICharContext 静态缓存持有 VariableToken——均指向游戏运行时对象图，必须一并清空，
+                // 否则 ParserMediator 之外这条链仍钉住 CSV/变量数据（实测退出后 gen2+LOH 残留 ~180MB）。
+                // 下次游戏加载时 Process.Initialize 会重建单例并重新 CacheVariables + LoadPlugins。
+                PluginManager.ResetInstance();
+                PluginAPICharContext.ClearStaticCache();
+                // mem-leak-fix：StrForm 静态格式化缓存（NameTarget/NameAssi 等 %TARGET%/// 三元符号）
+                // 持有当前游戏 VariableData 的 VariableToken，反向钉住 EmueraConsole→Process 对象图
+                // （gcroot 定位：FunctionMethodTerm.NameAssi 为残留根）。清空后下次加载 Process.Initialize
+                // 会重新 StrForm.Initialize() 重建。
+                StrForm.ClearStaticCache();
+                // mem-leak-fix：VariableParser 静态缓存（TARGET/ZeroTerm，Process.cs:598 每次加载
+                // 用当前游戏 VariableData token 构造）——同类静态根，一并清空，下次加载自动重建。
+                VariableParser.ClearStaticCache();
+                AppContents.UnloadContents();
+                Preload.Clear();
+                ConsoleEscapedParts.Clear();
             }
             finally
             {
