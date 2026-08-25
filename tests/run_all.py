@@ -286,6 +286,25 @@ def main():
 
     results.append(
         (
+            "SELECTCASE jump table",
+            _run_script(
+                "SELECTCASE jump table",
+                [
+                    sys.executable,
+                    str(TESTS_DIR / "test_selectcase_jumptable.py"),
+                    "--binary",
+                    str(binary_path),
+                    "--game-dir",
+                    str(game_dir),
+                ],
+                env=env,
+                timeout=240,
+            ),
+        )
+    )
+
+    results.append(
+        (
             "title LOADGAME regression",
             _run_script(
                 "title LOADGAME regression",

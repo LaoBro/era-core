@@ -3339,8 +3339,22 @@ internal sealed partial class FunctionIdentifier
 		}
 		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
 		{
-			LogicalLine caseJumpto = func.JumpTo;//ENDSELECT
 			AExpression selectValue = ((ExpressionArgument)func.Argument).Term;
+			//コンパイル時ジャンプテーブル：O(1) ディスパッチ。無い場合は従来の線形スキャン。
+			var jumpTable = func.SelectCaseJumpTable;
+			if (jumpTable != null)
+			{
+				InstructionLine? target = null;
+				if (selectValue.IsInteger)
+					jumpTable.IntTable!.TryGetValue(selectValue.GetIntValue(exm), out target);
+				else
+					jumpTable.StrTable!.TryGetValue(selectValue.GetStrValue(exm), out target);
+				target ??= jumpTable.DefaultTarget; // 未ヒット時：CASEELSE / ENDSELECT
+				state.CurrentLine = target; //報エラー文脈：JumpTo も currentLine を設定するが、線形スキャンと同じ明示代入を揃える
+				state.JumpTo(target);
+				return;
+			}
+			LogicalLine caseJumpto = func.JumpTo;//ENDSELECT
 			string sValue = null!;
 			long iValue = 0;
 			if (selectValue.IsInteger)

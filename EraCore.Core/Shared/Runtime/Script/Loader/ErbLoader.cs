@@ -2206,6 +2206,9 @@ internal sealed class ErbLoader
 							}
 
 						}
+						//コンパイル時ジャンプテーブル構築（条件を満たさない場合は null → 実行時に線形スキャンへフォールバック）。
+						//eager と lazy 物化（ReparseFunction）は同一の nestCheck 経路を共有するため、物化関数は自動で建表される。
+						selectLine.SelectCaseJumpTable = SelectCaseJumpTable.TryBuild(selectLine, exm);
 					}
 					break;
 				case FunctionCode.REND:

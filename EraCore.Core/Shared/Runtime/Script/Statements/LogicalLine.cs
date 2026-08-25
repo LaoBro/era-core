@@ -167,6 +167,8 @@ internal sealed class InstructionLine : LogicalLine
 	private LogicalLine jumptoendcatch = null!;
 	//IF文とSELECT文のみが使う。
 	public LinkedList<InstructionLine> IfCaseList = null!;
+	//SELECTCASEのみが使う。コンパイル時ジャンプテーブル（条件を満たさない場合は null＝線形スキャン）。
+	public SelectCaseJumpTable? SelectCaseJumpTable { get; set; }
 	//PRINTDATA文のみが使う。
 	public List<List<InstructionLine>> dataList = null!;
 	//TRYCALLLIST系が使う

@@ -36,6 +36,12 @@ internal abstract class AExpression
 	{
 		get { return type == typeof(string); }
 	}
+
+	/// <summary>
+	/// コンパイル時定数かどうか（SELECTCASE ジャンプテーブル用）。
+	/// Restructure 後、定数は SingleTerm に畳み込まれるため、既定は false で SingleTerm のみ true。
+	/// </summary>
+	public virtual bool IsConst => false;
 	readonly Type type;
 
 	/// <summary>

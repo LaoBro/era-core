@@ -31,6 +31,8 @@ internal class SingleTerm : AExpression
 	{
 		return this;
 	}
+
+	public override bool IsConst => true;
 }
 
 internal sealed class SingleStrTerm : SingleTerm
