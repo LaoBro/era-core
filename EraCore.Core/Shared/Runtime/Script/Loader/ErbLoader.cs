@@ -278,6 +278,10 @@ internal sealed class ErbLoader
 		}
 		finally
 		{
+			// mem-leak-fix：ParseScript 主循环挂载的 _activeArgLoader 静态槽在异常路径不经过
+			// L1593 的正常收尾——加载失败时最后一个 ErbLoader 实例（含 IR 索引 / 路径映射）会被
+			// 静态字段钉住直到下次成功加载。此处 finally 统一清理（正常路径已置 null，幂等）。
+			_activeArgLoader = null;
 			// finally exception bypasses catch above and bubbles to Process.Initialize
 			try
 			{

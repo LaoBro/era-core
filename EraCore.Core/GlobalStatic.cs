@@ -8,6 +8,7 @@ using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.Runtime.Utils.EvilMask;
 using MinorShift.Emuera.Runtime.Utils.PluginSystem;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.UI;
 using MinorShift.Emuera.UI.Game.Image;
 using System;
 using System.Collections.Generic;
@@ -207,6 +208,9 @@ internal sealed class GlobalStatic
                 AppContents.UnloadContents();
                 Preload.Clear();
                 ConsoleEscapedParts.Clear();
+                // mem-leak-fix：FontFactory 静态字体字典（fontname,size,style→EmuFont 值类型，
+                // 不持 GDI 资源，量级极小）——挂清理链图彻底，随会话结束清空，下次加载自动重建。
+                FontFactory.ClearFont();
             }
             finally
             {
