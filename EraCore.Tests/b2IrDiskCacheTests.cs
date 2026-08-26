@@ -297,4 +297,48 @@ $HOGE
 			.Where(s => s.Contains("この関数中では定義されていません") || s.Contains("存在しません")).ToList();
 		Assert.Empty(falsePositives);
 	}
+
+	/// <summary>
+	/// IR 后背物化回归：式中调用 #FUNCTION 方法不被误判「未被标记 #FUNCTION」。
+	/// IR 桩签名延后（IsMethod 未预建），式中解析（GetFunctionMethod）须先补算签名——否则对 CHECK_CHARA/IS_NAMED
+	/// 等 #FUNCTION 方法报 UsedNonMethodFunc（用户实机 D:\era\TW4.881shoess 二次打开大量「行内函数形式调用」警告）。
+	/// </summary>
+	[Fact]
+	public async Task Ir_second_launch_resolves_inline_hash_function_method_without_false_warning()
+	{
+		const string corpus = """
+@EVENTFIRST
+	SIF TWICE(2) == 4
+		RETURN
+	RETURN
+
+@TWICE,N
+#FUNCTION
+	RESULT = N * 2
+	RETURNF
+""";
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		EnableLazy(h);
+		await h.PreloadAsync();
+		h.WriteErb("IRMETHOD.ERB", corpus);
+
+		// 首次（建缓存）
+		var loader1 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		await loader1.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		// 第二次（IR 命中，blob 后背）
+		var loader2 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		var ok = await loader2.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		Assert.True(ok, "round2 failed\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+
+		var twice = Find(h.LabelDic, "TWICE");
+		Assert.NotNull(twice);
+		// 式中调用只触发签名物化（IsMethod/Arg 就位），函数体可保持桩——关键回归是 IsMethod 不被误判为 false。
+		Assert.True(twice.IsMethod, "TWICE must keep #FUNCTION IsMethod flag across IR materialization (signature resolved)");
+
+		var falsePositives = h.Console.DisplayLineList
+			.Select(l => l?.ToString() ?? "")
+			.Where(s => s.Contains("行内函数形式调用") || s.Contains("#FUNCTION")).ToList();
+		Assert.True(falsePositives.Count == 0, "falsePositives:\n" + string.Join("\n", falsePositives));
+	}
 }

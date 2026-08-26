@@ -603,6 +603,10 @@ internal partial class IdentifierDictionary
 			FunctionLabelLine func = labelDic.GetNonEventLabel(codeStr);
 			if (func != null)
 			{
+				// b2-irdiskcache：IR 桩签名延后（IsMethod/Arg 未预建），式中调用前先补算签名——
+				// 否则 #FUNCTION 函数的 IsMethod 仍为 false → 误报 UsedNonMethodFunc「未被标记 #FUNCTION」
+				// 及 CALLF 误判 CallToUserFunc。非递归（ComputeSignature 不跑 setJumpTo），幂等（非桩/已签名即 no-op）。
+				MinorShift.Emuera.Runtime.Script.Loader.ErbLoader.EnsureCalleeSignature(func);
 				if (userDefinedOnly && !func.IsMethod)
 				{
 					throw new CodeEE(string.Format(treer.CallfNonMethodFunc.Text, func.LabelName));
