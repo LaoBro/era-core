@@ -38,23 +38,22 @@ internal sealed class HttpRouteDispatcher
 
     private readonly GameServerProtocol _protocol;
     /// <summary>
-    /// 请求 body POCO 的源生成反序列化选项。Kestrel 注入 <c>ServerJsonContext.Default</c> 以保证
-    /// NativeAOT + 大小写不敏感（与原 Kestrel 行为一致）；HttpListener 传 null，走反射（其原行为）。
+    /// 请求 body 反序列化的源生成上下文。双宿主均注入 <c>ServerJsonContext.Default</c>（Core 共享）：
+    /// 经 <c>JsonSerializer.Deserialize(string, Type, context)</c> 源生成重载反序列化，NativeAOT 安全
+    /// （无 IL2026/IL3050）且大小写不敏感。默认构造用 <c>ServerJsonContext.Default</c>，使
+    /// HttpListener / 测试与 Kestrel 走同一路径。
     /// </summary>
-    private readonly JsonSerializerOptions? _requestOptions;
+    private readonly JsonSerializerContext _requestContext;
 
     public HttpRouteDispatcher(GameServerProtocol protocol)
-        : this(protocol, requestJsonContext: null)
+        : this(protocol, ServerJsonContext.Default)
     {
     }
 
-    public HttpRouteDispatcher(GameServerProtocol protocol, JsonSerializerContext? requestJsonContext)
+    public HttpRouteDispatcher(GameServerProtocol protocol, JsonSerializerContext requestJsonContext)
     {
         _protocol = protocol;
-        // 拷贝源生成上下文选项：继承其 resolver chain 与 [JsonSourceGenerationOptions]（大小写不敏感）。
-        _requestOptions = requestJsonContext == null
-            ? null
-            : new JsonSerializerOptions(requestJsonContext.Options);
+        _requestContext = requestJsonContext;
     }
 
     /// <summary>
@@ -144,10 +143,8 @@ internal sealed class HttpRouteDispatcher
             return null;
         try
         {
-            // Kestrel 经源生成 resolver（NativeAOT 安全 + 大小写不敏感）；HttpListener 走反射（原行为）。
-            return _requestOptions == null
-                ? JsonSerializer.Deserialize<T>(bodyText)
-                : JsonSerializer.Deserialize<T>(bodyText, _requestOptions);
+            // 源生成重载（NativeAOT 安全 + 大小写不敏感）：双宿主均经 ServerJsonContext.Default。
+            return (T?)JsonSerializer.Deserialize(bodyText, typeof(T), _requestContext);
         }
         catch (JsonException)
         {

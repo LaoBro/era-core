@@ -114,6 +114,12 @@ internal sealed class BridgeHost : IDisposable
     private readonly ConfigData _configData;
     private readonly ITerminalSetup _terminalSetup;
     private readonly IJsBridge _jsBridge;
+#if ANDROID
+    // mem-leak-fix：缓存 OnInputFromJs 委托实例——构造时赋给 AndroidJsBridge.FallbackInputHandler，
+    // Dispose 时用同一实例做 ReferenceEquals 比较（方法组每次转委托新建实例，直接 ReferenceEquals
+    // 方法组恒为 false，守卫失效且触发 CS8974）。
+    private readonly Action<string> _onInputFromJsDelegate;
+#endif
     private readonly Action<string>? _onReloadGame;
     private readonly Action? _onGameExited;
     private readonly CancellationTokenSource _cts = new();
@@ -194,8 +200,11 @@ internal sealed class BridgeHost : IDisposable
         // Dispatcher.Dispatch 切 UI 线程投递——不再用 MauiBridgeIO 直连游戏循环。
         _jsBridge.InputReceived += OnInputFromJs;
 #if ANDROID
-        // ADR-0019：兜底——InputReceived 无订阅者时仍能收到 JS 消息
-        AndroidJsBridge.FallbackInputHandler = OnInputFromJs;
+        // ADR-0019：兜底——InputReceived 无订阅者时仍能收到 JS 消息。
+        // 缓存同一委托实例供 Dispose 时 ReferenceEquals 比较（方法组每次转委托新建实例，
+        // 直接对方法组 ReferenceEquals 恒为 false——守卫失效 + CS8974）。
+        _onInputFromJsDelegate = OnInputFromJs;
+        AndroidJsBridge.FallbackInputHandler = _onInputFromJsDelegate;
         // ADR-0019：BridgeClient URL 拦截——可靠 JS→C# 备份通道
         AndroidJsBridge.BridgeUrlReceived += OnBridgeUrl;
 #endif
@@ -1535,8 +1544,10 @@ internal sealed class BridgeHost : IDisposable
         // 否则被 Dispose 的旧 BridgeHost 实例被静态根钉住（每次进出游戏泄漏一个 host 及其引用链）。
         // FallbackInputHandler 是共享静态委托——仅当仍指向本实例的处理器时才置 null，
         // 避免误清新 host 已赋值的处理器（RecreateHost 先 Dispose 旧 host 再 new 新 host，时序安全）。
+        // 用 ctor 缓存的 _onInputFromJsDelegate 做同一实例比较（方法组转委托每次新建实例，
+        // 直接对方法组 ReferenceEquals 恒 false——原守卫永不成立；同时消除 CS8974）。
         AndroidJsBridge.BridgeUrlReceived -= OnBridgeUrl;
-        if (ReferenceEquals(AndroidJsBridge.FallbackInputHandler, OnInputFromJs))
+        if (ReferenceEquals(AndroidJsBridge.FallbackInputHandler, _onInputFromJsDelegate))
             AndroidJsBridge.FallbackInputHandler = null;
 #endif
 

@@ -31,11 +31,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Server 剩余的 internal 类型（KestrelGameServer / WsConnectionHandler / ServerJsonContext）
+    <!-- Server 剩余的 internal 类型（KestrelGameServer / WsConnectionHandler）
          被 Cli（ServerRunner 直接构造 KestrelGameServer）和 Tests（KestrelGameServerIdleTests
          直接构造 server handler）访问——必须 InternalsVisibleTo 给两者。
-         （共享层类型 Session/SessionRegistry/OutputHub/HttpSessionIO/GameConfigService/Controller
-         已迁至 Emuera.Headless.Core，Core 的 InternalsVisibleTo 已覆盖 Server/Cli/Tests/Maui。）-->
+         （ServerJsonContext 已迁回 Core——POCO 本在 Core、双宿主共享；Kestrel 经 Core→Server 的
+         InternalsVisibleTo 访问 ServerJsonContext.Default。共享层类型 Session/SessionRegistry/
+         OutputHub/HttpSessionIO/GameConfigService/Controller 在 Core，Core 的 InternalsVisibleTo
+         已覆盖 Server/Cli/Tests/Maui。）-->
     <InternalsVisibleTo Include="EraCore.Cli" />
     <InternalsVisibleTo Include="EraCore.Tests" />
   </ItemGroup>

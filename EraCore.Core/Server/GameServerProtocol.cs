@@ -304,7 +304,7 @@ internal sealed class GameServerProtocol
         var arr = new JsonArray();
         foreach (var g in games)
         {
-            arr.Add(new JsonObject { ["name"] = g.Name, ["fullPath"] = g.FullPath });
+            arr.Add((JsonNode)new JsonObject { ["name"] = g.Name, ["fullPath"] = g.FullPath });
         }
 
         return Json(new JsonObject
@@ -327,7 +327,7 @@ internal sealed class GameServerProtocol
         var arr = new JsonArray();
         foreach (var d in result.SubDirectories)
         {
-            arr.Add(d);
+            arr.Add((JsonNode?)JsonValue.Create(d));
         }
 
         return Json(new JsonObject
