@@ -491,6 +491,18 @@ export const useGameStore = defineStore('game', () => {
    */
   const displayReportOverride = ref<'auto' | 'off' | 'on'>('off');
   /**
+   * 性能（启动加载）覆盖三态——C# 权威状态（来自 config 消息的 lazyFunctionLoad 等四个字段）。
+   * 'auto'=跟随游戏 emuera.config；'off'=强制关；'on'=强制开。
+   * 设置页分段控件据此渲染初始值；切换时投递 setPerfOverride 请求 C# 切换 + 持久化，
+   * C# 推回 config 消息后同步回此值。仅在下次进游戏时生效，默认 'auto'（不干预游戏配置）。
+   */
+  const perfOverrides = ref<Record<'lazyFunctionLoad' | 'irDiskCacheLoad' | 'parallelErbLoad' | 'parallelParseScript', 'auto' | 'off' | 'on'>>({
+    lazyFunctionLoad: 'auto',
+    irDiskCacheLoad: 'auto',
+    parallelErbLoad: 'auto',
+    parallelParseScript: 'auto',
+  });
+  /**
    * A0 补充（真机无 adb）：app 内日志查看器——agent.log 内容（来自 getAgentLog 回复的 agentLog 消息）。
    * 设置页「查看日志」按钮触发读取；truncated 表示内容因超过 200K 字符被截断为尾部。
    */
@@ -1475,6 +1487,7 @@ export const useGameStore = defineStore('game', () => {
     maxLog,
     agentLogEnabled,
     displayReportOverride,
+    perfOverrides,
     agentLogContent,
     agentLogTruncated,
     fetchConfig,

@@ -165,6 +165,13 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
     if (m.displayReportOverride === 'auto' || m.displayReportOverride === 'off' || m.displayReportOverride === 'on') {
       game.displayReportOverride = m.displayReportOverride;
     }
+    // 性能（启动加载）覆盖三态的 C# 权威状态——设置页据此渲染分段控件初始值
+    for (const perfKey of ['lazyFunctionLoad', 'irDiskCacheLoad', 'parallelErbLoad', 'parallelParseScript'] as const) {
+      const value = m[perfKey];
+      if (value === 'auto' || value === 'off' || value === 'on') {
+        game.perfOverrides[perfKey] = value;
+      }
+    }
     return;
   }
 

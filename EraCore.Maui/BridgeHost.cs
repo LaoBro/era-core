@@ -91,6 +91,79 @@ internal sealed class BridgeHost : IDisposable
     /// </summary>
     internal const string ActiveGcOnExitKey = "app.activeGcOnExit";
 
+    // ---- 性能覆盖三态（perf-load-override）：设置页「性能（启动加载）」区块 ----
+
+    /// <summary>
+    /// Preferences key——懒函数加载覆盖（<see cref="ConfigCode.LazyFunctionLoad"/>）。
+    /// 与下方三个 key 一同为 <c>"auto"</c>（跟随游戏配置，默认）/ <c>"on"</c> / <c>"off"</c>：
+    /// 仅内存覆盖不改写游戏配置文件；安卓真机上若感觉懒加载拖慢运行可切 off 回 eager。
+    /// </summary>
+    internal const string PerfLazyFunctionLoadKey = "app.perf.lazyFunctionLoad";
+
+    /// <summary>
+    /// Preferences key——IR 磁盘缓存覆盖（<see cref="ConfigCode.IrDiskCacheLoad"/>）；
+    /// 引擎侧仅在 LazyFunctionLoad 开启时生效。
+    /// </summary>
+    internal const string PerfIrDiskCacheLoadKey = "app.perf.irDiskCacheLoad";
+
+    /// <summary>Preferences key——ERB 并行读取覆盖（<see cref="ConfigCode.ParallelErbLoad"/>）。</summary>
+    internal const string PerfParallelErbLoadKey = "app.perf.parallelErbLoad";
+
+    /// <summary>
+    /// Preferences key——未调用函数解析并行化覆盖（<see cref="ConfigCode.ParallelParseScript"/>）。
+    /// </summary>
+    internal const string PerfParallelParseScriptKey = "app.perf.parallelParseScript";
+
+    /// <summary>
+    /// setPerfOverride 消息的 wire key（Vue 端 camelCase）→（Preferences key，引擎 ConfigCode）映射——
+    /// HandleSetPerfOverride 校验 key 合法性、PushConfigMessage/ApplyPerformanceOverrides 遍历用。
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, (string PrefKey, ConfigCode Code)> PerfOverrideItems =
+        new Dictionary<string, (string, ConfigCode)>
+        {
+            ["lazyFunctionLoad"] = (PerfLazyFunctionLoadKey, ConfigCode.LazyFunctionLoad),
+            ["irDiskCacheLoad"] = (PerfIrDiskCacheLoadKey, ConfigCode.IrDiskCacheLoad),
+            ["parallelErbLoad"] = (PerfParallelErbLoadKey, ConfigCode.ParallelErbLoad),
+            ["parallelParseScript"] = (PerfParallelParseScriptKey, ConfigCode.ParallelParseScript),
+        };
+
+    /// <summary>读单个性能覆盖三态值（Preferences 不可用时回退 auto=跟随游戏）。</summary>
+    private static string ReadPerfOverride(string prefKey)
+    {
+        try
+        {
+            return Preferences.Get(prefKey, "auto");
+        }
+        catch
+        {
+            return "auto";
+        }
+    }
+
+    /// <summary>
+    /// 游戏加载期应用性能覆盖——MainPage.OnReloadGame 在 Initialize（三源合并 + post-load 完毕）
+    /// 之后、会话创建之前调用。非 auto 的项经 GetItem(...).SetValue 压过一切来源
+    /// （与 OverrideDisplayReport 在 LoadConfigCore 尾部压 DisplayReport 同位语义，仅内存不落盘）；
+    /// ErbLoader 在随后会话创建时的 ERB 加载中读到即覆盖后的值。auto/缺省项不动游戏自身配置。
+    /// </summary>
+    internal static void ApplyPerformanceOverrides(ConfigData configData)
+    {
+        foreach (var item in PerfOverrideItems.Values)
+        {
+            var value = ReadPerfOverride(item.PrefKey);
+            if (value == "auto")
+                continue;
+            try
+            {
+                configData.GetItem(item.Code).SetValue(value == "on");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[bridge] ApplyPerformanceOverrides({item.Code}): {ex.Message}");
+            }
+        }
+    }
+
     /// <summary>三态字符串 ↔ <see cref="ConfigData.OverrideDisplayReport"/> 的映射（纯函数，单测覆盖）。</summary>
     internal static bool? ParseDisplayReportOverride(string? value) => value switch
     {
@@ -397,6 +470,12 @@ internal sealed class BridgeHost : IDisposable
                 if (type == "setDisplayReportOverride")
                 {
                     HandleSetDisplayReportOverride(doc.RootElement);
+                    return;
+                }
+                // 性能（启动加载）覆盖三态——写 Preferences，下次进游戏由 ApplyPerformanceOverrides 应用
+                if (type == "setPerfOverride")
+                {
+                    HandleSetPerfOverride(doc.RootElement);
                     return;
                 }
                 // A0 补充：app 内日志查看器——读取 agent.log 内容推给 Vue（真机无 adb 场景）
@@ -891,6 +970,47 @@ internal sealed class BridgeHost : IDisposable
     }
 
     /// <summary>
+    /// 接收 <c>{"type":"setPerfOverride","key":"lazyFunctionLoad"|"irDiskCacheLoad"|"parallelErbLoad"|"parallelParseScript",
+    /// "value":"auto"|"off"|"on"}</c>；持久化到对应 Preferences key。
+    /// <para>
+    /// 不即时改当前 <see cref="_configData"/>——这组开关只在 ERB 加载时被 ErbLoader 读取，
+    /// 当前景本已加载，改了也不影响本局；真正生效在下次进游戏（OnReloadGame →
+    /// ApplyPerformanceOverrides 据 Preferences 压值）。完成后推回 <c>config</c> 消息同步 UI。
+    /// </para>
+    /// </summary>
+    private void HandleSetPerfOverride(JsonElement root)
+    {
+        if (!root.TryGetProperty("key", out var keyEl) || keyEl.ValueKind != JsonValueKind.String
+            || !root.TryGetProperty("value", out var valueEl) || valueEl.ValueKind != JsonValueKind.String)
+        {
+            Console.WriteLine("[bridge] HandleSetPerfOverride: missing or non-string 'key'/'value' field");
+            return;
+        }
+        var key = keyEl.GetString();
+        var value = valueEl.GetString();
+        if (key == null || !PerfOverrideItems.TryGetValue(key, out var item))
+        {
+            Console.WriteLine($"[bridge] HandleSetPerfOverride: unknown key '{key}'");
+            return;
+        }
+        if (value is not ("auto" or "off" or "on"))
+        {
+            Console.WriteLine($"[bridge] HandleSetPerfOverride: invalid value '{value}' for '{key}'");
+            return;
+        }
+        try
+        {
+            Preferences.Set(item.PrefKey, value);
+        }
+        catch
+        {
+            // Preferences 不可用——仅持久化失败（下次启动回默认跟随游戏）
+        }
+        Console.WriteLine($"[bridge] perf override {key} set to {value}");
+        PushConfigMessage();
+    }
+
+    /// <summary>
     /// A0 补充（真机无 adb）：app 内日志查看器——读取 agent.log 内容推给 Vue。
     /// <para>
     /// 接收 <c>{"type":"getAgentLog"}</c>；调 <see cref="AgentLog.ReadAllText"/>（内部 flush，
@@ -1092,10 +1212,9 @@ internal sealed class BridgeHost : IDisposable
     /// <summary>
     /// 推送 emuera.config 值给 Vue——让设置页显示当前配置。
     /// <para>
-    /// 消息格式：<c>{"type":"config","maxLog":5000,"agentLogEnabled":false,"displayReportOverride":"auto"}</c>
-    /// （A0：agentLogEnabled 为文件日志开关的 C# 权威状态——启动时 Start() 推一次，
-    /// 设置页切换后 HandleSetAgentLogEnabled 推回同步；displayReportOverride 为启动日志
-    /// 覆盖三态的权威状态，切换后 HandleSetDisplayReportOverride 推回同步）。
+    /// 消息格式：<c>{"type":"config","maxLog":5000,"agentLogEnabled":false,"displayReportOverride":"auto",
+    /// "lazyFunctionLoad":"auto",...}</c>（性能覆盖四字段为对应 Preferences 三态权威值，
+    /// auto/off/on——切换后 HandleSetPerfOverride 推回同步）。
     /// </para>
     /// </summary>
     private void PushConfigMessage()
@@ -1103,7 +1222,11 @@ internal sealed class BridgeHost : IDisposable
         var maxLog = _configData.GetConfigValue<int>(ConfigCode.MaxLog);
         var displayReportOverride = DisplayReportOverrideToString(_configData.OverrideDisplayReport);
         var msg = JsonSerializer.Serialize(
-            new ConfigMessage("config", maxLog, AgentLog.Instance.Enabled, displayReportOverride),
+            new ConfigMessage("config", maxLog, AgentLog.Instance.Enabled, displayReportOverride,
+                ReadPerfOverride(PerfLazyFunctionLoadKey),
+                ReadPerfOverride(PerfIrDiskCacheLoadKey),
+                ReadPerfOverride(PerfParallelErbLoadKey),
+                ReadPerfOverride(PerfParallelParseScriptKey)),
             MauiJsonContext.Default.ConfigMessage);
         _dispatcher.Dispatch(() => _jsBridge.PostMessage(msg));
     }

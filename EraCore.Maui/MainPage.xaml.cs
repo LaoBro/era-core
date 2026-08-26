@@ -292,6 +292,9 @@ public partial class MainPage : ContentPage
                     dirAccessor,
                     // 三态偏好（auto/off/on）→ bool?（null/false/true）
                     BridgeHost.ParseDisplayReportOverride(ReadDisplayReportOverridePreference()));
+                // 性能（启动加载）覆盖：Initialize 后、会话创建前压值——盖过三源合并结果，
+                // 随后会话创建时 ErbLoader 加载 ERB 读到的即覆盖后的开关值
+                BridgeHost.ApplyPerformanceOverrides(newConfig);
                 var hasWrite = dirAccessor.HasWriteAccess();
                 Console.WriteLine($"[maui] OnReloadGame init completed: ExeDir={paths.ExeDir}, hasWrite={hasWrite}");
 #if ANDROID

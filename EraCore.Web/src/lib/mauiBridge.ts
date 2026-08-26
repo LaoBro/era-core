@@ -320,6 +320,30 @@ export function setDisplayReportOverride(value: DisplayReportOverride): void {
 }
 
 /**
+ * 性能（启动加载）覆盖三态 key——对应 emuera.config 的启动加载性能开关。
+ * - lazyFunctionLoad：懒函数加载（安卓上若感觉懒加载拖慢运行可切 'off' 回 eager）
+ * - irDiskCacheLoad：IR 磁盘缓存（引擎侧仅在懒函数加载开启时生效）
+ * - parallelErbLoad：ERB 并行读取
+ * - parallelParseScript：未调用函数解析并行化
+ */
+export type PerfOverrideKey = 'lazyFunctionLoad' | 'irDiskCacheLoad' | 'parallelErbLoad' | 'parallelParseScript';
+
+/**
+ * 设置页「性能（启动加载）」三态——请求 C# 覆盖游戏对应 emuera.config 项。
+ *
+ * C# `BridgeHost.HandleSetPerfOverride` 收到后：
+ * 1. 写 Preferences（key=`app.perf.<key>`——游戏加载时 OnReloadGame → ApplyPerformanceOverrides 读同一 key 压值）
+ * 2. 不即时改当前局（这组开关只在 ERB 加载时被读取，真正生效在下次进游戏）
+ * 3. 推回 `config` 消息（含 `<key>` 字段）同步设置页分段控件的权威状态
+ *
+ * @param key 性能选项名
+ * @param value 'auto'=跟随游戏配置（默认）；'off'=强制关；'on'=强制开
+ */
+export function setPerfOverride(key: PerfOverrideKey, value: DisplayReportOverride): void {
+  postInput(JSON.stringify({ type: 'setPerfOverride', key, value }));
+}
+
+/**
  * A0 补充（真机无 adb）：请求 C# 读取 agent.log 内容推给 Vue（设置页日志查看器）。
  *
  * C# `BridgeHost.HandleGetAgentLog` 收到后调 `AgentLog.ReadAllText()`（内部先 flush，

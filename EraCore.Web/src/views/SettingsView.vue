@@ -2,8 +2,8 @@
 import { ref } from 'vue';
 import { useGameStore } from '../stores/game';
 import { useUiStore } from '../stores/ui';
-import { setAgentLogEnabled, setDisplayReportOverride, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
-import type { DisplayReportOverride } from '../lib/mauiBridge';
+import { setAgentLogEnabled, setDisplayReportOverride, setPerfOverride, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
+import type { DisplayReportOverride, PerfOverrideKey } from '../lib/mauiBridge';
 
 const game = useGameStore();
 const ui = useUiStore();
@@ -28,6 +28,25 @@ function chooseDisplayReportOverride(value: DisplayReportOverride): void {
   setDisplayReportOverride(value);
   game.displayReportOverride = value;
 }
+
+/**
+ * 性能（启动加载）覆盖三态切换——投递 setPerfOverride 请求 C# 覆盖游戏对应
+ * emuera.config 项 + 持久化，本地乐观更新。C# 处理完推回 config 消息（含对应字段）
+ * 再次同步——最终显示以 C# 权威状态为准。
+ * 注意：这组开关只在 ERB 加载时被引擎读取，本局不受影响，重新进入游戏后生效。
+ */
+function choosePerfOverride(key: PerfOverrideKey, value: DisplayReportOverride): void {
+  setPerfOverride(key, value);
+  game.perfOverrides[key] = value;
+}
+
+/** 性能区块的四个开关行——label + wire key，模板内遍历渲染。 */
+const perfRows: Array<{ key: PerfOverrideKey; label: string }> = [
+  { key: 'lazyFunctionLoad', label: '懒函数加载' },
+  { key: 'irDiskCacheLoad', label: 'IR 磁盘缓存' },
+  { key: 'parallelErbLoad', label: '并行读取 ERB' },
+  { key: 'parallelParseScript', label: '并行解析未调用函数' },
+];
 
 /**
  * A0 补充（真机无 adb）：请求 C# 读取 agent.log 内容——回复异步到达（agentLog 消息
@@ -85,6 +104,35 @@ const logCopied = ref(false);
           </button>
           <span class="setting-value">{{ ui.theme === 'light' ? '开' : '关' }}</span>
         </div>
+      </div>
+      <div class="section">
+        <h3>性能（启动加载）</h3>
+        <div v-for="row in perfRows" :key="row.key" class="setting-row">
+          <span class="setting-label">{{ row.label }}</span>
+          <div class="segmented" role="radiogroup" :aria-label="row.label">
+            <button
+              v-for="opt in [
+                { value: 'auto', label: '跟随游戏' },
+                { value: 'off', label: '强制关' },
+                { value: 'on', label: '强制开' },
+              ]"
+              :key="opt.value"
+              class="segmented-item"
+              :class="{ active: game.perfOverrides[row.key] === opt.value }"
+              role="radio"
+              :aria-checked="game.perfOverrides[row.key] === opt.value"
+              @click="choosePerfOverride(row.key, opt.value as DisplayReportOverride)"
+            >
+              {{ opt.label }}
+            </button>
+          </div>
+        </div>
+        <p class="hint-text">
+          覆盖游戏 emuera.config 的启动加载性能开关（仅内存覆盖，不改写游戏配置文件）。
+          安卓上若感觉进入游戏或运行中变慢，可将「懒函数加载」切到强制关回到即时解析
+          （IR 磁盘缓存仅在懒函数加载开启时生效）；并行两项用于排查加载语义差异。
+          切换不影响当前局，重新进入游戏后生效。
+        </p>
       </div>
       <div class="section">
         <h3>其他</h3>

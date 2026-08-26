@@ -90,8 +90,20 @@ internal sealed record LayoutMessage(
     int GameColumns,
     string? FontName);
 
-/// <summary>{"type":"config","maxLog":...,"agentLogEnabled":...,"displayReportOverride":"auto"|"off"|"on"}</summary>
-internal sealed record ConfigMessage(string Type, int MaxLog, bool AgentLogEnabled, string DisplayReportOverride);
+/// <summary>
+/// {"type":"config","maxLog":...,"agentLogEnabled":...,"displayReportOverride":"auto"|"off"|"on",
+///  "lazyFunctionLoad":...,"irDiskCacheLoad":...,"parallelErbLoad":...,"parallelParseScript":...}
+/// （后四字段为性能（启动加载）覆盖三态："auto"|"off"|"on"，缺省 auto=跟随游戏配置）
+/// </summary>
+internal sealed record ConfigMessage(
+    string Type,
+    int MaxLog,
+    bool AgentLogEnabled,
+    string DisplayReportOverride,
+    string LazyFunctionLoad,
+    string IrDiskCacheLoad,
+    string ParallelErbLoad,
+    string ParallelParseScript);
 
 /// <summary>{"type":"backButtonPressed"}</summary>
 internal sealed record BackButtonPressedMessage(string Type);
