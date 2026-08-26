@@ -133,7 +133,7 @@ internal sealed class Utils
 		else if (!int.TryParse(attrValue, out num.num))
 			throw new CodeEE(string.Format(Lang.Error.AttributeCanNotInterpretNum.Text, tag, word));
 	}
-	public static void AddTagMixedNumArg(StringBuilder sb, string name, MixedNum num)
+	public static void AddTagMixedNumArg(StringBuilder sb, string name, MixedNum? num)
 	{
 		if (num != null && num.num != 0)
 		{

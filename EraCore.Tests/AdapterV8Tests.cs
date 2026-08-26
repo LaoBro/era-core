@@ -101,10 +101,10 @@ public class AdapterV8Tests : IDisposable
         Assert.Equal("rect", shapeSeg.shape!.type);
         Assert.Equal("#FF0000", shapeSeg.shape.color);
 
-        Assert.Equal(1, adapter.BgImages!.Count);
-        Assert.Equal("bg/forest.png", adapter.BgImages[0].src);
-        Assert.Equal(1, adapter.BgImages[0].depth);
-        Assert.Equal(0.5f, adapter.BgImages[0].opacity);
+        var bg = Assert.Single(adapter.BgImages!);
+        Assert.Equal("bg/forest.png", bg.src);
+        Assert.Equal(1, bg.depth);
+        Assert.Equal(0.5f, bg.opacity);
     }
 
     // ---------- issue 07：裁切矩形 segment 往返 ----------

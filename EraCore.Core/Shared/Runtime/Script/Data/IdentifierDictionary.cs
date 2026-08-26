@@ -482,7 +482,7 @@ internal partial class IdentifierDictionary
 		return null!;
 	}
 
-	public VariableToken GetVariableToken(string key, string subKey, bool allowPrivate)
+	public VariableToken GetVariableToken(string key, string? subKey, bool allowPrivate)
 	{
 		VariableToken? ret;
 		//if (Config.Config.IgnoreCase)

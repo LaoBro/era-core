@@ -452,7 +452,7 @@ internal sealed class ConsolePrintManager
 
     public void ClearHTMLIsland() => _state._htmlElementList.Clear();
 
-    public void PrintImg(string name, string nameb, string namem, MixedNum height, MixedNum width, MixedNum ypos)
+    public void PrintImg(string name, string? nameb, string? namem, MixedNum? height, MixedNum? width, MixedNum? ypos)
     {
         _console.printBuffer.Append(new ConsoleImagePart(name, nameb, namem, height, width, ypos));
     }

@@ -11,14 +11,14 @@ sealed class ConsoleImagePart : AConsoleDisplayNode
 {
 	#region EM_私家版_HTMLパラメータ拡張
 	//public ConsoleImagePart(string resName, string resNameb, int raw_height, int raw_width, int raw_ypos)
-	public ConsoleImagePart(string resName, string resNameb, string resNamem, MixedNum raw_height, MixedNum raw_width, MixedNum raw_ypos)
+	public ConsoleImagePart(string resName, string? resNameb, string? resNamem, MixedNum? raw_height, MixedNum? raw_width, MixedNum? raw_ypos)
 	{
 		top = 0;
 		bottom = Config.FontSize;
 		Text = "";
 		ResourceName = resName ?? "";
-		ButtonResourceName = resNameb;
-		MappingGraphName = resNamem;
+		ButtonResourceName = resNameb!;
+		MappingGraphName = resNamem!;
 		StringBuilder sb = new();
 		sb.Append("<img src='").Append(ResourceName).Append('\'');
 		if (ButtonResourceName != null)

@@ -224,7 +224,7 @@ internal sealed class EmueraConsole : IDisposable, IConsoleStateView, IButtonDis
     internal void PrintHtml(string str, bool toPrintBuffer) => _printManager.PrintHtml(str, toPrintBuffer);
     internal void PrintHTMLIsland(string html) => _printManager.PrintHTMLIsland(html);
     internal void ClearHTMLIsland() => _printManager.ClearHTMLIsland();
-    internal void PrintImg(string name, string nameb, string namem, Utils.MixedNum height, Utils.MixedNum width, Utils.MixedNum ypos) => _printManager.PrintImg(name, nameb, namem, height, width, ypos);
+    internal void PrintImg(string name, string? nameb, string? namem, Utils.MixedNum? height, Utils.MixedNum? width, Utils.MixedNum? ypos) => _printManager.PrintImg(name, nameb, namem, height, width, ypos);
     internal void PrintShape(string type, Utils.MixedNum[] param) => _printManager.PrintShape(type, param);
     // --- 背景图（issue 02） ---
     internal List<BgImageState> BgImages => _state.bgImages;
