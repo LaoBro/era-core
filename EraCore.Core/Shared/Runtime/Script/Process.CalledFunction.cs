@@ -169,6 +169,9 @@ internal sealed class CalledFunction
 			return null!;
 		}
 		FunctionLabelLine func = TopLabel;
+		// b2-irdiskcache：arg 转换读 func.Arg——IR 桩签名延后，必须先做非递归「签名物化」（否则 func.Arg 为 null → NRE）。
+		// 幂等：已解析（Arg != null）或非桩 → no-op；签名物化不动函数体、不跑 setJumpTo → 无递归。
+		ErbLoader.EnsureCalleeSignature(func);
 		AExpression[] convertedArg = new AExpression[func.Arg.Length];
 		if (convertedArg.Length < srcArgs.Count)
 		{

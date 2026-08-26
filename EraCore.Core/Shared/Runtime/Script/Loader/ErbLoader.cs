@@ -1340,6 +1340,9 @@ internal sealed class ErbLoader
 	/// </summary>
 	private void ParseScript()
 	{
+		// b2-irdiskcache：主循环期间挂载本 loader 为 arg 解析物化源（CalledFunction 的 stub 被调就地物化，
+		// 供 ConvertArg 读 callee.Arg）。Eager 无桩恒 no-op；lazy 主循环单线程，本槽仅加载中有效。
+		_activeArgLoader = this;
 		int usedLabelCount = 0;
 		int labelDepth = -1;
 		// lazy-function-load（B 线 B1）：主循环按层 BFS 保持零结构变化；only 兜底——若某层函数体尚未
@@ -1367,9 +1370,10 @@ internal sealed class ErbLoader
 				countInDepth++;
 				// 惰性 + 桩：就地物化（含 ReparseFunction 内建三步，逐位等价于 eager 对本标签的唯一一次三遍解析），
 				// 故此处物化后不再叠加 ParseFunctionWithCatch；非桩（已物化 / eager）走原三步。
+				// b2-irdiskcache：加载期 CALL arg 转换已提前物化本标签（ThreePassed）→ 跳过重复三遍（防警告重复）。
 				if (lazyMode && label.IsStub)
 					MaterializeLabel(label);
-				else
+				else if (!label.ThreePassed)
 					ParseFunctionWithCatch(label);
 			}
 			if (countInDepth == 0)
@@ -1579,6 +1583,7 @@ internal sealed class ErbLoader
 				output.PrintSystemLine(trerror.OverWriteSystemFuncWarn7.Text);
 			}
 		}
+		_activeArgLoader = null; // b2-irdiskcache：主循环结束卸载 arg 解析物化源（stale 亦无害，下次重设）
 
 	}
 
@@ -1826,7 +1831,8 @@ internal sealed class ErbLoader
 			// 非法标签桩：无 body 可重建，保持占位（不应物化）。
 			return null;
 		}
-		bool rebuildSignature = stub.IrBacked;
+		// 签名是否还需重建：IR 桩（或签名已由 EnsureCalleeSignature 预计算则 Arg!=null 跳过），源后背桩 Arg 已就位。
+		bool needSignature = stub.Arg == null;
 		// 以「@标签名」定位本函数（不依赖行号——重开户下 LineNo 语义漂移；函数名在单文件内唯一）。
 		StringComparer nameEq = Config.Config.StrComper;
 		// 直接以「桩」作为重解析目标（不新建瞬态标签）：body 绑定桩的私有变量 token，与参数赋值（写桩私有变量）
@@ -1867,7 +1873,7 @@ internal sealed class ErbLoader
 					{
 						label = stub;
 						// IR 命中桩：从 @ 行重建 wc（否则 parseLabel 的 PopRowArgs 得空）。B1 桩 wc 生成期已有。
-						if (rebuildSignature)
+						if (needSignature)
 							stub.SetRowArgs(lbl.PopRowArgs());
 						// @ 行 ParentLabelLine 须自指（生成期由 addLine 置位）：scaningLine=本函数时
 						// GetVariableToken 经 line.ParentLabelLine.GetPrivateVariable 解析私有变量/参数，
@@ -1896,8 +1902,8 @@ internal sealed class ErbLoader
 			if (st.Current == '#')
 			{
 				// B1 桩：签名已在生成期处理齐（#DIM/#LOCALSIZE/…），重解析只重建函数体；重复 AddPrivateVariable 会误报。
-				// IR 命中桩：签名留空，必须重跑 ParseSharpLine 重建（私有变量/IsMethod/LocalLength/…）。
-				if (rebuildSignature)
+				// IR 命中桩：签名留空（或未经 EnsureCalleeSignature 预计算），须重跑 ParseSharpLine 重建（私有变量/IsMethod/LocalLength/…）。
+				if (needSignature)
 				{
 					List<string> a = [], b = [];
 					LogicalLineParser.ParseSharpLine(stub, st, position, a, b);
@@ -1939,7 +1945,7 @@ internal sealed class ErbLoader
 		// 不重置则运行期 scaningLine 残留尾部 NullLine → 误报「この関数中では定義されていません」。三步/异常一并复位。
 		try
 		{
-			if (rebuildSignature)
+			if (needSignature)
 			{
 				parseLabel(label);
 				// 对齐 SortLabels 的 resizeLocalVars：IR 桩 gen 期按 ArgLength=0 建槽（SortLabels 对非事件把槽建为 0），
@@ -1960,7 +1966,109 @@ internal sealed class ErbLoader
 		{
 			ScanLine(null!);
 		}
+		label.ThreePassed = true; // b2-irdiskcache：三遍完成，供主循环跳过重复处理（加载期 CALL arg 转换已提前物化本标签时）
 		return label;
+	}
+
+	/// <summary>
+	/// b2-irdiskcache：非递归「签名物化」——只重建桩的 Arg/Def/私有变量/IsMethod（@ + # 行 → parseLabel），
+	/// <b>不解析函数体、不跑 setJumpTo</b>。供加载期 CALL/式中函数 arg 转换（ConvertArg 读 callee.Arg）用，
+	/// 避免「物化 A → A.setJumpTo → CALL B → 物化 B → …」的无界递归栈溢出。幂等（Arg != null 即已就位）。
+	/// </summary>
+	private void ComputeSignature(FunctionLabelLine stub)
+	{
+		if (stub.Arg != null || !stub.IsStub)
+			return;
+		string logical = stub.Position?.Filename ?? "";
+		if (logical.Length == 0)
+			return;
+		// IR 优先（blob 后台）；blob 读失败 / 未命中回落到源。
+		if (_ir is { Available: true } ir && ir.Index.TryGetValue((logical, stub.LabelName), out var entry))
+		{
+			try
+			{
+				var blob = ErbIrCache.ReadBlob(ir.Path, entry);
+				ComputeSignatureLines(stub, new BlobLineSource(blob.Lines, stub.Position!.Value.Filename));
+				return;
+			}
+			catch
+			{
+				// blob 损坏 → 回源签名（不在此抛，避免 arg 转换 NRE）。
+			}
+		}
+		if (_filePathByLogical.TryGetValue(logical, out string? physical) && !string.IsNullOrEmpty(physical))
+		{
+			using var eReader = new EraStreamReader(Config.Config.UseRenameFile && ParserMediator.RenameDic != null);
+			if (eReader.OpenOnCache(physical, logical))
+				ComputeSignatureLines(stub, new SourceLineSource(eReader));
+		}
+	}
+
+	private void ComputeSignatureLines(FunctionLabelLine stub, IFunctionLineSource src)
+	{
+		CharStream? line;
+		while ((line = src.ReadEnabledLine(false)) != null)
+		{
+			CharStream st = line;
+			var position = new ScriptPosition(src.Filename, src.LineNo);
+			// 签名只需 @ + # 行；body（指令/$/[[…]]）忽略；[ 预处理行忽略（签名行不受其禁用，生成期已过滤）。
+			if (st.Current == '@')
+			{
+				if (LogicalLineParser.ParseLabelLine(st, position, output, null) is FunctionLabelLine lbl
+					&& Config.Config.StrComper.Equals(lbl.LabelName, stub.LabelName))
+				{
+					stub.SetRowArgs(lbl.PopRowArgs());
+					stub.ParentLabelLine = stub;
+					EnsureEventSystemFlags(stub);
+				}
+				continue;
+			}
+			if (st.Current == '#')
+			{
+				List<string> a = [], b = [];
+				LogicalLineParser.ParseSharpLine(stub, st, position, a, b);
+				continue;
+			}
+			// 其余行（函数体）跳过——签名物化不解析 body。
+		}
+		if (stub.Arg == null)
+		{
+			setScanLine(stub);
+			try
+			{
+				parseLabel(stub);
+				if (!stub.IsEvent)
+				{
+					if (stub.ArgLength > 0)
+						idDic.resizeLocalVars("ARG", stub.LabelName, stub.ArgLength);
+					if (stub.ArgsLength > 0)
+						idDic.resizeLocalVars("ARGS", stub.LabelName, stub.ArgsLength);
+				}
+			}
+			finally
+			{
+				ScanLine(null!);
+			}
+			// 注意：不动 IsStub（仍为桩，函数体留待主循环物化）。
+		}
+	}
+
+	/// <summary>按标签名补全事件/系统标志与 Depth（对齐 ParseLabelLine 的判定）。</summary>
+	private static void EnsureEventSystemFlags(FunctionLabelLine stub)
+	{
+		if (IdentifierDictionary.IsEventLabelName(stub.LabelName))
+		{
+			stub.IsEvent = true;
+			stub.IsSystem = true;
+			if (stub.Depth != 0)
+				stub.Depth = 0;
+		}
+		else if (IdentifierDictionary.IsSystemLabelName(stub.LabelName))
+		{
+			stub.IsSystem = true;
+			if (stub.Depth != 0)
+				stub.Depth = 0;
+		}
 	}
 
 	/// <summary>载入函数重解析（源后背，B1 兼容入口）：重开源文件，以桩为目标的单函数重解析。源不可读/桩行不在 → null。</summary>
@@ -2112,6 +2220,9 @@ internal sealed class ErbLoader
 	/// lazy-function-load：运行时物化接缝入口（<see cref="CalledFunction"/> 命中桩时调用）。
 	/// 复用会话主加载保留的 <see cref="GlobalStatic.Process.RuntimeLoader"/>（含物理路径映射 / env / scanLine）。
 	/// eager（无桩）下恒 no-op，运行期路径零侵入。
+	/// 注：仅运行时（RuntimeLoader 非空）走全量物化；加载期由 CALL_Instruction.SetJumpTo 显式调
+	/// <see cref="EnsureCalleeSignature"/>（签名级、非递归），不可在此全量物化 —— 否则 A 物化→setJumpTo→CALL B→物化 B→
+	/// setJumpTo→CALL C→… 无界递归栈溢出（eraTW 递归调用链）。
 	/// </summary>
 	internal static void MaterializeOnRuntime(FunctionLabelLine label)
 	{
@@ -2119,6 +2230,31 @@ internal sealed class ErbLoader
 			return;
 		GlobalStatic.Process?.RuntimeLoader?.MaterializeLabel(label);
 	}
+
+	/// <summary>
+	/// b2-irdiskcache：加载期 CALL/式中函数 arg 转换前，保证被调桩的「签名」可解析（Arg/Def/私有变量/IsMethod）。
+	/// 只算签名、不动函数体、不跑 setJumpTo → 非递归；ComputeSignature 读取 blob（或源）@/# 行后 parseLabel。
+	/// 已解析（Arg != null）→ no-op（幂等）。加载中 RuntimeLoader=null，故用 <see cref="_activeArgLoader"/>。
+	/// </summary>
+	internal static void EnsureCalleeSignature(FunctionLabelLine stub)
+	{
+		if (stub == null || !stub.IsStub || stub.Arg != null)
+			return;
+		var loader = _activeArgLoader ?? GlobalStatic.Process?.RuntimeLoader;
+		if (loader == null)
+			return;
+		try
+		{
+			loader.ComputeSignature(stub);
+		}
+		catch
+		{
+			// 签名计算失败不在此抛（后续物化三态降级），确保 arg 转换路径对损坏 blob 不崩新异常。
+		}
+	}
+
+	/// <summary>加载期（ParseScript 主循环）arg 解析物化用的当前 loader；运行时恒经 RuntimeLoader，本槽仅加载中回退。</summary>
+	private static ErbLoader? _activeArgLoader;
 
 	private void ParseFunctionWithCatch(FunctionLabelLine label)
 	{//ここでエラーを捕まえることは本来はないはず。ExeEE相当。
@@ -2176,6 +2312,7 @@ internal sealed class ErbLoader
 		{
 			ScanLine(null!);
 		}
+		label.ThreePassed = true; // b2-irdiskcache：三遍跑完（含失败已标错）——主循环按此跳过重复三遍。
 
 	}
 

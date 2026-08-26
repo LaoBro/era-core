@@ -276,6 +276,9 @@ internal class FunctionLabelLine : LogicalLine, IComparable<FunctionLabelLine>
 	public bool IsStub { get; set; }
 	/// <summary>b2-irdiskcache：true = 本桩由 IR 索引构建（无 wc/签名，来自最小值桩）；物化时以 blob 重建签名。源后背桩恒 false。</summary>
 	public bool IrBacked { get; set; }
+	/// <summary>b2-irdiskcache：本函数物化已跑完 setArgument/nestCheck/setJumpTo 三遍（MaterializeFunction 或 ParseFunctionWithCatch）。
+	/// 加载期 CALL 指令 arg 转换会触发被调桩就地物化（早于其 BFS 层），主循环据此跳过对该标签的重复三遍，避免警告重复发射。</summary>
+	public bool ThreePassed { get; set; }
 
 	#region IComparable<FunctionLabelLine> メンバ
 	//ソート用情報
