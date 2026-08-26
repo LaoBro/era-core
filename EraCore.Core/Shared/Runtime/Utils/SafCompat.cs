@@ -194,4 +194,50 @@ internal static class SafCompat
         path = CombinePath(directory, segments[^1]);
         return true;
     }
+
+    /// <summary>
+    /// b2-irdiskcache：文件长度 + 修改时间戳。content URI（无 stat 语义）返回 false，由调用方按安全降级处理
+    /// （指纹降级：本地路径才计入长度/mtime 指纹）。本地读取异常同样返回 false（文件随后打不开会在加载期警告）。
+    /// </summary>
+    internal static bool TryGetFileStats(string path, out long length, out long lastWriteUtcTicks)
+    {
+        length = 0;
+        lastWriteUtcTicks = 0;
+        if (IsContentUri(path))
+            return false;
+        try
+        {
+            var fi = new FileInfo(path);
+            if (!fi.Exists)
+                return false;
+            length = fi.Length;
+            lastWriteUtcTicks = fi.LastWriteTimeUtc.Ticks;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// b2-irdiskcache：本地路径的临时文件原子替换（delete-dest + move），供 IR 磁盘缓存防半截文件用。
+    /// content URI 无原子 rename 语义，返回 false（调用方走删除+重写路径）。失败返回 false（残留 tmp 无害）。
+    /// </summary>
+    internal static bool TryAtomicReplaceLocal(string tmpPath, string destPath)
+    {
+        if (IsContentUri(tmpPath) || IsContentUri(destPath))
+            return false;
+        try
+        {
+            if (File.Exists(destPath))
+                File.Delete(destPath);
+            File.Move(tmpPath, destPath);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }

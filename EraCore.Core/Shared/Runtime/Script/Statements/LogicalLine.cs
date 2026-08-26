@@ -247,6 +247,8 @@ internal class FunctionLabelLine : LogicalLine, IComparable<FunctionLabelLine>
 		wc = null!;
 		return ret;
 	}
+	/// <summary>b2-irdiskcache：IR 命中桩由索引构建时无 wc（物化时从 blob 的 @ 行重建并走 parseLabel），此 setter 供重建用。</summary>
+	internal void SetRowArgs(WordCollection value) => wc = value;
 
 	public string LabelName { get; protected set; } = null!;
 	public bool IsEvent { get; set; }
@@ -272,6 +274,8 @@ internal class FunctionLabelLine : LogicalLine, IComparable<FunctionLabelLine>
 	public int Depth { get; set; }
 	/// <summary>lazy-function-load：true = 惰性桩（只有标签头、函数体行链未物化）；首次被调用时经物化接缝在输入端替换 NextLine 并复位。eager 一律 false。</summary>
 	public bool IsStub { get; set; }
+	/// <summary>b2-irdiskcache：true = 本桩由 IR 索引构建（无 wc/签名，来自最小值桩）；物化时以 blob 重建签名。源后背桩恒 false。</summary>
+	public bool IrBacked { get; set; }
 
 	#region IComparable<FunctionLabelLine> メンバ
 	//ソート用情報

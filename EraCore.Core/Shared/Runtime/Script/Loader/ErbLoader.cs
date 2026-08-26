@@ -59,6 +59,32 @@ internal sealed class ErbLoader
 	// 在 LoadErbDir / LoadErbList 构建（fname 即 Position.Filename 同源），运行时物化据此取 filepath。
 	private Dictionary<string, string> _filePathByLogical = new(StringComparer.OrdinalIgnoreCase);
 
+	// ===== b2-irdiskcache（B 线 B2，阶段① blob 库）=====
+	// 本 loader 会话的 IR 状态。<see cref="_ir"/> 非空 = IR 参与本会话（开 IrDiskCacheLoad 且 lazy 且非 AnalysisMode）。
+	//  <see cref="IrState.Available"/> = 启动校验命中（第二次启动走 IR 后背物化）；否则首轮走 B1 源并在此轮生成 IR 落盘。
+	//  运行时物化（RuntimeLoader 保留本实例）在 <see cref="MaterializeLabel"/> 依此决定 blob / 源后背。
+	private IrState? _ir;
+	/// <summary>IR 生成期收集：按文件加载序（逻辑文件名 → 该文件内按出现序的函数 blob）。仅生成 IR 时非空。</summary>
+	private List<(string Logical, List<IrBlob> Blobs)>? _irFileBlobs;
+
+	private sealed class IrState
+	{
+		/// <summary>本进程加载轮是否命中 IR（true = 第二次启动，索引已驻留）。</summary>
+		public bool Available;
+		/// <summary>IR 文件路径（缓存目录）。</summary>
+		public string Path = null!;
+		/// <summary>（逻辑文件名, 标签名）→ 索引条目。驻留（几 MB 量级），等价 labelDic。</summary>
+		public Dictionary<(string File, string Label), IrIndexEntry> Index = null!;
+		/// <summary>逻辑文件名 → 该文件内按 @ 出现序的索引条目（TryGenerateFromIr 用，免 O(n·files) 逐文件扫全表）。</summary>
+		public Dictionary<string, List<IrIndexEntry>> ByFile = new(StringComparer.OrdinalIgnoreCase);
+	}
+
+	private static string IrCachePath()
+	{
+		string dir = SafCompat.ResolveSubPath(Program.ExeDir, "_IRCache");
+		return SafCompat.CombinePath(dir, "era_ir.dat");
+	}
+
 	/// <summary>erb-loader-parallel 03：并行生成度上限——窗口内产物同时驻留 = 上限文件数的解析产物，
 	/// 封顶防内存峰值（spec 实测 eraTW 规模 12 核理想并行度 ~8-10x，取 8；默认度 = ProcessorCount）。</summary>
 	internal const int MaxParallelErbFiles = 8;
@@ -140,6 +166,38 @@ internal sealed class ErbLoader
 			// lazy-function-load：建立 逻辑文件名→物理路径 映射（Position.Filename 与 fname 同源）。
 			foreach (var (logical, physical) in pending)
 				_filePathByLogical[logical] = physical;
+			// b2-irdiskcache：IR 参与条件 = 开 IrDiskCacheLoad && lazy && 非 AnalysisMode。
+			// 启动进入文件读取前一次性判定：命中 IR（Available=true，索引驻留）→ 本轮免源扫描直建桩；
+			// 未命中/失效 → B1 源路径跑本轮，收尾重建 IR。指纹基于 pending 文件集合 + 解析相关配置（design §6）。
+			bool irEnabled = Config.Config.IrDiskCacheLoad && Config.Config.LazyFunctionLoad && !env.AnalysisMode;
+			_irFileBlobs = irEnabled ? [] : null;
+			_ir = null;
+			if (irEnabled)
+			{
+				string irPath = IrCachePath();
+				long fp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic);
+				if (ErbIrCache.TryLoad(irPath, fp, out var index))
+				{
+					var ir = new IrState { Available = true, Path = irPath, Index = index };
+					foreach (var kv in index)
+					{
+						if (!ir.ByFile.TryGetValue(kv.Key.File, out var list))
+							ir.ByFile[kv.Key.File] = list = new List<IrIndexEntry>();
+						list.Add(kv.Value);
+					}
+					// 索引区 = 文件加载序写盘；单文件内按 @ 出现序。按 BlobOffset 稳定此序（Dictionary 迭代序不保证）。
+					foreach (var list in ir.ByFile.Values)
+						list.Sort(static (a, b) => a.BlobOffset.CompareTo(b.BlobOffset));
+					_ir = ir;
+					_irFileBlobs = null; // 命中 → 本轮不重建（指纹匹配）
+				}
+				else
+				{
+					_ir = new IrState { Available = false, Path = irPath, Index = [] };
+					// 未命中/失效 → 本轮生成 IR（_irFileBlobs 已非空）
+				}
+				EmueraLog.Info("ErbIrCache", $"ir hit={_ir.Available} files={pending.Count} fp={fp:x16}");
+			}
 			// erb-loader-parallel 03：默认并行；配置串行或 AnalysisMode 时走 01 完成时的串行路径
 			//（fallback = 语义偏差排查 / 单线程调试的 abort 杠杆；AnalysisMode 的 PrintC 输出与
 			// funcCount 进度节奏依赖串行即时检查，一律强制串行）
@@ -187,6 +245,14 @@ internal sealed class ErbLoader
 			// 位于并行解析合并与 ParseScript 全部完成之后、单线程执行；ERH/CSV 条目随同一扫清空
 			//（它们在更早阶段已消费完毕）。失败路径（上方 catch）不清空——保留新鲜缓存辅助排障。
 			Preload.ClearCachedLines();
+
+			// b2-irdiskcache：本轮生成期收集完毕 → 组装 + 原子写 IR（未命中/失效重建）。生成失败静默
+			//（进程继续走 B1 路径，下次再试；design §5.1 异常策略），成功即下次启动命中。
+			if (_irFileBlobs is { Count: > 0 } irBlobs && _ir is { Available: false } irBuild)
+			{
+				long fp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic);
+				ErbIrCache.Write(irBuild.Path, fp, irBlobs);
+			}
 
 #if DEBUG
 			output.PrintSystemLine(string.Format(trsl.ElapsedTime.Text, (DateTime.Now - starttime).TotalMilliseconds));
@@ -239,6 +305,10 @@ internal sealed class ErbLoader
 		labelDic.Initialized = false;
 		// lazy-function-load：部分重载加载期间禁用运行时物化桥（成功结束再挂载，见方法尾部）。
 		GlobalStatic.Process!.RuntimeLoader = null;
+		// b2-irdiskcache：部分重载（指定文件集）不走 IR——单文件增量失效不在 v1 范围（design §6「不做」），
+		// 且部分文件集无法与整库指纹对齐。纯 B1 源后背。
+		_ir = null;
+		_irFileBlobs = null;
 
 		await Task.Run(() =>
 		{
@@ -484,6 +554,8 @@ internal sealed class ErbLoader
 		public readonly List<PendingOnlyCheck> PendingOnlys = [];
 		public int EnabledLineCount;
 		public bool HasError;
+		/// <summary>b2-irdiskcache：本文件的函数 IR blob（按 @ 出现序），仅 IR 生成期（_irBuildEnabled）非空。</summary>
+		public readonly List<IrBlob> IrBlobs = [];
 	}
 
 	/// <summary>
@@ -526,6 +598,14 @@ internal sealed class ErbLoader
 	private void GenerateErbFileCore(string filepath, string filename, List<string> isOnlyEvent, ErbFileArtifact art,
 		bool deferCrossFileChecks)
 	{
+		// b2-irdiskcache：IR 命中 → 本文件由索引直建桩，免读源文件（design §5.2）——第二次启动的大头收益所在。
+		// 无本文件条目（空文件）→ 回落源路径（零函数，产物等价）。
+		if (_ir is { Available: true } irHit && irHit.ByFile.TryGetValue(filename, out var irEntries) && irEntries.Count > 0)
+		{
+			TryGenerateFromIr(filename, irEntries, art);
+			return;
+		}
+
 		using var eReader = new EraStreamReader(Config.Config.UseRenameFile && ParserMediator.RenameDic != null);
 
 		if (!eReader.OpenOnCache(filepath, filename))
@@ -549,6 +629,26 @@ internal sealed class ErbLoader
 		// lazy-function-load（B 线 B1）：惰性模式 = 开 LazyFunctionLoad 且非 AnalysisMode（AnalysisMode 强制 eager）。
 		// 惰性下函数体行链不解析——labelDic 只注册全量标签桩（IsStub），仅 # 签名行处理（保 Argument/Def/IsMethod）。
 		bool lazy = Config.Config.LazyFunctionLoad && !env.AnalysisMode;
+		// b2-irdiskcache：收集本文件函数 IR blob（仅 IR 生成期）。
+		bool collectIr = _irFileBlobs != null;
+		FunctionLabelLine? irCurLabel = null;
+		List<IrLine>? irCurLines = null;
+		// 结束当前函数的 blob（@ 边界 / EOF 时调用）。
+		void FinishIrBlob()
+		{
+			if (!collectIr || irCurLabel == null)
+			{
+				irCurLabel = null;
+				irCurLines = null;
+				return;
+			}
+			if (irCurLabel is InvalidLabelLine bad)
+				art.IrBlobs.Add(IrBlob.InvalidFunc(bad.LabelName, bad.Position!.Value.LineNo, bad.ErrMes));
+			else
+				art.IrBlobs.Add(IrBlob.Valid(irCurLabel.LabelName, irCurLabel.Position!.Value.LineNo, irCurLines!));
+			irCurLabel = null;
+			irCurLines = null;
+		}
 		if (env.AnalysisMode)
 			art.ConsoleOps.Add(c => c.PrintSystemLine(" "));
 		while ((st = eReader.ReadEnabledLine(ppstate.Disabled)) != null)
@@ -587,6 +687,9 @@ internal sealed class ErbLoader
 				// 串行路径该警告在 ParseSharpLine 的 Contains 检查点发射，先于同行的 BeIgnore* 警告）
 				int lineWarnStart = art.Warnings.Count;
 				int onlyCountBefore = art.OnlyDeclarations.Count;
+				// b2-irdiskcache：收集 # 签名行文本（物化时重跑 ParseSharpLine 重建签名）。
+				if (collectIr && irCurLabel != null)
+					irCurLines?.Add(new IrLine(position!.Value.LineNo, st.RowString));
 				if (!LogicalLineParser.ParseSharpLine(funcLine, st, position, mergedOnlyView, art.OnlyDeclarations))
 					art.HasError = true;
 				if (deferCrossFileChecks && art.OnlyDeclarations.Count > onlyCountBefore)
@@ -605,12 +708,24 @@ internal sealed class ErbLoader
 			{
 				bool isFunction = st.Current == '@';
 				if (!isFunction && lazy)
+				{
+					// b2-irdiskcache：$ goto 属函数体，物化时随 ReparseFunction 重建——blob 收集进本函数行集。
+					if (collectIr && irCurLabel != null)
+						irCurLines?.Add(new IrLine(eReader.LineNo, st.RowString));
 					continue; // 惰性：$ goto 属函数体，物化时随 ReparseFunction 重建，此处跳过
+				}
 				nextLine = LogicalLineParser.ParseLabelLine(st, position, output, art.ConsoleOps);
 				if (isFunction)
 				{
 					var label = nextLine as FunctionLabelLine;
 					lastLabelLine = label!;
+					// b2-irdiskcache：@ 边界——结束上一函数 blob、开启本函数 blob（@ 行文本作首行，物化重建 wc）。
+					FinishIrBlob();
+					if (collectIr)
+					{
+						irCurLabel = label;
+						irCurLines = new() { new IrLine(eReader.LineNo, st.RowString) };
+					}
 					// 惰性：注册标签桩——保签名头、函数体行链留空；函数体在首调用/主循环时物化。
 					if (lazy)
 						label!.IsStub = true;
@@ -690,6 +805,9 @@ internal sealed class ErbLoader
 			}
 			else
 			{
+				// b2-irdiskcache：函数体指令行文本收集（blob 物化输入）。
+				if (collectIr && irCurLabel != null)
+					irCurLines?.Add(new IrLine(eReader.LineNo, st.RowString));
 				// 惰性：函数体指令行不解析（物化时随 ReparseFunction 重建），直接跳过
 				if (lazy)
 					continue;
@@ -739,9 +857,46 @@ internal sealed class ErbLoader
 			lastLine = addLine(art, nextLine, lastLine!);
 		}
 		addLine(art, new NullLine(), lastLine!);
+		FinishIrBlob(); // b2-irdiskcache：EOF 收尾最后函数 blob
 		position = new ScriptPosition(eReader.Filename, -1);
 		ppstate.FileEnd(position);
 		return;
+	}
+
+	/// <summary>
+	/// b2-irdiskcache：IR 命中路径的最小桩直建（design §5.2，实现时对账项 B）。免读源文件、免全文件词法扫描。
+	/// 桩只带 LabelName + Position + 最小签名（IsEvent/IsSystem/Depth 由标签名经 IdentifierDictionary 判同节点，
+	/// 与 ParseLabelLine 一致）；Arg/Def/私有变量/IsMethod/LocalLength 留空 → setLabelsArg 跳过、物化时从 blob
+	/// 重建（@ 行重建 wc → # 行重跑 ParseSharpLine → parseLabel → resizeLocalVars）。警告由物化期补发，生成期跳过
+	/// 源 ParsSharpLine/重载检查（指纹保证 IR 与源的等价性不变，改动源 → 指纹变 → 全量重建 → 警告照常）。
+	/// </summary>
+	private static void TryGenerateFromIr(string filename, List<IrIndexEntry> entries, ErbFileArtifact art)
+	{
+		foreach (var e in entries)
+		{
+			var pos = new ScriptPosition(e.File, e.LineNo);
+			if (e.Invalid)
+			{
+				art.FunctionLabels.Add(new InvalidLabelLine(pos, e.Label, e.ErrMes ?? ""));
+				art.HasError = true;
+				continue;
+			}
+			var label = new FunctionLabelLine(pos, e.Label, null!);
+			label.IsStub = true;
+			label.IrBacked = true;
+			if (IdentifierDictionary.IsEventLabelName(e.Label))
+			{
+				label.IsEvent = true;
+				label.IsSystem = true;
+				label.Depth = 0;
+			}
+			else if (IdentifierDictionary.IsSystemLabelName(e.Label))
+			{
+				label.IsSystem = true;
+				label.Depth = 0;
+			}
+			art.FunctionLabels.Add(label);
+		}
 	}
 
 	/// <summary>
@@ -776,6 +931,9 @@ internal sealed class ErbLoader
 		enabledLineCount += art.EnabledLineCount;
 		if (art.HasError)
 			noError = false;
+		// b2-irdiskcache：按文件加载序收集 IR blob（索引区顺序 = 文件加载序 → 重载警告顺序一致，design §4.4）。
+		if (_irFileBlobs != null && art.IrBlobs.Count > 0)
+			_irFileBlobs.Add((art.Filename, art.IrBlobs));
 	}
 
 	/// <summary>并行产物的跨文件检查占位（合并期由 <see cref="ResolvePendingCrossFileChecks"/> 替换或删除）。</summary>
@@ -926,6 +1084,11 @@ internal sealed class ErbLoader
 		List<FunctionLabelLine> labelList = labelDic.GetAllLabels(false);
 		foreach (FunctionLabelLine label in labelList)
 		{
+			// b2-irdiskcache：IR 命中桩无 @ wc（最小桩），parseLabel 需 PopRowArgs 会 NPE——Arg/Def 延后到物化期
+			// 从 blob 重建（MaterializeLabel → ReparseFunctionFromIr）。SortLabels 照常跑（含 resizeLocalVars，
+			// 物化后按实际 ArgLength 扩容）。
+			if (label.IrBacked)
+				continue;
 			try
 			{
 				if (label.Arg != null)
@@ -1602,46 +1765,81 @@ internal sealed class ErbLoader
 		art.FnfEvents.Clear();
 	}
 
-	/// <summary>
-	/// 02 抽取：单函数体重解析件（纯重构，零运行期接线；03 物化接缝复用）。
-	/// 给定一个已在 labelDic 注册的未物化标签桩 <paramref name="stub"/> 与源文件物理路径
-	/// <paramref name="filepath"/>，沿 <see cref="EraStreamReader"/>（Preload 缓存 / DirAccessor /
-	/// EncodingHandler，ADR-0023 决策二回读通道）重开源文件，定位本函数行区间
-	///（stub.Position.LineNo 起、至下一 @ 行止），复用 <see cref="LogicalLineParser"/>
-	/// 重建 label + 行链，再跑 parseLabel + setArgument/nestCheck/setJumpTo 三遍，
-	/// 得到与全量加载对该函数逐行等价的新 FunctionLabelLine（含已解析行链）。
-	/// 返回全新标签（不修改原桩）；源文件不可读 / 桩行已不在文件中 → 返回 null
-	///（沿 ADR-0023 决策二三态占位先例，不抛新异常——03 据此降级为占位报错）。幂等。
-	/// </summary>
-	internal FunctionLabelLine? ReparseFunction(FunctionLabelLine stub, string filepath)
+	/// <summary>b2-irdiskcache：「行文本流」抽象（design §5.3）——源回读与 blob 文本两条实现共用同一物化循环，物化产物等价性收敛为「输入流 == 源文件启用行」一件事。</summary>
+	private interface IFunctionLineSource
 	{
-		var pos = stub.Position;
-		if (pos == null)
+		/// <summary>取下一启用行（blob 源不回源、不 rename、不重 [ 预处理——已在产生端过滤）。行流在物化循环内驱动 ppstate。</summary>
+		CharStream? ReadEnabledLine(bool disabled);
+		/// <summary>最近一次返回行的行号（对齐 EraStreamReader.LineNo 语义）。</summary>
+		int LineNo { get; }
+		string Filename { get; }
+	}
+
+	/// <summary>源回读后端：包一层 <see cref="EraStreamReader"/>（Preload 缓存 / DirAccessor / EncodingHandler，ADR-0023 决策二回读通道）。</summary>
+	private sealed class SourceLineSource : IFunctionLineSource
+	{
+		private readonly EraStreamReader _reader;
+		public SourceLineSource(EraStreamReader reader) => _reader = reader;
+		public string Filename => _reader.Filename;
+		public int LineNo => _reader.LineNo;
+		public CharStream? ReadEnabledLine(bool disabled) => _reader.ReadEnabledLine(disabled);
+	}
+
+	/// <summary>IR blob 后端：回放函数块内已过滤的启用行（行号 + 文本），不做 rename / SkipWhiteSpace 之外的加工。</summary>
+	private sealed class BlobLineSource : IFunctionLineSource
+	{
+		private readonly IrLine[] _lines;
+		private readonly string _filename;
+		private int _index;
+		private int _lineNo;
+		public BlobLineSource(IrLine[] lines, string filename) { _lines = lines; _filename = filename; }
+		public string Filename => _filename;
+		public int LineNo => _lineNo;
+		public CharStream? ReadEnabledLine(bool disabled)
+		{
+			if (_index >= _lines.Length)
+				return null;
+			var l = _lines[_index++];
+			_lineNo = l.LineNo;
+			var st = new CharStream(l.Text);
+			LexicalAnalyzer.SkipWhiteSpace(st); // 对齐 ReadEnabledLine 产出的指向（源侧在 ReadEnabledLine 内已 Skip）
+			return st;
+		}
+	}
+
+	/// <summary>
+	/// 02 抽取 + b2-irdiskcache 统一：单函数体重解析（物化）引擎。给定未物化标签桩 <paramref name="stub"/>
+	/// 与一条启用行流 <paramref name="src"/>，定位本函数行区间，重建 label + 行链（复用 <see cref="LogicalLineParser"/>），
+	/// 再跑（IR 命中桩先行）parseLabel + setArgument/nestCheck/setJumpTo 三遍。
+	/// <list type="bullet">
+	/// <item>B1 源后背桩（<see cref="FunctionLabelLine.IrBacked"/> = false）：签名已在惰性生成期由源 # 行处理齐（Arg/Def/私有变量/IsMethod/LocalLength 与 eager 逐位一致），重解析只重建函数体行链，行为与既有 ReparseFunction 逐位一致。</item>
+	/// <item>IR 命中桩（IrBacked = true）：最小桩签名留空，此处从 blob 文本重建——@ 行重建 wc（parseLabel 待用）、# 行重跑 ParseSharpLine（私有变量/IsMethod/LocalLength）、随后 parseLabel + resizeLocalVars。</item>
+	/// </list>
+	/// 返回标签（in-place 于桩上重建，不修改引用无重路由）；未到达目标函数 / 流打不开 → null（三态占位）。幂等。
+	/// </summary>
+	private FunctionLabelLine? MaterializeFunction(FunctionLabelLine stub, IFunctionLineSource src)
+	{
+		if (stub.Position == null)
 			return null;
-
-		using var eReader = new EraStreamReader(Config.Config.UseRenameFile && ParserMediator.RenameDic != null);
-		if (!eReader.OpenOnCache(filepath, pos.Value.Filename))
-			return null; // 三态：源文件打不开（被移动/删除）→ 占位，不抛
-
-		// 以「@标签名」定位本函数（不依赖行号——eReader.LineNo 与 Position.LineNo 的基/空行跳过
-		// 语义在重开户下会漂移；函数名在单文件内唯一，改名/截断后找不到同名 @ 即返回 null）。
+		if (stub is InvalidLabelLine)
+		{
+			// 非法标签桩：无 body 可重建，保持占位（不应物化）。
+			return null;
+		}
+		bool rebuildSignature = stub.IrBacked;
+		// 以「@标签名」定位本函数（不依赖行号——重开户下 LineNo 语义漂移；函数名在单文件内唯一）。
 		StringComparer nameEq = Config.Config.StrComper;
-		// lazy-function-load 修复：直接以「桩」作为重解析目标（不新建瞬态标签）——桩在惰性生成期已保有
-		// 全部签名状态（Arg/Def/私有变量/IsMethod/LocalLength/…）。此前在新建标签上重解析导致 body 的
-		// 变量引用绑定到瞬态标签的私有变量 token，与参数赋值（写桩的私有变量）不一致：ReduceArgumentOnLoad=NO
-		// 时经 ParentLabelLine 运行期解析读到空值；YES 时 FORML 等参数在解析期就绑定瞬态 token
-		// （如 TK 的 %LINE% → DRAWLINE 空串崩溃）。用桩作目标后 body 绑定桩的 token，读写一致。
+		// 直接以「桩」作为重解析目标（不新建瞬态标签）：body 绑定桩的私有变量 token，与参数赋值（写桩私有变量）
+		// 一致（Issue 06：此前新建标签导致 ReduceArgumentOnLoad=NO 运行期解析读空、YES 解析期绑错 token）。
 		FunctionLabelLine? label = null;
 		LogicalLine tail = null!;
-		// lazy-function-load 修复：物化重解析必须处理 [ 预处理指令（[SKIPSTART]/[SKIPEND]/
-		// [IF]/[ELSE]/[ENDIF]/[IF_DEBUG]/[IF_NDEBUG]）——主加载经 PPState 评估并禁用其内容；
-		// 惰性下桩跳过函数体，物化若漏掉这步，[SKIPSTART]...[SKIPEND] 包着的「故意不平衡」嵌套块
-		// 会被误解析 → 嵌套错乱误报（IF/ENDIF/SELECTCASE/ENDSELECT 错配）。
+		// [ 预处理评估：源路径重演 [SKIPSTART][SKIPEND] 等保「故意不平衡」块不被误解析；blob 源无 [ 行则 no-op。
 		var ppstate = new PPState(env, idDic);
-		CharStream st;
-		while ((st = eReader.ReadEnabledLine(ppstate.Disabled)) != null)
+		CharStream? line;
+		while ((line = src.ReadEnabledLine(ppstate.Disabled)) != null)
 		{
-			var position = new ScriptPosition(eReader.Filename, eReader.LineNo);
+			CharStream st = line;
+			var position = new ScriptPosition(src.Filename, src.LineNo);
 			// [ 预处理指令（与主加载同款，先于 @/$ 判定）
 			if (st.Current == '[' && st.Next != '[')
 			{
@@ -1663,11 +1861,18 @@ internal sealed class ErbLoader
 			{
 				if (label == null)
 				{
-					// 解析 @ 行仅用于匹配标签名；不采用其新建标签（body 直接解析进桩，见上方说明）。
+					// 解析 @ 行仅用于匹配标签名；body 直接解析进桩（见上方说明）。
 					if (LogicalLineParser.ParseLabelLine(st, position, output, null) is FunctionLabelLine lbl
 						&& nameEq.Equals(lbl.LabelName, stub.LabelName))
 					{
 						label = stub;
+						// IR 命中桩：从 @ 行重建 wc（否则 parseLabel 的 PopRowArgs 得空）。B1 桩 wc 生成期已有。
+						if (rebuildSignature)
+							stub.SetRowArgs(lbl.PopRowArgs());
+						// @ 行 ParentLabelLine 须自指（生成期由 addLine 置位）：scaningLine=本函数时
+						// GetVariableToken 经 line.ParentLabelLine.GetPrivateVariable 解析私有变量/参数，
+						// 否则对 IR 桩扫描线命中后 ParentLabelLine=null → 私有变量落 privateDimList → 误报。
+						label.ParentLabelLine = label;
 						tail = stub;
 					}
 					continue;
@@ -1681,9 +1886,7 @@ internal sealed class ErbLoader
 				if (LogicalLineParser.ParseLabelLine(st, position, output, null) is GotoLabelLine g)
 				{
 					g.ParentLabelLine = label;
-					// lazy-function-load 修复：惰性下桩跳过 $ 标签、加载期不注册，物化必须补注册，
-					// 否则 GOTO 的 SetJumpTo 经 GetLabelDollar 解析失败 → 误报
-					// 「指定されたラベル名"$X"は現在の関数内に存在しません」。
+					// 惰性下桩跳过 $ 标签、加载期不注册，物化必须补注册（否则 GOTO SetJumpTo 经 GetLabelDollar 解析失败）。
 					labelDic.AddLabelDollar(g);
 					tail.NextLine = g;
 					tail = g;
@@ -1692,9 +1895,13 @@ internal sealed class ErbLoader
 			}
 			if (st.Current == '#')
 			{
-				// 跳过：桩在惰性生成期已处理全部 # 签名行（#DIM/#DIMS/#FUNCTION/#SINGLE/#PRI/#LATER/#ONLY/
-				// #LOCALSIZE…），Arg/Def/私有变量/IsMethod/LocalLength 与 eager 逐位一致；重解析只需重建
-				// 函数体行链。重复 AddPrivateVariable 反而会误报「変数名Xは既に使われています」。
+				// B1 桩：签名已在生成期处理齐（#DIM/#LOCALSIZE/…），重解析只重建函数体；重复 AddPrivateVariable 会误报。
+				// IR 命中桩：签名留空，必须重跑 ParseSharpLine 重建（私有变量/IsMethod/LocalLength/…）。
+				if (rebuildSignature)
+				{
+					List<string> a = [], b = [];
+					LogicalLineParser.ParseSharpLine(stub, st, position, a, b);
+				}
 				continue;
 			}
 			var parsed = LogicalLineParser.ParseLine(st, position, output, label);
@@ -1725,17 +1932,26 @@ internal sealed class ErbLoader
 		if (label == null)
 			return null;
 		tail.NextLine = new NullLine();
-		// 不重跑 parseLabel：桩已在加载期经 setLabelsArg 解析 Arg/Def（与 eager 逐位一致）。
-		// setScanLine(label) 提供 scan-line 上下文（对齐 eager setLabelsArg），供 setArgument/nestCheck/
-		// setJumpTo 内 body 行私有变量解析使用（ScanLine 逐行覆盖）。
+		// B1 桩不重跑 parseLabel（生成期 setLabelsArg 已解析 Arg/Def）；IR 桩在这里补 Arg/Def + 扩 ARG/ARGS 槽。
+		// setScanLine(label) 提供 scan-line 上下文（对齐 eager setLabelsArg），供三步/parseLabel 内私有变量解析。
 		setScanLine(label);
-		// lazy-function-load（Issue 06 实机）：对齐 eager ParseFunctionWithCatch 的 finally 收尾——
-		// nestCheck 对函数体终止 NullLine 也会 ScanLine，物化路径若不重置，运行期 scaningLine 会残留为
-		// 尾部 NullLine（ParentLabelLine=null）；其后再经 GetScaningLine 解析本函数私有变量时被跳过 →
-		// 落入 privateDimList → 误报「変数Xはこの関数中では定義されていません」。eager 由 finally
-		// ScanLine(null!) 收尾，物化路径必须同样复位（含主循环物化、运行时物化与三步抛异常路径）。
+		// Issue 06：对齐 eager ParseFunctionWithCatch 的 finally 收尾——nestCheck 对终止 NullLine 也会 ScanLine，
+		// 不重置则运行期 scaningLine 残留尾部 NullLine → 误报「この関数中では定義されていません」。三步/异常一并复位。
 		try
 		{
+			if (rebuildSignature)
+			{
+				parseLabel(label);
+				// 对齐 SortLabels 的 resizeLocalVars：IR 桩 gen 期按 ArgLength=0 建槽（SortLabels 对非事件把槽建为 0），
+				// 物化后按实际值扩容，否则运行期 ARGx 绑定到 size-0 槽。
+				if (!label.IsEvent)
+				{
+					if (label.ArgLength > 0)
+						idDic.resizeLocalVars("ARG", label.LabelName, label.ArgLength);
+					if (label.ArgsLength > 0)
+						idDic.resizeLocalVars("ARGS", label.LabelName, label.ArgsLength);
+				}
+			}
 			setArgument(label);
 			nestCheck(label);
 			setJumpTo(label);
@@ -1745,6 +1961,32 @@ internal sealed class ErbLoader
 			ScanLine(null!);
 		}
 		return label;
+	}
+
+	/// <summary>载入函数重解析（源后背，B1 兼容入口）：重开源文件，以桩为目标的单函数重解析。源不可读/桩行不在 → null。</summary>
+	internal FunctionLabelLine? ReparseFunction(FunctionLabelLine stub, string filepath)
+	{
+		var pos = stub.Position;
+		if (pos == null)
+			return null;
+
+		using var eReader = new EraStreamReader(Config.Config.UseRenameFile && ParserMediator.RenameDic != null);
+		if (!eReader.OpenOnCache(filepath, pos.Value.Filename))
+			return null; // 三态：源文件打不开（被移动/删除）→ 占位，不抛
+		return MaterializeFunction(stub, new SourceLineSource(eReader));
+	}
+
+	/// <summary>
+	/// b2-irdiskcache：IR 后背物化——以 blob 文本流作为 <see cref="MaterializeFunction"/> 输入（design §5.3 / 对账项 C）。
+	/// 读 blob 失败抛异常（调用方转回退/占位）。单函数 parse 上复用既有循环，与源后背产物逐一等价。
+	/// </summary>
+	private FunctionLabelLine? ReparseFunctionFromIr(FunctionLabelLine stub, in IrIndexEntry entry)
+	{
+		if (_ir is not { Available: true } ir)
+			return null;
+		var blob = ErbIrCache.ReadBlob(ir.Path, entry);
+		string filename = stub.Position?.Filename ?? "";
+		return MaterializeFunction(stub, new BlobLineSource(blob.Lines, filename));
 	}
 
 	/// <summary>
@@ -1758,6 +2000,13 @@ internal sealed class ErbLoader
 	{
 		if (!stub.IsStub)
 			return; // 幂等
+		// b2-irdiskcache：IR 命中桩 → blob 优先物化，blob 失败回退源（design §5.3，User Story 8「静默回退」）。
+		if (stub.IrBacked)
+		{
+			MaterializeLabelFromIr(stub);
+			return;
+		}
+		// 以下为源后背（B1）原路径：桩为源生成（含完整签名）。
 		string logical = stub.Position?.Filename ?? "";
 		if (logical.Length == 0
 			|| !_filePathByLogical.TryGetValue(logical, out string? physical) || string.IsNullOrEmpty(physical))
@@ -1789,6 +2038,63 @@ internal sealed class ErbLoader
 		// 生成期已与 eager 逐位一致，LocalLength/LocalsLength 亦已由生成期 #LOCALSIZE / SortLabels 置位。
 		stub.NextLine = reparse.NextLine;
 		stub.IsStub = false;
+	}
+
+	/// <summary>b2-irdiskcache：IR 命中桩物化——blob 优先，blob 校验失败/缺失回源（ReparseFunction 源后背亦会重建签名）。三态降级占位不抛新异常。</summary>
+	private void MaterializeLabelFromIr(FunctionLabelLine stub)
+	{
+		string logical = stub.Position?.Filename ?? "";
+		string? physical = null;
+		if (logical.Length > 0)
+			_filePathByLogical.TryGetValue(logical, out physical);
+
+		// 1) blob 优先
+		if (_ir is { Available: true } ir && logical.Length > 0
+			&& ir.Index.TryGetValue((logical, stub.LabelName), out var entry))
+		{
+			FunctionLabelLine? viaIr = null;
+			try
+			{
+				viaIr = ReparseFunctionFromIr(stub, entry);
+			}
+			catch (Exception exc)
+			{
+				EmueraLog.Warn("ErbIrCache", $"IR blob corrupt, fallback to source: {stub.LabelName} ({exc.GetType().Name})");
+				viaIr = null;
+			}
+			if (viaIr != null)
+			{
+				stub.NextLine = viaIr.NextLine;
+				stub.IsStub = false;
+				stub.IrBacked = false;
+				return;
+			}
+		}
+
+		// 2) 回退源路径（blob 损坏/缺失 → 源后背高可信，回源比占位更符合 User Story 8）
+		if (!string.IsNullOrEmpty(physical))
+		{
+			FunctionLabelLine? viaSource = null;
+			try
+			{
+				viaSource = ReparseFunction(stub, physical);
+			}
+			catch (Exception exc)
+			{
+				string errmes = exc is EmueraException ? exc.Message : exc.GetType().ToString() + ":" + exc.Message;
+				ParserMediator.Warn(string.Format(trerror.FuncAnalysisError.Text, stub.LabelName, errmes), stub, 2, true, false, exc.StackTrace!);
+				viaSource = null;
+			}
+			if (viaSource != null)
+			{
+				// 源回退已重建签名（ReparseFunction 对 IrBacked 桩走 rebuildSignature），仅复位标记。
+				stub.NextLine = viaSource.NextLine;
+				stub.IsStub = false;
+				stub.IrBacked = false;
+				return;
+			}
+		}
+		DegradeToPlaceholderError(stub);
 	}
 
 	/// <summary>物化失败降级为占位报错：清桩标记（停止重试）+ 一次性标 IsError/ErrMes，不抛新异常（ADR-0023 决策二三态先例）。</summary>

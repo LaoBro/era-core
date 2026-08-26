@@ -103,6 +103,8 @@ internal sealed class Config
 	public static bool IgnoreUncalledFunction => Current!._data.GetConfigValue<bool>(ConfigCode.IgnoreUncalledFunction);
 	/// <summary>lazy-function-load（B 线 B1）：函数级惰性物化开关，与 IgnoreUncalledFunction 正交；AnalysisMode 一律强制 eager。</summary>
 	public static bool LazyFunctionLoad => Current!._data.GetConfigValue<bool>(ConfigCode.LazyFunctionLoad);
+	/// <summary>b2-irdiskcache（B 线 B2）：函数粒度 IR 磁盘缓存开关（默认 true）。生效前提 = 与 LazyFunctionLoad 同为 true 且非 AnalysisMode；否则 IR 不建不读（回退硬门）。</summary>
+	public static bool IrDiskCacheLoad => Current!._data.GetConfigValue<bool>(ConfigCode.IrDiskCacheLoad);
 	public static DisplayWarningFlag FunctionNotFoundWarning => Current!._data.GetConfigValue<DisplayWarningFlag>(ConfigCode.FunctionNotFoundWarning);
 	public static DisplayWarningFlag FunctionNotCalledWarning => Current!._data.GetConfigValue<DisplayWarningFlag>(ConfigCode.FunctionNotCalledWarning);
 	public static bool ChangeMasterNameIfDebug => Current!._data.GetConfigValue<bool>(ConfigCode.ChangeMasterNameIfDebug);

@@ -75,6 +75,9 @@ internal enum ConfigCode
 	//IgnoreWarningFiles = 33,
 	// lazy-function-load（B 线 B1）：函数级惰性物化；AnalysisMode 一律强制 eager。Issue 04 全绿即默认 true。
 	LazyFunctionLoad = 300,
+	// b2-irdiskcache（B 线 B2）：函数粒度 IR 磁盘缓存开关（默认 true）；FALSE = 完全回到 B1 现状。
+	// 生效前提 = IrDiskCacheLoad && LazyFunctionLoad && !AnalysisMode；eager 下 IR 不建不读。沿 LazyFunctionLoad 先例。
+	IrDiskCacheLoad = 301,
 	ChangeMasterNameIfDebug = 34,
 	LastKey = 35,
 	ButtonWrap = 36,

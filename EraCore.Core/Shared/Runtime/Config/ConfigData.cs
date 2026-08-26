@@ -121,6 +121,8 @@ internal sealed class ConfigData
 		configArray.Add(new ConfigItem<DisplayWarningFlag>(ConfigCode.FunctionNotCalledWarning, "関数が呼び出されなかった警告の扱い", "Function not called warning", DisplayWarningFlag.IGNORE));
 		// lazy-function-load（B 线 B1）：默认 true（Issue 04 门禁全绿 + 复测远超预注册线 → 默认开，沿 ParallelErbLoad 先例不做观望期）。
 		configArray.Add(new ConfigItem<bool>(ConfigCode.LazyFunctionLoad, "未呼び出し関数の本体解析を遅延する", "Defer uncalled function body parsing", true));
+		// b2-irdiskcache（B 线 B2）：默认 true（spec 已决）；FALSE = 完全回到 B1 现状（回退硬门）。
+		configArray.Add(new ConfigItem<bool>(ConfigCode.IrDiskCacheLoad, "関数の内容をIRディスクキャッシュする", "Cache function bodies to IR disk cache", true));
 
 
 		configArray.Add(new ConfigItem<bool>(ConfigCode.ChangeMasterNameIfDebug, "デバッグコマンドを使用した時にMASTERの名前を変更する", "Change MASTER mame in debug", true));
@@ -283,6 +285,7 @@ internal sealed class ConfigData
 		configArray[i++] = new ConfigItem<DisplayWarningFlag>(ConfigCode.FunctionNotCalledWarning, "関数が呼び出されなかった警告の扱い", DisplayWarningFlag.IGNORE);
 		// lazy-function-load（B 线 B1）：默认 true（Issue 04 门禁全绿 + 复测远超预注册线 → 默认开，沿 ParallelErbLoad 先例不做观望期）。
 		configArray[i++] = new ConfigItem<bool>(ConfigCode.LazyFunctionLoad, "未呼び出し関数の本体解析を遅延する", true);
+		configArray[i++] = new ConfigItem<bool>(ConfigCode.IrDiskCacheLoad, "関数の内容をIRディスクキャッシュする", true);
 		//configArray[i++] = new ConfigItem<List<string>>(ConfigCode.IgnoreWarningFiles, "指定したファイル中の警告を無視する", new List<string>());
 		configArray[i++] = new ConfigItem<bool>(ConfigCode.ChangeMasterNameIfDebug, "デバッグコマンドを使用した時にMASTERの名前を変更する", true);
 		configArray[i++] = new ConfigItem<bool>(ConfigCode.ButtonWrap, "ボタンの途中で行を折りかえさない", false);

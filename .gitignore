@@ -53,6 +53,7 @@ docs/2026.6.16.mouse-input/spikes/*
 docs/2026.6.23.vt-input/spikes/*
 
 test_game/save/
+test_game/_IRCache/
 test_game/emuera.log
 test_game/profile
 test_game/debug/
