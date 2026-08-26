@@ -341,4 +341,130 @@ $HOGE
 			.Where(s => s.Contains("行内函数形式调用") || s.Contains("#FUNCTION")).ToList();
 		Assert.True(falsePositives.Count == 0, "falsePositives:\n" + string.Join("\n", falsePositives));
 	}
+
+	/// <summary>
+	/// IR 后背物化回归：函数体引用自身 #DIM 私有变量 + ARG 不误报（scaningLine→ParentLabelLine→GetPrivateVariable 上下文）。
+	/// 用户实机 TW4.881shoess 二次打开大量「变量 X 未在此函数中定义」「不存在执行中的函数，无法获取/更改 ARG」。
+	/// </summary>
+	[Fact]
+	public async Task Ir_second_launch_resolves_private_dim_plus_arg_without_false_warning()
+	{
+		const string corpus = """
+@EVENTFIRST
+	CALL HAS_PRIV(3)
+	RETURN
+
+@HAS_PRIV,C
+#DIM LOCAL_VALUE
+#DIMS LOCAL_NAME
+	LOCAL_VALUE = ARG
+	IF LOCAL_VALUE:C == 0
+		LOCAL_NAME:C = "x"
+	ENDIF
+	RETURN
+""";
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		EnableLazy(h);
+		await h.PreloadAsync();
+		h.WriteErb("IRPRIV2.ERB", corpus);
+		var loader1 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		await loader1.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		h.Console.DisplayLineList.Clear(); // 只测第二轮
+		var loader2 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		var ok = await loader2.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		Assert.True(ok, "round2 failed\n" + string.Join("\n", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+
+		var hp = Find(h.LabelDic, "HAS_PRIV");
+		Assert.NotNull(hp);
+		Assert.False(hp.IsStub, "HAS_PRIV should be materialized via blob in round2. stub=" + hp.IsStub + " err=" + hp.IsError + " depth=" + hp.Depth + "\n" + string.Join("\n", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+
+		var falsePositives = h.Console.DisplayLineList
+			.Select(l => l?.ToString() ?? "")
+			.Where(s => s.Contains("未在此函数中定义") || s.Contains("不存在执行中的函数") || s.Contains("定义されていません")).ToList();
+		Assert.True(falsePositives.Count == 0, "falsePositives:\n" + string.Join("\n", falsePositives));
+	}
+
+	/// <summary>
+	/// IR 后背物化回归（运行时接缝）：第二轮加载后未被调用的事件函数保持桩，运行时首调（MaterializeOnRuntime）
+	/// 经 blob 后背物化，其 #DIM REF 私有变量 + ARG 必须可解析——对应实机 TW4.881shoess 游玩时
+	/// 「变量 X 未在此函数中定义 / 不存在执行中的函数无法获取 ARG」警告。
+	/// </summary>
+	[Fact]
+	public async Task Ir_runtime_materialization_resolves_dim_ref_plus_arg_cleanly()
+	{
+		const string corpus = """
+@EVENTFIRST
+	RETURN
+
+@DAILY_EVENT,C
+#DIM REF TARGET_ARR,100
+#DIMS LABEL_NAME
+	IF TARGET_ARR:ARG == 0
+		LABEL_NAME:ARG = "x"
+	ENDIF
+	RETURN
+""";
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		EnableLazy(h);
+		await h.PreloadAsync();
+		h.WriteErb("IRDT.ERB", corpus);
+		var loader1 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		await loader1.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		h.Console.DisplayLineList.Clear();
+		var loader2 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		var ok = await loader2.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		Assert.True(ok, "round2 failed\n" + string.Join("\n", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+
+		var ev = Find(h.LabelDic, "DAILY_EVENT");
+		Assert.True(ev.IsStub, "DAILY_EVENT must stay stub (uncalled during load)");
+		// 运行时首调经 blob 后背物化
+		ErbLoader.MaterializeOnRuntime(ev);
+		Assert.False(ev.IsStub, "DAILY_EVENT must materialize via blob at runtime");
+		Assert.False(ev.IsError, "DAILY_EVENT must not degrade: err=" + ev.ErrMes);
+
+		var falsePositives = h.Console.DisplayLineList
+			.Select(l => l?.ToString() ?? "")
+			.Where(s => s.Contains("未在此函数中定义") || s.Contains("不存在执行中的函数") || s.Contains("定义されていません") || s.Contains("既に使われ")).ToList();
+		Assert.True(falsePositives.Count == 0, "falsePositives:\n" + string.Join("\n", falsePositives));
+	}
+
+	/// <summary>IR blob 后背运行时物化：形参直接命名 ARG/ARG:1 的函数（实机 @EVENT_COUNTER(ARG, ARG:1) 等 Lv2 警告根因候选）。</summary>
+	[Fact]
+	public async Task Ir_runtime_materialization_arg_named_params_clean()
+	{
+		const string corpus = """
+@EVENTFIRST
+	RETURN
+
+@EVENT_COUNTER(ARG, ARG:1)
+	SIF ARG:1 == 1
+		RETURN 0
+	RETURN 0
+""";
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		EnableLazy(h);
+		await h.PreloadAsync();
+		h.WriteErb("IRARG.ERB", corpus);
+		var loader1 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		await loader1.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		h.Console.DisplayLineList.Clear();
+		var loader2 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		var ok = await loader2.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		Assert.True(ok, "round2 failed\n" + string.Join("\n", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+
+		var ev = Find(h.LabelDic, "EVENT_COUNTER");
+		if (ev != null && ev.IsStub)
+		{
+			ErbLoader.MaterializeOnRuntime(ev);
+			Assert.False(ev.IsStub, "EVENT_COUNTER must materialize via blob: err=" + ev.ErrMes);
+			Assert.False(ev.IsError);
+		}
+		var falsePositives = h.Console.DisplayLineList
+			.Select(l => l?.ToString() ?? "")
+			.Where(s => s.Contains("不存在执行中的函数") || s.Contains("未在此函数中定义") || s.Contains("定义されていません")).ToList();
+		Assert.True(falsePositives.Count == 0, "falsePositives:\n" + string.Join("\n", falsePositives));
+	}
 }
