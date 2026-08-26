@@ -269,7 +269,11 @@ function onTerminalClick(e: MouseEvent): void {
 // sortBgImages 升序 → 渲染顺序小 depth 在前、大 depth 在后（CSS 后者在上）=
 // WinForms 降序烘焙（大 depth 最终在上）。opacity 逐张应用。
 // 掩膜渲染（image/rect 三态）已下沉到 SegmentRenderer.vue（review 2026-08-06 抽重复）。
-const sortedBgImages = computed(() => sortBgImages(game.displayState.bgImages));
+// 过滤 opacity<=0 的隐藏层（spec D）：透明度 0 = 不显示，渲染与否视觉等价；
+// 过滤后可避免隐藏层请求资源 + 解码整图 + 上传 GPU 纹理的纯浪费。filter 保序，与 sort 顺序等价。
+const sortedBgImages = computed(() =>
+  sortBgImages(game.displayState.bgImages).filter((bg) => bg.opacity > 0),
+);
 
 /** 背景层内联样式——fixed 相对视口，宽度对齐游戏窗口（contentStyle 同款宽度）。
     z-index:-1：在 .terminal-content 的 stacking context 内沉到文本之下（文本 z-index auto），

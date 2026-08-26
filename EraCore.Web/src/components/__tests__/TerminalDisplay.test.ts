@@ -464,4 +464,31 @@ describe('TerminalDisplay: 背景图层', () => {
     const { wrapper } = await mountWith([line([imgSeg()])]);
     expect(wrapper.find('.term-bg-layer').exists()).toBe(false);
   });
+
+  // ---------- issue 记忆-内存优化 spec D：过滤 opacity<=0 的隐藏层 ----------
+
+  it('bgImages 含 opacity=0 时不渲染对应 <img>（隐藏层不请求/解码）', async () => {
+    const bgImages: BgImageState[] = [
+      { src: 'bg/visible.png', depth: 0, opacity: 1 },
+      { src: 'bg/hidden.png', depth: 1, opacity: 0 },
+      { src: 'bg/fading.png', depth: 2, opacity: 0.5 },
+    ];
+    const { wrapper } = await mountWith([line([imgSeg()])], bgImages);
+
+    const imgs = wrapper.findAll('.term-bg-img');
+    expect(imgs).toHaveLength(2);
+    const srcs = imgs.map((i) => i.attributes('src'));
+    expect(srcs).not.toContain('/assets/bg/hidden.png');
+    expect(srcs).toContain('/assets/bg/visible.png');
+    expect(srcs).toContain('/assets/bg/fading.png');
+  });
+
+  it('全 opacity=0 时背景层整体隐藏（v-if="sortedBgImages.length > 0" 生效）', async () => {
+    const bgImages: BgImageState[] = [
+      { src: 'bg/a.png', depth: 0, opacity: 0 },
+      { src: 'bg/b.png', depth: 1, opacity: 0 },
+    ];
+    const { wrapper } = await mountWith([line([imgSeg()])], bgImages);
+    expect(wrapper.find('.term-bg-layer').exists()).toBe(false);
+  });
 });

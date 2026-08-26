@@ -97,10 +97,18 @@ export function sortBgImages(bgImages: BgImageState[]): BgImageState[] {
   return [...bgImages].sort((a, b) => a.depth - b.depth);
 }
 
+// 模块级单例离屏 canvas + ctx 缓存（spec B：srcm 读像素 canvas 复用）。
+// 连点读像素时复用同一 canvas，只在尺寸不匹配时才重设（重设 = 重新分配，离散发生），
+// 避免每次点击分配全尺寸 canvas（大图 8MB+ 级）造成峰值抖动。
+let cachedCanvas: HTMLCanvasElement | null = null;
+let cachedCtx: CanvasRenderingContext2D | null = null;
+
 /**
  * 浏览器胶水：加载 srcm 图并读取 (x,y) 像素色（0xRRGGBB）。
  * - `crossOrigin='anonymous'`：配合服务端 CORS 头（03 已带 Access-Control-Allow-Origin:*）
  *   使 canvas 可读回像素；缺 CORS 时 getImageData 抛 SecurityError → 返回 null
+ * - 离屏 canvas 复用：宽高匹配时不重建（见模块级缓存注释）；读像素失败/加载失败
+ *   不影响缓存状态，下一次点击仍走正常路径
  * - 组件调用；组件测试 mock 此函数（canvas 细节不在组件测试里驱动）
  *
  * @returns 0xRRGGBB，或 null（加载失败/零尺寸/读像素失败）
@@ -117,11 +125,20 @@ export async function loadImageAndReadPixel(srcmUrl: string, x: number, y: numbe
   if (img.naturalWidth <= 0 || img.naturalHeight <= 0) {
     return null;
   }
+  // 宽高匹配则复用缓存 canvas，否则重设尺寸（重设即在原尺寸上重新分配）。
+  if (cachedCanvas && cachedCtx &&
+      cachedCanvas.width === img.naturalWidth && cachedCanvas.height === img.naturalHeight) {
+    const ctx = cachedCtx;
+    ctx.drawImage(img, 0, 0);
+    return readSrcmPixelFromContext(ctx, x, y);
+  }
   const canvas = document.createElement('canvas');
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
+  cachedCanvas = canvas;
+  cachedCtx = ctx;
   ctx.drawImage(img, 0, 0);
   return readSrcmPixelFromContext(ctx, x, y);
 }
