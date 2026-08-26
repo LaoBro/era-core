@@ -2033,6 +2033,12 @@ internal sealed class ErbLoader
 		}
 		if (stub.Arg == null)
 		{
+			// b2-irdiskcache：签名物化是嵌套在「调用方 arg / 式中函数解析」内的辅助——必须保留并恢复调用方
+			// scaningLine。若像全量物化那样 setScanLine(stub) 后 finally ScanLine(null!)，会把调用方
+			// Process.scaningLine 清空：其正在解析的表达式（如 `&& !YANUSHI` / `THING(LOCAL)` / `ARG`）
+			// 续读时 scaningLine=null → 私有变量/LOCAL/ARG 全部误报「未在此函数中定义/不存在执行中的函数」。
+			// round1(B1) 无此问题：源后背桩已有 Arg → EnsureCalleeSignature 提前 no-op，不进入本分支。
+			LogicalLine? prevScan = GlobalStatic.Process?.GetScaningLine();
 			setScanLine(stub);
 			try
 			{
@@ -2047,7 +2053,7 @@ internal sealed class ErbLoader
 			}
 			finally
 			{
-				ScanLine(null!);
+				ScanLine(prevScan!);
 			}
 			// 注意：不动 IsStub（仍为桩，函数体留待主循环物化）。
 		}

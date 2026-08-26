@@ -467,4 +467,91 @@ $HOGE
 			.Where(s => s.Contains("不存在执行中的函数") || s.Contains("未在此函数中定义") || s.Contains("定义されていません")).ToList();
 		Assert.True(falsePositives.Count == 0, "falsePositives:\n" + string.Join("\n", falsePositives));
 	}
+
+	/// <summary>IR blob 后背运行时物化：复现实机 @GET_CHILD(ARG) (#DIM 私有 + RAND:私有 + ARG 形参) 的私有变量解析。</summary>
+	[Fact]
+	public async Task Ir_runtime_materialization_rand_private_var_clean()
+	{
+		const string corpus = """
+@EVENTFIRST
+	RETURN
+
+@DO_PREG(ARG)
+#DIM 妊娠必要値
+	妊娠必要値 = 1000
+	IF RAND:妊娠必要値 == 0
+		RETURN 0
+	ENDIF
+	RETURN 0
+""";
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		EnableLazy(h);
+		await h.PreloadAsync();
+		h.WriteErb("IRPREG.ERB", corpus);
+		var loader1 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		await loader1.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		h.Console.DisplayLineList.Clear();
+		var loader2 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		var ok = await loader2.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		Assert.True(ok, "round2 failed\n" + string.Join("\n", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+		var fp = Find(h.LabelDic, "DO_PREG");
+		if (fp != null && fp.IsStub)
+			ErbLoader.MaterializeOnRuntime(fp);
+		var falsePositives = h.Console.DisplayLineList
+			.Select(l => l?.ToString() ?? "")
+			.Where(s => s.Contains("不存在执行中的函数") || s.Contains("未在此函数中定义") || s.Contains("定义されていません")).ToList();
+		Assert.True(falsePositives.Count == 0, "falsePositives:\n" + string.Join("\n", falsePositives));
+	}
+
+	/// <summary>
+	/// IR blob 后背运行时物化：caller 物化时触发 EnsureCalleeSignature（签名预计算 → callee.Arg != null → needSignature=false，
+	/// 跳过 ParseSharpLine），callee 私有变量必须已就位——复现实机 PREGNANCY.ERB:171 妊娠必要値 未定义。
+	/// </summary>
+	[Fact]
+	public async Task Ir_callee_precomputed_signature_keeps_private_dims_in_materialization()
+	{
+		const string corpus = """
+@EVENTFIRST
+	RETURN
+
+@A
+	CALL B(0)
+	RETURN
+
+@B,C
+#DIM 妊娠必要値
+	妊娠必要値 = 1000
+	IF RAND:妊娠必要値 == 0
+		RETURN 0
+	ENDIF
+	RETURN 0
+""";
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		EnableLazy(h);
+		await h.PreloadAsync();
+		h.WriteErb("IRPRE.ERB", corpus);
+		var loader1 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		await loader1.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		h.Console.DisplayLineList.Clear();
+		var loader2 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		var ok = await loader2.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		Assert.True(ok, "round2 failed\n" + string.Join("\n", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+		var a = Find(h.LabelDic, "A");
+		var b = Find(h.LabelDic, "B");
+		Assert.NotNull(a);
+		Assert.NotNull(b);
+		// caller A 物化 → 其 setJumpTo 的 CALL B(0) → ConvertArg → EnsureCalleeSignature(B) 预计算签名。
+		if (a.IsStub)
+			ErbLoader.MaterializeOnRuntime(a);
+		// 再物化 B：needSignature=false（Arg 已就位）→ 私有变量必须来自预计算 ComputeSignature。
+		if (b.IsStub)
+			ErbLoader.MaterializeOnRuntime(b);
+		Assert.False(b.IsError, "B must not degrade. err=" + b.ErrMes);
+		var falsePositives = h.Console.DisplayLineList
+			.Select(l => l?.ToString() ?? "")
+			.Where(s => s.Contains("未在此函数中定义") || s.Contains("不存在执行中的函数") || s.Contains("定义されていません")).ToList();
+		Assert.True(falsePositives.Count == 0, "falsePositives:\n" + string.Join("\n", falsePositives));
+	}
 }
