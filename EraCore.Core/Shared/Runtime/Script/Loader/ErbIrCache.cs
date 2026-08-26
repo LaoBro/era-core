@@ -170,89 +170,162 @@ internal static class ErbIrCache
 		return new IrBlob("", 0, false, null, lines);
 	}
 
-	// ===== 生成 / 原子写 =====
+	// ===== 生成 / 原子写（增量流式，内存 O(单文件大小)）=====
 
-	/// <summary>
-	/// 组装单文件 IR 并原子写（tmp + fsync + rename）。失败静默（进程继续走 B1 路径，下次再试）。
-	/// <paramref name="blobsByFile"/>：按文件加载序的（逻辑文件名 → 该文件内按出现序的函数 blob）。
-	/// </summary>
-	internal static void Write(string path, long contentFingerprint,
-		IReadOnlyList<(string Logical, List<IrBlob> Blobs)> blobsByFile)
+	/// <summary>写单个函数 blob 的序列化原语（blob 区 / 索引区共用）。</summary>
+	private static void WriteBlob(BinaryWriter w, IrBlob b)
 	{
-		try
+		w.Write(b.Lines.Length);
+		foreach (var l in b.Lines)
 		{
-			long engineKey = EngineVersionKey;
-			using var ms = new MemoryStream(64 * 1024);
-			using (var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
-			{
-				// 占位文件头（indexOffset/indexLength/blobBytes 最后回填；WriteHeader 恰好 40 字节）
-				w.Write(new byte[40]);
-				// [blob 区]：逐文件、逐函数写 blob，记录偏移
-				int blobBytes = 0;
-				var offsets = new List<(long Offset, int Length, string File, string Label, int LineNo, bool Invalid, string? ErrMes)>();
-				foreach (var (logical, blobs) in blobsByFile)
-				{
-					for (int i = 0; i < blobs.Count; i++)
-					{
-						var b = blobs[i];
-						long off = ms.Position;
-						WriteBlob(w, b);
-						int len = checked((int)(ms.Position - off));
-						offsets.Add((off, len, logical, b.Label, b.LineNo, b.Invalid, b.InvalidErrMes));
-						blobBytes += len;
-					}
-				}
-				// [索引区]
-				int indexOffset = checked((int)ms.Position);
-				w.Write(offsets.Count);
-				foreach (var (off, len, file, label, lineNo, invalid, err) in offsets)
-				{
-					w.Write(label);
-					w.Write(file);
-					w.Write(lineNo);
-					w.Write(invalid);
-					if (invalid)
-						w.Write(err ?? "");
-					w.Write(off);
-					w.Write(len);
-				}
-				int indexLength = checked((int)ms.Position - indexOffset);
-				// 回填文件头
-				ms.Seek(0, SeekOrigin.Begin);
-				WriteHeader(w, functionCount: offsets.Count, indexOffset, indexLength, blobBytes, contentFingerprint, engineKey);
-			}
-			if (ms.Length > MaxIrFileBytes)
-			{
-				EmueraLog.Info("ErbIrCache", $"IR skipped: size {ms.Length} exceeds bound {MaxIrFileBytes}");
-				return;
-			}
-			AtomicWrite(path, ms.ToArray());
-		}
-		catch (Exception ex)
-		{
-			// IR 生成失败（磁盘满/IO 异常）→ 静默放弃（进程继续走 B1 路径，下次再试），不抛新异常。
-			EmueraLog.Warn("ErbIrCache", $"IR write skipped: {ex.GetType().Name}: {ex.Message}");
+			w.Write(l.LineNo);
+			w.Write(l.Text);
 		}
 	}
 
-	private static void AtomicWrite(string path, byte[] bytes)
+	/// <summary>
+	/// 增量 IR 写器（design §5.1「blob 缓冲按文件批量落盘」）：loader 生成期逐文件调 <see cref="AppendFile"/>，
+	/// 单文件 blob 文本写完即由调用方释放，峰值内存 O(单文件大小) 而非 O(IR 总大小)；索引区/文件头在
+	/// <see cref="Complete"/> 收尾回填，全程不把整份 IR 组装进内存（消除了旧 Write 的整库 MemoryStream + ToArray 两倍峰值）。
+	/// 失败静默（磁盘满/IO 异常）→ 删 tmp、不产生最终文件；进程继续走 B1 源路径，下次再试（design §5.1 异常策略）。
+	/// </summary>
+	internal sealed class IrCacheWriter : IDisposable
 	{
-		string tmp = path + ".tmp";
-		using (var stream = SafCompat.OpenWrite(tmp))
+		/// <summary>文件头固定占位长度（对齐 <see cref="ErbIrCache.WriteHeader"/> 恰好 40 字节）。</summary>
+		private const int HeaderBytes = 40;
+		private readonly string _path;
+		private readonly string _tmpPath;
+		private Stream? _stream;
+		private BinaryWriter? _w;
+		private bool _poisoned;
+		private int _blobBytes;
+		private int _functionCount;
+		/// <summary>索引偏移表（每个函数一条；67k 量级 ≈ 几 MB，驻留量与 IR 索引同量级，可接受）。</summary>
+		private readonly List<(long Offset, int Length, string File, string Label, int LineNo, bool Invalid, string? ErrMes)> _offsets = [];
+
+		internal IrCacheWriter(string path)
 		{
-			stream.Write(bytes, 0, bytes.Length);
-			stream.Flush();
+			_path = path;
+			_tmpPath = path + ".tmp";
+			_stream = SafCompat.OpenWrite(_tmpPath);
+			_w = new BinaryWriter(_stream, Encoding.UTF8, leaveOpen: true);
+			_w.Write(new byte[HeaderBytes]); // 文件头占位（Complete 回填）
+		}
+
+		/// <summary>写一个文件的全部函数 blob（按出现序），记录索引偏移。写毕由调用方清空该文件的 blob 缓冲以释放内存。</summary>
+		internal void AppendFile(string logical, IReadOnlyList<IrBlob> blobs)
+		{
+			if (_w == null || blobs.Count == 0)
+				return;
+			try
+			{
+				for (int i = 0; i < blobs.Count; i++)
+				{
+					var b = blobs[i];
+					long off = _stream!.Position;
+					WriteBlob(_w, b);
+					int len = checked((int)(_stream.Position - off));
+					_offsets.Add((off, len, logical, b.Label, b.LineNo, b.Invalid, b.InvalidErrMes));
+					_blobBytes += len;
+					_functionCount++;
+				}
+			}
+			catch (Exception ex)
+			{
+				// 写盘失败（磁盘满等）→ 毒化：停写、清 tmp；加载不受影响（B1 已跑完）。不在此抛新异常。
+				EmueraLog.Warn("ErbIrCache", $"IR append skipped: {ex.GetType().Name}: {ex.Message}");
+				Poison();
+			}
+		}
+
+		/// <summary>写索引区 + 回填文件头 + fsync + 原子替换。超边界/失败 → 清 tmp、不产生最终文件，返回 false。</summary>
+		internal bool Complete(long contentFingerprint)
+		{
+			if (_poisoned)
+			{
+				Clear();
+				return false;
+			}
+			try
+			{
+				int indexOffset = checked((int)_stream!.Position);
+				_w!.Write(_functionCount);
+				foreach (var (off, len, file, label, lineNo, invalid, err) in _offsets)
+				{
+					_w.Write(label);
+					_w.Write(file);
+					_w.Write(lineNo);
+					_w.Write(invalid);
+					if (invalid)
+						_w.Write(err ?? "");
+					_w.Write(off);
+					_w.Write(len);
+				}
+				int indexLength = checked((int)_stream.Position - indexOffset);
+				if (_stream.Length > MaxIrFileBytes)
+				{
+					EmueraLog.Info("ErbIrCache", $"IR skipped: size {_stream.Length} exceeds bound {MaxIrFileBytes}");
+					Clear();
+					return false;
+				}
+				_stream.Seek(0, SeekOrigin.Begin);
+				WriteHeader(_w, _functionCount, indexOffset, indexLength, _blobBytes, contentFingerprint, EngineVersionKey);
+				_w.Flush();
+				_stream.Flush();
 #if !HEADLESS
-			stream.Flush(flushToDisk: true); // fsync
+				_stream.Flush(flushToDisk: true); // fsync
 #endif
+				CloseStream();
+				// 桌面文件系统：原子替换（delete-dest + rename）；content URI 无原子 rename → 降级删目标 + 拷内容。
+				if (!SafCompat.TryAtomicReplaceLocal(_tmpPath, _path))
+				{
+					var bytes = SafCompat.ReadAllBytes(_tmpPath);
+					SafCompat.Delete(_path);
+					if (bytes != null)
+					{
+						using var s = SafCompat.OpenWrite(_path);
+						s.Write(bytes, 0, bytes.Length);
+					}
+					SafCompat.Delete(_tmpPath);
+				}
+				return true;
+			}
+			catch (Exception ex)
+			{
+				// IR 生成失败（磁盘满/IO 异常）→ 静默放弃（进程继续走 B1 路径，下次再试），不抛新异常。
+				EmueraLog.Warn("ErbIrCache", $"IR write skipped: {ex.GetType().Name}: {ex.Message}");
+				Clear();
+				return false;
+			}
 		}
-		// 桌面文件系统：原子替换（delete-dest + rename）；content URI 无原子 rename → 降级删除+重写。
-		if (!SafCompat.TryAtomicReplaceLocal(tmp, path))
+
+		/// <summary>放弃本次生成并清 tmp（异常路径）。</summary>
+		internal void Abort() => Clear();
+
+		private void Poison()
 		{
-			SafCompat.Delete(path);
-			using var s = SafCompat.OpenWrite(path);
-			s.Write(bytes, 0, bytes.Length);
+			_poisoned = true;
+			CloseStream();
+			SafCompat.Delete(_tmpPath);
 		}
+
+		private void Clear()
+		{
+			CloseStream();
+			SafCompat.Delete(_tmpPath);
+		}
+
+		private void CloseStream()
+		{
+			var w = _w;
+			var s = _stream;
+			_w = null;
+			_stream = null;
+			try { w?.Dispose(); } catch { /* 关闭失败不掩盖主流程 */ }
+			try { s?.Dispose(); } catch { }
+		}
+
+		public void Dispose() => CloseStream();
 	}
 
 	// ===== 序列化原语 =====
@@ -282,16 +355,6 @@ internal static class ErbIrCache
 		indexOffset = r.ReadInt32();
 		indexLength = r.ReadInt32();
 		blobBytes = r.ReadInt32();
-	}
-
-	private static void WriteBlob(BinaryWriter w, IrBlob b)
-	{
-		w.Write(b.Lines.Length);
-		foreach (var l in b.Lines)
-		{
-			w.Write(l.LineNo);
-			w.Write(l.Text);
-		}
 	}
 
 	private static IrIndexEntry ReadIndexEntry(BinaryReader r)

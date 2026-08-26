@@ -64,8 +64,8 @@ internal sealed class ErbLoader
 	//  <see cref="IrState.Available"/> = 启动校验命中（第二次启动走 IR 后背物化）；否则首轮走 B1 源并在此轮生成 IR 落盘。
 	//  运行时物化（RuntimeLoader 保留本实例）在 <see cref="MaterializeLabel"/> 依此决定 blob / 源后背。
 	private IrState? _ir;
-	/// <summary>IR 生成期收集：按文件加载序（逻辑文件名 → 该文件内按出现序的函数 blob）。仅生成 IR 时非空。</summary>
-	private List<(string Logical, List<IrBlob> Blobs)>? _irFileBlobs;
+	/// <summary>IR 生成期增量写器（按文件批量落盘，内存 O(单文件大小)，design §5.1）。仅生成 IR（未命中/失效）时非空。</summary>
+	private ErbIrCache.IrCacheWriter? _irWriter;
 
 	private sealed class IrState
 	{
@@ -170,13 +170,14 @@ internal sealed class ErbLoader
 			// 启动进入文件读取前一次性判定：命中 IR（Available=true，索引驻留）→ 本轮免源扫描直建桩；
 			// 未命中/失效 → B1 源路径跑本轮，收尾重建 IR。指纹基于 pending 文件集合 + 解析相关配置（design §6）。
 			bool irEnabled = Config.Config.IrDiskCacheLoad && Config.Config.LazyFunctionLoad && !env.AnalysisMode;
-			_irFileBlobs = irEnabled ? [] : null;
+			long irFp = 0;
 			_ir = null;
+			_irWriter = null;
 			if (irEnabled)
 			{
 				string irPath = IrCachePath();
-				long fp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic);
-				if (ErbIrCache.TryLoad(irPath, fp, out var index))
+				irFp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic);
+				if (ErbIrCache.TryLoad(irPath, irFp, out var index))
 				{
 					var ir = new IrState { Available = true, Path = irPath, Index = index };
 					foreach (var kv in index)
@@ -189,14 +190,14 @@ internal sealed class ErbLoader
 					foreach (var list in ir.ByFile.Values)
 						list.Sort(static (a, b) => a.BlobOffset.CompareTo(b.BlobOffset));
 					_ir = ir;
-					_irFileBlobs = null; // 命中 → 本轮不重建（指纹匹配）
 				}
 				else
 				{
 					_ir = new IrState { Available = false, Path = irPath, Index = [] };
-					// 未命中/失效 → 本轮生成 IR（_irFileBlobs 已非空）
+					// 未命中/失效 → 本轮生成 IR：开增量写器（tmp + 头占位），MergeErbFile 逐文件落盘。
+					_irWriter = new ErbIrCache.IrCacheWriter(irPath);
 				}
-				EmueraLog.Info("ErbIrCache", $"ir hit={_ir.Available} files={pending.Count} fp={fp:x16}");
+				EmueraLog.Info("ErbIrCache", $"ir hit={_ir.Available} files={pending.Count} fp={irFp:x16}");
 			}
 			// erb-loader-parallel 03：默认并行；配置串行或 AnalysisMode 时走 01 完成时的串行路径
 			//（fallback = 语义偏差排查 / 单线程调试的 abort 杠杆；AnalysisMode 的 PrintC 输出与
@@ -246,12 +247,12 @@ internal sealed class ErbLoader
 			//（它们在更早阶段已消费完毕）。失败路径（上方 catch）不清空——保留新鲜缓存辅助排障。
 			Preload.ClearCachedLines();
 
-			// b2-irdiskcache：本轮生成期收集完毕 → 组装 + 原子写 IR（未命中/失效重建）。生成失败静默
-			//（进程继续走 B1 路径，下次再试；design §5.1 异常策略），成功即下次启动命中。
-			if (_irFileBlobs is { Count: > 0 } irBlobs && _ir is { Available: false } irBuild)
+			// b2-irdiskcache：本轮生成期收集完毕 → Complete 增量写器（回填索引/头 + fsync + 原子替换）。
+			// 生成失败静默（进程继续走 B1 路径，下次再试；design §5.1 异常策略），成功即下次启动命中。
+			if (_irWriter is { } writer)
 			{
-				long fp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic);
-				ErbIrCache.Write(irBuild.Path, fp, irBlobs);
+				writer.Complete(irFp);
+				_irWriter = null;
 			}
 
 #if DEBUG
@@ -263,6 +264,9 @@ internal sealed class ErbLoader
 		catch (Exception e)
 		{
 			ParserMediator.FlushWarningList();
+			// b2-irdiskcache：加载异常 → 放弃本次 IR 生成并清 tmp（不留下半截缓存）。
+			_irWriter?.Abort();
+			_irWriter = null;
 #if !HEADLESS
 			System.Media.SystemSounds.Hand.Play();
 #endif
@@ -305,10 +309,10 @@ internal sealed class ErbLoader
 		labelDic.Initialized = false;
 		// lazy-function-load：部分重载加载期间禁用运行时物化桥（成功结束再挂载，见方法尾部）。
 		GlobalStatic.Process!.RuntimeLoader = null;
-		// b2-irdiskcache：部分重载（指定文件集）不走 IR——单文件增量失效不在 v1 范围（design §6「不做」），
-		// 且部分文件集无法与整库指纹对齐。纯 B1 源后背。
+		// b2-irdiskcache：部分重载（指定文件集）不走 IR——_ir 置空使本文件集走源生成而非 TryGenerateFromIr 直建桩
+		//（须重读源反映新内容）；单文件增量失效不在 v1 范围（design §6「不做」），本路不生成 _irWriter。
 		_ir = null;
-		_irFileBlobs = null;
+		_irWriter = null;
 
 		await Task.Run(() =>
 		{
@@ -629,8 +633,8 @@ internal sealed class ErbLoader
 		// lazy-function-load（B 线 B1）：惰性模式 = 开 LazyFunctionLoad 且非 AnalysisMode（AnalysisMode 强制 eager）。
 		// 惰性下函数体行链不解析——labelDic 只注册全量标签桩（IsStub），仅 # 签名行处理（保 Argument/Def/IsMethod）。
 		bool lazy = Config.Config.LazyFunctionLoad && !env.AnalysisMode;
-		// b2-irdiskcache：收集本文件函数 IR blob（仅 IR 生成期）。
-		bool collectIr = _irFileBlobs != null;
+		// b2-irdiskcache：收集本文件函数 IR blob（仅 IR 生成期，即增量写器非空）。
+		bool collectIr = _irWriter != null;
 		FunctionLabelLine? irCurLabel = null;
 		List<IrLine>? irCurLines = null;
 		// 结束当前函数的 blob（@ 边界 / EOF 时调用）。
@@ -931,9 +935,12 @@ internal sealed class ErbLoader
 		enabledLineCount += art.EnabledLineCount;
 		if (art.HasError)
 			noError = false;
-		// b2-irdiskcache：按文件加载序收集 IR blob（索引区顺序 = 文件加载序 → 重载警告顺序一致，design §4.4）。
-		if (_irFileBlobs != null && art.IrBlobs.Count > 0)
-			_irFileBlobs.Add((art.Filename, art.IrBlobs));
+		// b2-irdiskcache：逐文件批量落盘到 IR（本文件 image 已并入共享状态，blob 写完即清空释放——内存 O(单文件)）。
+		if (_irWriter != null && art.IrBlobs.Count > 0)
+		{
+			_irWriter.AppendFile(art.Filename, art.IrBlobs);
+			art.IrBlobs.Clear();
+		}
 	}
 
 	/// <summary>并行产物的跨文件检查占位（合并期由 <see cref="ResolvePendingCrossFileChecks"/> 替换或删除）。</summary>
