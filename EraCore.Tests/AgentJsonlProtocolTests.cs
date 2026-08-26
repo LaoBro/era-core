@@ -203,20 +203,17 @@ public class AgentJsonlProtocolTests : IDisposable
     [Fact]
     public async Task T_buildturn_non_initial_omits_protocol_version()
     {
-        // StepAsync 调用走 BuildTurn(isInitial=false)，protocolVersion 应为 null（WhenWritingNull 不出现）
-        // StepAsync 走 DispatchInput + WaitForInputAsync + BuildTurn——
-        // 为绕开 DispatchInput 的 InputType 处理，先调 GetInitialTurnAsync 拿首帧，
-        // 再调 StepAsync("")（EnterKey 允许空输入）
-        SetWaitInput(new InputRequest
-        {
-            InputType = InputType.EnterKey,
-            Timelimit = -1,
-        });
+        // StepAsync 调用走 BuildTurn(isInitial=false)，protocolVersion 应为 null（WhenWritingNull 不出现）。
+        // 本测试不初始化 _console（_state.process 为 null）——DispatchInput 若真实派发输入
+        // 会触发 PressEnterKey → RunEmueraProgram → DoScript 的 NRE（曾以 fatal 日志形式出现）。
+        // 故 SetWaitInput(req: null)：DispatchInput 在 req==null 时直接返回，不执行脚本；
+        // 断言目标（非初始帧无 protocolVersion）与 InputType 无关，不受影响。
+        SetWaitInput(req: null);
 
         var initial = await _protocol.GetInitialTurnAsync();
         Assert.NotNull(initial);
 
-        // State 仍是 WaitInput（DispatchInput 对 EnterKey + "" 不改 state）
+        // StepAsync = DispatchInput（req==null 直接 return）+ WaitForInputAsync + BuildTurn
         var stepJson = await _protocol.StepAsync("");
         Assert.NotNull(stepJson);
         using var doc = JsonDocument.Parse(stepJson!);
