@@ -103,74 +103,129 @@ internal sealed class Session : IDisposable
 
     private async Task GameLoopAsync()
     {
-        await GameLoopComposer.RunAsync(
-            _configData,
-            _terminalSetup,
-            (console, ui, ts) =>
-            {
-                _console = console;
-                // Phase 1：单个 DisplayState 实例由 Session 持有，注入 AgentJsonlProtocol。
-                // HTTP 线程上 Config.Current 不可用（AsyncLocal 仅在游戏循环 task 设置），
-                // 直接从 ConfigData 读默认字体名，传给 DisplayState 避免 BuildPrintOpsForLine 访问 Config.FontName 时 NRE。
-                var defaultFontName = _configData.GetConfigValue<string>(ConfigCode.FontName) ?? "";
-                // MAUI 托管模式（fullDiffOnFirstTurn=true）：WebView 桥接无 GET /snapshot 端点为入口，
-                // 首帧 diff 是唯一画面来源——ComputeDiff 首帧返回全量 AppendLinesOp 而非 null。
-                // HTTP 模式靠 GET /snapshot 拿画面，首帧 diff=null 正确（默认 false）。
-                _displayState = new DisplayState(_console, defaultFontName, _fullDiffOnFirstTurn);
-                _protocol = new AgentJsonlProtocol(_console, ui, _io, _displayState);
-                return _protocol;
-            },
-            async p =>
-            {
-                // Issue 11 D1：runLoop 被 GameLoopComposer 调用时 console.Initialize() 已完成
-                // （无论成败——ConsoleStateManager.Initialize 失败时置 State=Error 并 return，不抛）。
-                // 故 runLoop 开始即加载结束，立即置 _loading=false 让 StateString 返真实状态。
-                _loading = false;
-                try
+        // 失败可见切片（handoff-nativeaot-parallel-erb §6.2）：RunAsync 内 await console.Initialize()
+        // 与 runLoop 回调之间没有保护——初始化阶段（OpenScope / console 构造 / Initialize）抛出时，
+        // 若不在此收束，_gameTask 静默 fault、_loading 永久为 true、前端永远 Loading。此 catch 仅作
+        // 最后防线；正常失败路径由 ConsoleStateManager 置 State=Error、runLoop 回调内 catch 处理。
+        try
+        {
+            await GameLoopComposer.RunAsync(
+                _configData,
+                _terminalSetup,
+                (console, ui, ts) =>
                 {
-                    await ((AgentJsonlProtocol)p).RunLoopAsync(enableTimeout: true, _cts.Token);
-                }
-                catch (GameExitException)
+                    _console = console;
+                    // Phase 1：单个 DisplayState 实例由 Session 持有，注入 AgentJsonlProtocol。
+                    // HTTP 线程上 Config.Current 不可用（AsyncLocal 仅在游戏循环 task 设置），
+                    // 直接从 ConfigData 读默认字体名，传给 DisplayState 避免 BuildPrintOpsForLine 访问 Config.FontName 时 NRE。
+                    var defaultFontName = _configData.GetConfigValue<string>(ConfigCode.FontName) ?? "";
+                    // MAUI 托管模式（fullDiffOnFirstTurn=true）：WebView 桥接无 GET /snapshot 端点为入口，
+                    // 首帧 diff 是唯一画面来源——ComputeDiff 首帧返回全量 AppendLinesOp 而非 null。
+                    // HTTP 模式靠 GET /snapshot 拿画面，首帧 diff=null 正确（默认 false）。
+                    _displayState = new DisplayState(_console, defaultFontName, _fullDiffOnFirstTurn);
+                    _protocol = new AgentJsonlProtocol(_console, ui, _io, _displayState);
+                    return _protocol;
+                },
+                async p =>
                 {
-                    // 脚本 QUIT/EXIT：正常终结 session，走 finally 清理（BuildFinalTurn/IO.Close）
-                }
-                catch (Exception ex)
-                {
-                    AgentLog.Instance.Write("session game loop exception: " + ex);
-                    // 目标 3：记录 LastError，GET /state 透出 lastError（threadAlive=false 的因果）。
-                    _lastError = ex.ToString();
-                    // 3.3（NativeAOT）：JsonObject.ToJsonString()——匿名类型在 AOT 下反射序列化被禁用。
-                    // 目标 1：errorInfo 结构化（type/message/inner），agent 一次定位；error 保留完整串兼容既有消费者。
-                    var structured = ErrorInfo.From(ex);
-                    _io.WriteLine(new JsonObject
-                    {
-                        ["error"] = ex.ToString(),
-                        ["errorInfo"] = structured?.ToJsonObject(),
-                        ["state"] = _console!.State.ToString()
-                    }.ToJsonString());
-                }
-                finally
-                {
-                    // 产出最终 turn（可失败/为空），保序交 TurnDelivery.EndOfGame
-                    // （内部：置 ready → 写 final turn → End(game_ended) → Close）。
-                    string? finalTurn = null;
+                    // Issue 11 D1：runLoop 被 GameLoopComposer 调用时 console.Initialize() 已完成
+                    // （无论成败——ConsoleStateManager.Initialize 失败时置 State=Error 并 return，不抛）。
+                    // 故 runLoop 开始即加载结束，立即置 _loading=false 让 StateString 返真实状态。
+                    _loading = false;
                     try
                     {
-                        finalTurn = _protocol!.BuildFinalTurn();
+                        await ((AgentJsonlProtocol)p).RunLoopAsync(enableTimeout: true, _cts.Token);
+                    }
+                    catch (GameExitException)
+                    {
+                        // 脚本 QUIT/EXIT：正常终结 session，走 finally 清理（BuildFinalTurn/IO.Close）
                     }
                     catch (Exception ex)
                     {
-                        // 最终 turn 生成失败不阻断 Dispose；HasEnded 会让 GET /turn 返回 404
-                        AgentLog.Instance.Write("final turn build failed: " + ex.Message);
+                        AgentLog.Instance.Write("session game loop exception: " + ex);
+                        // 目标 3：记录 LastError，GET /state 透出 lastError（threadAlive=false 的因果）。
+                        _lastError = ex.ToString();
+                        // 3.3（NativeAOT）：JsonObject.ToJsonString()——匿名类型在 AOT 下反射序列化被禁用。
+                        // 目标 1：errorInfo 结构化（type/message/inner），agent 一次定位；error 保留完整串兼容既有消费者。
+                        var structured = ErrorInfo.From(ex);
+                        _io.WriteLine(new JsonObject
+                        {
+                            ["error"] = ex.ToString(),
+                            ["errorInfo"] = structured?.ToJsonObject(),
+                            ["state"] = _console!.State.ToString()
+                        }.ToJsonString());
                     }
-                    _delivery.EndOfGame(finalTurn);
-                    _protocol?.Stop();
-                    _console?.Dispose();
-                    _hasEnded = true;
-                    // scope 在 composer 的 using 块退出时自动 Dispose（Pfc.Dispose + Current 归 null）。
-                    // 旧 Reset() 已删除——RAII 单一归属。
-                }
-            });
+                    finally
+                    {
+                        FinalizeEndedLoop();
+                    }
+                });
+        }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested || _disposed)
+        {
+            // Dispose/服务器关闭导致的初始化期取消：session_ended 已由 TurnDelivery/TurnDelivery.Dispose
+            // 表达，不发错误回合，只收束本地标志防止 StateString 停在 "Loading"。
+            AgentLog.Instance.Write("session game loop canceled during initialization");
+            _loading = false;
+            _hasEnded = true;
+        }
+        catch (Exception ex)
+        {
+            DeliverInitStageFailure(ex);
+        }
+    }
+
+    /// <summary>
+    /// 初始化阶段失败的干净收束：与 runLoop 回调内 catch/finally 同构——记 LastError、
+    /// 向 IO 写结构化 error 行（前端由此读到错误原因）、派发 final turn、Dispose 控制台并置位 HasEnded。
+    /// </summary>
+    private void DeliverInitStageFailure(Exception ex)
+    {
+        AgentLog.Instance.Write("session game loop exception (init stage): " + ex);
+        _lastError = ex.ToString();
+        _loading = false;
+        var structured = ErrorInfo.From(ex);
+        try
+        {
+            // NativeAOT：JsonObject.ToJsonString()，禁用匿名类型反射序列化（同 runLoop 回调内约定）。
+            _io.WriteLine(new JsonObject
+            {
+                ["error"] = ex.ToString(),
+                ["errorInfo"] = structured?.ToJsonObject(),
+                ["state"] = _console?.State.ToString() ?? "Idle"
+            }.ToJsonString());
+        }
+        catch (Exception wex)
+        {
+            // IO 已断开等写失败不阻断清理——LastError/HasEnded 已保证 /state 侧可诊断。
+            AgentLog.Instance.Write("failed to deliver init-stage error line: " + wex.Message);
+        }
+        FinalizeEndedLoop();
+    }
+
+    /// <summary>
+    /// 游戏循环终结的公共收尾（原 runLoop 回调 finally 的主体）：产出最终 turn（可失败/为空）、
+    /// 保序交 TurnDelivery.EndOfGame、停协议、Dispose 控制台并置位 HasEnded。
+    /// scope 由 GameLoopComposer 的 using 块退出时 Dispose（Pfc.Dispose + Current 归 null），RAII 单一归属。
+    /// </summary>
+    private void FinalizeEndedLoop()
+    {
+        string? finalTurn = null;
+        try
+        {
+            finalTurn = _protocol?.BuildFinalTurn();
+        }
+        catch (Exception ex)
+        {
+            // 最终 turn 生成失败不阻断 Dispose；HasEnded 会让 GET /turn 返回 404
+            AgentLog.Instance.Write("final turn build failed: " + ex.Message);
+        }
+        _delivery.EndOfGame(finalTurn);
+        _protocol?.Stop();
+        _console?.Dispose();
+        _hasEnded = true;
+        // scope 在 composer 的 using 块退出时自动 Dispose（Pfc.Dispose + Current 归 null）。
+        // 旧 Reset() 已删除——RAII 单一归属。
     }
 
     /// <summary>

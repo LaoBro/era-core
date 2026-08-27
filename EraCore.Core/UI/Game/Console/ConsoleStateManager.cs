@@ -92,6 +92,20 @@ internal sealed class ConsoleStateManager
 
             logWriter?.WriteLine("Init:End " + boottimeDebugStopwatch.ElapsedMilliseconds + "ms");
         }
+        catch (Exception ex)
+        {
+            // 失败可见切片（handoff-nativeaot-parallel-erb §6.2）：初始化期任何 C# 异常统一转为
+            // Error 终态而非穿透——历史上 Preload.LoadTreesAsync 位于 Process.Initialize 保护圈外，
+            // 抛出会直达 Session 层造成 _gameTask 静默 fault、前端永久 Loading。与下方
+            // "Process.Initialize 返回 false" 分支同构：置 State、输出系统行、刷控制台。
+            // Session 层 catch 仅作最后防线，两层都不静默吞异常（照记 AgentLog/EmueraLog）。
+            EmueraLog.Error("csm", $"Initialize EXCEPTION: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+            _state.State = ConsoleState.Error;
+            _console.PrintSystemLine($"[Initialize] unexpected error: {ex.GetType().Name}: {ex.Message}");
+            _console.OutputLog(null, false, showFailure: false);
+            _console.PrintFlush(false);
+            _console.RefreshStrings(true);
+        }
         finally
         {
             try

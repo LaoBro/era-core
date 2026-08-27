@@ -148,20 +148,43 @@ internal sealed class BridgeHost : IDisposable
     /// </summary>
     internal static void ApplyPerformanceOverrides(ConfigData configData)
     {
+        // 失败可见切片（handoff-nativeaot-parallel-erb §6.2 第 4 条）：四项全覆盖日志记录
+        // requested（Preferences 三态）/ effective（引擎实际值）/ fixed（游戏 csv/_fixed.config
+        // 锁定状态，Fixed=true 时 SetValue 静默丢弃写入，ConfigItem.cs）——不能只凭三态设置值
+        // 推断引擎行为。字符串拼接，NativeAOT 下无反射序列化。
+#if ANDROID
+        const string platform = "android";
+#else
+        const string platform = "desktop";
+#endif
         foreach (var item in PerfOverrideItems.Values)
         {
-            var value = ReadPerfOverride(item.PrefKey);
-            if (value == "auto")
-                continue;
+            var requested = ReadPerfOverride(item.PrefKey);
             try
             {
-                configData.GetItem(item.Code).SetValue(value == "on");
+                var configItem = configData.GetItem(item.Code);
+                if (requested != "auto")
+                    configItem.SetValue(requested == "on");
+                LogPerfOverride(
+                    $"perf override {item.Code}: platform={platform} requested={requested} " +
+                    $"effective={(configItem.GetValue<bool>() ? "on" : "off")} fixed={configItem.Fixed}");
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[bridge] ApplyPerformanceOverrides({item.Code}): {ex.Message}");
+#if ANDROID
+                Android.Util.Log.Warn("EmueraMaui", $"ApplyPerformanceOverrides({item.Code}): {ex.Message}");
+#endif
             }
         }
+    }
+
+    private static void LogPerfOverride(string message)
+    {
+        Console.WriteLine($"[bridge] {message}");
+#if ANDROID
+        Android.Util.Log.Info("EmueraMaui", message);
+#endif
     }
 
     /// <summary>三态字符串 ↔ <see cref="ConfigData.OverrideDisplayReport"/> 的映射（纯函数，单测覆盖）。</summary>
