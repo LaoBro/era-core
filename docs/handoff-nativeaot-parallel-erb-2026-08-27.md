@@ -455,7 +455,9 @@ NativeAOT 目前仍是实验性目标，本轮不修改 Android 的 `auto` 默�
 
 > **构建记录（2026-08-28，erb-bounded-lifecycle 工作树）**：`dotnet publish EraCore.Maui/EraCore.Maui.csproj -f net10.0-android -r android-arm64 -c Release -p:PublishAot=true -p:RunAOTCompilation=false`，.NET 10.0.400 + Microsoft.Android workload 36.1.69。产物 `EraCore.Maui/bin-aot/Release/net10.0-android/android-arm64/com.eracore.maui-Signed.apk`（27,317,728 字节），SHA-256 `3725c53ebd222ebbd4e7236de45638ddc7a1897dcec9b64394d633134e7c4c03`。仅 XA1040/IL3053 实验性提示（csproj 已条件豁免）。注意：此 APK 含尚未提交的有界调度改动；on/off A/B 用同一 APK 经设置页开关切换即可。
 >
-> **构建记录二（2026-08-28，含 771708b/dcd5c25/7c10328）**：同命令重建，26,986,993 字节，SHA-256 `4fe1ea80a6dc1881ba7ad7102652a1c704708eec8c33236444db5bcf40adaedf`。新增：EmueraLog→logcat（tag=Emuera）、Preload SAF 每树 1 并发。**前版 APK 真机/模拟器判别结论**：崩溃为 Preload SAF 读取风暴中 monodroid bridge `take_global_ref` abort（SIGABRT），两轮开关均跑同等风暴（2722 vs 2550 次 OpenRead）——该崩溃类与 `ParallelErbLoad` 无因果，且 MuMu 为 x86_64+houdini ARM 翻译，结果不作为门禁；真机复测仍必须执行。
+> **构建记录二（2026-08-28，含 771708b/dcd5c25/7c10328）**：同命令重建，SHA-256 `4fe1ea80a6dc1881ba7ad7102652a1c704708eec8c33236444db5bcf40adaedf`。新增：EmueraLog→logcat（tag=Emuera）、Preload SAF 每树 1 并发。**前版 APK 判别结论**：SIGABRT 崩溃为 Preload SAF 读取风暴中 monodroid bridge `take_global_ref` abort，两轮开关均跑同等风暴（2722 vs 2550 次 OpenRead）——该崩溃类与 `ParallelErbLoad` 无因果，且 MuMu 为 x86_64+houdini ARM 翻译，结果不作为门禁；真机复测仍必须执行。
+>
+> **构建记录三（2026-08-28，含 dcd82c8 IR 命中 NRE 修复）**：SHA-256 `f9a6ff759da1407abd15b9d312d26b1385e2f55a681464d41ee2710f1fc1ad75`。四开关全开错误屏根因：IR 命中桩不恢复 `#FUNCTION` 的 Depth=0 → Depth-BFS 不物化 → 式中方法走进空行链桩 NRE（桌面真实语料复现，dcd82c8 修复 + 红测）。模拟器 off/on 两轮稳定通过（bounded 调度日志：2388 文件、window=4、peakActive=4、genmerge 3.5s）。
 
 固定同一 `android-arm64` 设备、同一 APK、同一游戏目录和同一版本配置；冷启动前完整退出应用，每轮只发起一次加载。生产 MAUI 的目标是 `net10.0-android`，Release 使用项目现有 `RunAOTCompilation=true`；若使用显式 `PublishAot=true`，必须单独记录构建参数和 APK SHA。
 
