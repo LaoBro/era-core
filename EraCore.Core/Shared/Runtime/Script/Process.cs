@@ -343,6 +343,13 @@ internal sealed partial class Process(EmueraConsole view)
 	int methodStack;
 	public SingleTerm GetValue(SuperUserDefinedMethodTerm udmt)
 	{
+		// erb-bounded-lifecycle（IR 命中 NRE 修复，真机四开关全开错误屏）：式中方法命中惰性桩时
+		// 先物化再进入——CallFunction（CALL 语句）在 CalledFunction.cs 有同款接缝，而 IR 命中桩
+		// 不经 Depth-BFS 主循环物化（TryGenerateFromIr 不恢复 #FUNCTION 的 Depth=0，桩 Depth=-1
+		// 永不匹配层），无此接缝会在 IntoFunction 后读到空行链（CurrentLine=null → ScriptProc.Run:75 NRE）。
+		// 幂等（非桩恒 no-op）；物化失败降级为占位报错（IsError），Run() 转 CodeEE 而非 NRE。
+		if (udmt.Call.TopLabel.IsStub)
+			ErbLoader.MaterializeOnRuntime(udmt.Call.TopLabel);
 		methodStack++;
 		if (methodStack > 100)
 		{

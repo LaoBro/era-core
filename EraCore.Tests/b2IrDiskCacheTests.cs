@@ -8,6 +8,8 @@ using MinorShift.Emuera.Runtime.Script;
 using MinorShift.Emuera.Runtime.Script.Data;
 using MinorShift.Emuera.Runtime.Script.Loader;
 using MinorShift.Emuera.Runtime.Script.Statements;
+using MinorShift.Emuera.Runtime.Script.Statements.Expression;
+using MinorShift.Emuera.Runtime.Script.Statements.Function;
 using Xunit;
 
 namespace MinorShift.Emuera.Tests;
@@ -554,4 +556,50 @@ $HOGE
 			.Where(s => s.Contains("未在此函数中定义") || s.Contains("不存在执行中的函数") || s.Contains("定义されていません")).ToList();
 		Assert.True(falsePositives.Count == 0, "falsePositives:\n" + string.Join("\n", falsePositives));
 	}
+
+	/// <summary>
+	/// erb-bounded-lifecycle IR 命中 NRE 回归（真机四开关全开错误屏）：IR 命中桩不恢复
+	/// #FUNCTION 方法的 Depth=0/IsMethod（TryGenerateFromIr 仅恢复事件/系统标签）→ Depth-BFS
+	/// 主循环永不物化它们 → 式中方法（UserDefinedMethodTerm → Process.GetValue）走进空行链桩，
+	/// CurrentLine=null → NRE（ScriptProc.Run:75）。修复：GetValue 加与 CallFunction 对称的
+	/// 桩物化接缝。本测试构造与生产同路径的 method term 并直接走运行期求值。
+	/// </summary>
+	[Fact]
+	public async Task Ir_hit_lazy_method_term_getvalue_materializes_stub_instead_of_nre()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		EnableLazy(h);
+		ConfigData.Current!.GetConfigItem(ConfigCode.IrDiskCacheLoad).SetValue(true);
+		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelErbLoad).SetValue(true);
+		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(true);
+		await h.PreloadAsync();
+		h.WriteErb("IRMT.ERB", """
+@MYMETHOD
+#FUNCTION
+RETURNF 42
+""");
+		var loader1 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		var ok1 = await loader1.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		Assert.True(ok1, "round1 failed\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+		h.Console.DisplayLineList.Clear();
+
+		// 第二轮：新建 loader 命中磁盘 IR（b2 惯例——_ir 是 loader 实例状态）
+		var loader2 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		var ok2 = await loader2.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		Assert.True(ok2, "round2 failed\n" + string.Join("\n", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+
+		var m = Find(h.LabelDic, "MYMETHOD");
+		Assert.NotNull(m);
+		Assert.True(m.IsStub, "IR-hit method stub should stay unmaterialized after load (lazy semantics)");
+		Assert.True(m.IrBacked, "round2 must be IR-hit (IrBacked stub), otherwise this test is not covering the regression");
+
+		// 与生产 ExpressionParser 同路径构造式中方法项，然后直接走运行期求值（修复点所在路径）
+		var term = UserDefinedMethodTerm.Create(m, [], out var errMes);
+		Assert.True(term != null, "term create failed: " + errMes);
+		var value = h.Exm.Process.GetValue(term);
+		Assert.NotNull(value);
+		Assert.Equal(42L, Assert.IsType<SingleLongTerm>(value).Int);
+	}
+
 }
