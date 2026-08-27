@@ -61,9 +61,16 @@ static partial class Preload
                        ext.Equals(".als", StringComparison.OrdinalIgnoreCase);
             }).ToList();
 
+            // erb-bounded-lifecycle（handoff §5 最小版）：SAF content URI 路径把每树读取限为 1 并发。
+            // 实测（MuMu NativeAOT 2026-08-28）：4 线程并发 SAF OpenRead 的 JNI 风暴中，monodroid
+            // bridge 在 take_global_ref 处 abort（SIGABRT）——并发 JNI 是实验性 NativeAOT 运行时
+            // bridge GC bug 的触发放大器。双树 WhenAll 下总计 ≤2 并发，桌面文件系统路径不受限。
+            var readDegree = SafPath.IsContentUri(path) ? 1 : -1;
+            var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = readDegree };
+
             await Task.Run(() =>
             {
-                Parallel.ForEach(targetFiles, filePath =>
+                Parallel.ForEach(targetFiles, parallelOptions, filePath =>
                 {
                     var value = ReadAllLinesViaAccessor(filePath, dirAccessor);
                     files[filePath] = value;
