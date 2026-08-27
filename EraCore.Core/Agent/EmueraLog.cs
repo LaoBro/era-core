@@ -45,6 +45,17 @@ internal static class EmueraLog
     /// </summary>
     internal static void SetTerminalLevel(Level level) => TerminalLevel = level;
 
+    /// <summary>
+    /// erb-bounded-lifecycle 观测收尾：平台 sink（MAUI Android 启动时注册 → Android.Util.Log）。
+    /// 历史：Release 下 DebuggerSink 空操作、stderr 不可见——真机 logcat 里看不到任何阶段标记
+    /// （LoadPendingParallel / phase=genmerge / csm），崩溃判别只能靠 SAF 侧散点日志。注册后
+    /// 每条 Write 都透传 (level, 整行文本)；Core 保持平台中立，不引用 Android 程序集。
+    /// </summary>
+    private static Action<Level, string>? _platformSink;
+
+    /// <summary>注册/替换平台 sink（null = 注销）。跟随全局 MinLevel 阈值，不另设独立阈值。</summary>
+    internal static void SetPlatformSink(Action<Level, string>? sink) => _platformSink = sink;
+
     internal static void Debug(string category, string message) => Write(Level.Debug, category, message);
     internal static void Info(string category, string message) => Write(Level.Info, category, message);
     internal static void Warn(string category, string message) => Write(Level.Warn, category, message);
@@ -73,6 +84,9 @@ internal static class EmueraLog
 
         // DebuggerSink：ADB logcat（DEBUG 构建才实际输出）
         System.Diagnostics.Debug.WriteLine(line);
+
+        // PlatformSink：宿主注册（MAUI Android → Android.Util.Log；Release 真机唯一可见通道）
+        _platformSink?.Invoke(level, line);
     }
 
     internal static Level ParseLevel(string envVar, Level fallback)

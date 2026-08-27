@@ -61,6 +61,20 @@ public static class MauiProgram
 		try
 		{
 			AppDataPaths.Configure(FileSystem.AppDataDirectory);
+#if ANDROID
+			// erb-bounded-lifecycle 观测收尾：EmueraLog → logcat。Release 下 DebuggerSink 空操作、
+			// stderr 丢失——真机/模拟器 logcat 此前看不到 LoadPendingParallel / phase=genmerge 等
+			// 阶段标记，崩溃判别缺时间线。级别 → LogPriority，tag 用 "Emuera" 与桥接层 "EmueraMaui" 区分。
+			EmueraLog.SetPlatformSink((level, line) => Android.Util.Log.WriteLine(
+				level switch
+				{
+					EmueraLog.Level.Debug => Android.Util.LogPriority.Debug,
+					EmueraLog.Level.Info => Android.Util.LogPriority.Info,
+					EmueraLog.Level.Warn => Android.Util.LogPriority.Warn,
+					EmueraLog.Level.Error => Android.Util.LogPriority.Error,
+					_ => Android.Util.LogPriority.Info,
+				}, "Emuera", line));
+#endif
 			// === A0：AgentLog 默认关闭 + UI 开关（saf-accel 计划）===
 			// 读 Preferences（key 与 BridgeHost 设置页开关共用，默认 false）→ Configure。
 			// 时序要求：Configure 必须在首次 AgentLog.Instance 访问之前（Lazy 单例构造时机）——
