@@ -265,7 +265,7 @@ lowmemory
 
 ## 修复方案（实施版）
 
-> 状态：**第一阶段（失败可见切片，§6.2）已实现**（2026-08-27，含红测 `SessionInitFailureTests`）；§3/§4/§5/§6.3 待实现。本文只定义修复边界、实施顺序和验收门槛，不把未验证的假设当作 NativeAOT 的平台限制。
+> 状态：**第一阶段（失败可见切片，§6.2）已实现**（2026-08-27，含红测 `SessionInitFailureTests`）；**§3 调度器重写（erb-bounded-lifecycle）已实现**（有界滑动窗口 + `GenerationResult` + linked CTS + 尾任务收束 + 测试接缝 + §4.1 `privateDimList` 锁 + 判别日志，红测 `ErbLoaderBoundedSchedulerTests` 5 项）；§4.2 共享写审计、§5 SAF 限流、§6.3 剩余观测待实现。本文只定义修复边界、实施顺序和验收门槛，不把未验证的假设当作 NativeAOT 的平台限制。
 > 根因排序：P0 任务生命周期未收束；P0 生成期共享状态竞态；P0/P1 未合并 artifact 无上界；P1 SAF 与多层并发放大。历史 JSON 反射问题不纳入本次修复，除非新日志再次出现对应特征。
 > 本轮 NativeAOT 仍处于实验性阶段，跳过发布止血，不把 Android 默认关闭作为修复前置条件；保留 on/off 对照用于验证。
 > 实施顺序（2026-08-27 审查后修订）：**失败可见切片（E 的前半，原第 5 步）提前为第一阶段**。理由：当前加载期 C# 层异常会让 `_loading` 永远为 true、前端永久 Loading（证据见 6.1）；先修它能让后续真机 A/B 中所有可捕异常以错误回合浮出，把"卡住靠 logcat 考古"变成"直接读错误原因"。它不替代根因修复——线程池饿死型无响应与原生层崩溃（SIGABRT/OOM）没有异常可捕，A/B/C/D 仍按计划执行。
@@ -452,6 +452,8 @@ NativeAOT 目前仍是实验性目标，本轮不修改 Android 的 `auto` 默�
 - 对 `MainPage.OnReloadGame` 做两次快速 reload 测试，确认旧初始化不会在新 host 上继续写入。
 
 ### 9. NativeAOT Android 验收门禁
+
+> **构建记录（2026-08-28，erb-bounded-lifecycle 工作树）**：`dotnet publish EraCore.Maui/EraCore.Maui.csproj -f net10.0-android -r android-arm64 -c Release -p:PublishAot=true -p:RunAOTCompilation=false`，.NET 10.0.400 + Microsoft.Android workload 36.1.69。产物 `EraCore.Maui/bin-aot/Release/net10.0-android/android-arm64/com.eracore.maui-Signed.apk`（27,317,728 字节），SHA-256 `3725c53ebd222ebbd4e7236de45638ddc7a1897dcec9b64394d633134e7c4c03`。仅 XA1040/IL3053 实验性提示（csproj 已条件豁免）。注意：此 APK 含尚未提交的有界调度改动；on/off A/B 用同一 APK 经设置页开关切换即可。
 
 固定同一 `android-arm64` 设备、同一 APK、同一游戏目录和同一版本配置；冷启动前完整退出应用，每轮只发起一次加载。生产 MAUI 的目标是 `net10.0-android`，Release 使用项目现有 `RunAOTCompilation=true`；若使用显式 `PublishAot=true`，必须单独记录构建参数和 APK SHA。
 

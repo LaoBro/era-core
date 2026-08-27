@@ -118,7 +118,10 @@ internal sealed class ErbLoader
 	/// 複数のファイルを読む
 	/// </summary>
 	/// <param name="filepath"></param>
-	public async Task<bool> LoadErbDir(string erbDir, bool displayReport, LabelDictionary labelDictionary)
+	/// <param name="externalCt">erb-bounded-lifecycle：外部取消令牌（预留 reload/会话退出接线；当前调用方未传即 default）。
+	/// 与调度内部首错 CTS 链接——取消后不再启动新 worker，已启动 worker 收束后才返回。</param>
+	public async Task<bool> LoadErbDir(string erbDir, bool displayReport, LabelDictionary labelDictionary,
+		CancellationToken externalCt = default)
 	{
 		//1.713 labelDicをnewする位置を変更。
 		//checkScript();の時点でExpressionPerserがProcess.instance.LabelDicを必要とするから。
@@ -210,7 +213,7 @@ internal sealed class ErbLoader
 			var phaseSw = Stopwatch.StartNew();
 			var gcBeforeGenmerge = GcSnapshot.Take();
 			if (Config.Config.ParallelErbLoad && !env.AnalysisMode)
-				await LoadPendingParallel(pending, isOnlyEvent, displayReport, starttime);
+				await LoadPendingParallel(pending, isOnlyEvent, displayReport, starttime, externalCt);
 			else
 				await LoadPendingSerial(pending, isOnlyEvent, displayReport, starttime);
 			phaseSw.Stop();
@@ -234,7 +237,8 @@ internal sealed class ErbLoader
 			// erb-loader-parallel 06：附 GC 增量统计（WP0 判别数据：期间 GC 增量 vs 耗时）
 			var parseSw = Stopwatch.StartNew();
 			var gcBeforeParse = GcSnapshot.Take();
-			await Task.Run(() => ParseScript());
+			// CA2016：ParseScript 本轮不做取消感知（erb-bounded-lifecycle 只覆盖生成/合并调度），显式不传播令牌
+			await Task.Run(() => ParseScript(), CancellationToken.None);
 			parseSw.Stop();
 			EmueraLog.Info("ErbLoader", $"phase=parsescript ms={parseSw.ElapsedMilliseconds} {GcSnapshot.Diff(gcBeforeParse)}");
 			if (displayReport)
@@ -1027,59 +1031,152 @@ internal sealed class ErbLoader
 		}
 	}
 
+	#region erb-bounded-lifecycle：有界滑动窗口调度（handoff §3）
+
+	#region 测试接缝（handoff §8.1：夹具可注入失败点/延迟/observer；生产路径恒 null，零开销）
+	/// <summary>worker 开始生成前按文件名 await 的 gate（窗口/收束测试用）。hook 收到 worker 的取消令牌。</summary>
+	internal Func<string, CancellationToken, Task>? TestGenerateGateHook;
+	/// <summary>生成完成后按文件名决定注入的异常（返回 null 不注入）；artifact 保留以复现「有部分产物 + 异常」的按序回放路径。</summary>
+	internal Func<string, Exception?>? TestGenerateFaultHook;
+	/// <summary>worker 生命周期 observer：(phase, filename)，phase ∈ start/end/cancel；窗口上界与尾任务收束断言用。</summary>
+	internal Action<string, string>? TestWorkerObserver;
+	/// <summary>窗口宽度覆盖（null = Min(ProcessorCount, MaxParallelErbFiles)）。</summary>
+	internal int? TestWindowOverride;
+	#endregion
+
+	/// <summary>单个文件的生成结果：worker 永不向调用方抛异常，一切结果（含取消）显式承载。
+	/// Exception 非空且 Artifact 同非空 = 生成中途抛出但已有部分产物（主循环按序回放一次后抛原异常）。</summary>
+	private sealed record GenerationResult(int Index, string Filename, ErbFileArtifact? Artifact, Exception? Exception, bool Canceled);
+
 	/// <summary>
-	/// 并行调度（erb-loader-parallel 03）：全部文件入池生成，经 <see cref="MaxParallelErbFiles"/> 封顶的
-	/// 信号量限流（并发生成中的文件数 = degree，防内存峰值）；本方法按原文件序逐个 await 产物并合并——
-	/// 无窗口 barrier，最慢文件的长尾不再阻塞后续文件的合并（流水线）。生成期经 per-task AsyncLocal
-	/// （警告缓冲 / ScanLineMirror / Config scope 由 Task.Run 快照 ExecutionContext 各自独立）做到无共享写；
-	/// 全部 LabelDictionary 写入与警告发射都在本方法（主线程 async 流）按序执行。进度行随合并按序补发——
-	/// 输出内容与顺序与串行一致（PR 决策：按序补发而非聚合行）。异常任务不在任务内回放控制台输出，
-	/// 由本方法按序单线程回放后抛首个异常（避免并发控制台写）。
+	/// 并行调度（erb-bounded-lifecycle，重写自 erb-loader-parallel 03 的全量 Task 数组版）：
+	/// 按索引推进的有界滑动窗口——运行中 worker 数与「已生成未合并产物数」共用同一上限
+	/// <see cref="MaxParallelErbFiles"/>（窗口宽度 = clamp(TestWindowOverride ?? Min(ProcessorCount, MaxParallelErbFiles), 1, pending.Count)），
+	/// 不再为全部 pending 创建 Task/结果数组；合并一个文件后才放行下一个，artifact 驻留量有显式上界
+	/// （旧实现首文件慢时未合并产物可驻留接近整个游戏——Android NativeAOT 上表现为 OOM 闪退/长 GC 卡死）。
+	/// <para>
+	/// 生命周期不变式：按序处理到某索引发现异常时，先回放该文件已有的控制台输出/警告一次，
+	/// 再保留原异常类型与堆栈抛出；linked CTS 立即取消未启动与运行中 worker；finally 必须 await
+	/// 全部已启动任务收束后才离开——旧实现 using SemaphoreSlim 在尾任务仍运行时 Dispose，
+	/// 尾任务在已释放 gate 上 Release/WaitAsync 抛出无人观察的异常。取消产生的次生
+	/// OperationCanceledException 只记录，不覆盖原始加载异常。
+	/// </para>
+	/// 生成期共享写仍集中在 <see cref="MergeErbFile"/>（主 async 流按序执行）；worker 经 per-task
+	/// AsyncLocal（警告缓冲/ScanLineMirror）与 deferCrossFileChecks 空视图做到无共享写。进度行随合并按序补发。
 	/// </summary>
 	private async Task LoadPendingParallel(List<(string Filename, string File)> pending, List<string> isOnlyEvent,
-		bool displayReport, DateTime starttime)
+		bool displayReport, DateTime starttime, CancellationToken externalCt)
 	{
-		int degree = Math.Min(Environment.ProcessorCount, MaxParallelErbFiles);
-		EmueraLog.Info("ErbLoader", $"LoadPendingParallel: files={pending.Count}, degree={degree}");
-		var arts = new ErbFileArtifact?[pending.Count];
-		var errors = new Exception?[pending.Count];
-		using var gate = new SemaphoreSlim(degree, degree);
-		var tasks = new Task[pending.Count];
-		for (int i = 0; i < pending.Count; i++)
+		if (pending.Count == 0)
+			return;
+		int window = Math.Clamp(TestWindowOverride ?? Math.Min(Environment.ProcessorCount, MaxParallelErbFiles), 1, pending.Count);
+		EmueraLog.Info("ErbLoader", $"LoadPendingParallel: files={pending.Count}, window={window}");
+		// 外部取消（预留 reload/会话退出）+ 内部取消（本轮首错收束）链接；worker 只见合成令牌
+		using var cts = CancellationTokenSource.CreateLinkedTokenSource(externalCt);
+		// 运行表只持有窗口内任务（旧实现：tasks[pending.Count] 全量数组长期持有全部任务引用）
+		var running = new Dictionary<int, Task<GenerationResult>>(window);
+		int nextToStart = 0;
+		int merged = 0;
+		int peakActive = 0;
+		int canceledCount = 0;
+		var phaseSw = Stopwatch.StartNew();
+		var gcLast = GcSnapshot.Take();
+
+		try
 		{
-			int idx = i; // for 循环变量闭包陷阱：任务体必须捕获本迭代的独立副本
-			tasks[i] = Task.Run(async () =>
+			while (merged < pending.Count)
 			{
-				await gate.WaitAsync();
+				// 填窗：合并掉一个才放行下一个——active worker 与未合并产物共用同一上限
+				while (nextToStart < pending.Count && running.Count < window)
+				{
+					int idx = nextToStart++; // 闭包陷阱：捕获本迭代独立副本
+					running[idx] = Task.Run(() => RunGenerateWorkerAsync(idx, pending[idx].Filename, pending[idx].File, cts.Token));
+				}
+				peakActive = Math.Max(peakActive, running.Count);
+
+				var result = await running[merged].ConfigureAwait(false);
+				running.Remove(merged);
+				merged++;
+				if (result.Exception != null)
+				{
+					// 首错按序处理：回放该文件已有的控制台输出/警告一次，保留原异常类型与堆栈抛出
+					EmueraLog.Error("ErbLoader",
+						$"LoadPendingParallel: fail idx={result.Index} file={result.Filename} stage={(result.Canceled ? "cancel" : "generate")} ex={result.Exception.GetType().Name}");
+					if (result.Artifact != null)
+					{
+						ReplayConsoleOps(result.Artifact);
+						ParserMediator.EmitWarningBuffer(result.Artifact.Warnings);
+					}
+					throw result.Exception;
+				}
+				PrintLoadingProgress(displayReport, starttime, result.Filename);
+				MergeErbFile(result.Artifact!, isOnlyEvent);
+				// 判别日志（handoff §6.3）：每 32 文件输出窗口占用 + GC 增量，卡住阶段可由 logcat 直接判别
+				if ((merged & 0x1F) == 0)
+				{
+					EmueraLog.Info("ErbLoader", $"LoadPendingParallel: merged={merged}/{pending.Count} active={running.Count} window={window} ms={phaseSw.ElapsedMilliseconds} {GcSnapshot.Diff(gcLast)}");
+					gcLast = GcSnapshot.Take();
+				}
+			}
+		}
+		finally
+		{
+			// 收束：无论正常完成/首错/取消——不再启动新 worker，但已启动的必须全部等到结束才离开本方法。
+			// 此前旧实现离开即 Dispose 信号量，尾任务在已释放 gate 上炸出无人观察的异常。
+			cts.Cancel();
+			foreach (var kv in running)
+			{
 				try
 				{
-					arts[idx] = GenerateErbFile(pending[idx].File, pending[idx].Filename, isOnlyEvent,
-						deferCrossFileChecks: true, replayOnFailure: false);
+					var tail = await kv.Value.ConfigureAwait(false);
+					if (tail.Canceled)
+						Interlocked.Increment(ref canceledCount);
 				}
-				catch (Exception ex) { errors[idx] = ex; }
-				finally
+				catch (Exception ex)
 				{
-					gate.Release();
+					// 次生异常（含取消 OCE）：只记录，不覆盖正在传播的首错
+					EmueraLog.Error("ErbLoader", $"LoadPendingParallel: tail idx={kv.Key} ended with {ex.GetType().Name}: {ex.Message}");
 				}
-			});
-		}
-		for (int i = 0; i < pending.Count; i++)
-		{
-			await tasks[i];
-			if (errors[i] != null)
-			{
-				if (arts[i] != null)
-				{
-					// 复刻串行路径 GenerateErbFile 的异常回放语义（单线程执行）
-					ReplayConsoleOps(arts[i]!);
-					ParserMediator.EmitWarningBuffer(arts[i]!.Warnings);
-				}
-				throw errors[i]!;
 			}
-			PrintLoadingProgress(displayReport, starttime, pending[i].Filename);
-			MergeErbFile(arts[i]!, isOnlyEvent);
+			EmueraLog.Info("ErbLoader",
+				$"LoadPendingParallel: window={window} started={nextToStart} merged={merged} peakActive={peakActive} canceled={Volatile.Read(ref canceledCount)} ms={phaseSw.ElapsedMilliseconds}");
 		}
 	}
+
+	/// <summary>worker 主体：gate hook → 取消检查 → 生成 → fault 注入点。永不抛出——一切结果进 <see cref="GenerationResult"/>；
+	/// 测试观察点 start/end/cancel 经 <see cref="TestWorkerObserver"/> 上报（含失败与取消路径，收束断言依据）。</summary>
+	private async Task<GenerationResult> RunGenerateWorkerAsync(int idx, string filename, string filepath, CancellationToken ct)
+	{
+		TestWorkerObserver?.Invoke("start", filename);
+		try
+		{
+			if (TestGenerateGateHook != null)
+				await TestGenerateGateHook(filename, ct).ConfigureAwait(false);
+			ct.ThrowIfCancellationRequested();
+			var art = GenerateErbFile(filepath, filename, [], deferCrossFileChecks: true, replayOnFailure: false);
+			// fault 注入点在生成完成后：artifact 保留 + 异常显式承载，复现「部分产物 + 异常」的按序回放路径
+			var fault = TestGenerateFaultHook?.Invoke(filename);
+			return fault != null
+				? new GenerationResult(idx, filename, art, fault, Canceled: false)
+				: new GenerationResult(idx, filename, art, null, false);
+		}
+		catch (OperationCanceledException)
+		{
+			TestWorkerObserver?.Invoke("cancel", filename);
+			return new GenerationResult(idx, filename, null, new OperationCanceledException(), true);
+		}
+		catch (Exception ex)
+		{
+			// GenerateErbFile(replayOnFailure:false) 已清缓冲并抑制回放；worker 线程不写控制台/全局警告
+			return new GenerationResult(idx, filename, null, ex, false);
+		}
+		finally
+		{
+			TestWorkerObserver?.Invoke("end", filename);
+		}
+	}
+
+	#endregion
 
 	private static LogicalLine addLine(ErbFileArtifact art, LogicalLine nextLine, LogicalLine lastLine)
 	{

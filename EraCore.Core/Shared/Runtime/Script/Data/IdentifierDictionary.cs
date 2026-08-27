@@ -114,6 +114,15 @@ internal partial class IdentifierDictionary
 
 	readonly Dictionary<string, DefinedNameType> nameDic = new(Config.StrComper);
 
+	/// <summary>
+	/// erb-bounded-lifecycle（方案 B 止血）：并行生成期多个 ERB 的 #DIM/#DIMS 经
+	/// CheckUserPrivateVarName（Add）/ ThrowException（Contains）并发触达本列表。
+	/// 普通 List 非线程安全，并发追加可损坏内部数组（计数与容量不一致 → Contains 死循环/误判/异常）。
+	/// Add 与 Contains 同锁串行化；语义不变（重复项仍 Add，Contains 结果不变）。
+	/// 长期方案是生成期收集改 per-file artifact、合并期统一写入（handoff §4.2），锁只是过渡。
+	/// </summary>
+	private readonly object _privateDimLock = new();
+
 	List<string> privateDimList = [];
 	//Dictionary<string, VariableToken> userDefinedVarDic = new Dictionary<string, VariableToken>();
 
@@ -421,7 +430,8 @@ internal partial class IdentifierDictionary
 					break;
 			}
 		}
-		privateDimList.Add(varName);
+		lock (_privateDimLock)
+			privateDimList.Add(varName);
 	}
 	#endregion
 
@@ -642,7 +652,10 @@ internal partial class IdentifierDictionary
 		string idStr = str;
 		//if (Config.Config.IgnoreCase || Config.Config.IgnoreCase) //片方だけなのは互換性用オプションなのでレアケースのはず。対応しない。
 		//	idStr = idStr.ToUpper();
-		if (!isFunc && privateDimList.Contains(idStr))
+		bool isPrivateDim;
+		lock (_privateDimLock)
+			isPrivateDim = privateDimList.Contains(idStr);
+		if (!isFunc && isPrivateDim)
 			throw new IdentifierNotFoundCodeEE(string.Format(treer.VarNotDefinedThisFunc.Text, str));
 		if (nameDic.TryGetValue(idStr, out DefinedNameType value))
 		{
