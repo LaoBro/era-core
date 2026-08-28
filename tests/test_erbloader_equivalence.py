@@ -190,11 +190,25 @@ def _set_parallel(cfg_path, parallel):
     ])
 
 
+def _drop_ir_cache(game):
+    """删除源游戏自带的 IR 磁盘缓存（<game>/_IRCache/era_ir.dat）。
+
+    IR 的键不是内容哈希，而是 (逻辑名, 长度, mtime Ticks) 逐文件 FNV-1a 加解析配置
+    （ErbIrCache.cs:52-97）。shutil.copytree 保留 mtime，因此两份副本的指纹一致——若不删除，
+    两次加载都会命中源目录带来的同一份 era_ir.dat，函数体根本不重新解析，等价性比较
+    退化为「命中 vs 命中」而恒等。--no-inject 模式不改配置（lazy + IR 默认开），风险最大。
+    """
+    cache = game / "_IRCache"
+    if cache.exists():
+        shutil.rmtree(cache, ignore_errors=True)
+
+
 def _build_corpus(src_game, inject_warnings):
     """复制源游戏到临时目录；注入警告语料（可选）。返回 temp game 目录。"""
     tmp = tempfile.mkdtemp(prefix="erbloader_eq_")
     game = Path(tmp) / "game"
     shutil.copytree(str(src_game), str(game))
+    _drop_ir_cache(game)
     if inject_warnings:
         erb = game / "erb"
         os.makedirs(erb / "1#PRI", exist_ok=True)
