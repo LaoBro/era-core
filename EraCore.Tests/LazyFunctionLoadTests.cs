@@ -68,7 +68,7 @@ public class LazyFunctionLoadTests
 		await h.PreloadAsync();
 		h.WriteErb("LAZY.ERB", Corpus);
 
-		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 		var labelDic = h.LabelDic;
 		var ok = await loader.LoadErbDir(h.ErbDir, displayReport: false, labelDic);
 		Assert.True(ok, "lazy LoadErbDir failed\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
@@ -108,7 +108,7 @@ public class LazyFunctionLoadTests
 			ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
 			await h.PreloadAsync();
 			h.WriteErb("LAZY2.ERB", Corpus);
-			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 			await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
 			var called = Find(h.LabelDic, "CALLED");
 			Assert.False(called.IsStub);
@@ -124,7 +124,7 @@ public class LazyFunctionLoadTests
 			await h.InitializeAsync();
 			await h.PreloadAsync();
 			h.WriteErb("LAZY2B.ERB", Corpus);
-			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 			await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
 			var called = Find(h.LabelDic, "CALLED");
 			eagerChain = SummarizeChain(called);
@@ -147,7 +147,7 @@ public class LazyFunctionLoadTests
 		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
 		await h.PreloadAsync();
 		h.WriteErb("LAZY3.ERB", Corpus);
-		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 		await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
 		var called = Find(h.LabelDic, "CALLED");
 		Assert.False(called.IsStub);
@@ -177,7 +177,7 @@ public class LazyFunctionLoadTests
 		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
 		var path = h.WriteErb("LAZY4.ERB", Corpus);
 		await h.PreloadAsync();
-		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 		await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
 		var uncalled = Find(h.LabelDic, "UNCALLED");
 		Assert.True(uncalled.IsStub);
@@ -189,7 +189,7 @@ public class LazyFunctionLoadTests
 		Assert.False(uncalled.IsStub, "failed materialization clears stub to stop retry");
 
 		// 清理 Preload 缓存，避免污染后续测试。
-		loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+		loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 		await Task.CompletedTask;
 	}
 
@@ -204,7 +204,7 @@ public class LazyFunctionLoadTests
 		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
 		await h.PreloadAsync();
 		h.WriteErb("LAZY6.ERB", Corpus);
-		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 		await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
 
 		var uncalled = Find(h.LabelDic, "UNCALLED");
@@ -239,7 +239,7 @@ public class LazyFunctionLoadTests
 
 		var analysisEnv = new LoaderEnv(h.CsvDir, h.ErbDir, analysisMode: true,
 			analysisFiles: new List<string>(), debugMode: false) { DirAccessor = h.Env.DirAccessor };
-		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, analysisEnv, _ => { });
+		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, analysisEnv, line => h.Process.scaningLine = line);
 		var ok = await loader.LoadErbDir(h.ErbDir, displayReport: true, h.LabelDic);
 		Assert.True(ok);
 		// 所有标签均应全量物化（无桩）。

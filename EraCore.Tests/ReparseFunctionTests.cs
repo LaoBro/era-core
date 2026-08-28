@@ -93,7 +93,7 @@ $INNER
 		var path = h.WriteErb("REPARSE.ERB", Corpus);
 		await h.PreloadAsync();
 
-		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 		var labelDic = new LabelDictionary();
 		// 加载失败时以控制台行辅助定位语料问题；成功路径不做字符串拼接。
 		var ok = await loader.LoadErbDir(h.ErbDir, displayReport: false, labelDic);
@@ -124,7 +124,7 @@ $INNER
 		var path = h.WriteErb("REPARSE2.ERB", "@BASIC2\nRETURN\n");
 		await h.PreloadAsync();
 
-		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 		var labelDic = new LabelDictionary();
 		await loader.LoadErbDir(h.ErbDir, displayReport: false, labelDic);
 		var eager = labelDic.GetNonEventLabel("BASIC2");
@@ -143,7 +143,7 @@ $INNER
 		var path = h.WriteErb("REPARSE3.ERB", "@BASIC3\nRETURN\n");
 		await h.PreloadAsync();
 
-		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 		var labelDic = new LabelDictionary();
 		await loader.LoadErbDir(h.ErbDir, displayReport: false, labelDic);
 		var eager = labelDic.GetNonEventLabel("BASIC3");

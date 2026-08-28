@@ -182,7 +182,7 @@ public class SelectCaseJumpTableTests
 			ConfigData.Current!.GetConfigItem(ConfigCode.IgnoreUncalledFunction).SetValue(false);
 			await h.PreloadAsync();
 			h.WriteErb(erbName, corpus);
-			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 			var ok = await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
 			if (!ok)
 			{
@@ -463,7 +463,7 @@ public class SelectCaseJumpTableTests
 			ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
 			await h.PreloadAsync();
 			h.WriteErb("SCL.ERB", LazyCorpus());
-			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 			if (!await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic))
 				throw new InvalidOperationException("lazy LoadErbDir failed");
 

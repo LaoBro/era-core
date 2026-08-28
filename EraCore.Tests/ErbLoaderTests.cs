@@ -32,10 +32,16 @@ public class ErbLoaderTests
 		Assert.Equal(expected, ErbLoader.ShouldRunParallelSweep(configured, analysisMode, isAndroid));
 	}
 
-	/// <summary>构造 ErbLoader + 一个记录 scaningLine 写入的 spy sink。</summary>
+	/// <summary>
+	/// 构造 ErbLoader + 一个记录 scaningLine 写入的 spy sink。
+	/// sink 同时写入 <c>h.Process.scaningLine</c>：仅 spy.Add 而不回写会让串行路径的
+	/// GetLoadScaningLine() 恒为 null、私有变量被误判未定义（ErbLoader.cs:2064 已记录该误报），
+	/// 使被测行为偏离真实启动（Process.cs:627 注入的是 `line => process.scaningLine = line`）。
+	/// </summary>
 	private static ErbLoader NewLoaderWithSpy(LoaderTestHarness h, List<LogicalLine?> spy)
 	{
-		return new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => spy.Add(line));
+		return new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env,
+			line => { spy.Add(line); h.Process.scaningLine = line; });
 	}
 
 	[Fact]
@@ -151,7 +157,7 @@ public class ErbLoaderTests
 		await h.PreloadAsync();
 		var analysisEnv = new LoaderEnv(h.CsvDir, h.ErbDir, analysisMode: true,
 			analysisFiles: new List<string>(), debugMode: false) { DirAccessor = new FileSystemGameDirAccessor() };
-		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, analysisEnv, _ => { });
+		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, analysisEnv, line => h.Process.scaningLine = line);
 		var labelDic = new LabelDictionary();
 
 		await loader.LoadErbDir(h.ErbDir, displayReport: false, labelDic);
@@ -286,7 +292,8 @@ public class ErbLoaderTests
 		var analysisEnv = new LoaderEnv(h.CsvDir, h.ErbDir, analysisMode: true,
 			analysisFiles: new List<string>(), debugMode: false) { DirAccessor = new FileSystemGameDirAccessor() };
 		var spy = new List<LogicalLine?>();
-		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, analysisEnv, line => spy.Add(line));
+		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, analysisEnv,
+			line => { spy.Add(line); h.Process.scaningLine = line; });
 		var labelDic = new LabelDictionary();
 
 		var initialLineCount = h.Console.DisplayLineCount;
@@ -423,7 +430,7 @@ public class ErbLoaderTests
 		var before = h.Console.DisplayLineCount;
 		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelErbLoad).SetValue(false);
 		var labelDicSerial = new LabelDictionary();
-		await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { })
+		await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line)
 			.LoadErbDir(h.ErbDir, displayReport: false, labelDicSerial);
 		var serialLines = h.Console.DisplayLineList.Skip(before)
 			.Select(l => l?.ToString() ?? "").Where(s => !s.StartsWith("経過時間:")).ToList();
@@ -498,7 +505,7 @@ public class ErbLoaderTests
 		var before = h.Console.DisplayLineCount;
 		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
 		var labelDicSerial = new LabelDictionary();
-		await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { })
+		await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line)
 			.LoadErbDir(h.ErbDir, displayReport: false, labelDicSerial);
 		var serialLines = h.Console.DisplayLineList.Skip(before)
 			.Select(l => l?.ToString() ?? "").Where(s => !s.StartsWith("経過時間:")).ToList();
@@ -540,7 +547,7 @@ public class ErbLoaderTests
 		var before = h.Console.DisplayLineCount;
 		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
 		var labelDicSerial = new LabelDictionary();
-		await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { })
+		await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line)
 			.LoadErbDir(h.ErbDir, displayReport: false, labelDicSerial);
 		var serialLines = h.Console.DisplayLineList.Skip(before)
 			.Select(l => l?.ToString() ?? "").Where(s => !s.StartsWith("経過時間:")).ToList();
@@ -578,7 +585,7 @@ public class ErbLoaderTests
 		var before = h.Console.DisplayLineCount;
 		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
 		var labelDicSerial = new LabelDictionary();
-		await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { })
+		await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line)
 			.LoadErbDir(h.ErbDir, displayReport: false, labelDicSerial);
 		var serialLines = h.Console.DisplayLineList.Skip(before)
 			.Select(l => l?.ToString() ?? "").Where(s => !s.StartsWith("経過時間:")).ToList();

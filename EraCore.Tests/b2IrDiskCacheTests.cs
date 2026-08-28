@@ -101,7 +101,7 @@ public class b2IrDiskCacheTests
 		string? srcCalled = null, srcUncalled = null;
 		int srcLocal = -1, srcLocals = -1;
 		{
-			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 			var ok = await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
 			Assert.True(ok, "round1 LoadErbDir failed\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
 			Assert.True(File.Exists(irFile), "first launch should build IR cache file");
@@ -126,7 +126,7 @@ public class b2IrDiskCacheTests
 		{
 			// 复用同一引擎（TempRoot 不变）；新 loader 使 _ir 从磁盘重新加载命中。
 			var irMtimeBefore = File.GetLastWriteTimeUtc(irFile);
-			var loader2 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+			var loader2 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 			var ok2 = await loader2.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
 			Assert.True(ok2, "round2 LoadErbDir failed\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
 			// 源未改动 → 指纹命中 → IR 不应被重建。
@@ -167,7 +167,7 @@ public class b2IrDiskCacheTests
 		ConfigData.Current!.GetConfigItem(ConfigCode.IrDiskCacheLoad).SetValue(false);
 		await h.PreloadAsync();
 		h.WriteErb("IROFF.ERB", Corpus);
-		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 		var ok = await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
 		Assert.True(ok, "disabled LoadErbDir failed\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
 		Assert.False(File.Exists(FullIrPath(h.TempRoot)), "IrDiskCacheLoad:FALSE must not create IR cache");
@@ -192,7 +192,7 @@ public class b2IrDiskCacheTests
 		// 首次：建缓存，物化 UNCALLED（源）
 		string? beforeChain = null;
 		{
-			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 			await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
 			Assert.True(File.Exists(irFile));
 			var before = Find(h.LabelDic, "UNCALLED");
@@ -208,7 +208,7 @@ public class b2IrDiskCacheTests
 
 		// 第二次：指纹变化 → IR 失效重建；UNCALLED 物化反映新内容（无幽灵）
 		{
-			var loader2 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+			var loader2 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 			await loader2.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
 			var after = Find(h.LabelDic, "UNCALLED");
 			ErbLoader.MaterializeOnRuntime(after);
@@ -234,7 +234,7 @@ public class b2IrDiskCacheTests
 
 		// 首轮建缓存
 		{
-			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 			await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
 			Assert.True(File.Exists(irFile));
 		}
@@ -243,7 +243,7 @@ public class b2IrDiskCacheTests
 
 		// 第二轮：校验失败 → 回退源加载；物化正确、不抛
 		{
-			var loader2 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+			var loader2 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 			var ok = await loader2.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
 			Assert.True(ok, "corrupt IR should silently fall back\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
 			var uncalled = Find(h.LabelDic, "UNCALLED");

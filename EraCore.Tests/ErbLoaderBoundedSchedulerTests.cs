@@ -185,7 +185,7 @@ public class ErbLoaderBoundedSchedulerTests
 		// 串行对照：签名一致
 		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelErbLoad).SetValue(false);
 		var serialDic = new LabelDictionary();
-		var serialOk = await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, _ => { })
+		var serialOk = await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line)
 			.LoadErbDir(h.ErbDir, displayReport: false, serialDic);
 		Assert.True(serialOk);
 		Assert.Equal(ExpectedSignature(), Signature(serialDic));

@@ -33,7 +33,7 @@ internal static class PlaceholderAssert
 public class PreloadCacheLifecycleTests
 {
 	private static ErbLoader NewLoader(LoaderTestHarness h) =>
-		new(h.Console, h.Exm, h.IdDic, h.Env, _ => { });
+		new(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
 
 	[Fact]
 	public async Task LoadErbDir_clears_cached_lines_but_keeps_path_index()
