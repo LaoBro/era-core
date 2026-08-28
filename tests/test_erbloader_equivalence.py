@@ -212,6 +212,11 @@ def _build_corpus(src_game, inject_warnings):
         cfg = game / "emuera.config"
         if cfg.exists():
             _set_config_lines(cfg, [
+                # 该默认语料必须真正进入 ParseScript 未调用清扫；否则产品默认的
+                # LazyFunctionLoad 会让两次运行只比较标签生成，无法覆盖 Issue 08。
+                ("未呼び出し関数の本体解析を遅延する", "NO"),
+                ("関数の内容をIRディスクキャッシュする", "NO"),
+                ("サブディレクトリを検索する", "YES"),
                 ("同名の非イベント関数が複数定義されたとき警告する", "YES"),
                 ("呼び出されなかった関数を無視する", "NO"),
                 ("関数が見つからない警告の扱い", "ONCE"),
@@ -255,15 +260,20 @@ def main():
     print(f"[Equivalence] binary={binary}")
 
     # ---- 同一游戏，两条路径各加载一次 ----
-    game = _build_corpus(source, inject)
+    # 两次加载必须使用独立副本：加载期可能创建/消费 IR 缓存，且配置文件本身
+    # 是可写状态。复用同一目录会把第一次运行的副作用带入第二次，导致比较结果
+    # 无法归因于并行开关。
+    parallel_game = _build_corpus(source, inject)
+    serial_game = _build_corpus(source, inject)
+    _set_parallel(parallel_game / "emuera.config", parallel=True)
+    _set_parallel(serial_game / "emuera.config", parallel=False)
 
     print("\n--- 并行路径加载 ---")
-    par_totals, par_warnings = _run_path(binary, game)
+    par_totals, par_warnings = _run_path(binary, parallel_game)
     print(f"  三数统计={par_totals} 警告条数={len(par_warnings)}")
 
     print("\n--- 串行 fallback 加载 ---")
-    _set_parallel(game / "emuera.config", parallel=False)
-    ser_totals, ser_warnings = _run_path(binary, game)
+    ser_totals, ser_warnings = _run_path(binary, serial_game)
     print(f"  三数统计={ser_totals} 警告条数={len(ser_warnings)}")
 
     # 断言：三数统计完全一致
@@ -283,7 +293,7 @@ def main():
             print("  diff:", d)
 
     report = {
-        "gameDirs": str(game),
+        "gameDirs": {"parallel": str(parallel_game), "serial": str(serial_game)},
         "injectWarnings": inject,
         "parallel": _equiv_report(par_totals, par_warnings),
         "serial": _equiv_report(ser_totals, ser_warnings),
