@@ -20,6 +20,18 @@ namespace MinorShift.Emuera.Tests;
 [Collection("LoaderTests")]
 public class ErbLoaderTests
 {
+	[Theory]
+	[InlineData(true, false, false, true)]
+	[InlineData(false, false, false, false)]
+	[InlineData(true, true, false, false)]
+	[InlineData(true, false, true, false)]
+	[InlineData(false, false, true, false)]
+	public void ParallelParseScript_policy_disables_sweep_on_android(
+		bool configured, bool analysisMode, bool isAndroid, bool expected)
+	{
+		Assert.Equal(expected, ErbLoader.ShouldRunParallelSweep(configured, analysisMode, isAndroid));
+	}
+
 	/// <summary>构造 ErbLoader + 一个记录 scaningLine 写入的 spy sink。</summary>
 	private static ErbLoader NewLoaderWithSpy(LoaderTestHarness h, List<LogicalLine?> spy)
 	{

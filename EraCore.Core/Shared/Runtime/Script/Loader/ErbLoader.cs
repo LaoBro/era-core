@@ -1434,6 +1434,13 @@ internal sealed class ErbLoader
 	/// </summary>
 	private ParseScriptDiag? _parseDiag;
 
+	/// <summary>
+	/// NativeAOT Android 止血门：并行未调用清扫在 Android 上暂时统一回退串行。
+	/// 该策略只改变平台安全门，不改变桌面配置或 AnalysisMode 的既有语义。
+	/// </summary>
+	internal static bool ShouldRunParallelSweep(bool configured, bool analysisMode, bool isAndroid)
+		=> configured && !analysisMode && !isAndroid;
+
 	private sealed class ParseScriptDiag
 	{
 		internal readonly Stopwatch Sw = new();
@@ -1516,7 +1523,12 @@ internal sealed class ErbLoader
 		}
 		// erb-loader-parallel 08 D4-1：未调用遍历并行化（C-only）——callform / else 两分支同票同套
 		//（D4-3）。门控：ParallelParseScript 且非 AnalysisMode（warningDic/tempDic 路径强制串行，D5 前提）。
-		bool parallelSweep = Config.Config.ParallelParseScript && !env.AnalysisMode;
+		// NativeAOT Android SIGSEGV 止血：Android 暂不运行并行清扫，设置值仍保留供桌面/后续 A-B。
+		bool parallelSweepConfigured = Config.Config.ParallelParseScript;
+		bool isAndroid = OperatingSystem.IsAndroid();
+		bool parallelSweep = ShouldRunParallelSweep(parallelSweepConfigured, env.AnalysisMode, isAndroid);
+		EmueraLog.Info("ErbLoader",
+			$"parsescript_policy configured={parallelSweepConfigured} effective={parallelSweep} android={isAndroid} analysis={env.AnalysisMode}");
 		bool sweepParallelRan = false;
 		if (useCallForm)
 		{//callform系が使われたら全ての関数が呼び出されたとみなす。
