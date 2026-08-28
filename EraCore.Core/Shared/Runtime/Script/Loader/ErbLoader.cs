@@ -1406,6 +1406,11 @@ internal sealed class ErbLoader
 		public readonly List<FnfEvent> FnfEvents = [];
 		/// <summary>FNF 占位标记 level（普通警告 level 0-3，-1 安全保留）。</summary>
 		public const int FnfPlaceholderLevel = -1;
+		/// <summary>
+		/// D5#3：本 label 解析过程中是否用到 callform 系。并行段由 <c>MarkUseCallForm</c> 写入本字段，
+		/// 回放段 <c>ReplaySweepArt</c> 在主线程合并回 <c>useCallForm</c>——并行期间不碰实例字段。
+		/// </summary>
+		public bool UseCallForm;
 		public void AddFnfEvent(string str, LogicalLine line, int level, bool isError)
 		{
 			Warnings.Add(new ParserMediator.ParserWarning("", null!, FnfPlaceholderLevel, null!));
@@ -1776,7 +1781,8 @@ internal sealed class ErbLoader
 	/// <see cref="Parallel"/>.ForEach(Partitioner 范围分区, Min(ProcessorCount, 8))——Partitioner 均载 +
 	/// 度数封顶（度数硬编码不可配，R3-Q11）；per-label 产物（警告缓冲 / FNF 事件）按 labelList 序
 	/// 存入返回数组，回放段串行重放。共享状态处置对照 D5 清单：#1 警告 per-label 缓冲（Begin/EndWarningBuffer）；
-	/// #2 FNF 事件拦截（printFunctionNotFoundWarning 开头）；#3 useCallForm 良性竞争直写（不改）；
+	/// #2 FNF 事件拦截（printFunctionNotFoundWarning 开头）；#3 useCallForm 改返回值 + per-label
+	/// 产物（原为 ref 直写实例字段，共享写已消除，见 MarkUseCallForm）；
 	/// #5 nestCheck 集合局部化（nestCheck 内部）；#6 scaningLine 写点切换（ScanLine()）；
 	/// #7 Depth check-then-set 同层同值良性竞争（事实 B）；#8 并行段跳过 per-label 分步计时（_parseDiag 置 null，
 	/// phases 总时长计时在调用方）。异常语义（R3-Q9）：先按序回放已产生的缓冲（已解析 label 的警告不丢）
@@ -1869,6 +1875,10 @@ internal sealed class ErbLoader
 	/// </summary>
 	private void ReplaySweepArt(UncalledSweepArt art)
 	{
+		// D5#3：并行段采集的 callform 标记在此由主线程合并（单向置位，等价于串行的 OR 语义）。
+		// 必须早于下方 warnings.Count == 0 的提前返回，否则无警告的 label 会丢失该标记。
+		if (art.UseCallForm)
+			useCallForm = true;
 		var warnings = art.Warnings;
 		if (warnings.Count == 0)
 			return;
@@ -3063,7 +3073,10 @@ internal sealed class ErbLoader
 				string FunctionNotFoundName = null!;
 				try
 				{
-					func.Function.Instruction.SetJumpTo(ref useCallForm, func, depth, ref FunctionNotFoundName);
+					// D5#3：callform 标记改为返回值，由 MarkUseCallForm 决定落点——
+					// 并行未调用清扫期间写入 per-label 产物，不再直写本实例字段。
+					if (func.Function.Instruction.SetJumpTo(func, depth, ref FunctionNotFoundName))
+						MarkUseCallForm();
 				}
 				catch (CodeEE e)
 				{
@@ -3080,8 +3093,24 @@ internal sealed class ErbLoader
 				continue;
 			}
 			if (func.FunctionCode == FunctionCode.TRYCALLLIST || func.FunctionCode == FunctionCode.TRYJUMPLIST)
-				useCallForm = true;
+				MarkUseCallForm();
 		}
+	}
+
+	/// <summary>
+	/// erb-loader-parallel 08 D5#3：记录「用到 callform 系」，按上下文分流落点而非直写实例字段。
+	/// 主循环（串行）下 <see cref="SweepArtCurrent"/> 为 null → 直写 <see cref="useCallForm"/>，
+	/// 与改动前完全一致；未调用并行清扫期间写入 per-label 产物
+	/// <see cref="UncalledSweepArt.UseCallForm"/>，由回放段在主线程合并。
+	/// 并行区因此不再有对本实例字段的写入（原为 ref 直写，构成共享写）。
+	/// </summary>
+	private void MarkUseCallForm()
+	{
+		UncalledSweepArt? art = SweepArtCurrent.Value;
+		if (art != null)
+			art.UseCallForm = true;
+		else
+			useCallForm = true;
 	}
 
 	// erb-loader-parallel 03：原 GetErbFilesFromCache 孪生实现收敛至 Preload.GetFilesFromCache（扩展名 + 日志标签参数化）。

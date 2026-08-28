@@ -1164,12 +1164,11 @@ internal sealed partial class FunctionIdentifier
 			flag = EXTENDED | METHOD_SAFE | FORCE_SETARG;
 		}
 
-		public override void SetJumpTo(ref bool useCallForm, InstructionLine func, int currentDepth, ref string FunctionoNotFoundName)
+		public override bool SetJumpTo(InstructionLine func, int currentDepth, ref string FunctionoNotFoundName)
 		{
 			if (!func.Argument.IsConst)
 			{
-				useCallForm = true;
-				return;
+				return true;
 			}
 			SpCallFArgment callfArg = (SpCallFArgment)func.Argument;
 			try
@@ -1179,7 +1178,7 @@ internal sealed partial class FunctionIdentifier
 			catch (CodeEE e)
 			{
 				ParserMediator.Warn(e.Message, func, 2, true, false);
-				return;
+				return false;
 			}
 			if (callfArg.FuncTerm == null)
 			{
@@ -1187,8 +1186,9 @@ internal sealed partial class FunctionIdentifier
 					ParserMediator.Warn(string.Format(trerror.NotDefinedFunc.Text, callfArg.ConstStr), func, 2, true, false);
 				else
 					ParserMediator.Warn(callfArg.ConstStr, func, 2, true, false);
-				return;
+				return false;
 			}
+			return false;
 		}
 
 		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
@@ -1261,12 +1261,11 @@ internal sealed partial class FunctionIdentifier
 			return ret;
 		}
 
-		public override void SetJumpTo(ref bool useCallForm, InstructionLine func, int currentDepth, ref string FunctionoNotFoundName)
+		public override bool SetJumpTo(InstructionLine func, int currentDepth, ref string FunctionoNotFoundName)
 		{
 			if (!func.Argument.IsConst)
 			{
-				useCallForm = true;
-				return;
+				return true;
 			}
 
 			SpCallSharpArgment arg = (SpCallSharpArgment)func.Argument;
@@ -1274,10 +1273,11 @@ internal sealed partial class FunctionIdentifier
 			if (!manager.HasMethod(arg.ConstStr))
 			{
 				ParserMediator.Warn(string.Format(trerror.MethodNotFound.Text, arg.ConstStr), func, 2, true, false);
-				return;
+				return false;
 			}
 
 			arg.CallFunc = manager.GetMethod(func.Argument.ConstStr);
+			return false;
 		}
 
 		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
@@ -1319,12 +1319,11 @@ internal sealed partial class FunctionIdentifier
 			flag = EXTENDED | METHOD_SAFE | FORCE_SETARG;
 		}
 
-		public override void SetJumpTo(ref bool useCallForm, InstructionLine func, int currentDepth, ref string FunctionoNotFoundName)
+		public override bool SetJumpTo(InstructionLine func, int currentDepth, ref string FunctionoNotFoundName)
 		{
 			if (!func.Argument.IsConst)
 			{
-				useCallForm = true;
-				return;
+				return true;
 			}
 			SpCallFArgment callfArg = (SpCallFArgment)func.Argument;
 			//if (Config.Config.IgnoreCase)
@@ -1335,12 +1334,13 @@ internal sealed partial class FunctionIdentifier
 			}
 			catch
 			{
-				return;
+				return false;
 			}
 			if (callfArg.FuncTerm == null)
 			{
-				return;
+				return false;
 			}
+			return false;
 		}
 
 		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
@@ -3212,14 +3212,14 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | FLOW_CONTROL | PARTIAL | FORCE_SETARG;
 		}
 
-		public override void SetJumpTo(ref bool useCallForm, InstructionLine func, int currentDepth, ref string FunctionoNotFoundName)
+		public override bool SetJumpTo(InstructionLine func, int currentDepth, ref string FunctionoNotFoundName)
 		{
 			LogicalLine jumpto = func.NextLine;
 			if ((jumpto == null) || (jumpto.NextLine == null) ||
 				(jumpto is FunctionLabelLine) || (jumpto is NullLine))
 			{
 				ParserMediator.Warn(trerror.NothingAfterSif.Text, func, 2, true, false);
-				return;
+				return false;
 			}
 			else if (jumpto is InstructionLine)
 			{
@@ -3236,6 +3236,7 @@ internal sealed partial class FunctionIdentifier
 
 			if ((func.JumpTo != null) && (func.Position!.Value.LineNo + 1 != func.NextLine.Position!.Value.LineNo))
 				ParserMediator.Warn(trerror.EmptyAfterSif.Text, func, 0, false, true);
+			return false;
 		}
 
 		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
@@ -3661,7 +3662,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED | FLOW_CONTROL;
 		}
 
-		public override void SetJumpTo(ref bool useCallForm, InstructionLine func, int currentDepth, ref string FunctionoNotFoundName)
+		public override bool SetJumpTo(InstructionLine func, int currentDepth, ref string FunctionoNotFoundName)
 		{
 			FunctionLabelLine label = func.ParentLabelLine;
 			if (!label.IsMethod)
@@ -3682,6 +3683,7 @@ internal sealed partial class FunctionIdentifier
 					}
 				}
 			}
+			return false;
 		}
 
 		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
@@ -3717,12 +3719,11 @@ internal sealed partial class FunctionIdentifier
 		readonly bool isJump;
 		readonly bool isTry;
 
-		public override void SetJumpTo(ref bool useCallForm, InstructionLine func, int currentDepth, ref string FunctionoNotFoundName)
+		public override bool SetJumpTo(InstructionLine func, int currentDepth, ref string FunctionoNotFoundName)
 		{
 			if (!func.Argument.IsConst)
 			{
-				useCallForm = true;
-				return;
+				return true;
 			}
 			SpCallArgment callArg = (SpCallArgment)func.Argument;
 			string labelName = callArg.ConstStr;
@@ -3730,7 +3731,7 @@ internal sealed partial class FunctionIdentifier
 			if ((call == null) && (!func.Function.IsTry()))
 			{
 				FunctionoNotFoundName = labelName;
-				return;
+				return false;
 			}
 			if (call != null)
 			{
@@ -3741,17 +3742,18 @@ internal sealed partial class FunctionIdentifier
 				{
 					func.IsError = true;
 					func.ErrMes = call.TopLabel.ErrMes;
-					return;
+					return false;
 				}
 				string errMes;
 				callArg.UDFArgument = call.ConvertArg(callArg.RowArgs, out errMes);
 				if (callArg.UDFArgument == null)
 				{
 					ParserMediator.Warn(errMes, func, 2, true, false);
-					return;
+					return false;
 				}
 			}
 			callArg.CallFunc = call!;
+			return false;
 		}
 
 		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
@@ -3799,7 +3801,7 @@ internal sealed partial class FunctionIdentifier
 			flag = FLOW_CONTROL | EXTENDED;
 		}
 
-		public override void SetJumpTo(ref bool useCallForm, InstructionLine func, int currentDepth, ref string FunctionoNotFoundName)
+		public override bool SetJumpTo(InstructionLine func, int currentDepth, ref string FunctionoNotFoundName)
 		{
 			//EVENT関数からCALLされた先でCALLEVENTされるようなパターンはIntoFunctionで捕まえる
 			FunctionLabelLine label = func.ParentLabelLine;
@@ -3807,6 +3809,7 @@ internal sealed partial class FunctionIdentifier
 			{
 				ParserMediator.Warn(trerror.CanNotUseCallevent.Text, func, 2, true, false);
 			}
+			return false;
 		}
 
 		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
@@ -3836,7 +3839,7 @@ internal sealed partial class FunctionIdentifier
 		}
 		readonly bool isTry;
 
-		public override void SetJumpTo(ref bool useCallForm, InstructionLine func, int currentDepth, ref string FunctionoNotFoundName)
+		public override bool SetJumpTo(InstructionLine func, int currentDepth, ref string FunctionoNotFoundName)
 		{
 			GotoLabelLine jumpto;
 			func.JumpTo = null!;
@@ -3849,7 +3852,7 @@ internal sealed partial class FunctionIdentifier
 					if (!func.Function.IsTry())
 						ParserMediator.Warn(string.Format(trerror.NotDefinedLabelName.Text, labelName), func, 2, true, false);
 					else
-						return;
+						return false;
 				}
 				else if (jumpto.IsError)
 					ParserMediator.Warn(string.Format(trerror.InvalidLabelName.Text, labelName), func, 2, true, false);
@@ -3858,6 +3861,7 @@ internal sealed partial class FunctionIdentifier
 					func.JumpTo = jumpto;
 				}
 			}
+			return false;
 		}
 		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
 		{
