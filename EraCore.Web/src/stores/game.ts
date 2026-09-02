@@ -6,7 +6,7 @@ import { applySnapshot } from '../lib/snapshotReducer';
 import { EMPTY_DISPLAY_STATE } from '../types/protocol';
 import type { DisplayState, DisplaySnapshot, TurnRecord } from '../types/protocol';
 import { useConnectionStore } from './connection';
-import { isMauiEnvironment } from '../lib/mauiBridge';
+import { isMauiEnvironment, type SweepGatePolicyValue } from '../lib/mauiBridge';
 import { TURN_HISTORY_MAX } from '../config/constants';
 
 /**
@@ -502,6 +502,14 @@ export const useGameStore = defineStore('game', () => {
     parallelErbLoad: 'auto',
     parallelParseScript: 'auto',
   });
+  /**
+   * ADR-0026 诊断旋钮一：并行未调用遍历平台门策略——C# 权威状态（来自 config 消息的 sweepGatePolicy 字段）。
+   * 'auto'=跟随平台门（默认，与旧版本逐位一致）；'forceon'=Android 强制并行（复现取证用）；
+   * 'forceoff'=强制串行（紧急杀开关）。设置页「诊断」分段控件据此渲染初始值；切换时投递
+   * setSweepGatePolicy 请求 C# 写 Preferences + 持久化，C# 推回 config 消息后同步回此值。
+   * 仅内存覆盖，游戏随包配置无法设置；下次进游戏生效。
+   */
+  const sweepGatePolicy = ref<SweepGatePolicyValue>('auto');
   /**
    * A0 补充（真机无 adb）：app 内日志查看器——agent.log 内容（来自 getAgentLog 回复的 agentLog 消息）。
    * 设置页「查看日志」按钮触发读取；truncated 表示内容因超过 200K 字符被截断为尾部。
@@ -1488,6 +1496,7 @@ export const useGameStore = defineStore('game', () => {
     agentLogEnabled,
     displayReportOverride,
     perfOverrides,
+    sweepGatePolicy,
     agentLogContent,
     agentLogTruncated,
     fetchConfig,

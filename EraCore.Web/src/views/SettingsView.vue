@@ -2,8 +2,8 @@
 import { ref } from 'vue';
 import { useGameStore } from '../stores/game';
 import { useUiStore } from '../stores/ui';
-import { setAgentLogEnabled, setDisplayReportOverride, setPerfOverride, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
-import type { DisplayReportOverride, PerfOverrideKey } from '../lib/mauiBridge';
+import { setAgentLogEnabled, setDisplayReportOverride, setPerfOverride, setSweepGatePolicy, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
+import type { DisplayReportOverride, PerfOverrideKey, SweepGatePolicyValue } from '../lib/mauiBridge';
 
 const game = useGameStore();
 const ui = useUiStore();
@@ -47,6 +47,17 @@ const perfRows: Array<{ key: PerfOverrideKey; label: string }> = [
   { key: 'parallelErbLoad', label: '并行读取 ERB' },
   { key: 'parallelParseScript', label: '并行解析未调用函数' },
 ];
+
+/**
+ * ADR-0026 诊断旋钮一（并行未调用遍历平台门策略）切换——投递 setSweepGatePolicy 请求 C#
+ * 写 Preferences + 持久化，本地乐观更新。C# 处理完推回 config 消息（含 sweepGatePolicy 字段）
+ * 再次同步——最终显示以 C# 权威状态为准。
+ * 注意：策略只在 ERB 加载时被读取，本局不受影响，重新进入游戏后生效。
+ */
+function chooseSweepGatePolicy(value: SweepGatePolicyValue): void {
+  setSweepGatePolicy(value);
+  game.sweepGatePolicy = value;
+}
 
 /**
  * A0 补充（真机无 adb）：请求 C# 读取 agent.log 内容——回复异步到达（agentLog 消息
@@ -132,6 +143,36 @@ const logCopied = ref(false);
           安卓上若感觉进入游戏或运行中变慢，可将「懒函数加载」切到强制关回到即时解析
           （IR 磁盘缓存仅在懒函数加载开启时生效）；并行两项用于排查加载语义差异。
           切换不影响当前局，重新进入游戏后生效。
+        </p>
+      </div>
+      <div class="section">
+        <h3>诊断</h3>
+        <div class="setting-row">
+          <span class="setting-label">并行未调用遍历平台门</span>
+          <div class="segmented" role="radiogroup" aria-label="并行未调用遍历平台门策略">
+            <button
+              v-for="opt in [
+                { value: 'auto', label: '默认' },
+                { value: 'forceon', label: '强制并行' },
+                { value: 'forceoff', label: '强制串行' },
+              ]"
+              :key="opt.value"
+              class="segmented-item"
+              :class="{ active: game.sweepGatePolicy === opt.value }"
+              role="radio"
+              :aria-checked="game.sweepGatePolicy === opt.value"
+              @click="chooseSweepGatePolicy(opt.value as SweepGatePolicyValue)"
+            >
+              {{ opt.label }}
+            </button>
+          </div>
+        </div>
+        <p class="hint-text">
+          诊断旋钮，默认保持 auto；复现 Android 并行崩溃用。默认=跟随平台门（Android 上串行，
+          行为与旧版本完全一致）；强制并行=Android 上越过平台门进入并行未调用遍历（取证用，
+          可能让 app 崩溃）；强制串行=无论任何配置一律串行（紧急杀开关）。仅内存覆盖，
+          游戏配置无法解除；切换不影响当前局，重新进入游戏后生效，实际执行路径以日志
+          parsescript_policy 的 policy= 字段为准。
         </p>
       </div>
       <div class="section">

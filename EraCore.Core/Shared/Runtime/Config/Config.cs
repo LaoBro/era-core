@@ -99,6 +99,8 @@ internal sealed class Config
 	public static bool ParallelErbLoad => Current!._data.GetConfigValue<bool>(ConfigCode.ParallelErbLoad);
 	/// <summary>erb-loader-parallel 08：ParseScript 未调用遍历并行开关（默认 true，与 ParallelErbLoad 正交）。false = 串行 fallback；AnalysisMode 一律强制串行。</summary>
 	public static bool ParallelParseScript => Current!._data.GetConfigValue<bool>(ConfigCode.ParallelParseScript);
+	/// <summary>ADR-0026 诊断旋钮：并行未调用遍历平台门策略内存覆盖（null=Auto 跟随平台门）。壳层经 Preferences 写入，无 ConfigCode 条目、游戏配置不可设置。</summary>
+	public static SweepGatePolicy? OverrideSweepGatePolicy => Current?._data.OverrideSweepGatePolicy;
 	public static ReduceArgumentOnLoadFlag ReduceArgumentOnLoad => Current!._data.GetConfigValue<ReduceArgumentOnLoadFlag>(ConfigCode.ReduceArgumentOnLoad);
 	public static bool IgnoreUncalledFunction => Current!._data.GetConfigValue<bool>(ConfigCode.IgnoreUncalledFunction);
 	/// <summary>lazy-function-load（B 线 B1）：函数级惰性物化开关，与 IgnoreUncalledFunction 正交；AnalysisMode 一律强制 eager。</summary>

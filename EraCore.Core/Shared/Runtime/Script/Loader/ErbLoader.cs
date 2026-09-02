@@ -1442,9 +1442,20 @@ internal sealed class ErbLoader
 	/// <summary>
 	/// NativeAOT Android 止血门：并行未调用清扫在 Android 上暂时统一回退串行。
 	/// 该策略只改变平台安全门，不改变桌面配置或 AnalysisMode 的既有语义。
+	/// <para>
+	/// ADR-0026 诊断旋钮扩维：<paramref name="policy"/> 为壳层内存覆盖（默认 Auto 与无旋钮逐位等价）。
+	/// ForceOn 只越过 Android 平台门（AnalysisMode 门与 <paramref name="configured"/> 主开关不越——
+	/// 一个旋钮一个维度）；ForceOff 恒 false，压过一切组合。本函数保持唯一决策点，语义真值表
+	/// 由 ErbLoaderTests 穷举（configured × analysisMode × isAndroid × policy 全组合）。
+	/// </para>
 	/// </summary>
-	internal static bool ShouldRunParallelSweep(bool configured, bool analysisMode, bool isAndroid)
-		=> configured && !analysisMode && !isAndroid;
+	internal static bool ShouldRunParallelSweep(bool configured, bool analysisMode, bool isAndroid, SweepGatePolicy policy)
+		=> policy switch
+		{
+			SweepGatePolicy.ForceOn => configured && !analysisMode,
+			SweepGatePolicy.ForceOff => false,
+			_ => configured && !analysisMode && !isAndroid,
+		};
 
 	private sealed class ParseScriptDiag
 	{
@@ -1529,11 +1540,14 @@ internal sealed class ErbLoader
 		// erb-loader-parallel 08 D4-1：未调用遍历并行化（C-only）——callform / else 两分支同票同套
 		//（D4-3）。门控：ParallelParseScript 且非 AnalysisMode（warningDic/tempDic 路径强制串行，D5 前提）。
 		// NativeAOT Android SIGSEGV 止血：Android 暂不运行并行清扫，设置值仍保留供桌面/后续 A-B。
+		// ADR-0026：policy 为壳层诊断旋钮内存覆盖（null=Auto），parsescript_policy 行尾 policy= 字段
+		// 自证当时策略与生效值（追加式字段，对既有解析兼容）——取证对「哪条路径确实执行了」以此为准。
 		bool parallelSweepConfigured = Config.Config.ParallelParseScript;
 		bool isAndroid = OperatingSystem.IsAndroid();
-		bool parallelSweep = ShouldRunParallelSweep(parallelSweepConfigured, env.AnalysisMode, isAndroid);
+		SweepGatePolicy sweepPolicy = Config.Config.OverrideSweepGatePolicy ?? SweepGatePolicy.Auto;
+		bool parallelSweep = ShouldRunParallelSweep(parallelSweepConfigured, env.AnalysisMode, isAndroid, sweepPolicy);
 		EmueraLog.Info("ErbLoader",
-			$"parsescript_policy configured={parallelSweepConfigured} effective={parallelSweep} android={isAndroid} analysis={env.AnalysisMode}");
+			$"parsescript_policy configured={parallelSweepConfigured} effective={parallelSweep} android={isAndroid} analysis={env.AnalysisMode} policy={SweepGatePolicyCodec.ToConfigString(sweepPolicy)}");
 		bool sweepParallelRan = false;
 		if (useCallForm)
 		{//callform系が使われたら全ての関数が呼び出されたとみなす。

@@ -341,6 +341,56 @@ describe('handleMauiMessage - config displayReportOverride', () => {
   });
 });
 
+// ---------- handleMauiMessage：config 消息（ADR-0026 诊断旋钮一：平台门策略）----------
+
+describe('handleMauiMessage - config sweepGatePolicy (ADR-0026 诊断分组)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('config 消息含 sweepGatePolicy → 写入 store（诊断分段控件渲染依据）', async () => {
+    vi.stubGlobal('window', {
+      location: { protocol: 'https:', hostname: 'app.local' },
+      chrome: { webview: { postMessage: vi.fn() } },
+    });
+
+    await initAppState();
+
+    const game = useGameStore();
+    expect(game.sweepGatePolicy).toBe('auto'); // 默认 auto（跟随平台门，与旧版本逐位一致）
+
+    const handler = (window as any).__onMessage as ((msg: unknown) => void) | undefined;
+
+    handler!({ type: 'config', sweepGatePolicy: 'forceon' });
+    expect(game.sweepGatePolicy).toBe('forceon');
+
+    // 再推 forceoff / auto → 逐个同步
+    handler!({ type: 'config', sweepGatePolicy: 'forceoff' });
+    expect(game.sweepGatePolicy).toBe('forceoff');
+    handler!({ type: 'config', sweepGatePolicy: 'auto' });
+    expect(game.sweepGatePolicy).toBe('auto');
+  });
+
+  it('config 消息含非法 sweepGatePolicy 值 → 忽略不写 store', async () => {
+    vi.stubGlobal('window', {
+      location: { protocol: 'https:', hostname: 'app.local' },
+      chrome: { webview: { postMessage: vi.fn() } },
+    });
+
+    await initAppState();
+
+    const game = useGameStore();
+    const handler = (window as any).__onMessage as ((msg: unknown) => void) | undefined;
+
+    handler!({ type: 'config', sweepGatePolicy: 'on' }); // 旧三态词表不是本旋钮词表
+    expect(game.sweepGatePolicy).toBe('auto'); // 保持原值
+  });
+});
+
 // ---------- handleMauiMessage：agentLog 消息（A0 补充：app 内日志查看器）----------
 
 describe('handleMauiMessage - agentLog (A0 日志查看器)', () => {

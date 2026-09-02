@@ -172,6 +172,10 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
         game.perfOverrides[perfKey] = value;
       }
     }
+    // ADR-0026 诊断旋钮一（平台门策略）的 C# 权威状态——设置页「诊断」分段控件据此渲染初始值
+    if (m.sweepGatePolicy === 'auto' || m.sweepGatePolicy === 'forceon' || m.sweepGatePolicy === 'forceoff') {
+      game.sweepGatePolicy = m.sweepGatePolicy;
+    }
     return;
   }
 

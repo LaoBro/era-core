@@ -344,6 +344,28 @@ export function setPerfOverride(key: PerfOverrideKey, value: DisplayReportOverri
 }
 
 /**
+ * ADR-0026 诊断旋钮一：并行未调用遍历平台门策略值——设置页「诊断」分组专用词表
+ * （与性能覆盖三态 'auto'/'off'/'on' 刻意区分，防误当性能优化项拨动）。
+ */
+export type SweepGatePolicyValue = 'auto' | 'forceon' | 'forceoff';
+
+/**
+ * 设置页「诊断」分组——并行未调用遍历平台门策略（复现 Android 并行崩溃用，默认保持 auto）。
+ *
+ * C# `BridgeHost.HandleSetSweepGatePolicy` 收到后：
+ * 1. 写 Preferences（key=`app.diag.sweepGatePolicy`——游戏加载时 OnReloadGame → ApplySweepGatePolicy 读同一 key 应用）
+ * 2. 不即时改当前局（策略只在 ERB 加载时被读取，真正生效在下次进游戏）
+ * 3. 推回 `config` 消息（含 sweepGatePolicy 字段）同步设置页分段控件的权威状态
+ *
+ * 仅内存覆盖不落盘：游戏随包 emuera.config 无法设置；生效路径见 parsescript_policy 日志 policy= 字段。
+ *
+ * @param value 'auto'=跟随平台门（默认，与旧版本逐位一致）；'forceon'=Android 上强制并行（取证用）；'forceoff'=强制串行（紧急杀开关）
+ */
+export function setSweepGatePolicy(value: SweepGatePolicyValue): void {
+  postInput(JSON.stringify({ type: 'setSweepGatePolicy', value }));
+}
+
+/**
  * A0 补充（真机无 adb）：请求 C# 读取 agent.log 内容推给 Vue（设置页日志查看器）。
  *
  * C# `BridgeHost.HandleGetAgentLog` 收到后调 `AgentLog.ReadAllText()`（内部先 flush，

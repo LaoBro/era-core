@@ -295,6 +295,9 @@ public partial class MainPage : ContentPage
                 // 性能（启动加载）覆盖：Initialize 后、会话创建前压值——盖过三源合并结果，
                 // 随后会话创建时 ErbLoader 加载 ERB 读到的即覆盖后的开关值
                 BridgeHost.ApplyPerformanceOverrides(newConfig);
+                // ADR-0026 诊断旋钮一（并行未调用遍历平台门策略）：同点应用——仅内存覆盖写
+                // OverrideSweepGatePolicy，ErbLoader 加载 ERB 时读并在 parsescript_policy 日志自证
+                BridgeHost.ApplySweepGatePolicy(newConfig);
                 var hasWrite = dirAccessor.HasWriteAccess();
                 Console.WriteLine($"[maui] OnReloadGame init completed: ExeDir={paths.ExeDir}, hasWrite={hasWrite}");
 #if ANDROID

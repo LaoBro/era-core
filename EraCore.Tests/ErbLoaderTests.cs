@@ -20,16 +20,46 @@ namespace MinorShift.Emuera.Tests;
 [Collection("LoaderTests")]
 public class ErbLoaderTests
 {
+	/// <summary>
+	/// ADR-0026 诊断旋钮：ShouldRunParallelSweep 语义真值表——
+	/// 主开关(configured) × AnalysisMode × Android × policy(auto/forceon/forceoff) 全 24 组合穷举。
+	/// 语义边界（回归保护）：Auto 与 ADR-0024 止血门逐位等价；ForceOn 只越过 Android 平台门，
+	/// 不越过 AnalysisMode 门与主开关；ForceOff 压过一切组合恒串行。
+	/// (true,false,true,Auto) 行即探针分支 probe-android-sweep 曾临时改 Short 并 Skip 的用例——
+	/// 随 policy 维度参数化恢复：Auto 下 Android 仍串行，越门改用 ForceOn 显式表达。
+	/// </summary>
 	[Theory]
-	[InlineData(true, false, false, true)]
-	[InlineData(false, false, false, false)]
-	[InlineData(true, true, false, false)]
-	[InlineData(true, false, true, false)]
-	[InlineData(false, false, true, false)]
-	public void ParallelParseScript_policy_disables_sweep_on_android(
-		bool configured, bool analysisMode, bool isAndroid, bool expected)
+	// ---- Auto：configured && !analysisMode && !isAndroid（与改动前逐位一致）----
+	[InlineData(true, false, false, SweepGatePolicy.Auto, true)]
+	[InlineData(false, false, false, SweepGatePolicy.Auto, false)]
+	[InlineData(true, true, false, SweepGatePolicy.Auto, false)]
+	[InlineData(true, false, true, SweepGatePolicy.Auto, false)]
+	[InlineData(false, true, false, SweepGatePolicy.Auto, false)]
+	[InlineData(false, false, true, SweepGatePolicy.Auto, false)]
+	[InlineData(true, true, true, SweepGatePolicy.Auto, false)]
+	[InlineData(false, true, true, SweepGatePolicy.Auto, false)]
+	// ---- ForceOn：configured && !analysisMode（Android 平台门被越过；其余门不动）----
+	[InlineData(true, false, false, SweepGatePolicy.ForceOn, true)]
+	[InlineData(true, false, true, SweepGatePolicy.ForceOn, true)]
+	[InlineData(false, false, false, SweepGatePolicy.ForceOn, false)]
+	[InlineData(false, false, true, SweepGatePolicy.ForceOn, false)]
+	[InlineData(true, true, false, SweepGatePolicy.ForceOn, false)]
+	[InlineData(true, true, true, SweepGatePolicy.ForceOn, false)]
+	[InlineData(false, true, false, SweepGatePolicy.ForceOn, false)]
+	[InlineData(false, true, true, SweepGatePolicy.ForceOn, false)]
+	// ---- ForceOff：恒 false（紧急杀开关，压过游戏配置与一切组合）----
+	[InlineData(true, false, false, SweepGatePolicy.ForceOff, false)]
+	[InlineData(false, false, false, SweepGatePolicy.ForceOff, false)]
+	[InlineData(true, true, false, SweepGatePolicy.ForceOff, false)]
+	[InlineData(true, false, true, SweepGatePolicy.ForceOff, false)]
+	[InlineData(false, true, false, SweepGatePolicy.ForceOff, false)]
+	[InlineData(false, false, true, SweepGatePolicy.ForceOff, false)]
+	[InlineData(true, true, true, SweepGatePolicy.ForceOff, false)]
+	[InlineData(false, true, true, SweepGatePolicy.ForceOff, false)]
+	public void ShouldRunParallelSweep_truth_table_exhaustive(
+		bool configured, bool analysisMode, bool isAndroid, SweepGatePolicy policy, bool expected)
 	{
-		Assert.Equal(expected, ErbLoader.ShouldRunParallelSweep(configured, analysisMode, isAndroid));
+		Assert.Equal(expected, ErbLoader.ShouldRunParallelSweep(configured, analysisMode, isAndroid, policy));
 	}
 
 	/// <summary>

@@ -92,8 +92,10 @@ internal sealed record LayoutMessage(
 
 /// <summary>
 /// {"type":"config","maxLog":...,"agentLogEnabled":...,"displayReportOverride":"auto"|"off"|"on",
-///  "lazyFunctionLoad":...,"irDiskCacheLoad":...,"parallelErbLoad":...,"parallelParseScript":...}
-/// （后四字段为性能（启动加载）覆盖三态："auto"|"off"|"on"，缺省 auto=跟随游戏配置）
+///  "lazyFunctionLoad":...,"irDiskCacheLoad":...,"parallelErbLoad":...,"parallelParseScript":...,
+///  "sweepGatePolicy":"auto"|"forceon"|"forceoff"}
+/// （后四字段为性能（启动加载）覆盖三态："auto"|"off"|"on"，缺省 auto=跟随游戏配置；
+///   sweepGatePolicy 为 ADR-0026 诊断旋钮一，缺省 auto=跟随平台门）
 /// </summary>
 internal sealed record ConfigMessage(
     string Type,
@@ -103,7 +105,8 @@ internal sealed record ConfigMessage(
     string LazyFunctionLoad,
     string IrDiskCacheLoad,
     string ParallelErbLoad,
-    string ParallelParseScript);
+    string ParallelParseScript,
+    string SweepGatePolicy);
 
 /// <summary>{"type":"backButtonPressed"}</summary>
 internal sealed record BackButtonPressedMessage(string Type);

@@ -114,6 +114,18 @@ internal sealed class BridgeHost : IDisposable
     /// </summary>
     internal const string PerfParallelParseScriptKey = "app.perf.parallelParseScript";
 
+    // ---- 诊断旋钮（ADR-0026）：设置页「诊断」分组，与性能区隔离——复现 Android 并行崩溃用 ----
+
+    /// <summary>
+    /// Preferences key——并行未调用遍历平台门策略（<see cref="SweepGatePolicy"/>，ADR-0026 诊断旋钮一）。
+    /// 值为 <c>"auto"</c>（跟随平台门，默认，与无旋钮逐位等价）/ <c>"forceon"</c>（只越过 Android 平台门，
+    /// 复现取证用）/ <c>"forceoff"</c>（恒串行，紧急杀开关）。仅内存覆盖不落盘：写入
+    /// <see cref="ConfigData.OverrideSweepGatePolicy"/>（无 ConfigCode 条目，游戏随包配置无法设置）；
+    /// 游戏加载（OnReloadGame → ApplySweepGatePolicy）时读此 key 应用，ErbLoader 在 parsescript_policy
+    /// 日志以 policy= 字段自证。
+    /// </summary>
+    internal const string DiagSweepGatePolicyKey = "app.diag.sweepGatePolicy";
+
     /// <summary>
     /// setPerfOverride 消息的 wire key（Vue 端 camelCase）→（Preferences key，引擎 ConfigCode）映射——
     /// HandleSetPerfOverride 校验 key 合法性、PushConfigMessage/ApplyPerformanceOverrides 遍历用。
@@ -185,6 +197,45 @@ internal sealed class BridgeHost : IDisposable
 #if ANDROID
         Android.Util.Log.Info("EmueraMaui", message);
 #endif
+    }
+
+    /// <summary>
+    /// 读诊断旋钮「平台门策略」的 Preferences 值并经 codec 规范化（null/空/未知值/Preferences
+    /// 不可用一律回退 <see cref="SweepGatePolicy.Auto"/>=跟随平台门）——词表唯一映射点在
+    /// <see cref="SweepGatePolicyCodec"/>，此处不做二次校验。
+    /// </summary>
+    internal static SweepGatePolicy ReadSweepGatePolicyPreference()
+    {
+        try
+        {
+            return SweepGatePolicyCodec.Parse(Preferences.Get(DiagSweepGatePolicyKey, "auto"));
+        }
+        catch
+        {
+            return SweepGatePolicy.Auto;
+        }
+    }
+
+    /// <summary>
+    /// 游戏加载期应用诊断旋钮「并行未调用遍历平台门策略」（ADR-0026）——MainPage.OnReloadGame 在
+    /// <see cref="ApplyPerformanceOverrides"/> 之后、会话创建之前调用。仅内存覆盖：写
+    /// <see cref="ConfigData.OverrideSweepGatePolicy"/>（无 ConfigCode 条目，游戏随包配置无法设置，
+    /// SaveConfig 不落盘）。Auto 置 null（跟随平台门，与无旋钮逐位等价）；随后会话创建时 ErbLoader
+    /// 读到并在 parsescript_policy 日志以 policy= 字段自证。
+    /// </summary>
+    internal static void ApplySweepGatePolicy(ConfigData configData)
+    {
+#if ANDROID
+        const string platform = "android";
+#else
+        const string platform = "desktop";
+#endif
+        var requested = ReadSweepGatePolicyPreference();
+        configData.OverrideSweepGatePolicy = requested == SweepGatePolicy.Auto ? null : requested;
+        LogPerfOverride(
+            $"sweep gate policy override: platform={platform} " +
+            $"requested={SweepGatePolicyCodec.ToConfigString(requested)} " +
+            $"effective={SweepGatePolicyCodec.ToConfigString(requested)}");
     }
 
     /// <summary>三态字符串 ↔ <see cref="ConfigData.OverrideDisplayReport"/> 的映射（纯函数，单测覆盖）。</summary>
@@ -499,6 +550,12 @@ internal sealed class BridgeHost : IDisposable
                 if (type == "setPerfOverride")
                 {
                     HandleSetPerfOverride(doc.RootElement);
+                    return;
+                }
+                // ADR-0026 诊断旋钮一（平台门策略）——写 Preferences，下次进游戏由 ApplySweepGatePolicy 应用
+                if (type == "setSweepGatePolicy")
+                {
+                    HandleSetSweepGatePolicy(doc.RootElement);
                     return;
                 }
                 // A0 补充：app 内日志查看器——读取 agent.log 内容推给 Vue（真机无 adb 场景）
@@ -1034,6 +1091,40 @@ internal sealed class BridgeHost : IDisposable
     }
 
     /// <summary>
+    /// 接收 <c>{"type":"setSweepGatePolicy","value":"auto"|"forceon"|"forceoff"}</c>（ADR-0026 诊断旋钮一，
+    /// 设置页「诊断」分组）；持久化到 <see cref="DiagSweepGatePolicyKey"/>。
+    /// <para>
+    /// 不即时改当前 <see cref="_configData"/>——策略只在 ERB 加载时被 ErbLoader 读取，当前局不受影响；
+    /// 真正生效在下次进游戏（OnReloadGame → ApplySweepGatePolicy 据此压值）。完成后推回 <c>config</c>
+    /// 消息同步 UI。
+    /// </para>
+    /// </summary>
+    private void HandleSetSweepGatePolicy(JsonElement root)
+    {
+        if (root.TryGetProperty("value", out var el) && el.ValueKind == JsonValueKind.String)
+        {
+            var value = el.GetString();
+            if (value is not ("auto" or "forceon" or "forceoff"))
+            {
+                Console.WriteLine($"[bridge] HandleSetSweepGatePolicy: invalid value '{value}'");
+                return;
+            }
+            try
+            {
+                Preferences.Set(DiagSweepGatePolicyKey, value);
+            }
+            catch
+            {
+                // Preferences 不可用——仅持久化失败（下次启动回默认跟随平台门）
+            }
+            Console.WriteLine($"[bridge] sweep gate policy set to {value}");
+            PushConfigMessage();
+            return;
+        }
+        Console.WriteLine("[bridge] HandleSetSweepGatePolicy: missing or non-string 'value' field");
+    }
+
+    /// <summary>
     /// A0 补充（真机无 adb）：app 内日志查看器——读取 agent.log 内容推给 Vue。
     /// <para>
     /// 接收 <c>{"type":"getAgentLog"}</c>；调 <see cref="AgentLog.ReadAllText"/>（内部 flush，
@@ -1236,8 +1327,9 @@ internal sealed class BridgeHost : IDisposable
     /// 推送 emuera.config 值给 Vue——让设置页显示当前配置。
     /// <para>
     /// 消息格式：<c>{"type":"config","maxLog":5000,"agentLogEnabled":false,"displayReportOverride":"auto",
-    /// "lazyFunctionLoad":"auto",...}</c>（性能覆盖四字段为对应 Preferences 三态权威值，
-    /// auto/off/on——切换后 HandleSetPerfOverride 推回同步）。
+    /// "lazyFunctionLoad":"auto",...,"sweepGatePolicy":"auto"}</c>（性能覆盖四字段为对应 Preferences
+    /// 三态权威值 auto/off/on，sweepGatePolicy 为 ADR-0026 诊断旋钮一权威值 auto/forceon/forceoff——
+    /// 切换后对应 Handle* 推回同步）。
     /// </para>
     /// </summary>
     private void PushConfigMessage()
@@ -1249,7 +1341,8 @@ internal sealed class BridgeHost : IDisposable
                 ReadPerfOverride(PerfLazyFunctionLoadKey),
                 ReadPerfOverride(PerfIrDiskCacheLoadKey),
                 ReadPerfOverride(PerfParallelErbLoadKey),
-                ReadPerfOverride(PerfParallelParseScriptKey)),
+                ReadPerfOverride(PerfParallelParseScriptKey),
+                SweepGatePolicyCodec.ToConfigString(ReadSweepGatePolicyPreference())),
             MauiJsonContext.Default.ConfigMessage);
         _dispatcher.Dispatch(() => _jsBridge.PostMessage(msg));
     }
