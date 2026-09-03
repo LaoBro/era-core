@@ -4,6 +4,7 @@ using MinorShift.Emuera.Runtime.Utils;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 
 namespace MinorShift.Emuera.Runtime.Script.Loader;
@@ -59,15 +60,19 @@ internal static class ErbIrCache
 	internal readonly record struct FileStamp(string Logical, long Length, long MtimeTicks);
 
 	/// <summary>
-	/// 内容指纹 = FNV-1a 滚动哈希（文件集合 + 解析相关配置集 + Rename 宏表）。文件集合按 pending 序（文件加载序）
-	/// 输入，保证同集合同序 → 同指纹。
+	/// 内容指纹 = FNV-1a 滚动哈希（文件集合 + 解析相关配置集 + Rename 宏表）。
+	/// 文件集合先按（逻辑名, 物理路径）排序再哈希——指纹语义是「集合 + 配置」，与加载序无关；
+	/// SAF 上 pending 序 = Preload 读取完成序（并行 degree&gt;1 时逐轮随机），顺序直接进哈希曾使
+	/// 指纹逐轮漂移、IR 永远 miss + 每轮白付整库重建写（2026-09-04 模拟器实测，回归钉
+	/// ErbIrCacheTests.Fingerprint_is_invariant_under_input_order）。
 	/// </summary>
 	internal static long ComputeContentFingerprint(IReadOnlyList<(string Logical, string Physical)> files,
 		IReadOnlyDictionary<string, string>? renameDic)
 	{
 		ulong h = Fnv1a64Init;
 		// 文件集合：每文件（逻辑名, 长度, mtime）——脚本增删/改名/改动 → 指纹变化
-		foreach (var (logical, physical) in files)
+		foreach (var (logical, physical) in files.OrderBy(f => f.Logical, StringComparer.Ordinal)
+			.ThenBy(f => f.Physical, StringComparer.Ordinal))
 		{
 			long len = 0, mtime = 0;
 			SafCompat.TryGetFileStats(physical, out len, out mtime); // content URI（无 stat）→ 按 0 降级

@@ -85,6 +85,16 @@ internal sealed class ErbLoader
 		return SafCompat.CombinePath(dir, "era_ir.dat");
 	}
 
+	/// <summary>
+	/// b2-irdiskcache 参与判定唯一决策点（真值表穷举于 ErbIrCacheTests）。
+	/// content-URI 一律不参与：SAF 流不可 seek，<see cref="ErbIrCache.ReadBlob"/> 每函数触发
+	/// 整库缓冲重读（2026-09-04 模拟器实测 era_ir.dat 31.5MB × 2724 次 ≈ 143s+），hit 路径
+	/// 严格劣于 B1 源路径；且 SAF 无原子替换，崩溃窗口还会留下半成品库。
+	/// 镜像到 app 私有存储的正解另立 issue（diagnostic-knobs/issues/05）。
+	/// </summary>
+	internal static bool ShouldUseIrCache(bool irDiskCacheConfigured, bool lazyFunctionLoad, bool analysisMode, bool irPathIsContentUri)
+		=> irDiskCacheConfigured && lazyFunctionLoad && !analysisMode && !irPathIsContentUri;
+
 	/// <summary>erb-loader-parallel 03：并行生成度上限——窗口内产物同时驻留 = 上限文件数的解析产物，
 	/// 封顶防内存峰值（spec 实测 eraTW 规模 12 核理想并行度 ~8-10x，取 8；默认度 = ProcessorCount）。</summary>
 	internal const int MaxParallelErbFiles = 8;
@@ -169,16 +179,18 @@ internal sealed class ErbLoader
 			// lazy-function-load：建立 逻辑文件名→物理路径 映射（Position.Filename 与 fname 同源）。
 			foreach (var (logical, physical) in pending)
 				_filePathByLogical[logical] = physical;
-			// b2-irdiskcache：IR 参与条件 = 开 IrDiskCacheLoad && lazy && 非 AnalysisMode。
+			// b2-irdiskcache：IR 参与条件 = 开 IrDiskCacheLoad && lazy && 非 AnalysisMode（唯一决策点
+			// <see cref="ShouldUseIrCache"/>，content-URI 一律不参与——读放大止血，见该函数注释）。
 			// 启动进入文件读取前一次性判定：命中 IR（Available=true，索引驻留）→ 本轮免源扫描直建桩；
 			// 未命中/失效 → B1 源路径跑本轮，收尾重建 IR。指纹基于 pending 文件集合 + 解析相关配置（design §6）。
-			bool irEnabled = Config.Config.IrDiskCacheLoad && Config.Config.LazyFunctionLoad && !env.AnalysisMode;
+			string irPath = IrCachePath();
+			bool irPathIsContentUri = SafPath.IsContentUri(irPath);
+			bool irEnabled = ShouldUseIrCache(Config.Config.IrDiskCacheLoad, Config.Config.LazyFunctionLoad, env.AnalysisMode, irPathIsContentUri);
 			long irFp = 0;
 			_ir = null;
 			_irWriter = null;
 			if (irEnabled)
 			{
-				string irPath = IrCachePath();
 				irFp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic);
 				if (ErbIrCache.TryLoad(irPath, irFp, out var index))
 				{
@@ -201,6 +213,11 @@ internal sealed class ErbLoader
 					_irWriter = new ErbIrCache.IrCacheWriter(irPath);
 				}
 				EmueraLog.Info("ErbIrCache", $"ir hit={_ir.Available} files={pending.Count} fp={irFp:x16}");
+			}
+			else if (irPathIsContentUri)
+			{
+				// 止血自证：SAF 上整库禁用时的可见性——加载走 B1 源路径且不建不读 IR（无重建写税）。
+				EmueraLog.Info("ErbIrCache", $"ir disabled: content-URI not seekable, B1 source path (config IrDiskCacheLoad={Config.Config.IrDiskCacheLoad})");
 			}
 			// erb-loader-parallel 03：默认并行；配置串行或 AnalysisMode 时走 01 完成时的串行路径
 			//（fallback = 语义偏差排查 / 单线程调试的 abort 杠杆；AnalysisMode 的 PrintC 输出与
