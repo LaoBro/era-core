@@ -66,9 +66,9 @@ static partial class Preload
             // 实测（MuMu NativeAOT 2026-08-28）：4 线程并发 SAF OpenRead 的 JNI 风暴中，monodroid
             // bridge 在 take_global_ref 处 abort（SIGABRT）——并发 JNI 是实验性 NativeAOT 运行时
             // bridge GC bug 的触发放大器。双树 WhenAll 下总计 ≤2 并发，桌面文件系统路径不受限。
-            // ADR-0026 诊断旋钮二：壳层内存覆盖可拨 1/2/4（degree 表征实验不重编），Auto 保持
-            // 每树 1 与止血值逐位一致；preload_policy 日志行自证请求值/生效值/文件数/耗时。
-            var requestedDegree = Config.Config.OverrideSafReadDegree ?? SafReadDegree.Auto;
+            // ADR-0026 诊断旋钮二：壳层内存覆盖可拨任意并发度（钳制 1–64，真机崩溃阈值二分取证
+            // 不重编），auto 保持每树 1 与止血值逐位一致；preload_policy 日志行自证请求值/生效值。
+            int? requestedDegree = Config.Config.OverrideSafReadDegree;
             var readDegree = ResolveReadDegree(requestedDegree, SafPath.IsContentUri(path));
             var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = readDegree };
 
@@ -153,19 +153,14 @@ static partial class Preload
             Load(csvDir, dirAccessor));
 
     /// <summary>
-    /// ADR-0026 诊断旋钮二唯一决策点：请求并发度 × 是否 content-URI → 每树
-    /// ParallelOptions.MaxDegreeOfParallelism。Auto 与 7c10328 止血值逐位一致（content-URI 每树 1）；
-    /// 显式档位只放大 content-URI 读取；桌面文件系统路径恒 -1（ParallelOptions 默认，不受限）。
-    /// 语义真值表由 SafReadDegreeTests 穷举。
+    /// ADR-0026 诊断旋钮二唯一决策点：请求并发度（null=auto）× 是否 content-URI → 每树
+    /// ParallelOptions.MaxDegreeOfParallelism。auto 与 7c10328 止血值逐位一致（content-URI 每树 1）；
+    /// 显式值（真机崩溃阈值二分取证）钳制 1–64 后原样生效；桌面文件系统路径恒 -1（不受限）。
+    /// 数值域语义由 SafReadDegreeTests 覆盖。
     /// </summary>
-    internal static int ResolveReadDegree(SafReadDegree requested, bool isContentUri)
+    internal static int ResolveReadDegree(int? requested, bool isContentUri)
         => !isContentUri ? -1
-        : requested switch
-        {
-            SafReadDegree.Two => 2,
-            SafReadDegree.Four => 4,
-            _ => 1,
-        };
+        : Math.Clamp(requested ?? 1, SafReadDegreeCodec.MinExplicitDegree, SafReadDegreeCodec.MaxExplicitDegree);
 
     private static string[] ReadAllLinesViaAccessor(string path, IGameDirAccessor dirAccessor)
     {

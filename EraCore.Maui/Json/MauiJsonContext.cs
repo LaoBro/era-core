@@ -93,10 +93,10 @@ internal sealed record LayoutMessage(
 /// <summary>
 /// {"type":"config","maxLog":...,"agentLogEnabled":...,"displayReportOverride":"auto"|"off"|"on",
 ///  "lazyFunctionLoad":...,"irDiskCacheLoad":...,"parallelErbLoad":...,"parallelParseScript":...,
-///  "sweepGatePolicy":"auto"|"forceon"|"forceoff","safReadDegree":"auto"|"1"|"2"|"4"}
+///  "sweepGatePolicy":"auto"|"forceon"|"forceoff","safReadDegree":"auto"|&lt;1-64&gt;}
 /// （后四字段为性能（启动加载）覆盖三态："auto"|"off"|"on"，缺省 auto=跟随游戏配置；
 ///   sweepGatePolicy 为 ADR-0026 诊断旋钮一，缺省 auto=跟随平台门；
-///   safReadDegree 为 ADR-0026 诊断旋钮二，缺省 auto=每树 1 并发）
+///   safReadDegree 为 ADR-0026 诊断旋钮二，"auto" 或钳制后的数值字符串，缺省 auto=每树 1 并发）
 /// </summary>
 internal sealed record ConfigMessage(
     string Type,

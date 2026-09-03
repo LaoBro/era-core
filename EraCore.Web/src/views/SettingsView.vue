@@ -59,15 +59,27 @@ function chooseSweepGatePolicy(value: SweepGatePolicyValue): void {
   game.sweepGatePolicy = value;
 }
 
+/** SAF 读取并发度自定义输入框（自由数值，C# 侧钳制 1–64）。 */
+const safDegreeInput = ref<string>('');
+
 /**
- * ADR-0026 诊断旋钮二（SAF content-URI 读取并发度）切换——投递 setSafReadDegree 请求 C#
- * 写 Preferences + 持久化，本地乐观更新。C# 处理完推回 config 消息（含 safReadDegree 字段）
- * 再次同步——最终显示以 C# 权威状态为准。
+ * ADR-0026 诊断旋钮二（SAF content-URI 读取并发度）应用——把 'auto' 或数值字符串投递
+ * setSafReadDegree 请求 C# 规范化（数值钳制 1–64）+ 写 Preferences，本地乐观更新；C# 处理完
+ * 推回 config 消息（含规范化后的 safReadDegree 字段）再次同步——最终显示以 C# 权威状态为准。
  * 注意：并发度只在 Preload.Load 时被读取，本局不受影响，重新进入游戏后生效。
  */
-function chooseSafReadDegree(value: SafReadDegreeValue): void {
+function applySafReadDegree(value: SafReadDegreeValue): void {
   setSafReadDegree(value);
   game.safReadDegree = value;
+}
+
+/** 自定义并发度输入的应用：非正整数输入忽略；越界值按 C# 同款规则钳制 1–64 后投递。 */
+function applyCustomSafReadDegree(): void {
+  const raw = safDegreeInput.value.trim();
+  if (!/^\d+$/.test(raw)) return;
+  const clamped = String(Math.min(64, Math.max(1, parseInt(raw, 10))));
+  safDegreeInput.value = '';
+  applySafReadDegree(clamped);
 }
 
 /**
@@ -187,31 +199,38 @@ const logCopied = ref(false);
         </p>
         <div class="setting-row">
           <span class="setting-label">SAF 读取并发度</span>
-          <div class="segmented" role="radiogroup" aria-label="SAF 读取并发度">
+          <div class="segmented" role="group" aria-label="SAF 读取并发度">
             <button
-              v-for="opt in [
-                { value: 'auto', label: '默认' },
-                { value: '1', label: '1' },
-                { value: '2', label: '2' },
-                { value: '4', label: '4' },
-              ]"
-              :key="opt.value"
+              v-for="opt in ['auto', '1', '2', '4', '8']"
+              :key="opt"
               class="segmented-item"
-              :class="{ active: game.safReadDegree === opt.value }"
-              role="radio"
-              :aria-checked="game.safReadDegree === opt.value"
-              @click="chooseSafReadDegree(opt.value as SafReadDegreeValue)"
+              :class="{ active: game.safReadDegree === opt }"
+              :aria-pressed="game.safReadDegree === opt"
+              @click="applySafReadDegree(opt)"
             >
-              {{ opt.label }}
+              {{ opt }}
+            </button>
+            <input
+              v-model="safDegreeInput"
+              class="saf-degree-input"
+              type="number"
+              min="1"
+              max="64"
+              placeholder="1-64"
+              aria-label="自定义 SAF 读取并发度"
+              @keydown.enter="applyCustomSafReadDegree"
+            />
+            <button class="segmented-item" aria-label="应用自定义 SAF 读取并发度" @click="applyCustomSafReadDegree">
+              应用
             </button>
           </div>
         </div>
         <p class="hint-text">
-          诊断旋钮，默认保持 auto；真机复测与读取并发度表征实验用。仅影响 Android SAF 目录的
-          游戏文件读取：默认=每树 1 并发（与旧版本完全一致）；1/2/4=每树读取并发度（可能触发
-          已知并发读取卡死）。桌面本地目录不受此开关影响。仅内存覆盖，游戏配置无法设置；
-          切换不影响当前局，重新进入游戏后生效，实际并发状态以日志 preload_policy 的
-          requested=/effective= 字段为准。
+          诊断旋钮，默认保持 auto；真机复测与读取并发度取证实验用（可输入 1-64 任意值二分
+          崩溃阈值）。仅影响 Android SAF 目录的游戏文件读取：默认=每树 1 并发（与旧版本完全
+          一致）；数值=每树读取并发度（高并发可能触发已知并发读取卡死/崩溃）。桌面本地目录
+          不受此开关影响。仅内存覆盖，游戏配置无法设置；切换不影响当前局，重新进入游戏后
+          生效，实际并发状态以日志 preload_policy 的 requested=/effective= 字段为准。
         </p>
       </div>
       <div class="section">
@@ -396,6 +415,17 @@ h3 {
   background: var(--color-control-hover);
   color: var(--color-text);
   font-weight: 600;
+}
+/* 诊断旋钮二：SAF 读取并发度自定义输入（自由数值，C# 侧钳制 1–64） */
+.saf-degree-input {
+  border: none;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  padding: var(--space-2) var(--space-3);
+  width: 5.5em;
+  outline: none;
 }
 /* A0 补充：查看日志按钮 + 日志展示区（基于 .btn-outline 实心控件，DESIGN.md） */
 .log-view {

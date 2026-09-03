@@ -176,8 +176,9 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
     if (m.sweepGatePolicy === 'auto' || m.sweepGatePolicy === 'forceon' || m.sweepGatePolicy === 'forceoff') {
       game.sweepGatePolicy = m.sweepGatePolicy;
     }
-    // ADR-0026 诊断旋钮二（SAF 读取并发度）的 C# 权威状态——设置页「诊断」分段控件据此渲染初始值
-    if (m.safReadDegree === 'auto' || m.safReadDegree === '1' || m.safReadDegree === '2' || m.safReadDegree === '4') {
+    // ADR-0026 诊断旋钮二（SAF 读取并发度）的 C# 权威状态（"auto" 或钳制后的数值字符串）
+    // ——设置页「诊断」输入框据此渲染
+    if (m.safReadDegree === 'auto' || (typeof m.safReadDegree === 'string' && /^\d+$/.test(m.safReadDegree))) {
       game.safReadDegree = m.safReadDegree;
     }
     return;

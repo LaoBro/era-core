@@ -127,9 +127,9 @@ internal sealed class BridgeHost : IDisposable
     internal const string DiagSweepGatePolicyKey = "app.diag.sweepGatePolicy";
 
     /// <summary>
-    /// Preferences key——SAF content-URI 读取并发度（<see cref="SafReadDegree"/>，ADR-0026 诊断旋钮二）。
-    /// 值为 <c>"auto"</c>（每树 1 并发，默认，与止血值逐位一致）/ <c>"1"</c>/<c>"2"</c>/<c>"4"</c>
-    /// （每树显式并发度，degree 表征实验用）。仅内存覆盖不落盘：写入
+    /// Preferences key——SAF content-URI 读取并发度（ADR-0026 诊断旋钮二）。
+    /// 值为 <c>"auto"</c>（每树 1 并发，默认，与止血值逐位一致）或十进制数值字符串
+    /// （每树任意并发度，钳制 1–64，真机崩溃阈值二分取证用）。仅内存覆盖不落盘：写入
     /// <see cref="ConfigData.OverrideSafReadDegree"/>（无 ConfigCode 条目，游戏随包配置无法设置）；
     /// 游戏加载（OnReloadGame → ApplySafReadDegree）时读此 key 应用，Preload 在 preload_policy
     /// 日志以 requested=/effective= 字段自证。
@@ -255,10 +255,10 @@ internal sealed class BridgeHost : IDisposable
 
     /// <summary>
     /// 读诊断旋钮「SAF 读取并发度」的 Preferences 值并经 codec 规范化（null/空/未知值/Preferences
-    /// 不可用一律回退 <see cref="SafReadDegree.Auto"/>=每树 1 并发）——词表唯一映射点在
+    /// 不可用一律回退 null=auto 每树 1 并发；显式数值钳制 1–64）——词表唯一映射点在
     /// <see cref="SafReadDegreeCodec"/>，此处不做二次校验。
     /// </summary>
-    internal static SafReadDegree ReadSafReadDegreePreference()
+    internal static int? ReadSafReadDegreePreference()
     {
         try
         {
@@ -266,7 +266,7 @@ internal sealed class BridgeHost : IDisposable
         }
         catch
         {
-            return SafReadDegree.Auto;
+            return null;
         }
     }
 
@@ -274,14 +274,14 @@ internal sealed class BridgeHost : IDisposable
     /// 游戏加载期应用诊断旋钮「SAF content-URI 读取并发度」（ADR-0026）——MainPage.OnReloadGame 在
     /// <see cref="ApplySweepGatePolicy"/> 之后、会话创建之前调用。仅内存覆盖：写
     /// <see cref="ConfigData.OverrideSafReadDegree"/>（无 ConfigCode 条目，游戏随包配置无法设置，
-    /// SaveConfig 不落盘）。Auto 置 null（每树 1 并发，与止血值逐位等价）；随后会话创建时 Preload
+    /// SaveConfig 不落盘）。null=auto（每树 1 并发，与止血值逐位等价）；随后会话创建时 Preload
     /// 读到并在 preload_policy 日志以 requested=/effective=/files=/ms= 字段自证。
     /// </summary>
     internal static void ApplySafReadDegree(ConfigData configData)
     {
         var platform = PlatformTag;
         var requested = ReadSafReadDegreePreference();
-        configData.OverrideSafReadDegree = requested == SafReadDegree.Auto ? null : requested;
+        configData.OverrideSafReadDegree = requested;
         LogPerfOverride(
             $"saf read degree override: platform={platform} " +
             $"requested={SafReadDegreeCodec.ToConfigString(requested)} " +
@@ -1181,8 +1181,8 @@ internal sealed class BridgeHost : IDisposable
     }
 
     /// <summary>
-    /// 接收 <c>{"type":"setSafReadDegree","value":"auto"|"1"|"2"|"4"}</c>（ADR-0026 诊断旋钮二，
-    /// 设置页「诊断」分组）；持久化到 <see cref="DiagSafReadDegreeKey"/>。
+    /// 接收 <c>{"type":"setSafReadDegree","value":"auto"|&lt;1-64 的十进制数值&gt;}</c>（ADR-0026 诊断旋钮二，
+    /// 设置页「诊断」分组）；规范化（数值钳制 1–64）后持久化到 <see cref="DiagSafReadDegreeKey"/>。
     /// <para>
     /// 不即时改当前 <see cref="_configData"/>——并发度只在 Preload.Load 时被读取，当前局不受影响；
     /// 真正生效在下次进游戏（OnReloadGame → ApplySafReadDegree 据此压值）。完成后推回 <c>config</c>
@@ -1194,20 +1194,22 @@ internal sealed class BridgeHost : IDisposable
         if (root.TryGetProperty("value", out var el) && el.ValueKind == JsonValueKind.String)
         {
             var value = el.GetString();
-            if (value is not ("auto" or "1" or "2" or "4"))
+            var parsed = SafReadDegreeCodec.Parse(value);
+            if (parsed == null && value != "auto")
             {
                 Console.WriteLine($"[bridge] HandleSetSafReadDegree: invalid value '{value}'");
                 return;
             }
+            var canonical = SafReadDegreeCodec.ToConfigString(parsed);
             try
             {
-                Preferences.Set(DiagSafReadDegreeKey, value);
+                Preferences.Set(DiagSafReadDegreeKey, canonical);
             }
             catch
             {
                 // Preferences 不可用——仅持久化失败（下次启动回默认每树 1 并发）
             }
-            Console.WriteLine($"[bridge] saf read degree set to {value}");
+            Console.WriteLine($"[bridge] saf read degree set to {canonical}");
             PushConfigMessage();
             return;
         }
