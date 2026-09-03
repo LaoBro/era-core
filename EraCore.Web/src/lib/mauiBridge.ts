@@ -366,6 +366,29 @@ export function setSweepGatePolicy(value: SweepGatePolicyValue): void {
 }
 
 /**
+ * ADR-0026 诊断旋钮二：SAF content-URI 读取并发度值——设置页「诊断」分组专用词表
+ * （数字字符串档位与性能覆盖三态 'auto'/'off'/'on' 刻意区分，防误当性能优化项拨动）。
+ */
+export type SafReadDegreeValue = 'auto' | '1' | '2' | '4';
+
+/**
+ * 设置页「诊断」分组——SAF content-URI 读取并发度（真机复测 / degree 表征实验用，默认保持 auto）。
+ *
+ * C# `BridgeHost.HandleSetSafReadDegree` 收到后：
+ * 1. 写 Preferences（key=`app.diag.safReadDegree`——游戏加载时 OnReloadGame → ApplySafReadDegree 读同一 key 应用）
+ * 2. 不即时改当前局（并发度只在 Preload.Load 时被读取，真正生效在下次进游戏）
+ * 3. 推回 `config` 消息（含 safReadDegree 字段）同步设置页分段控件的权威状态
+ *
+ * 仅内存覆盖不落盘：游戏随包 emuera.config 无法设置；仅 SAF content-URI 读取受影响，
+ * 桌面文件系统路径不受限；生效状态见 preload_policy 日志 requested=/effective= 字段。
+ *
+ * @param value 'auto'=每树 1 并发（默认，与旧版本逐位一致）；'1'/'2'/'4'=每树显式并发度（读取随之变化的仪器值）
+ */
+export function setSafReadDegree(value: SafReadDegreeValue): void {
+  postInput(JSON.stringify({ type: 'setSafReadDegree', value }));
+}
+
+/**
  * A0 补充（真机无 adb）：请求 C# 读取 agent.log 内容推给 Vue（设置页日志查看器）。
  *
  * C# `BridgeHost.HandleGetAgentLog` 收到后调 `AgentLog.ReadAllText()`（内部先 flush，

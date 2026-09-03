@@ -127,6 +127,16 @@ internal sealed class BridgeHost : IDisposable
     internal const string DiagSweepGatePolicyKey = "app.diag.sweepGatePolicy";
 
     /// <summary>
+    /// Preferences key——SAF content-URI 读取并发度（<see cref="SafReadDegree"/>，ADR-0026 诊断旋钮二）。
+    /// 值为 <c>"auto"</c>（每树 1 并发，默认，与止血值逐位一致）/ <c>"1"</c>/<c>"2"</c>/<c>"4"</c>
+    /// （每树显式并发度，degree 表征实验用）。仅内存覆盖不落盘：写入
+    /// <see cref="ConfigData.OverrideSafReadDegree"/>（无 ConfigCode 条目，游戏随包配置无法设置）；
+    /// 游戏加载（OnReloadGame → ApplySafReadDegree）时读此 key 应用，Preload 在 preload_policy
+    /// 日志以 requested=/effective= 字段自证。
+    /// </summary>
+    internal const string DiagSafReadDegreeKey = "app.diag.safReadDegree";
+
+    /// <summary>
     /// setPerfOverride 消息的 wire key（Vue 端 camelCase）→（Preferences key，引擎 ConfigCode）映射——
     /// HandleSetPerfOverride 校验 key 合法性、PushConfigMessage/ApplyPerformanceOverrides 遍历用。
     /// </summary>
@@ -164,11 +174,7 @@ internal sealed class BridgeHost : IDisposable
         // requested（Preferences 三态）/ effective（引擎实际值）/ fixed（游戏 csv/_fixed.config
         // 锁定状态，Fixed=true 时 SetValue 静默丢弃写入，ConfigItem.cs）——不能只凭三态设置值
         // 推断引擎行为。字符串拼接，NativeAOT 下无反射序列化。
-#if ANDROID
-        const string platform = "android";
-#else
-        const string platform = "desktop";
-#endif
+        var platform = PlatformTag;
         foreach (var item in PerfOverrideItems.Values)
         {
             var requested = ReadPerfOverride(item.PrefKey);
@@ -199,6 +205,19 @@ internal sealed class BridgeHost : IDisposable
 #endif
     }
 
+    /// <summary>Apply* 覆盖日志的平台标注（android/desktop）——三处 Apply* 共用，消除 #if ANDROID 常量块的复制。</summary>
+    private static string PlatformTag
+    {
+        get
+        {
+#if ANDROID
+            return "android";
+#else
+            return "desktop";
+#endif
+        }
+    }
+
     /// <summary>
     /// 读诊断旋钮「平台门策略」的 Preferences 值并经 codec 规范化（null/空/未知值/Preferences
     /// 不可用一律回退 <see cref="SweepGatePolicy.Auto"/>=跟随平台门）——词表唯一映射点在
@@ -225,17 +244,48 @@ internal sealed class BridgeHost : IDisposable
     /// </summary>
     internal static void ApplySweepGatePolicy(ConfigData configData)
     {
-#if ANDROID
-        const string platform = "android";
-#else
-        const string platform = "desktop";
-#endif
+        var platform = PlatformTag;
         var requested = ReadSweepGatePolicyPreference();
         configData.OverrideSweepGatePolicy = requested == SweepGatePolicy.Auto ? null : requested;
         LogPerfOverride(
             $"sweep gate policy override: platform={platform} " +
             $"requested={SweepGatePolicyCodec.ToConfigString(requested)} " +
             $"effective={SweepGatePolicyCodec.ToConfigString(requested)}");
+    }
+
+    /// <summary>
+    /// 读诊断旋钮「SAF 读取并发度」的 Preferences 值并经 codec 规范化（null/空/未知值/Preferences
+    /// 不可用一律回退 <see cref="SafReadDegree.Auto"/>=每树 1 并发）——词表唯一映射点在
+    /// <see cref="SafReadDegreeCodec"/>，此处不做二次校验。
+    /// </summary>
+    internal static SafReadDegree ReadSafReadDegreePreference()
+    {
+        try
+        {
+            return SafReadDegreeCodec.Parse(Preferences.Get(DiagSafReadDegreeKey, "auto"));
+        }
+        catch
+        {
+            return SafReadDegree.Auto;
+        }
+    }
+
+    /// <summary>
+    /// 游戏加载期应用诊断旋钮「SAF content-URI 读取并发度」（ADR-0026）——MainPage.OnReloadGame 在
+    /// <see cref="ApplySweepGatePolicy"/> 之后、会话创建之前调用。仅内存覆盖：写
+    /// <see cref="ConfigData.OverrideSafReadDegree"/>（无 ConfigCode 条目，游戏随包配置无法设置，
+    /// SaveConfig 不落盘）。Auto 置 null（每树 1 并发，与止血值逐位等价）；随后会话创建时 Preload
+    /// 读到并在 preload_policy 日志以 requested=/effective=/files=/ms= 字段自证。
+    /// </summary>
+    internal static void ApplySafReadDegree(ConfigData configData)
+    {
+        var platform = PlatformTag;
+        var requested = ReadSafReadDegreePreference();
+        configData.OverrideSafReadDegree = requested == SafReadDegree.Auto ? null : requested;
+        LogPerfOverride(
+            $"saf read degree override: platform={platform} " +
+            $"requested={SafReadDegreeCodec.ToConfigString(requested)} " +
+            $"effective={SafReadDegreeCodec.ToConfigString(requested)}");
     }
 
     /// <summary>三态字符串 ↔ <see cref="ConfigData.OverrideDisplayReport"/> 的映射（纯函数，单测覆盖）。</summary>
@@ -556,6 +606,12 @@ internal sealed class BridgeHost : IDisposable
                 if (type == "setSweepGatePolicy")
                 {
                     HandleSetSweepGatePolicy(doc.RootElement);
+                    return;
+                }
+                // ADR-0026 诊断旋钮二（SAF 读取并发度）——写 Preferences，下次进游戏由 ApplySafReadDegree 应用
+                if (type == "setSafReadDegree")
+                {
+                    HandleSetSafReadDegree(doc.RootElement);
                     return;
                 }
                 // A0 补充：app 内日志查看器——读取 agent.log 内容推给 Vue（真机无 adb 场景）
@@ -1125,6 +1181,40 @@ internal sealed class BridgeHost : IDisposable
     }
 
     /// <summary>
+    /// 接收 <c>{"type":"setSafReadDegree","value":"auto"|"1"|"2"|"4"}</c>（ADR-0026 诊断旋钮二，
+    /// 设置页「诊断」分组）；持久化到 <see cref="DiagSafReadDegreeKey"/>。
+    /// <para>
+    /// 不即时改当前 <see cref="_configData"/>——并发度只在 Preload.Load 时被读取，当前局不受影响；
+    /// 真正生效在下次进游戏（OnReloadGame → ApplySafReadDegree 据此压值）。完成后推回 <c>config</c>
+    /// 消息同步 UI。
+    /// </para>
+    /// </summary>
+    private void HandleSetSafReadDegree(JsonElement root)
+    {
+        if (root.TryGetProperty("value", out var el) && el.ValueKind == JsonValueKind.String)
+        {
+            var value = el.GetString();
+            if (value is not ("auto" or "1" or "2" or "4"))
+            {
+                Console.WriteLine($"[bridge] HandleSetSafReadDegree: invalid value '{value}'");
+                return;
+            }
+            try
+            {
+                Preferences.Set(DiagSafReadDegreeKey, value);
+            }
+            catch
+            {
+                // Preferences 不可用——仅持久化失败（下次启动回默认每树 1 并发）
+            }
+            Console.WriteLine($"[bridge] saf read degree set to {value}");
+            PushConfigMessage();
+            return;
+        }
+        Console.WriteLine("[bridge] HandleSetSafReadDegree: missing or non-string 'value' field");
+    }
+
+    /// <summary>
     /// A0 补充（真机无 adb）：app 内日志查看器——读取 agent.log 内容推给 Vue。
     /// <para>
     /// 接收 <c>{"type":"getAgentLog"}</c>；调 <see cref="AgentLog.ReadAllText"/>（内部 flush，
@@ -1327,9 +1417,9 @@ internal sealed class BridgeHost : IDisposable
     /// 推送 emuera.config 值给 Vue——让设置页显示当前配置。
     /// <para>
     /// 消息格式：<c>{"type":"config","maxLog":5000,"agentLogEnabled":false,"displayReportOverride":"auto",
-    /// "lazyFunctionLoad":"auto",...,"sweepGatePolicy":"auto"}</c>（性能覆盖四字段为对应 Preferences
-    /// 三态权威值 auto/off/on，sweepGatePolicy 为 ADR-0026 诊断旋钮一权威值 auto/forceon/forceoff——
-    /// 切换后对应 Handle* 推回同步）。
+    /// "lazyFunctionLoad":"auto",...,"sweepGatePolicy":"auto","safReadDegree":"auto"}</c>（性能覆盖四字段
+    /// 为对应 Preferences 三态权威值 auto/off/on，sweepGatePolicy 为 ADR-0026 诊断旋钮一权威值
+    /// auto/forceon/forceoff，safReadDegree 为旋钮二权威值 auto/1/2/4——切换后对应 Handle* 推回同步）。
     /// </para>
     /// </summary>
     private void PushConfigMessage()
@@ -1342,7 +1432,8 @@ internal sealed class BridgeHost : IDisposable
                 ReadPerfOverride(PerfIrDiskCacheLoadKey),
                 ReadPerfOverride(PerfParallelErbLoadKey),
                 ReadPerfOverride(PerfParallelParseScriptKey),
-                SweepGatePolicyCodec.ToConfigString(ReadSweepGatePolicyPreference())),
+                SweepGatePolicyCodec.ToConfigString(ReadSweepGatePolicyPreference()),
+                SafReadDegreeCodec.ToConfigString(ReadSafReadDegreePreference())),
             MauiJsonContext.Default.ConfigMessage);
         _dispatcher.Dispatch(() => _jsBridge.PostMessage(msg));
     }

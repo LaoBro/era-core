@@ -60,6 +60,15 @@ internal sealed class ConfigData
 	/// </summary>
 	public SweepGatePolicy? OverrideSweepGatePolicy { get; set; }
 
+	/// <summary>
+	/// 诊断旋钮（ADR-0026）：SAF content-URI 读取并发度的内存覆盖——null=不覆盖（默认，
+	/// <see cref="SafReadDegree.Auto"/> 每树 1 并发，与止血值逐位一致）；1/2/4 由 app 壳层经
+	/// Preferences 写入，Preload.Load 读取并经 <c>preload_policy</c> 日志自证。仅绑
+	/// content-URI 读取分支，桌面文件系统路径不受限。无对应 ConfigCode——游戏随包的
+	/// emuera.config 无法设置（loadConfig 对未知键静默跳过）；仅内存覆盖，不落盘。
+	/// </summary>
+	public SafReadDegree? OverrideSafReadDegree { get; set; }
+
 	internal ConfigData()
 	{
 		// Issue 12：构造时绑定当前游戏目录的 emuera.config 路径。

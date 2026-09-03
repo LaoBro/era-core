@@ -2,8 +2,8 @@
 import { ref } from 'vue';
 import { useGameStore } from '../stores/game';
 import { useUiStore } from '../stores/ui';
-import { setAgentLogEnabled, setDisplayReportOverride, setPerfOverride, setSweepGatePolicy, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
-import type { DisplayReportOverride, PerfOverrideKey, SweepGatePolicyValue } from '../lib/mauiBridge';
+import { setAgentLogEnabled, setDisplayReportOverride, setPerfOverride, setSafReadDegree, setSweepGatePolicy, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
+import type { DisplayReportOverride, PerfOverrideKey, SafReadDegreeValue, SweepGatePolicyValue } from '../lib/mauiBridge';
 
 const game = useGameStore();
 const ui = useUiStore();
@@ -57,6 +57,17 @@ const perfRows: Array<{ key: PerfOverrideKey; label: string }> = [
 function chooseSweepGatePolicy(value: SweepGatePolicyValue): void {
   setSweepGatePolicy(value);
   game.sweepGatePolicy = value;
+}
+
+/**
+ * ADR-0026 诊断旋钮二（SAF content-URI 读取并发度）切换——投递 setSafReadDegree 请求 C#
+ * 写 Preferences + 持久化，本地乐观更新。C# 处理完推回 config 消息（含 safReadDegree 字段）
+ * 再次同步——最终显示以 C# 权威状态为准。
+ * 注意：并发度只在 Preload.Load 时被读取，本局不受影响，重新进入游戏后生效。
+ */
+function chooseSafReadDegree(value: SafReadDegreeValue): void {
+  setSafReadDegree(value);
+  game.safReadDegree = value;
 }
 
 /**
@@ -173,6 +184,34 @@ const logCopied = ref(false);
           可能让 app 崩溃）；强制串行=无论任何配置一律串行（紧急杀开关）。仅内存覆盖，
           游戏配置无法解除；切换不影响当前局，重新进入游戏后生效，实际执行路径以日志
           parsescript_policy 的 policy= 字段为准。
+        </p>
+        <div class="setting-row">
+          <span class="setting-label">SAF 读取并发度</span>
+          <div class="segmented" role="radiogroup" aria-label="SAF 读取并发度">
+            <button
+              v-for="opt in [
+                { value: 'auto', label: '默认' },
+                { value: '1', label: '1' },
+                { value: '2', label: '2' },
+                { value: '4', label: '4' },
+              ]"
+              :key="opt.value"
+              class="segmented-item"
+              :class="{ active: game.safReadDegree === opt.value }"
+              role="radio"
+              :aria-checked="game.safReadDegree === opt.value"
+              @click="chooseSafReadDegree(opt.value as SafReadDegreeValue)"
+            >
+              {{ opt.label }}
+            </button>
+          </div>
+        </div>
+        <p class="hint-text">
+          诊断旋钮，默认保持 auto；真机复测与读取并发度表征实验用。仅影响 Android SAF 目录的
+          游戏文件读取：默认=每树 1 并发（与旧版本完全一致）；1/2/4=每树读取并发度（可能触发
+          已知并发读取卡死）。桌面本地目录不受此开关影响。仅内存覆盖，游戏配置无法设置；
+          切换不影响当前局，重新进入游戏后生效，实际并发状态以日志 preload_policy 的
+          requested=/effective= 字段为准。
         </p>
       </div>
       <div class="section">
