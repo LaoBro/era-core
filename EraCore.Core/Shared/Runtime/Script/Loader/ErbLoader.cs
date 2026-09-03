@@ -96,8 +96,18 @@ internal sealed class ErbLoader
 		=> irDiskCacheConfigured && lazyFunctionLoad && !analysisMode && !irPathIsContentUri;
 
 	/// <summary>erb-loader-parallel 03：并行生成度上限——窗口内产物同时驻留 = 上限文件数的解析产物，
-	/// 封顶防内存峰值（spec 实测 eraTW 规模 12 核理想并行度 ~8-10x，取 8；默认度 = ProcessorCount）。</summary>
+	/// 封顶防内存峰值（spec 实测 eraTW 规模 12 核理想并行度 ~8-10x，取 8；默认度 = ProcessorCount）。
+	/// 06-K1：壳层取证旋钮（<see cref="ConfigData.OverrideMaxParallelErbFiles"/>）可覆盖，见下。</summary>
 	internal const int MaxParallelErbFiles = 8;
+
+	/// <summary>
+	/// 06-K1 决策点（真值表穷举于 MaxParallelErbFilesTests）：auto（null）= min(核数, 8) 与现状逐位一致；
+	/// 显式 4/8/16 = 直接生效（与核数解耦的取证档——16 档的价值正在于超订阅/更多未合并产物驻留观测）。
+	/// 两处消费同源同拨：LoadPendingParallel 窗口（文件数语义）+ RunUncalledSweepParallel 清扫度
+	/// （线程数语义）——修订原 R3-Q11「度数硬编码不可配」（diagnostic-knobs/issues/06）。
+	/// </summary>
+	internal static int ResolveMaxParallelErbFiles(int? requested, int processorCount)
+		=> requested ?? Math.Min(processorCount, MaxParallelErbFiles);
 
 	/// <summary>
 	/// erb-loader-parallel 06：WP0 局部性实验用 GC 快照（累计分配量 / 各代收集次数）。
@@ -1086,8 +1096,9 @@ internal sealed class ErbLoader
 	{
 		if (pending.Count == 0)
 			return;
-		int window = Math.Clamp(TestWindowOverride ?? Math.Min(Environment.ProcessorCount, MaxParallelErbFiles), 1, pending.Count);
-		EmueraLog.Info("ErbLoader", $"LoadPendingParallel: files={pending.Count}, window={window}");
+		int window = Math.Clamp(TestWindowOverride ?? ResolveMaxParallelErbFiles(Config.Config.OverrideMaxParallelErbFiles, Environment.ProcessorCount), 1, pending.Count);
+		// 06-K1 自证：knob= 壳层请求词表值，window= 生效值（auto=与无旋钮逐位一致）——取证以此对账
+		EmueraLog.Info("ErbLoader", $"LoadPendingParallel: files={pending.Count}, window={window} knob={MaxParallelErbFilesCodec.ToConfigString(Config.Config.OverrideMaxParallelErbFiles)}");
 		// 外部取消（预留 reload/会话退出）+ 内部取消（本轮首错收束）链接；worker 只见合成令牌
 		using var cts = CancellationTokenSource.CreateLinkedTokenSource(externalCt);
 		// 运行表只持有窗口内任务（旧实现：tasks[pending.Count] 全量数组长期持有全部任务引用）
@@ -1563,8 +1574,14 @@ internal sealed class ErbLoader
 		bool isAndroid = OperatingSystem.IsAndroid();
 		SweepGatePolicy sweepPolicy = Config.Config.OverrideSweepGatePolicy ?? SweepGatePolicy.Auto;
 		bool parallelSweep = ShouldRunParallelSweep(parallelSweepConfigured, env.AnalysisMode, isAndroid, sweepPolicy);
+		// 06-K1/K2 自证：sweep_deg= 未调用遍历清扫度上限（与本轮 RunUncalledSweepParallel 同值），
+		// dimlock= privateDimList 锁策略。时序前提：dimlock= 在 ParseScript 时读 Config，而实际锁行为是
+		// IdentifierDictionary 构造时快照——壳层 OnReloadGame 先 Apply 旋钮再建会话，两者恒一致；
+		// 若未来出现先于 Apply 的 idDic 构造路径，此字段会失真，需改为由 idDic 直接上报
+		int sweepDegree = ResolveMaxParallelErbFiles(Config.Config.OverrideMaxParallelErbFiles, Environment.ProcessorCount);
+		DimLockPolicy dimLockPolicy = Config.Config.OverrideDimLockPolicy ?? DimLockPolicy.Auto;
 		EmueraLog.Info("ErbLoader",
-			$"parsescript_policy configured={parallelSweepConfigured} effective={parallelSweep} android={isAndroid} analysis={env.AnalysisMode} policy={SweepGatePolicyCodec.ToConfigString(sweepPolicy)}");
+			$"parsescript_policy configured={parallelSweepConfigured} effective={parallelSweep} android={isAndroid} analysis={env.AnalysisMode} policy={SweepGatePolicyCodec.ToConfigString(sweepPolicy)} sweep_deg={sweepDegree} dimlock={DimLockPolicyCodec.ToConfigString(dimLockPolicy)}");
 		bool sweepParallelRan = false;
 		if (useCallForm)
 		{//callform系が使われたら全ての関数が呼び出されたとみなす。
@@ -1580,7 +1597,7 @@ internal sealed class ErbLoader
 				if (parallelSweep)
 				{
 					// 并行段：解析体全部入 per-label 缓冲（警告 / FNF 事件），回放段按 labelList 序重放
-					ReplayUncalledSweep(RunUncalledSweepParallel(labelList, labelDepth));
+					ReplayUncalledSweep(RunUncalledSweepParallel(labelList, labelDepth, sweepDegree));
 					sweepParallelRan = true;
 				}
 				else
@@ -1608,7 +1625,7 @@ internal sealed class ErbLoader
 			// lazy-function-load（B 线 B1）：惰性下不跑未调用解析体（sweepArts 恒 null），
 			// 只保留下方 FNC 免解析导出（Depth==-1 深差集，零解析）；IgnoreUncalledFunction 的 IsError 被 supersede。
 			UncalledSweepArt[]? sweepArts = !lazyMode && parallelSweep && !ignoreUncalledFunction
-				? RunUncalledSweepParallel(labelList, labelDepth)
+				? RunUncalledSweepParallel(labelList, labelDepth, sweepDegree)
 				: null;
 			int artIdx = 0;
 			foreach (FunctionLabelLine label in labelList)
@@ -1819,7 +1836,7 @@ internal sealed class ErbLoader
 	/// phases 总时长计时在调用方）。异常语义（R3-Q9）：先按序回放已产生的缓冲（已解析 label 的警告不丢）
 	/// 再重抛 InnerExceptions[0]，由外层 LoadErbDir 既有 catch 统一处理。
 	/// </summary>
-	private UncalledSweepArt[] RunUncalledSweepParallel(List<FunctionLabelLine> labelList, int labelDepth)
+	private UncalledSweepArt[] RunUncalledSweepParallel(List<FunctionLabelLine> labelList, int labelDepth, int maxDegree)
 	{
 		List<FunctionLabelLine> targets = [];
 		foreach (FunctionLabelLine label in labelList)
@@ -1834,9 +1851,10 @@ internal sealed class ErbLoader
 		_parseDiag = null;
 		_sweepParallelActive = true;
 		SweepActive = true;
-		// 度数封顶 8 与 MaxParallelErbFiles（文件数语义）恰同值而语义不同——spec-phase2 调度框架（R3-Q5）
-		// 度数硬编码不可配（R3-Q11），不复用度数常量也不新增开关，取同值字面语义注释锚定
-		var opts = new ParallelOptions { MaxDegreeOfParallelism = Math.Min(Environment.ProcessorCount, MaxParallelErbFiles) };
+		// 06-K1 修订 R3-Q11：清扫度不再硬编码——与 LoadPendingParallel 窗口同源同拨（同一旋钮，
+		// 由 ParseScript 算好传入）。auto 时 = min(核数, 8) 与旧硬编码逐位一致；语义仍不同
+		// （此处是并行解析线程上限，窗口是同时在生成/未合并的文件数），共用同一取证旋钮
+		var opts = new ParallelOptions { MaxDegreeOfParallelism = maxDegree };
 		try
 		{
 			// 小 chunk 动态均载：eraTW 函数大小长尾，静态大 range 会把巨型函数聚在同一分区拖成长尾

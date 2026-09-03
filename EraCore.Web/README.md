@@ -62,6 +62,8 @@ npm run build
 - `game.serverState`：`Idle`、`Loading`、`WaitInput`、`Quit`、`Error`。
 - `game.displayState`：终端当前显示内容。
 - `game.reloadStatus`：游戏加载/快速重开是否正在进行。
+- `game.displayReportOverride` / `game.perfOverrides`：启动日志与性能（懒加载/IR/并行两项）覆盖三态。
+- `game.sweepGatePolicy` / `game.safReadDegree` / `game.maxParallelErbFiles` / `game.dimLockPolicy`：ADR-0026 诊断旋钮（设置页「诊断」分组，`SettingsView.vue` 渲染，`mauiBridge.ts` 的 set* 消息投递，`useAppInit.ts` 按词表校验 config 消息）。
 
 ## Composable 和通信层
 

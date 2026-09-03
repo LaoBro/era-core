@@ -418,11 +418,11 @@ describe('handleMauiMessage - config safReadDegree (ADR-0026 诊断分组)', () 
     handler!({ type: 'config', safReadDegree: '2' });
     expect(game.safReadDegree).toBe('2');
 
-    // 再推 4 / 1 / auto → 逐个同步
-    handler!({ type: 'config', safReadDegree: '4' });
-    expect(game.safReadDegree).toBe('4');
-    handler!({ type: 'config', safReadDegree: '1' });
-    expect(game.safReadDegree).toBe('1');
+    // 再推 3 / 16 / auto → 逐个同步（自由数值词表：任意十进制数值字符串合法）
+    handler!({ type: 'config', safReadDegree: '3' });
+    expect(game.safReadDegree).toBe('3');
+    handler!({ type: 'config', safReadDegree: '16' });
+    expect(game.safReadDegree).toBe('16');
     handler!({ type: 'config', safReadDegree: 'auto' });
     expect(game.safReadDegree).toBe('auto');
   });
@@ -438,10 +438,93 @@ describe('handleMauiMessage - config safReadDegree (ADR-0026 诊断分组)', () 
     const game = useGameStore();
     const handler = (window as any).__onMessage as ((msg: unknown) => void) | undefined;
 
-    handler!({ type: 'config', safReadDegree: '3' }); // 词表只有 auto/1/2/4
-    expect(game.safReadDegree).toBe('auto'); // 保持原值
     handler!({ type: 'config', safReadDegree: 'on' }); // 旧三态词表不是本旋钮词表
     expect(game.safReadDegree).toBe('auto'); // 保持原值
+    handler!({ type: 'config', safReadDegree: 'abc' }); // 非数值非 auto
+    expect(game.safReadDegree).toBe('auto'); // 保持原值
+  });
+});
+
+describe('handleMauiMessage - config maxParallelErbFiles/dimLockPolicy (ADR-0026 06-K1/K2 诊断分组)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubWindow(): void {
+    vi.stubGlobal('window', {
+      location: { protocol: 'https:', hostname: 'app.local' },
+      chrome: { webview: { postMessage: vi.fn() } },
+    });
+  }
+
+  it('config 消息含 maxParallelErbFiles → 写入 store（诊断分段控件渲染依据）', async () => {
+    stubWindow();
+
+    await initAppState();
+
+    const game = useGameStore();
+    expect(game.maxParallelErbFiles).toBe('auto'); // 默认 auto（min(核数,8)，与现状逐位一致）
+
+    const handler = (window as any).__onMessage as ((msg: unknown) => void) | undefined;
+
+    handler!({ type: 'config', maxParallelErbFiles: '16' });
+    expect(game.maxParallelErbFiles).toBe('16');
+
+    // 再推 4 / 8 / auto → 逐个同步
+    handler!({ type: 'config', maxParallelErbFiles: '4' });
+    expect(game.maxParallelErbFiles).toBe('4');
+    handler!({ type: 'config', maxParallelErbFiles: '8' });
+    expect(game.maxParallelErbFiles).toBe('8');
+    handler!({ type: 'config', maxParallelErbFiles: 'auto' });
+    expect(game.maxParallelErbFiles).toBe('auto');
+  });
+
+  it('config 消息含非法 maxParallelErbFiles 值 → 忽略不写 store', async () => {
+    stubWindow();
+
+    await initAppState();
+
+    const game = useGameStore();
+    const handler = (window as any).__onMessage as ((msg: unknown) => void) | undefined;
+
+    handler!({ type: 'config', maxParallelErbFiles: '2' }); // 闭集词表只有 auto/4/8/16
+    expect(game.maxParallelErbFiles).toBe('auto'); // 保持原值
+    handler!({ type: 'config', maxParallelErbFiles: '08' }); // 闭集精确匹配，前导零不算
+    expect(game.maxParallelErbFiles).toBe('auto'); // 保持原值
+  });
+
+  it('config 消息含 dimLockPolicy → 写入 store（诊断分段控件渲染依据）', async () => {
+    stubWindow();
+
+    await initAppState();
+
+    const game = useGameStore();
+    expect(game.dimLockPolicy).toBe('auto'); // 默认 auto（恒加锁，与止血逐位一致）
+
+    const handler = (window as any).__onMessage as ((msg: unknown) => void) | undefined;
+
+    handler!({ type: 'config', dimLockPolicy: 'nolock' });
+    expect(game.dimLockPolicy).toBe('nolock');
+    handler!({ type: 'config', dimLockPolicy: 'auto' });
+    expect(game.dimLockPolicy).toBe('auto');
+  });
+
+  it('config 消息含非法 dimLockPolicy 值 → 忽略不写 store', async () => {
+    stubWindow();
+
+    await initAppState();
+
+    const game = useGameStore();
+    const handler = (window as any).__onMessage as ((msg: unknown) => void) | undefined;
+
+    handler!({ type: 'config', dimLockPolicy: 'forceoff' }); // 其他旋钮词表不是本旋钮词表
+    expect(game.dimLockPolicy).toBe('auto'); // 保持原值
+    handler!({ type: 'config', dimLockPolicy: 'NOLOCK' }); // 词表精确匹配，大写不算
+    expect(game.dimLockPolicy).toBe('auto'); // 保持原值
   });
 });
 

@@ -392,6 +392,57 @@ export function setSafReadDegree(value: SafReadDegreeValue): void {
 }
 
 /**
+ * ADR-0026 诊断旋钮三（06-K1）：并行生成度上限值——设置页「诊断」分组专用闭集词表。
+ * 'auto' = min(核数, 8)（默认，与现状逐位一致）；'4'/'8'/'16' = 取证档直接生效（与核数解耦，
+ * ERB 生成窗口与未调用遍历清扫度同源同拨）。
+ * 与性能覆盖三态 'auto'/'off'/'on' 刻意区分，防误当性能优化项拨动。
+ */
+export type MaxParallelErbFilesValue = 'auto' | '4' | '8' | '16';
+
+/**
+ * 设置页「诊断」分组——并行生成度上限（真机并行度/内存峰值取证用，默认保持 auto）。
+ *
+ * C# `BridgeHost.HandleSetMaxParallelErbFiles` 收到后：
+ * 1. 词表校验并写 Preferences（key=`app.diag.maxParallelErbFiles`——游戏加载时
+ *    OnReloadGame → ApplyMaxParallelErbFiles 读同一 key 应用）
+ * 2. 不即时改当前局（生成度只在 ERB 加载时被读取，真正生效在下次进游戏）
+ * 3. 推回 `config` 消息（含 maxParallelErbFiles 字段）同步设置页分段控件
+ *
+ * 仅内存覆盖不落盘：游戏随包 emuera.config 无法设置；生效状态见 LoadPendingParallel 日志
+ * knob=/window= 与 parsescript_policy 日志 sweep_deg= 字段。
+ *
+ * @param value 'auto'=min(核数,8)（默认）；'4'/'8'/'16'=显式上限（取证档）
+ */
+export function setMaxParallelErbFiles(value: MaxParallelErbFilesValue): void {
+  postInput(JSON.stringify({ type: 'setMaxParallelErbFiles', value }));
+}
+
+/**
+ * ADR-0026 诊断旋钮四（06-K2）：privateDimList 生成期全局锁策略值——设置页「诊断」分组专用词表。
+ * 'auto' = 恒加锁（默认，与止血逐位一致）；'nolock' = 纯取证档（关锁重开 List 并发损坏竞态，
+ * 可致状态损坏，issue 04-H1 判别用）——UI 已做显著危险标注。
+ */
+export type DimLockPolicyValue = 'auto' | 'nolock';
+
+/**
+ * 设置页「诊断」分组——privateDimList 锁策略（issue 04-H1 损坏型假警告判别用，默认保持 auto）。
+ *
+ * C# `BridgeHost.HandleSetDimLockPolicy` 收到后：
+ * 1. 词表校验并写 Preferences（key=`app.diag.dimLockPolicy`——游戏加载时
+ *    OnReloadGame → ApplyDimLockPolicy 读同一 key 应用）
+ * 2. 不即时改当前局（锁策略只在 IdentifierDictionary 构造时被读取，真正生效在下次进游戏）
+ * 3. 推回 `config` 消息（含 dimLockPolicy 字段）同步设置页分段控件
+ *
+ * 仅内存覆盖不落盘：游戏随包 emuera.config 无法设置；生效状态见 parsescript_policy 日志
+ * dimlock= 字段。
+ *
+ * @param value 'auto'=恒加锁（默认）；'nolock'=关锁（危险，取证专用，可致状态损坏）
+ */
+export function setDimLockPolicy(value: DimLockPolicyValue): void {
+  postInput(JSON.stringify({ type: 'setDimLockPolicy', value }));
+}
+
+/**
  * A0 补充（真机无 adb）：请求 C# 读取 agent.log 内容推给 Vue（设置页日志查看器）。
  *
  * C# `BridgeHost.HandleGetAgentLog` 收到后调 `AgentLog.ReadAllText()`（内部先 flush，

@@ -69,6 +69,22 @@ internal sealed class ConfigData
 	/// </summary>
 	public int? OverrideSafReadDegree { get; set; }
 
+	/// <summary>
+	/// 诊断旋钮（ADR-0026，06-K1）：并行生成度上限的内存覆盖——null=不覆盖（默认 min(核数,8)，
+	/// 与现状逐位一致）；显式 4/8/16（词表见 <see cref="MaxParallelErbFilesCodec"/>）=取证档直接生效
+	/// （与核数解耦），ERB 生成窗口与未调用遍历清扫度同源同拨。无对应 ConfigCode——游戏随包的
+	/// emuera.config 无法设置（loadConfig 对未知键静默跳过）；仅内存覆盖，不落盘。
+	/// </summary>
+	public int? OverrideMaxParallelErbFiles { get; set; }
+
+	/// <summary>
+	/// 诊断旋钮（ADR-0026，06-K2）：privateDimList 生成期全局锁策略的内存覆盖——null/Auto=恒加锁
+	/// （与 771708b 方案 B 止血逐位一致）；NoLock=纯取证档（关锁重开并发损坏竞态，可致状态损坏，
+	/// issue 04-H1 判别用）。无对应 ConfigCode——游戏随包的 emuera.config 无法设置
+	/// （loadConfig 对未知键静默跳过）；仅内存覆盖，不落盘。
+	/// </summary>
+	public DimLockPolicy? OverrideDimLockPolicy { get; set; }
+
 	internal ConfigData()
 	{
 		// Issue 12：构造时绑定当前游戏目录的 emuera.config 路径。

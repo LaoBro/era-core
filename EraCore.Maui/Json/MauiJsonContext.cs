@@ -93,10 +93,13 @@ internal sealed record LayoutMessage(
 /// <summary>
 /// {"type":"config","maxLog":...,"agentLogEnabled":...,"displayReportOverride":"auto"|"off"|"on",
 ///  "lazyFunctionLoad":...,"irDiskCacheLoad":...,"parallelErbLoad":...,"parallelParseScript":...,
-///  "sweepGatePolicy":"auto"|"forceon"|"forceoff","safReadDegree":"auto"|&lt;1-64&gt;}
+///  "sweepGatePolicy":"auto"|"forceon"|"forceoff","safReadDegree":"auto"|&lt;1-64&gt;,
+///  "maxParallelErbFiles":"auto"|"4"|"8"|"16","dimLockPolicy":"auto"|"nolock"}
 /// （后四字段为性能（启动加载）覆盖三态："auto"|"off"|"on"，缺省 auto=跟随游戏配置；
 ///   sweepGatePolicy 为 ADR-0026 诊断旋钮一，缺省 auto=跟随平台门；
-///   safReadDegree 为 ADR-0026 诊断旋钮二，"auto" 或钳制后的数值字符串，缺省 auto=每树 1 并发）
+///   safReadDegree 为 ADR-0026 诊断旋钮二，"auto" 或钳制后的数值字符串，缺省 auto=每树 1 并发；
+///   maxParallelErbFiles 为 ADR-0026 诊断旋钮三（06-K1），缺省 auto=min(核数,8)；
+///   dimLockPolicy 为 ADR-0026 诊断旋钮四（06-K2），缺省 auto=恒加锁，nolock=纯取证档）
 /// </summary>
 internal sealed record ConfigMessage(
     string Type,
@@ -108,7 +111,9 @@ internal sealed record ConfigMessage(
     string ParallelErbLoad,
     string ParallelParseScript,
     string SweepGatePolicy,
-    string SafReadDegree);
+    string SafReadDegree,
+    string MaxParallelErbFiles,
+    string DimLockPolicy);
 
 /// <summary>{"type":"backButtonPressed"}</summary>
 internal sealed record BackButtonPressedMessage(string Type);

@@ -181,6 +181,14 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
     if (m.safReadDegree === 'auto' || (typeof m.safReadDegree === 'string' && /^\d+$/.test(m.safReadDegree))) {
       game.safReadDegree = m.safReadDegree;
     }
+    // ADR-0026 诊断旋钮三（并行生成度上限，06-K1）的 C# 权威状态——设置页「诊断」分段控件据此渲染初始值
+    if (m.maxParallelErbFiles === 'auto' || m.maxParallelErbFiles === '4' || m.maxParallelErbFiles === '8' || m.maxParallelErbFiles === '16') {
+      game.maxParallelErbFiles = m.maxParallelErbFiles;
+    }
+    // ADR-0026 诊断旋钮四（privateDimList 锁策略，06-K2）的 C# 权威状态——设置页「诊断」分段控件据此渲染初始值
+    if (m.dimLockPolicy === 'auto' || m.dimLockPolicy === 'nolock') {
+      game.dimLockPolicy = m.dimLockPolicy;
+    }
     return;
   }
 

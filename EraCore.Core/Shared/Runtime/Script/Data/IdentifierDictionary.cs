@@ -120,8 +120,13 @@ internal partial class IdentifierDictionary
 	/// 普通 List 非线程安全，并发追加可损坏内部数组（计数与容量不一致 → Contains 死循环/误判/异常）。
 	/// Add 与 Contains 同锁串行化；语义不变（重复项仍 Add，Contains 结果不变）。
 	/// 长期方案是生成期收集改 per-file artifact、合并期统一写入（handoff §4.2），锁只是过渡。
+	/// 06-K2：壳层取证旋钮（<see cref="DimLockPolicy"/>）可关锁——纯取证档，重开本锁防的并发
+	/// 损坏竞态（issue 04-H1 候选判别），可致状态损坏；构造时读一次，本轮会话恒定。
 	/// </summary>
 	private readonly object _privateDimLock = new();
+
+	/// <summary>06-K2 消费点：仅 NoLock 关锁（判定唯一决策点 <see cref="DimLockPolicyCodec.IsDimLockEnabled"/>）。</summary>
+	private readonly bool _privateDimLockEnabled = DimLockPolicyCodec.IsDimLockEnabled(Config.OverrideDimLockPolicy);
 
 	List<string> privateDimList = [];
 	//Dictionary<string, VariableToken> userDefinedVarDic = new Dictionary<string, VariableToken>();
@@ -430,8 +435,11 @@ internal partial class IdentifierDictionary
 					break;
 			}
 		}
-		lock (_privateDimLock)
-			privateDimList.Add(varName);
+		if (_privateDimLockEnabled)
+			lock (_privateDimLock)
+				privateDimList.Add(varName);
+		else
+			privateDimList.Add(varName); // 06-K2 nolock 取证档：无锁直写（危险）
 	}
 	#endregion
 
@@ -653,8 +661,11 @@ internal partial class IdentifierDictionary
 		//if (Config.Config.IgnoreCase || Config.Config.IgnoreCase) //片方だけなのは互換性用オプションなのでレアケースのはず。対応しない。
 		//	idStr = idStr.ToUpper();
 		bool isPrivateDim;
-		lock (_privateDimLock)
-			isPrivateDim = privateDimList.Contains(idStr);
+		if (_privateDimLockEnabled)
+			lock (_privateDimLock)
+				isPrivateDim = privateDimList.Contains(idStr);
+		else
+			isPrivateDim = privateDimList.Contains(idStr); // 06-K2 nolock 取证档：无锁直读（危险）
 		if (!isFunc && isPrivateDim)
 			throw new IdentifierNotFoundCodeEE(string.Format(treer.VarNotDefinedThisFunc.Text, str));
 		if (nameDic.TryGetValue(idStr, out DefinedNameType value))

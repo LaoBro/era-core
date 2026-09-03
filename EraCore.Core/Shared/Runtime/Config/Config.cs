@@ -103,6 +103,10 @@ internal sealed class Config
 	public static SweepGatePolicy? OverrideSweepGatePolicy => Current?._data.OverrideSweepGatePolicy;
 	/// <summary>ADR-0026 诊断旋钮：SAF content-URI 读取并发度内存覆盖（null=auto 每树 1 并发；显式值钳制 1–64）。壳层经 Preferences 写入，无 ConfigCode 条目、游戏配置不可设置；桌面文件系统路径不受限。</summary>
 	public static int? OverrideSafReadDegree => Current?._data.OverrideSafReadDegree;
+	/// <summary>ADR-0026 诊断旋钮（06-K1）：并行生成度上限内存覆盖（null=auto min(核数,8)；显式 4/8/16 取证档与核数解耦，窗口与清扫度同源同拨）。壳层经 Preferences 写入，无 ConfigCode 条目、游戏配置不可设置。</summary>
+	public static int? OverrideMaxParallelErbFiles => Current?._data.OverrideMaxParallelErbFiles;
+	/// <summary>ADR-0026 诊断旋钮（06-K2）：privateDimList 锁策略内存覆盖（null/Auto=恒加锁；NoLock=纯取证档，可致状态损坏）。壳层经 Preferences 写入，无 ConfigCode 条目、游戏配置不可设置。</summary>
+	public static DimLockPolicy? OverrideDimLockPolicy => Current?._data.OverrideDimLockPolicy;
 	public static ReduceArgumentOnLoadFlag ReduceArgumentOnLoad => Current!._data.GetConfigValue<ReduceArgumentOnLoadFlag>(ConfigCode.ReduceArgumentOnLoad);
 	public static bool IgnoreUncalledFunction => Current!._data.GetConfigValue<bool>(ConfigCode.IgnoreUncalledFunction);
 	/// <summary>lazy-function-load（B 线 B1）：函数级惰性物化开关，与 IgnoreUncalledFunction 正交；AnalysisMode 一律强制 eager。</summary>

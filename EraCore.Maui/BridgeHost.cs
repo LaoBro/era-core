@@ -137,6 +137,26 @@ internal sealed class BridgeHost : IDisposable
     internal const string DiagSafReadDegreeKey = "app.diag.safReadDegree";
 
     /// <summary>
+    /// Preferences key——并行生成度上限（ADR-0026 诊断旋钮三，06-K1）。
+    /// 值为 <c>"auto"</c>（min(核数,8)，默认，与现状逐位一致）或词表值 <c>"4"/"8"/"16"</c>
+    /// （取证档直接生效，与核数解耦；ERB 生成窗口与未调用遍历清扫度同源同拨）。仅内存覆盖不落盘：
+    /// 写入 <see cref="ConfigData.OverrideMaxParallelErbFiles"/>（无 ConfigCode 条目，游戏随包配置无法设置）；
+    /// 游戏加载（OnReloadGame → ApplyMaxParallelErbFiles）时读此 key 应用，ErbLoader 在
+    /// LoadPendingParallel/parsescript_policy 日志以 knob=/sweep_deg= 字段自证。
+    /// </summary>
+    internal const string DiagMaxParallelErbFilesKey = "app.diag.maxParallelErbFiles";
+
+    /// <summary>
+    /// Preferences key——privateDimList 生成期全局锁策略（ADR-0026 诊断旋钮四，06-K2）。
+    /// 值为 <c>"auto"</c>（恒加锁，默认，与止血逐位一致）/ <c>"nolock"</c>（纯取证档：关锁重开
+    /// List 并发损坏竞态，可致状态损坏，issue 04-H1 判别用；UI 显著危险标注）。仅内存覆盖不落盘：
+    /// 写入 <see cref="ConfigData.OverrideDimLockPolicy"/>（无 ConfigCode 条目，游戏随包配置无法设置）；
+    /// 游戏加载（OnReloadGame → ApplyDimLockPolicy）时读此 key 应用，ErbLoader 在 parsescript_policy
+    /// 日志以 dimlock= 字段自证。
+    /// </summary>
+    internal const string DiagDimLockPolicyKey = "app.diag.dimLockPolicy";
+
+    /// <summary>
     /// setPerfOverride 消息的 wire key（Vue 端 camelCase）→（Preferences key，引擎 ConfigCode）映射——
     /// HandleSetPerfOverride 校验 key 合法性、PushConfigMessage/ApplyPerformanceOverrides 遍历用。
     /// </summary>
@@ -286,6 +306,76 @@ internal sealed class BridgeHost : IDisposable
             $"saf read degree override: platform={platform} " +
             $"requested={SafReadDegreeCodec.ToConfigString(requested)} " +
             $"effective={SafReadDegreeCodec.ToConfigString(requested)}");
+    }
+
+    /// <summary>
+    /// 读诊断旋钮「并行生成度上限」的 Preferences 值并经 codec 规范化（null/空/词表外值/Preferences
+    /// 不可用一律回退 null=auto min(核数,8)）——词表唯一映射点在
+    /// <see cref="MaxParallelErbFilesCodec"/>，此处不做二次校验。
+    /// </summary>
+    internal static int? ReadMaxParallelErbFilesPreference()
+    {
+        try
+        {
+            return MaxParallelErbFilesCodec.Parse(Preferences.Get(DiagMaxParallelErbFilesKey, "auto"));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 游戏加载期应用诊断旋钮「并行生成度上限」（ADR-0026，06-K1）——MainPage.OnReloadGame 在
+    /// <see cref="ApplySafReadDegree"/> 之后、会话创建之前调用。仅内存覆盖：写
+    /// <see cref="ConfigData.OverrideMaxParallelErbFiles"/>（无 ConfigCode 条目，游戏随包配置无法设置，
+    /// SaveConfig 不落盘）。null=auto（min(核数,8)，与现状逐位等价）；随后会话创建时 ErbLoader
+    /// 读到并在 LoadPendingParallel/parsescript_policy 日志以 knob=/sweep_deg= 字段自证。
+    /// </summary>
+    internal static void ApplyMaxParallelErbFiles(ConfigData configData)
+    {
+        var platform = PlatformTag;
+        var requested = ReadMaxParallelErbFilesPreference();
+        configData.OverrideMaxParallelErbFiles = requested;
+        LogPerfOverride(
+            $"max parallel erb files override: platform={platform} " +
+            $"requested={MaxParallelErbFilesCodec.ToConfigString(requested)} " +
+            $"effective={MaxParallelErbFilesCodec.ToConfigString(requested)}");
+    }
+
+    /// <summary>
+    /// 读诊断旋钮「privateDimList 锁策略」的 Preferences 值并经 codec 规范化（null/空/未知值/
+    /// Preferences 不可用一律回退 <see cref="DimLockPolicy.Auto"/>=恒加锁）——词表唯一映射点在
+    /// <see cref="DimLockPolicyCodec"/>，此处不做二次校验。
+    /// </summary>
+    internal static DimLockPolicy ReadDimLockPolicyPreference()
+    {
+        try
+        {
+            return DimLockPolicyCodec.Parse(Preferences.Get(DiagDimLockPolicyKey, "auto"));
+        }
+        catch
+        {
+            return DimLockPolicy.Auto;
+        }
+    }
+
+    /// <summary>
+    /// 游戏加载期应用诊断旋钮「privateDimList 锁策略」（ADR-0026，06-K2）——MainPage.OnReloadGame 在
+    /// <see cref="ApplyMaxParallelErbFiles"/> 之后、会话创建之前调用。仅内存覆盖：写
+    /// <see cref="ConfigData.OverrideDimLockPolicy"/>（无 ConfigCode 条目，游戏随包配置无法设置，
+    /// SaveConfig 不落盘）。Auto 置 null（恒加锁，与止血逐位等价）；NoLock=纯取证档（关锁可致状态损坏）；
+    /// 随后会话创建时 IdentifierDictionary 构造时读到，parsescript_policy 日志以 dimlock= 字段自证。
+    /// </summary>
+    internal static void ApplyDimLockPolicy(ConfigData configData)
+    {
+        var platform = PlatformTag;
+        var requested = ReadDimLockPolicyPreference();
+        configData.OverrideDimLockPolicy = requested == DimLockPolicy.Auto ? null : requested;
+        LogPerfOverride(
+            $"dim lock policy override: platform={platform} " +
+            $"requested={DimLockPolicyCodec.ToConfigString(requested)} " +
+            $"effective={DimLockPolicyCodec.ToConfigString(requested)}");
     }
 
     /// <summary>三态字符串 ↔ <see cref="ConfigData.OverrideDisplayReport"/> 的映射（纯函数，单测覆盖）。</summary>
@@ -612,6 +702,18 @@ internal sealed class BridgeHost : IDisposable
                 if (type == "setSafReadDegree")
                 {
                     HandleSetSafReadDegree(doc.RootElement);
+                    return;
+                }
+                // ADR-0026 诊断旋钮三（并行生成度上限，06-K1）——写 Preferences，下次进游戏由 ApplyMaxParallelErbFiles 应用
+                if (type == "setMaxParallelErbFiles")
+                {
+                    HandleSetMaxParallelErbFiles(doc.RootElement);
+                    return;
+                }
+                // ADR-0026 诊断旋钮四（privateDimList 锁策略，06-K2）——写 Preferences，下次进游戏由 ApplyDimLockPolicy 应用
+                if (type == "setDimLockPolicy")
+                {
+                    HandleSetDimLockPolicy(doc.RootElement);
                     return;
                 }
                 // A0 补充：app 内日志查看器——读取 agent.log 内容推给 Vue（真机无 adb 场景）
@@ -1217,6 +1319,81 @@ internal sealed class BridgeHost : IDisposable
     }
 
     /// <summary>
+    /// 接收 <c>{"type":"setMaxParallelErbFiles","value":"auto"|"4"|"8"|"16"}</c>（ADR-0026 诊断旋钮三，
+    /// 06-K1，设置页「诊断」分组）；词表校验后持久化到 <see cref="DiagMaxParallelErbFilesKey"/>。
+    /// <para>
+    /// 不即时改当前 <see cref="_configData"/>——生成度只在 ERB 加载时被读取，当前局不受影响；
+    /// 真正生效在下次进游戏（OnReloadGame → ApplyMaxParallelErbFiles 据此压值）。完成后推回 <c>config</c>
+    /// 消息同步 UI。
+    /// </para>
+    /// </summary>
+    private void HandleSetMaxParallelErbFiles(JsonElement root)
+    {
+        if (root.TryGetProperty("value", out var el) && el.ValueKind == JsonValueKind.String)
+        {
+            var value = el.GetString();
+            var parsed = MaxParallelErbFilesCodec.Parse(value);
+            if (parsed == null && value != "auto")
+            {
+                Console.WriteLine($"[bridge] HandleSetMaxParallelErbFiles: invalid value '{value}'");
+                return;
+            }
+            var canonical = MaxParallelErbFilesCodec.ToConfigString(parsed);
+            try
+            {
+                Preferences.Set(DiagMaxParallelErbFilesKey, canonical);
+            }
+            catch
+            {
+                // Preferences 不可用——仅持久化失败（下次启动回默认 min(核数,8)）
+            }
+            Console.WriteLine($"[bridge] max parallel erb files set to {canonical}");
+            PushConfigMessage();
+            return;
+        }
+        Console.WriteLine("[bridge] HandleSetMaxParallelErbFiles: missing or non-string 'value' field");
+    }
+
+    /// <summary>
+    /// 接收 <c>{"type":"setDimLockPolicy","value":"auto"|"nolock"}</c>（ADR-0026 诊断旋钮四，06-K2，
+    /// 设置页「诊断」分组）；词表校验（唯一映射点 <see cref="DimLockPolicyCodec"/>）后持久化到
+    /// <see cref="DiagDimLockPolicyKey"/>。nolock=纯取证档（关锁重开 List 并发损坏竞态，
+    /// 可致状态损坏——UI 已做显著危险标注）。
+    /// <para>
+    /// 不即时改当前 <see cref="_configData"/>——锁策略只在 IdentifierDictionary 构造时被读取，
+    /// 当前局不受影响；真正生效在下次进游戏（OnReloadGame → ApplyDimLockPolicy 据此压值）。
+    /// 完成后推回 <c>config</c> 消息同步 UI。
+    /// </para>
+    /// </summary>
+    private void HandleSetDimLockPolicy(JsonElement root)
+    {
+        if (root.TryGetProperty("value", out var el) && el.ValueKind == JsonValueKind.String)
+        {
+            var value = el.GetString();
+            // 词表唯一映射点：非法值 Parse 回退 Auto——仅当值既非 "auto" 又解析不出 nolock 时判非法
+            var parsed = DimLockPolicyCodec.Parse(value);
+            if (parsed != DimLockPolicy.NoLock && value != "auto")
+            {
+                Console.WriteLine($"[bridge] HandleSetDimLockPolicy: invalid value '{value}'");
+                return;
+            }
+            var canonical = DimLockPolicyCodec.ToConfigString(parsed);
+            try
+            {
+                Preferences.Set(DiagDimLockPolicyKey, canonical);
+            }
+            catch
+            {
+                // Preferences 不可用——仅持久化失败（下次启动回默认恒加锁）
+            }
+            Console.WriteLine($"[bridge] dim lock policy set to {canonical}");
+            PushConfigMessage();
+            return;
+        }
+        Console.WriteLine("[bridge] HandleSetDimLockPolicy: missing or non-string 'value' field");
+    }
+
+    /// <summary>
     /// A0 补充（真机无 adb）：app 内日志查看器——读取 agent.log 内容推给 Vue。
     /// <para>
     /// 接收 <c>{"type":"getAgentLog"}</c>；调 <see cref="AgentLog.ReadAllText"/>（内部 flush，
@@ -1419,9 +1596,11 @@ internal sealed class BridgeHost : IDisposable
     /// 推送 emuera.config 值给 Vue——让设置页显示当前配置。
     /// <para>
     /// 消息格式：<c>{"type":"config","maxLog":5000,"agentLogEnabled":false,"displayReportOverride":"auto",
-    /// "lazyFunctionLoad":"auto",...,"sweepGatePolicy":"auto","safReadDegree":"auto"}</c>（性能覆盖四字段
+    /// "lazyFunctionLoad":"auto",...,"sweepGatePolicy":"auto","safReadDegree":"auto",
+    /// "maxParallelErbFiles":"auto","dimLockPolicy":"auto"}</c>（性能覆盖四字段
     /// 为对应 Preferences 三态权威值 auto/off/on，sweepGatePolicy 为 ADR-0026 诊断旋钮一权威值
-    /// auto/forceon/forceoff，safReadDegree 为旋钮二权威值 auto/1/2/4——切换后对应 Handle* 推回同步）。
+    /// auto/forceon/forceoff，safReadDegree 为旋钮二权威值 auto/&lt;1-64&gt;，maxParallelErbFiles 为
+    /// 旋钮三权威值 auto/4/8/16，dimLockPolicy 为旋钮四权威值 auto/nolock——切换后对应 Handle* 推回同步）。
     /// </para>
     /// </summary>
     private void PushConfigMessage()
@@ -1435,7 +1614,9 @@ internal sealed class BridgeHost : IDisposable
                 ReadPerfOverride(PerfParallelErbLoadKey),
                 ReadPerfOverride(PerfParallelParseScriptKey),
                 SweepGatePolicyCodec.ToConfigString(ReadSweepGatePolicyPreference()),
-                SafReadDegreeCodec.ToConfigString(ReadSafReadDegreePreference())),
+                SafReadDegreeCodec.ToConfigString(ReadSafReadDegreePreference()),
+                MaxParallelErbFilesCodec.ToConfigString(ReadMaxParallelErbFilesPreference()),
+                DimLockPolicyCodec.ToConfigString(ReadDimLockPolicyPreference())),
             MauiJsonContext.Default.ConfigMessage);
         _dispatcher.Dispatch(() => _jsBridge.PostMessage(msg));
     }

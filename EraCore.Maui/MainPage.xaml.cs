@@ -301,6 +301,12 @@ public partial class MainPage : ContentPage
                 // ADR-0026 诊断旋钮二（SAF content-URI 读取并发度）：同点应用——仅内存覆盖写
                 // OverrideSafReadDegree，Preload.Load 时读并在 preload_policy 日志自证
                 BridgeHost.ApplySafReadDegree(newConfig);
+                // ADR-0026 诊断旋钮三（并行生成度上限，06-K1）：同点应用——仅内存覆盖写
+                // OverrideMaxParallelErbFiles，ErbLoader 加载 ERB 时读并在 LoadPendingParallel 日志自证
+                BridgeHost.ApplyMaxParallelErbFiles(newConfig);
+                // ADR-0026 诊断旋钮四（privateDimList 锁策略，06-K2）：同点应用——仅内存覆盖写
+                // OverrideDimLockPolicy，IdentifierDictionary 构造时读并在 parsescript_policy 日志自证
+                BridgeHost.ApplyDimLockPolicy(newConfig);
                 var hasWrite = dirAccessor.HasWriteAccess();
                 Console.WriteLine($"[maui] OnReloadGame init completed: ExeDir={paths.ExeDir}, hasWrite={hasWrite}");
 #if ANDROID

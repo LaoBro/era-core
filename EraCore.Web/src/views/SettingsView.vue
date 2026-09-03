@@ -2,8 +2,8 @@
 import { ref } from 'vue';
 import { useGameStore } from '../stores/game';
 import { useUiStore } from '../stores/ui';
-import { setAgentLogEnabled, setDisplayReportOverride, setPerfOverride, setSafReadDegree, setSweepGatePolicy, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
-import type { DisplayReportOverride, PerfOverrideKey, SafReadDegreeValue, SweepGatePolicyValue } from '../lib/mauiBridge';
+import { setAgentLogEnabled, setDimLockPolicy, setDisplayReportOverride, setMaxParallelErbFiles, setPerfOverride, setSafReadDegree, setSweepGatePolicy, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
+import type { DimLockPolicyValue, DisplayReportOverride, MaxParallelErbFilesValue, PerfOverrideKey, SafReadDegreeValue, SweepGatePolicyValue } from '../lib/mauiBridge';
 
 const game = useGameStore();
 const ui = useUiStore();
@@ -80,6 +80,29 @@ function applyCustomSafReadDegree(): void {
   const clamped = String(Math.min(64, Math.max(1, parseInt(raw, 10))));
   safDegreeInput.value = '';
   applySafReadDegree(clamped);
+}
+
+/**
+ * ADR-0026 诊断旋钮三（06-K1，并行生成度上限）切换——投递 setMaxParallelErbFiles 请求 C#
+ * 词表校验 + 写 Preferences，本地乐观更新。C# 处理完推回 config 消息（含 maxParallelErbFiles
+ * 字段）再次同步——最终显示以 C# 权威状态为准。
+ * 注意：生成度只在 ERB 加载时被读取，本局不受影响，重新进入游戏后生效。
+ */
+function chooseMaxParallelErbFiles(value: MaxParallelErbFilesValue): void {
+  setMaxParallelErbFiles(value);
+  game.maxParallelErbFiles = value;
+}
+
+/**
+ * ADR-0026 诊断旋钮四（06-K2，privateDimList 锁策略）切换——投递 setDimLockPolicy 请求 C#
+ * 词表校验 + 写 Preferences，本地乐观更新。C# 处理完推回 config 消息（含 dimLockPolicy 字段）
+ * 再次同步——最终显示以 C# 权威状态为准。
+ * 注意：nolock 为纯取证档（关锁可致状态损坏），仅真机单变量取证时短时拨动；
+ * 锁策略只在 IdentifierDictionary 构造时被读取，本局不受影响，重新进入游戏后生效。
+ */
+function chooseDimLockPolicy(value: DimLockPolicyValue): void {
+  setDimLockPolicy(value);
+  game.dimLockPolicy = value;
 }
 
 /**
@@ -231,6 +254,60 @@ const logCopied = ref(false);
           一致）；数值=每树读取并发度（高并发可能触发已知并发读取卡死/崩溃）。桌面本地目录
           不受此开关影响。仅内存覆盖，游戏配置无法设置；切换不影响当前局，重新进入游戏后
           生效，实际并发状态以日志 preload_policy 的 requested=/effective= 字段为准。
+        </p>
+        <div class="setting-row">
+          <span class="setting-label">并行生成度上限</span>
+          <div class="segmented" role="radiogroup" aria-label="并行生成度上限">
+            <button
+              v-for="opt in [
+                { value: 'auto', label: '默认' },
+                { value: '4', label: '4' },
+                { value: '8', label: '8' },
+                { value: '16', label: '16' },
+              ]"
+              :key="opt.value"
+              class="segmented-item"
+              :class="{ active: game.maxParallelErbFiles === opt.value }"
+              role="radio"
+              :aria-checked="game.maxParallelErbFiles === opt.value"
+              @click="chooseMaxParallelErbFiles(opt.value as MaxParallelErbFilesValue)"
+            >
+              {{ opt.label }}
+            </button>
+          </div>
+        </div>
+        <p class="hint-text">
+          诊断旋钮，默认保持 auto；真机并行度/内存峰值取证用。默认=min(核数, 8)（与现状完全
+          一致）；数值=同时生成/未合并的 ERB 文件数上限（与未调用遍历清扫度同源同拨，
+          显式档不与核数取 min，16 档即超订阅观测点）。仅内存覆盖，游戏配置无法设置；
+          切换不影响当前局，重新进入游戏后生效，实际窗口以日志 LoadPendingParallel 的
+          knob=/window= 字段为准。
+        </p>
+        <div class="setting-row">
+          <span class="setting-label">privateDim 锁</span>
+          <div class="segmented" role="radiogroup" aria-label="privateDimList 锁策略">
+            <button
+              v-for="opt in [
+                { value: 'auto', label: '默认加锁' },
+                { value: 'nolock', label: '关锁 ⚠' },
+              ]"
+              :key="opt.value"
+              class="segmented-item"
+              :class="{ active: game.dimLockPolicy === opt.value, danger: opt.value === 'nolock' }"
+              role="radio"
+              :aria-checked="game.dimLockPolicy === opt.value"
+              @click="chooseDimLockPolicy(opt.value as DimLockPolicyValue)"
+            >
+              {{ opt.label }}
+            </button>
+          </div>
+        </div>
+        <p class="hint-text" :class="{ 'danger-text': game.dimLockPolicy === 'nolock' }">
+          ⚠ 取证专用，可致状态损坏：关锁会重新打开它防的并行加载期 List 并发损坏竞态
+          （loading 假警告/异常判别实验用，issue 04-H1）。默认保持加锁（与止血版本完全一致）；
+          仅真机单变量取证时短时拨动，实验完立即拨回。仅内存覆盖，游戏配置无法设置；
+          切换不影响当前局，重新进入游戏后生效，实际锁状态以日志 parsescript_policy 的
+          dimlock= 字段为准。
         </p>
       </div>
       <div class="section">
@@ -426,6 +503,18 @@ h3 {
   padding: var(--space-2) var(--space-3);
   width: 5.5em;
   outline: none;
+}
+/* 诊断旋钮四（06-K2）：nolock 取证档显著危险标注——按钮 danger 色描边，激活 danger 色填充 */
+.segmented-item.danger {
+  color: var(--color-error);
+  font-weight: 600;
+}
+.segmented-item.danger.active {
+  background: color-mix(in srgb, var(--color-error) 22%, var(--color-surface));
+  color: var(--color-error);
+}
+.danger-text {
+  color: var(--color-error);
 }
 /* A0 补充：查看日志按钮 + 日志展示区（基于 .btn-outline 实心控件，DESIGN.md） */
 .log-view {
