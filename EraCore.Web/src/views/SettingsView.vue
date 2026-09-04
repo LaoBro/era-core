@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { useGameStore } from '../stores/game';
 import { useUiStore } from '../stores/ui';
 import { setAgentLogEnabled, setDimLockPolicy, setDisplayReportOverride, setMaxParallelErbFiles, setPerfOverride, setSafReadDegree, setSweepGatePolicy, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
@@ -59,27 +59,62 @@ function chooseSweepGatePolicy(value: SweepGatePolicyValue): void {
   game.sweepGatePolicy = value;
 }
 
-/** SAF 读取并发度自定义输入框（自由数值，C# 侧钳制 1–64）。 */
+/** SAF 读取并发度——模式（默认/手动）本地 UI 态；选手动时才显示数值输入框。 */
+const safMode = ref<'auto' | 'manual'>(game.safReadDegree === 'auto' ? 'auto' : 'manual');
+/** 手动并发度输入框（自由数值，C# 侧钳制 1–64）。 */
 const safDegreeInput = ref<string>('');
+/** 刚应用过的短暂反馈（"已应用 N"），1.5s 后消失。 */
+const safDegreeApplied = ref(false);
+/** 首次切到手动、尚未设置过数值时的默认初值。 */
+const DEFAULT_MANUAL_DEGREE = '4';
+
+/** 同步 C# 权威状态：config 消息推回的 safReadDegree 变化时对齐到本地模式与输入框。
+ *  immediate：SettingsView 按 v-if 切换会销毁重建——重挂载时也回填持久化值，避免
+ *  手动输入框空白（"设了但看不出来"的反馈缺失）。 */
+watch(
+  () => game.safReadDegree,
+  (v) => {
+    safMode.value = v === 'auto' ? 'auto' : 'manual';
+    if (v !== 'auto') safDegreeInput.value = v;
+  },
+  { immediate: true },
+);
 
 /**
- * ADR-0026 诊断旋钮二（SAF content-URI 读取并发度）应用——把 'auto' 或数值字符串投递
- * setSafReadDegree 请求 C# 规范化（数值钳制 1–64）+ 写 Preferences，本地乐观更新；C# 处理完
- * 推回 config 消息（含规范化后的 safReadDegree 字段）再次同步——最终显示以 C# 权威状态为准。
+ * ADR-0026 诊断旋钮二（SAF content-URI 读取并发度）模式切换——状态始终有清楚反馈：
+ * 拨「默认」立即投递并回 auto；拨「手动」显现输入框（反填当前数值，未设置过则填默认），
+ * 输入后点「应用」或回车才提交。C# 规范化（数值钳制 1–64）+ 写 Preferences，本地乐观更新，
+ * 处理完推回 config 消息（含规范化后的 safReadDegree 字段）再次同步——最终以 C# 权威状态为准。
  * 注意：并发度只在 Preload.Load 时被读取，本局不受影响，重新进入游戏后生效。
  */
+function chooseSafMode(mode: 'auto' | 'manual'): void {
+  safMode.value = mode;
+  safDegreeApplied.value = false;
+  if (mode === 'auto') {
+    applySafReadDegree('auto');
+  } else {
+    safDegreeInput.value = game.safReadDegree !== 'auto' ? game.safReadDegree : DEFAULT_MANUAL_DEGREE;
+  }
+}
+
+/** 投递 setSafReadDegree 请求 C# 规范化 + 写 Preferences；本地乐观更新。 */
 function applySafReadDegree(value: SafReadDegreeValue): void {
   setSafReadDegree(value);
   game.safReadDegree = value;
 }
 
-/** 自定义并发度输入的应用：非正整数输入忽略；越界值按 C# 同款规则钳制 1–64 后投递。 */
+/** 手动值应用：非正整数忽略；越界按 C# 同款规则钳制 1–64 后投递，并给出"已应用"反馈。 */
 function applyCustomSafReadDegree(): void {
-  const raw = safDegreeInput.value.trim();
+  // 注意：<input type="number"> 的 v-model 会把用户输入转成 number（Vue 对 number 输入默认
+  // castToNumber），此处统一 String() 归一后再 trim/正则，避免 number.trim() 抛 TypeError
+  // 导致第二次及以后的应用静默失败（无投递、无持久化、UI/日志不变）。
+  const raw = String(safDegreeInput.value ?? '').trim();
   if (!/^\d+$/.test(raw)) return;
   const clamped = String(Math.min(64, Math.max(1, parseInt(raw, 10))));
-  safDegreeInput.value = '';
+  safDegreeInput.value = clamped;
   applySafReadDegree(clamped);
+  safDegreeApplied.value = true;
+  setTimeout(() => (safDegreeApplied.value = false), 1500);
 }
 
 /**
@@ -222,36 +257,50 @@ const logCopied = ref(false);
         </p>
         <div class="setting-row">
           <span class="setting-label">SAF 读取并发度</span>
-          <div class="segmented" role="group" aria-label="SAF 读取并发度">
+          <div class="segmented" role="radiogroup" aria-label="SAF 读取并发度">
             <button
-              v-for="opt in ['auto', '1', '2', '4', '8']"
-              :key="opt"
               class="segmented-item"
-              :class="{ active: game.safReadDegree === opt }"
-              :aria-pressed="game.safReadDegree === opt"
-              @click="applySafReadDegree(opt)"
+              :class="{ active: safMode === 'auto' }"
+              role="radio"
+              :aria-checked="safMode === 'auto'"
+              @click="chooseSafMode('auto')"
             >
-              {{ opt }}
+              默认
             </button>
-            <input
-              v-model="safDegreeInput"
-              class="saf-degree-input"
-              type="number"
-              min="1"
-              max="64"
-              placeholder="1-64"
-              aria-label="自定义 SAF 读取并发度"
-              @keydown.enter="applyCustomSafReadDegree"
-            />
-            <button class="segmented-item" aria-label="应用自定义 SAF 读取并发度" @click="applyCustomSafReadDegree">
-              应用
+            <button
+              class="segmented-item"
+              :class="{ active: safMode === 'manual' }"
+              role="radio"
+              :aria-checked="safMode === 'manual'"
+              @click="chooseSafMode('manual')"
+            >
+              手动
             </button>
           </div>
         </div>
+        <div v-if="safMode === 'manual'" class="setting-row saf-degree-row">
+          <span class="setting-label">并发数值</span>
+          <input
+            v-model="safDegreeInput"
+            class="saf-degree-input"
+            type="number"
+            min="1"
+            max="64"
+            placeholder="1-64"
+            aria-label="SAF 并发数值"
+            @keydown.enter="applyCustomSafReadDegree"
+          />
+          <button class="segmented-item" aria-label="应用 SAF 并发数值" @click="applyCustomSafReadDegree">
+            应用
+          </button>
+          <span v-if="safDegreeApplied" class="setting-value saf-applied-hint" aria-live="polite">
+            已应用 {{ game.safReadDegree }}
+          </span>
+        </div>
         <p class="hint-text">
-          诊断旋钮，默认保持 auto；真机复测与读取并发度取证实验用（可输入 1-64 任意值二分
-          崩溃阈值）。仅影响 Android SAF 目录的游戏文件读取：默认=每树 1 并发（与旧版本完全
-          一致）；数值=每树读取并发度（高并发可能触发已知并发读取卡死/崩溃）。桌面本地目录
+          诊断旋钮，默认保持 auto；真机复测与读取并发度取证实验用——拨「手动」可输入 1-64
+          任意值二分崩溃阈值。仅影响 Android SAF 目录的游戏文件读取：默认=每树 1 并发（与旧版本
+          完全一致）；数值=每树读取并发度（高并发可能触发已知并发读取卡死/崩溃）。桌面本地目录
           不受此开关影响。仅内存覆盖，游戏配置无法设置；切换不影响当前局，重新进入游戏后
           生效，实际并发状态以日志 preload_policy 的 requested=/effective= 字段为准。
         </p>
@@ -503,6 +552,10 @@ h3 {
   padding: var(--space-2) var(--space-3);
   width: 5.5em;
   outline: none;
+}
+/* 诊断旋钮二：手动值应用成功的短暂反馈（醒目非文本色） */
+.saf-applied-hint {
+  color: var(--color-indicator);
 }
 /* 诊断旋钮四（06-K2）：nolock 取证档显著危险标注——按钮 danger 色描边，激活 danger 色填充 */
 .segmented-item.danger {
