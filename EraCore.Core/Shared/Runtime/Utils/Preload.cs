@@ -147,11 +147,15 @@ static partial class Preload
     /// 非缓存键路径返回 null 由调用方走文件系统枚举）。
     /// Key = 相对 dir 的逻辑相对路径（对齐 Config.getFiles）；Value = 缓存全路径键（OpenOnCache 精确命中）。
     /// 用 Unescape 后的 documentId 前缀过滤（避免 raw URI 上 %2F 前缀匹配失效）。
-    /// 02：缓存键只枚举一次——快照后复用（含日志取数）。</summary>
+    /// 02：缓存键只枚举一次——快照后复用（含日志取数）。
+    /// issue 09：缓存整体为空（从未加载——命中轮跳过内容 Preload）时返回 null，由调用方走
+    /// Config.GetFiles 枚举兜底；缓存加载过但无匹配扩展名时仍返回空列表（表示「确实没有」）。</summary>
     public static List<KeyValuePair<string, string>>? GetFilesFromCache(string dirPath, string extension, string logTag)
     {
         if (!SafPath.IsContentUri(dirPath)) return null;
         var cachedKeys = files.Keys.ToList();
+        if (cachedKeys.Count == 0)
+            return null;
         var result = cachedKeys
             .Where(k => k.EndsWith(extension, StringComparison.OrdinalIgnoreCase)
                 && SafPath.IsUnderRoot(dirPath, k))

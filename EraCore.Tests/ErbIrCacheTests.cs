@@ -189,7 +189,7 @@ public class ErbIrCacheTests
 	{
 		const string Root = "content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FListingConsistency";
 		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
-		using var _ = OpenRootedScope(Root, accessor);
+		using var rootedScope = OpenRootedScope(Root, accessor);
 		var erbDir = SafCompat.ResolveSubPath(Root, "erb");
 		SafCompat.CreateDirectory(erbDir);
 		accessor.Seed(SafCompat.CombinePath(erbDir, "MAIN.ERB"), Encoding.UTF8.GetBytes("@M\nRETURN\n"));
@@ -263,6 +263,44 @@ public class ErbIrCacheTests
 		// 建库轮语义：lazy 关闭 → 不判命中，直接走完整 Preload
 		config.GetConfigItem(ConfigCode.LazyFunctionLoad).SetValue(false);
 		Assert.False(ErbLoader.IsIrHitRound(env));
+	}
+
+	[Fact]
+	public async Task ContentUri_empty_cache_falls_back_to_enumeration_for_pending_list()
+	{
+		// issue 09 真机回归钉（2026-09-05 launch4 分析发现）：命中轮跳过内容 Preload →
+		// Preload 缓存整体为空。GetFilesFromCache 必须返回 null（而非空列表）让调用方走
+		// Config.GetFiles 枚举兜底，否则 content-URI 命中轮 ERB 清单为空、游戏不加载任何脚本。
+		const string Root = "content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FListingEmptyCache";
+		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		using var rootedScope = OpenRootedScope(Root, accessor);
+		var erbDir = SafCompat.ResolveSubPath(Root, "erb");
+		SafCompat.CreateDirectory(erbDir);
+		accessor.Seed(SafCompat.CombinePath(erbDir, "MAIN.ERB"), Encoding.UTF8.GetBytes("@M\nRETURN\n"));
+
+		Preload.Clear();
+		try
+		{
+			// 缓存空（命中轮语义）→ GetFilesFromCache 返回 null，调用方走枚举兜底
+			Assert.Null(Preload.GetFilesFromCache(erbDir, ".ERB", "test"));
+
+			var env = new LoaderEnv(
+				erbDir, erbDir, analysisMode: false, analysisFiles: new List<string>(), debugMode: false)
+			{ DirAccessor = accessor };
+			var pending = ErbLoader.BuildPendingList(env, out _, out _);
+			Assert.Single(pending);
+			Assert.Equal("MAIN.ERB", pending[0].Filename);
+
+			// 对照：缓存加载过 → GetFilesFromCache 返回缓存清单（非 null）
+			await Preload.Load(erbDir, accessor);
+			var fromCache = Preload.GetFilesFromCache(erbDir, ".ERB", "test");
+			Assert.NotNull(fromCache);
+			Assert.Equal("MAIN.ERB", Assert.Single(fromCache!).Key);
+		}
+		finally
+		{
+			Preload.Clear();
+		}
 	}
 
 	/// <summary>OpenScope 的带根路径变体：解析 GamePaths 到指定根 + 访问器，dispose 时还原。</summary>
