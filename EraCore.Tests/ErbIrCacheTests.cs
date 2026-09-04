@@ -303,6 +303,60 @@ public class ErbIrCacheTests
 		}
 	}
 
+	/// <summary>
+	/// issue 09 真机排障（2026-09-05 launch6 fp 分歧：命中轮 Config 枚举 fp=2efe… 与建库轮缓存键
+	/// fp=5287… 不同）——两套清单来源在子目录 + 中文/空格文件名下必须产生相同指纹，
+	/// 否则命中轮（缓存空走 Config）与建库轮（缓存键）指纹漂移、IR 永不命中。
+	/// 文件系统分支验证（content-URI 分支由 ContentUri_* 测试钉顶层；子目录差异若存在应在两分支同现）。
+	/// </summary>
+	[Fact]
+	public async Task FileSystem_cache_keys_vs_config_enumeration_have_same_fingerprint()
+	{
+		var tempRoot = Path.Combine(Path.GetTempPath(), "emuera-listdiff-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(tempRoot);
+		var previousPaths = GamePaths.Current;
+		GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
+		var config = new ConfigData();
+		// launch6 真机 files=2388（全树含子目录）→ SearchSubdirectory=YES；两套枚举都须递归
+		config.GetConfigItem(ConfigCode.SearchSubdirectory).SetValue(true);
+		using var scope = new RootedScope(GlobalStatic.OpenScope(config), tempRoot, previousPaths);
+		var erbDir = Path.Combine(tempRoot, "erb") + Path.DirectorySeparatorChar;
+		Directory.CreateDirectory(erbDir);
+		Directory.CreateDirectory(Path.Combine(erbDir, "SUB"));
+		File.WriteAllText(Path.Combine(erbDir, "TOP.ERB"), "@T\nRETURN\n");
+		File.WriteAllText(Path.Combine(erbDir, "SUB", "中文 名前.ERB"), "@C\nRETURN\n");
+		File.WriteAllText(Path.Combine(erbDir, "SUB", "NESTED.ERB"), "@N\nRETURN\n");
+
+		Preload.Clear();
+		try
+		{
+			await Preload.Load(erbDir, new FileSystemGameDirAccessor());
+			var cacheKeys = Preload.GetAllCachedKeys().ToList();
+			Assert.Equal(3, cacheKeys.Count);
+			// 模拟 GetFilesFromCache 输出（content-URI 分支语义，FS 下用同一相对路径函数）
+			var fromCache = cacheKeys
+				.Where(k => k.EndsWith(".ERB", StringComparison.OrdinalIgnoreCase)
+					&& SafPath.IsUnderRoot(erbDir, k))
+				.Select(k => (Logical: SafPath.GetRelativePathFromRoot(erbDir, k), Physical: k))
+				.ToList();
+			var fromConfig = Config.GetFiles(erbDir, "*.ERB")
+				.Select(kv => (Logical: kv.Key, Physical: kv.Value)).ToList();
+			Assert.Equal(fromConfig.Count, fromCache.Count);
+
+			// 集合一致 → 指纹一致（指纹排序无关，故只要求集合相等）
+			var cacheLogical = fromCache.Select(x => x.Logical).ToHashSet(StringComparer.Ordinal);
+			var configLogical = fromConfig.Select(x => x.Logical).ToHashSet(StringComparer.Ordinal);
+			Assert.Equal(cacheLogical, configLogical);
+			Assert.Equal(
+				ErbIrCache.ComputeContentFingerprint(fromConfig, null),
+				ErbIrCache.ComputeContentFingerprint(fromCache, null));
+		}
+		finally
+		{
+			Preload.Clear();
+		}
+	}
+
 	/// <summary>OpenScope 的带根路径变体：解析 GamePaths 到指定根 + 访问器，dispose 时还原。</summary>
 	private static IDisposable OpenRootedScope(string root, IGameDirAccessor accessor)
 	{

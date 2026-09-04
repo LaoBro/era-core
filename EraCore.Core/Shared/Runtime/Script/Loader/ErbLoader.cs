@@ -136,6 +136,19 @@ internal sealed class ErbLoader
 		var erbFiles = Preload.GetFilesFromCache(env.ErbDir, ".ERB", "ErbLoader")
 			?? Config.Config.GetFiles(env.ErbDir, "*.ERB") ?? [];
 		erbFileCount = erbFiles.Count;
+		// issue 09 真机排障（launch6 fp 分歧：缓存键清单 fp=5287… 与 Config 枚举 fp=2efe… 不同）：
+		// 缓存满（建库轮/IR 关闭轮）时对比两套清单来源，打印差异文件便于定位 SAF 枚举漂移。
+		if (Preload.GetFilesFromCache(env.ErbDir, ".ERB", "ErbLoader") is { Count: > 0 } cacheFiles)
+		{
+			var cfgFiles = Config.Config.GetFiles(env.ErbDir, "*.ERB") ?? [];
+			var cacheKeys = cacheFiles.Select(kv => kv.Key).ToHashSet(StringComparer.Ordinal);
+			var cfgKeys = cfgFiles.Select(kv => kv.Key).ToHashSet(StringComparer.Ordinal);
+			if (!cacheKeys.SetEquals(cfgKeys))
+				EmueraLog.Info("ErbIrCache",
+					$"list-diff cache={cacheKeys.Count} cfg={cfgKeys.Count} " +
+					$"cacheOnly=[{string.Join("|", cacheKeys.Except(cfgKeys).Take(5))}] " +
+					$"cfgOnly=[{string.Join("|", cfgKeys.Except(cacheKeys).Take(5))}]");
+		}
 		// erb-loader-parallel 03：统一有序待载清单（firstDir 目录序在前、主枚举去重序在后），
 		// 串行 / 并行两条调度共用同一清单与合并序
 		List<(string Filename, string File)> pending = [];
@@ -182,7 +195,13 @@ internal sealed class ErbLoader
 			var pending = BuildPendingList(env, out _, out _);
 			long fp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic);
 			bool hit = ErbIrCache.TryLoad(IrCachePath(), fp, out _);
-			EmueraLog.Info("ErbIrCache", $"pre-hit check hit={hit} files={pending.Count} fp={fp:x16}");
+			// issue 09 真机排障（launch6 fp 分歧）：指纹 = 文件集合 + 解析配置集 + Rename 表——
+			// 打印输入快照便于与 LoadErbDir 的 ir hit 行逐项对比定位漂移来源。
+			EmueraLog.Info("ErbIrCache",
+				$"pre-hit check hit={hit} files={pending.Count} fp={fp:x16} " +
+				$"ic={Config.Config.IgnoreCase} rf={Config.Config.UseRenameFile} rp={Config.Config.UseReplaceFile} " +
+				$"ra={(int)Config.Config.ReduceArgumentOnLoad} nr={Config.Config.NeedReduceArgumentOnLoad} " +
+				$"t3={Config.Config.SystemIgnoreTripleSymbol} rename={ParserMediator.RenameDic.Count}");
 			return hit;
 		}
 		catch (Exception ex)
