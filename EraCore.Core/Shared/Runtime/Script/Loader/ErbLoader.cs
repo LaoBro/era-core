@@ -172,7 +172,13 @@ internal sealed class ErbLoader
 		try
 		{
 			if (!ShouldUseIrCache(Config.Config.IrDiskCacheLoad, Config.Config.LazyFunctionLoad, env.AnalysisMode))
+			{
+				// issue 09 真机排障（2026-09-05 launch5 分析）：静默 false 曾使「未命中」无法与旧构建区分——
+				// 此处显式记录，任何 false 分支都有日志可查（hit / 关闭 / 异常三态齐全）。
+				EmueraLog.Info("ErbIrCache",
+					$"pre-hit check skipped: ir-disabled (irDisk={Config.Config.IrDiskCacheLoad} lazy={Config.Config.LazyFunctionLoad} analysis={env.AnalysisMode})");
 				return false;
+			}
 			var pending = BuildPendingList(env, out _, out _);
 			long fp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic);
 			bool hit = ErbIrCache.TryLoad(IrCachePath(), fp, out _);
