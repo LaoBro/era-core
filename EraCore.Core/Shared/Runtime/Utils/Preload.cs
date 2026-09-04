@@ -121,6 +121,26 @@ static partial class Preload
         return allFiles.Where(f => IsTargetExtension(Path.GetExtension(SafPath.GetLogicalFileName(f)))).ToList();
     }
 
+    /// <summary>
+    /// issue 09 真机修复（launch7 list-diff 定位）：命中轮（缓存空）的文件清单按 Preload 语义枚举——
+    /// 与缓存键同源（<c>GetFiles(path, "*", AllDirectories)</c> 全树 + C# 侧扩展名过滤），
+    /// 避免 <see cref="Config.Config.GetFiles"/> 的 SAF 通配/displayName 差异（真机实测丢文件、
+    /// 混合分隔符路径）导致清单漂移、IR 指纹永不命中。返回 (相对路径, 全路径)。
+    /// </summary>
+    public static List<KeyValuePair<string, string>> EnumerateFilesFromTree(
+        string rootDir, IGameDirAccessor dirAccessor, string extension)
+    {
+        var result = new List<KeyValuePair<string, string>>();
+        var targetFiles = EnumerateTargetFiles(rootDir, dirAccessor);
+        if (targetFiles == null)
+            return result;
+        foreach (var filePath in targetFiles)
+            if (filePath.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+                result.Add(new KeyValuePair<string, string>(
+                    SafPath.GetRelativePathFromRoot(rootDir, filePath), filePath));
+        return result;
+    }
+
     /// <summary>SAF content URI 不能对整段 path 用 Path.GetExtension（应取逻辑短名），见 <see cref="SafPath.GetLogicalFileName"/>。</summary>
     private static bool IsTargetExtension(string ext) =>
         ext.Equals(".csv", StringComparison.OrdinalIgnoreCase) ||

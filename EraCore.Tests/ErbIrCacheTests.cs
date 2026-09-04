@@ -304,21 +304,18 @@ public class ErbIrCacheTests
 	}
 
 	/// <summary>
-	/// issue 09 真机排障（2026-09-05 launch6 fp 分歧：命中轮 Config 枚举 fp=2efe… 与建库轮缓存键
-	/// fp=5287… 不同）——两套清单来源在子目录 + 中文/空格文件名下必须产生相同指纹，
-	/// 否则命中轮（缓存空走 Config）与建库轮（缓存键）指纹漂移、IR 永不命中。
-	/// 文件系统分支验证（content-URI 分支由 ContentUri_* 测试钉顶层；子目录差异若存在应在两分支同现）。
+	/// issue 09 真机修复（launch7 list-diff 定位：Config.GetFiles 的 SAF 通配/displayName 差异导致
+	/// 清单漂移、IR 永不命中）——命中轮清单改走 <see cref="Preload.EnumerateFilesFromTree"/>（与缓存键
+	/// 同源的 Preload 语义枚举）。本测试钉住：两来源在子目录 + 中文/空格文件名下集合与指纹一致。
 	/// </summary>
 	[Fact]
-	public async Task FileSystem_cache_keys_vs_config_enumeration_have_same_fingerprint()
+	public async Task FileSystem_enumerate_files_from_tree_matches_cache_keys()
 	{
 		var tempRoot = Path.Combine(Path.GetTempPath(), "emuera-listdiff-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(tempRoot);
 		var previousPaths = GamePaths.Current;
 		GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
 		var config = new ConfigData();
-		// launch6 真机 files=2388（全树含子目录）→ SearchSubdirectory=YES；两套枚举都须递归
-		config.GetConfigItem(ConfigCode.SearchSubdirectory).SetValue(true);
 		using var scope = new RootedScope(GlobalStatic.OpenScope(config), tempRoot, previousPaths);
 		var erbDir = Path.Combine(tempRoot, "erb") + Path.DirectorySeparatorChar;
 		Directory.CreateDirectory(erbDir);
@@ -330,25 +327,26 @@ public class ErbIrCacheTests
 		Preload.Clear();
 		try
 		{
-			await Preload.Load(erbDir, new FileSystemGameDirAccessor());
+			var accessor = new FileSystemGameDirAccessor();
+			await Preload.Load(erbDir, accessor);
 			var cacheKeys = Preload.GetAllCachedKeys().ToList();
 			Assert.Equal(3, cacheKeys.Count);
-			// 模拟 GetFilesFromCache 输出（content-URI 分支语义，FS 下用同一相对路径函数）
+			// 模拟 GetFilesFromCache 输出（缓存键 → 相对路径）
 			var fromCache = cacheKeys
 				.Where(k => k.EndsWith(".ERB", StringComparison.OrdinalIgnoreCase)
 					&& SafPath.IsUnderRoot(erbDir, k))
 				.Select(k => (Logical: SafPath.GetRelativePathFromRoot(erbDir, k), Physical: k))
 				.ToList();
-			var fromConfig = Config.GetFiles(erbDir, "*.ERB")
+			// 命中轮来源：Preload 语义枚举（与缓存键同源）
+			var fromTree = Preload.EnumerateFilesFromTree(erbDir, accessor, ".ERB")
 				.Select(kv => (Logical: kv.Key, Physical: kv.Value)).ToList();
-			Assert.Equal(fromConfig.Count, fromCache.Count);
+			Assert.Equal(fromCache.Count, fromTree.Count);
 
-			// 集合一致 → 指纹一致（指纹排序无关，故只要求集合相等）
+			var treeLogical = fromTree.Select(x => x.Logical).ToHashSet(StringComparer.Ordinal);
 			var cacheLogical = fromCache.Select(x => x.Logical).ToHashSet(StringComparer.Ordinal);
-			var configLogical = fromConfig.Select(x => x.Logical).ToHashSet(StringComparer.Ordinal);
-			Assert.Equal(cacheLogical, configLogical);
+			Assert.Equal(treeLogical, cacheLogical);
 			Assert.Equal(
-				ErbIrCache.ComputeContentFingerprint(fromConfig, null),
+				ErbIrCache.ComputeContentFingerprint(fromTree, null),
 				ErbIrCache.ComputeContentFingerprint(fromCache, null));
 		}
 		finally

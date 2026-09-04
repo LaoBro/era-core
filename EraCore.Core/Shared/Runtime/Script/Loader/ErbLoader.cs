@@ -122,8 +122,8 @@ internal sealed class ErbLoader
 	/// issue 09：ERB 待载清单构建（唯一路径——LoadErbDir 与启动 IR 命中预判定共用同一语义）。
 	/// firstDir（*#* 目录）序在前、主枚举去重序在后（erb-loader-parallel 03 合并序）。
 	/// 缓存空（命中轮/预判定）时 <see cref="Preload.GetFilesFromCache"/> 返回 null →
-	/// 走 <see cref="Config.Config.GetFiles"/> 枚举（SAF content-URI 兼容，见 GetFilesFromCache 注释）。
-	/// 两来源 logical 集合一致性由 ErbIrCacheTests.ContentUri_file_listing_consistent_between_cache_and_config 钉住。
+	/// 走 <see cref="Preload.EnumerateFilesFromTree"/>（与缓存键同源的 Preload 语义全树枚举——
+	/// launch7 真机实测 Config.GetFiles 的 SAF 通配/displayName 差异会丢文件/路径变形，弃用）。
 	/// </summary>
 	internal static List<(string Filename, string File)> BuildPendingList(LoaderEnv env, out int firstDirCount, out int erbFileCount)
 	{
@@ -134,28 +134,15 @@ internal sealed class ErbLoader
 		// 文件系统路径大小写不敏感，与既有 SCIgnore 语义一致
 		HashSet<string> loadedFiles = new(StringComparer.OrdinalIgnoreCase);
 		var erbFiles = Preload.GetFilesFromCache(env.ErbDir, ".ERB", "ErbLoader")
-			?? Config.Config.GetFiles(env.ErbDir, "*.ERB") ?? [];
+			?? Preload.EnumerateFilesFromTree(env.ErbDir, env.DirAccessor, ".ERB");
 		erbFileCount = erbFiles.Count;
-		// issue 09 真机排障（launch6 fp 分歧：缓存键清单 fp=5287… 与 Config 枚举 fp=2efe… 不同）：
-		// 缓存满（建库轮/IR 关闭轮）时对比两套清单来源，打印差异文件便于定位 SAF 枚举漂移。
-		if (Preload.GetFilesFromCache(env.ErbDir, ".ERB", "ErbLoader") is { Count: > 0 } cacheFiles)
-		{
-			var cfgFiles = Config.Config.GetFiles(env.ErbDir, "*.ERB") ?? [];
-			var cacheKeys = cacheFiles.Select(kv => kv.Key).ToHashSet(StringComparer.Ordinal);
-			var cfgKeys = cfgFiles.Select(kv => kv.Key).ToHashSet(StringComparer.Ordinal);
-			if (!cacheKeys.SetEquals(cfgKeys))
-				EmueraLog.Info("ErbIrCache",
-					$"list-diff cache={cacheKeys.Count} cfg={cfgKeys.Count} " +
-					$"cacheOnly=[{string.Join("|", cacheKeys.Except(cfgKeys).Take(5))}] " +
-					$"cfgOnly=[{string.Join("|", cfgKeys.Except(cacheKeys).Take(5))}]");
-		}
 		// erb-loader-parallel 03：统一有序待载清单（firstDir 目录序在前、主枚举去重序在后），
 		// 串行 / 并行两条调度共用同一清单与合并序
 		List<(string Filename, string File)> pending = [];
 		foreach (var dir in firstDir)
 		{
 			var firstErbFiles = Preload.GetFilesFromCache(dir, ".ERB", "ErbLoader")
-				?? Config.Config.GetFiles(dir, env.ErbDir, "*.ERB");
+				?? Preload.EnumerateFilesFromTree(dir, env.DirAccessor, ".ERB");
 			foreach (var erb in firstErbFiles ?? [])
 			{
 				loadedFiles.Add(erb.Value);

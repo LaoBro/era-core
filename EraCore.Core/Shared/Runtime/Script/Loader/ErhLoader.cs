@@ -43,7 +43,7 @@ internal sealed class ErhLoader
 	{
 		List<KeyValuePair<string, string>>? headerFiles = Preload.GetFilesFromCache(headerDir, ".ERH", "ErhLoader");
 		if (headerFiles == null)
-			headerFiles = Config.Config.GetFiles(headerDir, "*.ERH");
+			headerFiles = Preload.EnumerateFilesFromTree(headerDir, env.DirAccessor, ".ERH");
 		headerFiles ??= [];
 		bool noError = true;
 		EmueraLog.Info("ErhLoader", "LoadHeaderFiles start: dir=" + headerDir + ", files=" + headerFiles.Count);
