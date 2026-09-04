@@ -7,6 +7,7 @@ import {
   formatMainGameDirForDisplay,
   type GameEntry,
 } from '../game';
+import { useUiStore } from '../ui';
 
 /**
  * game-library spec Seam 3：useGameStore 主目录 / 上次玩过 / scanGames / unloadGame 单测。
@@ -327,6 +328,22 @@ describe('useGameStore game-library 状态与动作', () => {
 
       expect(game.lastTurn).toBeNull();
       expect(game.displayState.state).toBe('');
+    });
+
+    it('视图拨回 terminal——退出前停留 debug/settings，重开不残留', () => {
+      const game = useGameStore();
+      const ui = useUiStore();
+      ui.switchView('debug');
+      expect(ui.currentView).toBe('debug');
+
+      game.completeExitGame();
+
+      expect(ui.currentView).toBe('terminal');
+
+      // settings 同理
+      ui.switchView('settings');
+      game.completeExitGame();
+      expect(ui.currentView).toBe('terminal');
     });
 
     it('不清空 lastPlayedGame——列表高亮仍需', () => {

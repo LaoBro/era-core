@@ -127,7 +127,8 @@ function parseBridgeController(raw: unknown): { kind: 'agent' | 'user'; leaseExp
  * - **不**自动加载游戏——列表页等用户点击项再触发
  *
  * 收到 `gameExited` 时的处理（game-library spec ID10 / ID12）：
- * 1. `game.completeExitGame()`——清 gameDir + displayState + serverState + exitStatus
+ * 1. `game.completeExitGame()`——清 gameDir + displayState + serverState + exitStatus，
+ *    并把视图重置回 terminal（退出重开不残留 debug/settings 视图）
  * 2. `scanGamesBridge()`——自动重新扫描主目录，列表页填新数据
  *
  * C# 侧 reload 失败时（`GamePaths.Validate` 抛 `GamePathValidationException` 或

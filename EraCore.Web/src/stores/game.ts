@@ -6,6 +6,7 @@ import { applySnapshot } from '../lib/snapshotReducer';
 import { EMPTY_DISPLAY_STATE } from '../types/protocol';
 import type { DisplayState, DisplaySnapshot, TurnRecord } from '../types/protocol';
 import { useConnectionStore } from './connection';
+import { useUiStore } from './ui';
 import { isMauiEnvironment, type DimLockPolicyValue, type MaxParallelErbFilesValue, type SafReadDegreeValue, type SweepGatePolicyValue } from '../lib/mauiBridge';
 import { TURN_HISTORY_MAX } from '../config/constants';
 
@@ -1159,10 +1160,12 @@ export const useGameStore = defineStore('game', () => {
 
   /**
    * game-library spec ID10：完成退出游戏流程——
-   * `useAppInit` 收到 C# 推来的 `gameExited` 消息后调此方法。
+   * `useAppInit` 收到 C# 推来的 `gameExited` 消息后调此方法（HTTP 路径为 `exitGameHttp`）。
    *
    * 清空当前游戏相关状态（gameDir / serverState / displayState / lastPlayedGame 不清——
    * 列表页高亮仍需 lastPlayedGame），重置 exitStatus='idle' 让 UI 解锁。
+   * 视图重置回 terminal——currentView 是 Pinia 内存态，MAUI 退出只重建 C# host
+   * 不重建 WebView，不重置则下次进游戏仍停留在退出前的 debug/settings 视图。
    *
    * **不**投递 scanGames——调用方收到 gameExited 后自行投递 scanGames 重新填充列表。
    */
@@ -1191,6 +1194,9 @@ export const useGameStore = defineStore('game', () => {
     inputSubmittedAt.value = null;
     stopTinputTicker();
     acceptGeneration(0);
+    // 视图拨回 terminal——覆盖 MAUI（gameExited）与 HTTP（exitGameHttp）两条退出路径，
+    // 用户下次进游戏从 terminal 起步，不残留退出前的 debug/settings 视图。
+    useUiStore().switchView('terminal');
   }
 
   /**

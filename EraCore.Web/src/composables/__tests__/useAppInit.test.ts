@@ -3,6 +3,7 @@ import { setActivePinia, createPinia } from 'pinia';
 import { initAppState } from '../useAppInit';
 import { useGameStore } from '../../stores/game';
 import { useConnectionStore } from '../../stores/connection';
+import { useUiStore } from '../../stores/ui';
 
 /**
  * T-025 D9 rev：initAppState 单测——App.vue onMounted 提取的逻辑。
@@ -237,6 +238,58 @@ describe('handleMauiMessage - gameThreadStatus', () => {
     handler!({ type: 'gameThreadStatus', alive: false });
 
     expect(game.gameStatusHint).toBe('stopped');
+  });
+});
+
+// ---------- handleMauiMessage：gameExited（退出后视图重置回 terminal）----------
+
+describe('handleMauiMessage - gameExited 视图重置', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('debug 视图下退出 → gameExited 后 currentView 回 terminal + gameDir 清空', async () => {
+    vi.stubGlobal('window', {
+      location: { protocol: 'https:', hostname: 'app.local' },
+      chrome: { webview: { postMessage: vi.fn() } },
+    });
+
+    await initAppState();
+
+    const game = useGameStore();
+    const ui = useUiStore();
+    // 模拟游戏中：已加载目录 + 用户切到 debug 视图
+    game.setGameDir('D:/emuera/game1');
+    ui.switchView('debug');
+    expect(ui.currentView).toBe('debug');
+
+    const handler = (window as any).__onMessage as ((msg: unknown) => void) | undefined;
+    expect(typeof handler).toBe('function');
+    handler!({ type: 'gameExited' });
+
+    expect(game.gameDir).toBeNull();
+    expect(ui.currentView).toBe('terminal');
+  });
+
+  it('settings 视图下退出 → gameExited 后同样回 terminal', async () => {
+    vi.stubGlobal('window', {
+      location: { protocol: 'https:', hostname: 'app.local' },
+      chrome: { webview: { postMessage: vi.fn() } },
+    });
+
+    await initAppState();
+
+    const ui = useUiStore();
+    ui.switchView('settings');
+
+    const handler = (window as any).__onMessage as ((msg: unknown) => void) | undefined;
+    handler!({ type: 'gameExited' });
+
+    expect(ui.currentView).toBe('terminal');
   });
 });
 
