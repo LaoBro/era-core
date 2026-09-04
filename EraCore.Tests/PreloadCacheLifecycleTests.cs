@@ -138,4 +138,47 @@ public class PreloadCacheLifecycleTests
 		var line = Process.getRawTextFormFilewithLine(new ScriptPosition("WARM.ERB", 1));
 		Assert.Contains("warm_window_line", line);
 	}
+
+	/// <summary>
+	/// issue 09：命中轮（跳过内容 Preload）的路径索引构建——只建索引、不读内容。
+	/// 运行期报错回显（getRawTextFormFilewithLine → TryGetFullPath）依赖路径索引定位源文件，
+	/// 命中轮无内容缓存；子目录文件（相对名含 \）必须同样可定位，否则回显退化为占位。
+	/// </summary>
+	[Fact]
+	public void IndexTree_builds_path_index_without_reading_content()
+	{
+		using var h = new LoaderTestHarness();
+		var erbDir = h.ErbDir;
+		var csvDir = h.CsvDir;
+		var accessor = new FileSystemGameDirAccessor();
+		Directory.CreateDirectory(Path.Combine(erbDir, "SUB"));
+		var top = h.WriteErb("TOP.ERB", "@T\nRETURN\n");
+		var sub = Path.Combine(erbDir, "SUB", "NESTED.ERB");
+		File.WriteAllText(sub, "@N\nRETURN\n");
+		var csv = h.WriteCsv("DATA.CSV", "KEY,value\n");
+
+		Preload.Clear();
+		try
+		{
+			Preload.IndexTree(erbDir, accessor);
+			Preload.IndexTree(csvDir, accessor);
+
+			// 索引可定位：顶层 + 子目录 + CSV
+			Assert.True(Preload.TryGetFullPath("TOP.ERB", out var topPath));
+			Assert.Equal(top, topPath);
+			Assert.True(Preload.TryGetFullPath("SUB\\NESTED.ERB", out var subPath));
+			Assert.Equal(sub, subPath);
+			Assert.True(Preload.TryGetFullPath("DATA.CSV", out var csvPath));
+			Assert.Equal(csv, csvPath);
+
+			// 内容未读：缓存仍空（命中轮不读源内容）
+			Assert.Null(Preload.TryGetFileLines(top));
+			Assert.Null(Preload.TryGetFileLines(sub));
+			Assert.Null(Preload.TryGetFileLines(csv));
+		}
+		finally
+		{
+			Preload.Clear();
+		}
+	}
 }

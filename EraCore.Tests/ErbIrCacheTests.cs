@@ -2,11 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Script;
 using MinorShift.Emuera.Runtime.Script.Loader;
 using MinorShift.Emuera.Runtime.Utils;
 using Xunit;
+// 测试命名空间（MinorShift.Emuera.Tests）无外层 Config 命名空间可命中，直接写 Config.Config 会绑定到
+// 类 Config 而非命名空间——用别名钉住静态门面（生产代码在 Runtime.* 命名空间内无此歧义）。
+using Config = MinorShift.Emuera.Runtime.Config.Config;
 
 namespace MinorShift.Emuera.Tests;
 
@@ -175,6 +180,100 @@ public class ErbIrCacheTests
 		}
 	}
 
+	// ===== issue 09：命中轮跳过内容 Preload =====
+	// 命中轮（缓存空）清单改由 Config.Config.GetFiles 枚举——与 Preload.GetFilesFromCache 的
+	// logical 集合必须一致（同一 content-URI 树），否则 LoadErbDir 内判定与建库轮指纹漂移、命中轮永不命中。
+
+	[Fact]
+	public async Task ContentUri_file_listing_consistent_between_cache_and_config()
+	{
+		const string Root = "content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FListingConsistency";
+		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		using var _ = OpenRootedScope(Root, accessor);
+		var erbDir = SafCompat.ResolveSubPath(Root, "erb");
+		SafCompat.CreateDirectory(erbDir);
+		accessor.Seed(SafCompat.CombinePath(erbDir, "MAIN.ERB"), Encoding.UTF8.GetBytes("@M\nRETURN\n"));
+		accessor.Seed(SafCompat.CombinePath(erbDir, "EVENT.ERB"), Encoding.UTF8.GetBytes("@E\nRETURN\n"));
+		accessor.Seed(SafCompat.CombinePath(erbDir, "SUB.ERB"), Encoding.UTF8.GetBytes("@S\nRETURN\n"));
+
+		Preload.Clear();
+		try
+		{
+			await Preload.Load(erbDir, accessor);
+			var fromCache = Preload.GetFilesFromCache(erbDir, ".ERB", "test");
+			Assert.NotNull(fromCache);
+			var fromConfig = Config.GetFiles(erbDir, "*.ERB");
+			Assert.NotEmpty(fromConfig);
+
+			// logical 集合相等（命中轮/预判定与建库轮同树枚举一致）
+			Assert.Equal(
+				fromConfig.Select(kv => kv.Key).ToHashSet(StringComparer.OrdinalIgnoreCase),
+				fromCache!.Select(kv => kv.Key).ToHashSet(StringComparer.OrdinalIgnoreCase));
+			// 物理路径（指纹输入的另一半）同源枚举，应逐位一致
+			Assert.Equal(
+				fromConfig.Select(kv => kv.Value).ToHashSet(StringComparer.Ordinal),
+				fromCache.Select(kv => kv.Value).ToHashSet(StringComparer.Ordinal));
+			// 两来源指纹恒等（长度/mtime 对 content-URI 均降级 0 → 集合一致即指纹一致）
+			Assert.Equal(
+				ErbIrCache.ComputeContentFingerprint(
+					fromConfig.Select(kv => (kv.Key, kv.Value)).ToList(), null),
+				ErbIrCache.ComputeContentFingerprint(
+					fromCache.Select(kv => (kv.Key, kv.Value)).ToList(), null));
+		}
+		finally
+		{
+			Preload.Clear();
+		}
+	}
+
+	[Fact]
+	public async Task IsIrHitRound_detects_valid_ir_and_falls_back_to_full_preload_otherwise()
+	{
+		var tempRoot = Path.Combine(Path.GetTempPath(), "emuera-irhit-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(tempRoot);
+		var previousPaths = GamePaths.Current;
+		GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
+		var config = new ConfigData();
+		using var scope = new RootedScope(GlobalStatic.OpenScope(config), tempRoot, previousPaths);
+		config.GetConfigItem(ConfigCode.IrDiskCacheLoad).SetValue(true);
+		config.GetConfigItem(ConfigCode.LazyFunctionLoad).SetValue(true);
+
+		var erbDir = Path.Combine(tempRoot, "erb") + Path.DirectorySeparatorChar;
+		Directory.CreateDirectory(erbDir);
+		File.WriteAllText(Path.Combine(erbDir, "MAIN.ERB"), "@M\nRETURN\n");
+		var env = new LoaderEnv(
+			Path.Combine(tempRoot, "csv") + Path.DirectorySeparatorChar,
+			erbDir, analysisMode: false, analysisFiles: new List<string>(), debugMode: false)
+		{ DirAccessor = new FileSystemGameDirAccessor() };
+
+		// 建一个合法（空函数集）IR：指纹来自同一清单构建路径——BuildPendingList 即 IsIrHitRound 内部所用。
+		var pending = ErbLoader.BuildPendingList(env, out _, out _);
+		Assert.NotEmpty(pending);
+		long fp = ErbIrCache.ComputeContentFingerprint(pending, null);
+		string irPath = ErbIrCache.GetIrCachePath(tempRoot);
+		Directory.CreateDirectory(Path.GetDirectoryName(irPath)!);
+		using (var writer = new ErbIrCache.IrCacheWriter(irPath))
+			Assert.True(writer.Complete(fp));
+
+		Assert.True(ErbLoader.IsIrHitRound(env), "valid IR + 开关齐备 → 命中轮（跳过内容 Preload）");
+
+		File.Delete(irPath);
+		Assert.False(ErbLoader.IsIrHitRound(env), "IR 缺失 → 走完整 Preload");
+
+		// 建库轮语义：lazy 关闭 → 不判命中，直接走完整 Preload
+		config.GetConfigItem(ConfigCode.LazyFunctionLoad).SetValue(false);
+		Assert.False(ErbLoader.IsIrHitRound(env));
+	}
+
+	/// <summary>OpenScope 的带根路径变体：解析 GamePaths 到指定根 + 访问器，dispose 时还原。</summary>
+	private static IDisposable OpenRootedScope(string root, IGameDirAccessor accessor)
+	{
+		var previous = GamePaths.Current;
+		GamePaths.Resolve(root, accessor);
+		var config = new ConfigData();
+		return new RootedScope(GlobalStatic.OpenScope(config), tempRoot: null!, previous);
+	}
+
 	/// <summary>ComputeContentFingerprint 读 Config.Config.*（指纹的解析配置集输入）——开 GlobalStatic 域。</summary>
 	private static IDisposable OpenScope()
 	{
@@ -191,6 +290,19 @@ public class ErbIrCacheTests
 		{
 			inner.Dispose();
 			try { Directory.Delete(tempRoot, recursive: true); } catch { /* 临时目录清理失败不掩盖断言 */ }
+		}
+	}
+
+	private sealed class RootedScope(IDisposable inner, string tempRoot, GamePaths previous) : IDisposable
+	{
+		public void Dispose()
+		{
+			inner.Dispose();
+			GamePaths.SetCurrent(previous);
+			if (tempRoot != null)
+			{
+				try { Directory.Delete(tempRoot, recursive: true); } catch { /* 临时目录清理失败不掩盖断言 */ }
+			}
 		}
 	}
 }

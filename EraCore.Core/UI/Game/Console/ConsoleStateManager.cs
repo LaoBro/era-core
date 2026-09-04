@@ -55,14 +55,11 @@ internal sealed class ConsoleStateManager
         try
         {
             logWriter?.WriteLine("Init:Start");
-            logWriter?.WriteLine("File:Preload:Start");
-            _state._genericTimerStopwatch.Restart();
+			_state._genericTimerStopwatch.Restart();
 
-        Preload.Clear();
-        // erb-loader-parallel 03：两棵树并行预载收敛为单一入口（02 引入 WhenAll，03 收敛调用方）
-        await Preload.LoadTreesAsync(Program.ErbDir, Program.CsvDir, GamePaths.Current.DirAccessor);
-
-        logWriter?.WriteLine("File:Preload:End " + boottimeDebugStopwatch.ElapsedMilliseconds + "ms");
+		// issue 09：内容 Preload 已前移至 Process.Initialize（RenameDic 载毕后）并随 IR 命中判定门控——
+		// 命中轮跳过内容读取，只留清单枚举。此处仅清空跨会话 stale 缓存（File:Preload 标记随预载段移动）。
+		Preload.Clear();
 
 		GlobalStatic.Console = _console;
 		_state.process = new Process(_console);
@@ -95,9 +92,10 @@ internal sealed class ConsoleStateManager
         catch (Exception ex)
         {
             // 失败可见切片（handoff-nativeaot-parallel-erb §6.2）：初始化期任何 C# 异常统一转为
-            // Error 终态而非穿透——历史上 Preload.LoadTreesAsync 位于 Process.Initialize 保护圈外，
-            // 抛出会直达 Session 层造成 _gameTask 静默 fault、前端永久 Loading。与下方
-            // "Process.Initialize 返回 false" 分支同构：置 State、输出系统行、刷控制台。
+            // Error 终态而非穿透。issue 09 后 Preload 已移入 Process.Initialize 保护圈内（异常由
+            // Process.Initialize catch → handleException → 返回 false → 走上方 false 分支），
+            // 本 catch 覆盖圈外剩余段（env 装配 / 控制台初始化 / RunEmueraProgram 等）。
+            // 与 "Process.Initialize 返回 false" 分支同构：置 State、输出系统行、刷控制台。
             // Session 层 catch 仅作最后防线，两层都不静默吞异常（照记 AgentLog/EmueraLog）。
             EmueraLog.Error("csm", $"Initialize EXCEPTION: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
             _state.State = ConsoleState.Error;

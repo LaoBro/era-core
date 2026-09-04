@@ -178,6 +178,24 @@ internal sealed partial class Process(EmueraConsole view)
 			}
 			logWriter?.WriteLine($"Proc:Init:Rename:Load:End {stopWatch.ElapsedMilliseconds}ms");
 
+			// issue 09：IR 命中轮跳过内容 Preload——命中判定前移至此（RenameDic 已载，指纹与建库轮同源）。
+			// 命中 → 只留文件清单枚举（LoadErbDir 内 Config.GetFiles 兜底重建），物化走 blob、
+			// 源回退/CSV/ERH/ERD 走懒读（缓存空直读）；未命中 / IR 关闭 → 仍走完整 Preload
+			//（建库轮 / IR 关闭轮行为不变）。time.log 的 File:Preload 标记随本段移动：
+			// 命中轮 Start→End 间隔即预判定耗时（近 0），非命中轮含完整内容读取。
+			logWriter?.WriteLine("File:Preload:Start");
+			if (ErbLoader.IsIrHitRound(env))
+			{
+				// 命中轮：跳过内容读取，只枚举文件清单建路径索引（运行期报错回显按需定位源文件用）。
+				Preload.IndexTree(env.ErbDir, env.DirAccessor);
+				Preload.IndexTree(env.CsvDir, env.DirAccessor);
+			}
+			else
+			{
+				await Preload.LoadTreesAsync(env.ErbDir, env.CsvDir, env.DirAccessor);
+			}
+			logWriter?.WriteLine("File:Preload:End " + stopWatch.ElapsedMilliseconds + "ms");
+
 			if (!Config.DisplayReport)
 			{
 				console.PrintSingleLine(Config.LoadLabel);

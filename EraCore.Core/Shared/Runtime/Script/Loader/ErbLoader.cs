@@ -119,6 +119,75 @@ internal sealed class ErbLoader
 		=> irDiskCacheConfigured && lazyFunctionLoad && !analysisMode;
 
 	/// <summary>
+	/// issue 09：ERB 待载清单构建（唯一路径——LoadErbDir 与启动 IR 命中预判定共用同一语义）。
+	/// firstDir（*#* 目录）序在前、主枚举去重序在后（erb-loader-parallel 03 合并序）。
+	/// 缓存空（命中轮/预判定）时 <see cref="Preload.GetFilesFromCache"/> 返回 null →
+	/// 走 <see cref="Config.Config.GetFiles"/> 枚举（SAF content-URI 兼容，见 GetFilesFromCache 注释）。
+	/// 两来源 logical 集合一致性由 ErbIrCacheTests.ContentUri_file_listing_consistent_between_cache_and_config 钉住。
+	/// </summary>
+	internal static List<(string Filename, string File)> BuildPendingList(LoaderEnv env, out int firstDirCount, out int erbFileCount)
+	{
+		var firstDir = env.DirAccessor.GetDirectories(env.ErbDir, "*#*",
+			Config.Config.SearchSubdirectory ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly) ?? [];
+		firstDirCount = firstDir.Length;
+		// erb-loader-parallel 02：firstDir 已载文件查重 O(n²)（List 线性扫）→ 集合查找；
+		// 文件系统路径大小写不敏感，与既有 SCIgnore 语义一致
+		HashSet<string> loadedFiles = new(StringComparer.OrdinalIgnoreCase);
+		var erbFiles = Preload.GetFilesFromCache(env.ErbDir, ".ERB", "ErbLoader")
+			?? Config.Config.GetFiles(env.ErbDir, "*.ERB") ?? [];
+		erbFileCount = erbFiles.Count;
+		// erb-loader-parallel 03：统一有序待载清单（firstDir 目录序在前、主枚举去重序在后），
+		// 串行 / 并行两条调度共用同一清单与合并序
+		List<(string Filename, string File)> pending = [];
+		foreach (var dir in firstDir)
+		{
+			var firstErbFiles = Preload.GetFilesFromCache(dir, ".ERB", "ErbLoader")
+				?? Config.Config.GetFiles(dir, env.ErbDir, "*.ERB");
+			foreach (var erb in firstErbFiles ?? [])
+			{
+				loadedFiles.Add(erb.Value);
+				pending.Add((erb.Key, erb.Value));
+			}
+		}
+		foreach (var erb in erbFiles)
+		{
+			if (loadedFiles.Contains(erb.Value))
+				continue;
+			pending.Add((erb.Key, erb.Value));
+		}
+		return pending;
+	}
+
+	/// <summary>
+	/// issue 09：IR 命中预判定（启动内容 Preload 门控）。不读源内容——文件清单走
+	/// <see cref="Config.Config.GetFiles"/> 枚举（缓存空即命中轮语义），指纹计算只读文件
+	/// stat（长度/mtime，content-URI 降级 0，见 <see cref="ErbIrCache.ComputeContentFingerprint"/>），
+	/// <see cref="ErbIrCache.TryLoad"/> 只读 IR 头 + 索引区。
+	/// 命中 → 调用方可跳过 <see cref="Preload.LoadTreesAsync"/> 的内容读取（物化走 blob、源回退走懒读）；
+	/// 未命中 / IR 关闭（<see cref="ShouldUseIrCache"/>）/ 任何异常 → false，调用方走完整 Preload。
+	/// 与 LoadErbDir 内判定共享 BuildPendingList + 指纹逻辑（顺序无关），LoadErbDir 会再次核对。
+	/// </summary>
+	internal static bool IsIrHitRound(LoaderEnv env)
+	{
+		try
+		{
+			if (!ShouldUseIrCache(Config.Config.IrDiskCacheLoad, Config.Config.LazyFunctionLoad, env.AnalysisMode))
+				return false;
+			var pending = BuildPendingList(env, out _, out _);
+			long fp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic);
+			bool hit = ErbIrCache.TryLoad(IrCachePath(), fp, out _);
+			EmueraLog.Info("ErbIrCache", $"pre-hit check hit={hit} files={pending.Count} fp={fp:x16}");
+			return hit;
+		}
+		catch (Exception ex)
+		{
+			// 枚举/stat 等任何异常 → 保守走完整 Preload，不阻断启动。
+			EmueraLog.Warn("ErbIrCache", $"pre-hit check skipped: {ex.GetType().Name}: {ex.Message}");
+			return false;
+		}
+	}
+
+	/// <summary>
 	/// b2-irdiskcache：清空本会话 IR 状态并显式关闭常驻读句柄（issues/05 句柄常驻的关闭点——
 	/// reload / 加载失败 / 部分重载的既有 <c>_ir = null</c> 置空处统一走这里）。生成期写器一并
 	/// <see cref="ErbIrCache.IrCacheWriter.Abort"/>（清 tmp，异常路径不留下半截缓存）。
@@ -186,42 +255,17 @@ internal sealed class ErbLoader
 		// lazy-function-load：加载开始即失效运行时物化桥（首次加载本就 null；重载期间禁用运行时物化，
 		// 主循环用「本实例」就地物化；成功结束再重新挂载）。失败路径不清——保留旧桥状态亦无害。
 		GlobalStatic.Process!.RuntimeLoader = null;
-		#region EE_ファイル読み込み順拡張
-		var firstDir = env.DirAccessor.GetDirectories(erbDir, "*#*", Config.Config.SearchSubdirectory ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly) ?? [];
-		// erb-loader-parallel 02：firstDir 已载文件查重 O(n²)（List 线性扫）→ 集合查找；
-		// 文件系统路径大小写不敏感，与既有 SCIgnore 语义一致
-		HashSet<string> loadedFiles = new(StringComparer.OrdinalIgnoreCase);
-		#endregion
-		var erbFiles = Preload.GetFilesFromCache(erbDir, ".ERB", "ErbLoader") ?? Config.Config.GetFiles(erbDir, "*.ERB") ?? [];
+		// issue 09：待载清单构建唯一路径（缓存命中轮与启动 IR 预判定共用；命中轮无缓存 →
+		// <see cref="Config.Config.GetFiles"/> 枚举，见 <see cref="BuildPendingList"/>）。
+		List<(string Filename, string File)> pending = BuildPendingList(env, out int firstDirCount, out int erbFileCount);
 		List<string> isOnlyEvent = [];
 		noError = true;
 		var starttime = DateTime.Now;
-		EmueraLog.Info("ErbLoader", $"LoadErbDir start: dir={erbDir}, files={erbFiles.Count}, firstDirs={firstDir.Length}");
-		// erb-loader-parallel 03：统一有序待载清单（firstDir 目录序在前、主枚举去重序在后），
-		// 串行 / 并行两条调度共用同一清单与合并序
-		List<(string Filename, string File)> pending = [];
+		EmueraLog.Info("ErbLoader", $"LoadErbDir start: dir={erbDir}, files={erbFileCount}, firstDirs={firstDirCount}");
 		try
 		{
 			labelDic.RemoveAll();
 			_filePathByLogical = new(StringComparer.OrdinalIgnoreCase);
-			#region EE_ファイル読み込み順拡張
-			foreach (var dir in firstDir)
-			{
-				var firstErbFiles = Preload.GetFilesFromCache(dir, ".ERB", "ErbLoader") ?? Config.Config.GetFiles(dir, erbDir, "*.ERB");
-				foreach (var erb in firstErbFiles ?? [])
-				{
-					loadedFiles.Add(erb.Value);
-					pending.Add((erb.Key, erb.Value));
-				};
-			};
-			#endregion
-
-			foreach (var erb in erbFiles)
-			{
-				if (loadedFiles.Contains(erb.Value))
-					continue;
-				pending.Add((erb.Key, erb.Value));
-			};
 			// lazy-function-load：建立 逻辑文件名→物理路径 映射（Position.Filename 与 fname 同源）。
 			foreach (var (logical, physical) in pending)
 				_filePathByLogical[logical] = physical;

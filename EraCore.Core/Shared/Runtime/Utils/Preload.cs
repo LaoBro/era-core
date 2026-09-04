@@ -48,20 +48,9 @@ static partial class Preload
         var startTime = DateTime.Now;
         EmueraLog.Info("preload", $"Load start: {path}");
 
-        if (dirAccessor.DirectoryExists(path))
+        var targetFiles = EnumerateTargetFiles(path, dirAccessor);
+        if (targetFiles != null)
         {
-            var allFiles = dirAccessor.GetFiles(path, "*", SearchOption.AllDirectories);
-            var targetFiles = allFiles.Where(f =>
-            {
-                // SAF content URI 不能对整段 path 用 Path.GetExtension（应取逻辑短名）
-                var ext = Path.GetExtension(SafPath.GetLogicalFileName(f));
-                return ext.Equals(".csv", StringComparison.OrdinalIgnoreCase) ||
-                       ext.Equals(".erb", StringComparison.OrdinalIgnoreCase) ||
-                       ext.Equals(".erh", StringComparison.OrdinalIgnoreCase) ||
-                       ext.Equals(".erd", StringComparison.OrdinalIgnoreCase) ||
-                       ext.Equals(".als", StringComparison.OrdinalIgnoreCase);
-            }).ToList();
-
             // erb-bounded-lifecycle（handoff §5 最小版）：SAF content URI 路径把每树读取限为 1 并发。
             // 实测（MuMu NativeAOT 2026-08-28）：4 线程并发 SAF OpenRead 的 JNI 风暴中，monodroid
             // bridge 在 take_global_ref 处 abort（SIGABRT）——并发 JNI 是实验性 NativeAOT 运行时
@@ -107,6 +96,38 @@ static partial class Preload
         foreach (var path in paths)
             await Load(path, dirAccessor);
     }
+
+    /// <summary>
+    /// issue 09：命中轮（跳过内容 Preload）的路径索引构建——只枚举文件清单，不读源内容。
+    /// 运行期报错回读（<see cref="Process.getRawTextFormFilewithLine"/> → <see cref="TryGetFullPath"/>）
+    /// 依赖路径索引定位源文件；命中轮无内容缓存，索引必须在枚举期顺手建好，否则子目录文件
+    /// 报错回显退化为占位。枚举/扩展名过滤与 <see cref="Load(string, IGameDirAccessor)"/> 语义一致。
+    /// </summary>
+    public static void IndexTree(string path, IGameDirAccessor dirAccessor)
+    {
+        var targetFiles = EnumerateTargetFiles(path, dirAccessor);
+        if (targetFiles == null)
+            return;
+        foreach (var filePath in targetFiles)
+            pathIndex[SafPath.GetRelativePathFromRoot(path, filePath)] = filePath;
+    }
+
+    /// <summary>枚举 path 下目标扩展名（.erb/.csv/.erh/.erd/.als）的文件清单，不读内容。目录不存在返回 null。</summary>
+    private static List<string>? EnumerateTargetFiles(string path, IGameDirAccessor dirAccessor)
+    {
+        if (!dirAccessor.DirectoryExists(path))
+            return null;
+        var allFiles = dirAccessor.GetFiles(path, "*", SearchOption.AllDirectories);
+        return allFiles.Where(f => IsTargetExtension(Path.GetExtension(SafPath.GetLogicalFileName(f)))).ToList();
+    }
+
+    /// <summary>SAF content URI 不能对整段 path 用 Path.GetExtension（应取逻辑短名），见 <see cref="SafPath.GetLogicalFileName"/>。</summary>
+    private static bool IsTargetExtension(string ext) =>
+        ext.Equals(".csv", StringComparison.OrdinalIgnoreCase) ||
+        ext.Equals(".erb", StringComparison.OrdinalIgnoreCase) ||
+        ext.Equals(".erh", StringComparison.OrdinalIgnoreCase) ||
+        ext.Equals(".erd", StringComparison.OrdinalIgnoreCase) ||
+        ext.Equals(".als", StringComparison.OrdinalIgnoreCase);
 
     public static void Clear()
     {
