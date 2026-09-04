@@ -126,6 +126,36 @@ agent
 
 ## 构建
 
+### 发布（推荐：`scripts/publish.ps1`）
+
+所有可分发产物统一收集到仓库根 `artifacts/`，完成后脚本打印最终产物路径（exe/apk，非 dll）。
+MAUI 目标发布前自动确定性重建前端（`npm run build` → dist-maui → 拷贝 wwwroot），规避旧前端滞后问题
+（见 `docs/LESSONS/testing-and-ci.md` #11）。
+
+```powershell
+.\scripts\publish.ps1                    # 显示用法
+.\scripts\publish.ps1 cli                # CLI 普通发布（框架依赖单文件）→ artifacts/cli/
+.\scripts\publish.ps1 cli-aot            # CLI NativeAOT win-x64 → artifacts/cli-aot/win-x64/
+.\scripts\publish.ps1 maui-win           # MAUI Windows 普通发布 → artifacts/maui-win/
+.\scripts\publish.ps1 maui-win-aot       # MAUI Windows NativeAOT → artifacts/maui-win-aot/win-x64/
+.\scripts\publish.ps1 maui-android       # MAUI Android 普通 Release → artifacts/maui-android/<rid>/
+.\scripts\publish.ps1 maui-android-aot   # MAUI Android NativeAOT → artifacts/maui-android-aot/<rid>/
+.\scripts\publish.ps1 all                # 全部
+.\scripts\publish.ps1 list               # 列出已有产物
+```
+
+常用选项：
+- `-Rid arm64|x64|all`：Android RID 短名（默认 arm64，实际传 `android-arm64`/`android-x64`）
+- `-SkipFrontend`：跳过 MAUI 发布前的前端确定性重建（不推荐，可能打包旧前端）
+- `-Clean`：发布前清空对应 artifacts 子目录
+- `-MsvcLib <path>`：`cli-aot` 手动指定 MSVC LIB（分号分隔三段），不传则自动探测
+
+Android 目标需 Android SDK + JDK 17+（`JAVA_HOME`）；`cli-aot` 需 VS「使用 C++ 的桌面开发」工作负载（脚本自动探测 MSVC）。
+
+### 原生 dotnet 命令（参考，自定义参数/排查时用）
+
+以下为不带脚本封装的原始命令。MAUI 目标直接使用时注意前端滞后问题（见下方 Android NativeAOT 约束 3）。
+
 ### CLI & Server 模式（共享 `EraCore.Cli`）
 
 ```bash
@@ -179,7 +209,7 @@ dotnet publish EraCore.Maui/EraCore.Maui.csproj -f net10.0-android -r android-ar
 
 1. **目录隔离**：`EraCore.Maui/Directory.Build.props` 在 `PublishAot=true` 时自动把中间产物/输出重定向到 `obj-aot/`/`bin-aot/`，并补回 `DefaultItemExcludes`（`obj/**;bin/**`）——**NativeAOT 与普通构建（Mono Full AOT）互不污染**。不要手动传 `-p:BaseIntermediateOutputPath`（全局属性会传染 Core 项目，且破坏 SDK 默认排除导致 CS0579）。
 2. **JSON 序列化必须走源生成**：NativeAOT 下 `System.Text.Json` 反射序列化被禁用（`JsonSerializerIsReflectionDisabled` 抛异常）。壳层消息走 `EraCore.Maui/Json/MauiJsonContext.cs`（具名 record + `[JsonSourceGenerationOptions(CamelCase)]`），协议层走 Core 的 `EmueraJsonContext`（显示/回合/配置）与 `ServerJsonContext`（HTTP 请求 body POCO）。**新增壳层消息禁止匿名类型 `JsonSerializer.Serialize(new {...})`**。
-3. **`-p:SkipVueBuild=true`**：跳过 Vue 前端构建（使用 `EraCore.Maui/wwwroot/` 现有产物）。若改了 `EraCore.Web/` 前端代码，先 `npm run build` 再构建。
+3. **`-p:SkipVueBuild=true`**：跳过 Vue 前端构建（使用 `EraCore.Maui/wwwroot/` 现有产物）。若改了 `EraCore.Web/` 前端代码，需先 `npm run build -- --base=./ --outDir=dist-maui` 并拷贝到 `EraCore.Maui/wwwroot` 再构建（`scripts/publish.ps1` 的 MAUI 目标会在发布前自动完成这步）。
 4. **`-p:RunAOTCompilation=false`**：避免 Mono Full AOT 与 NativeAOT 双重编译（`PublishAot=true` 时默认 `RunAOTCompilation=true`，需显式关掉）。
 5. **ILC 警告治理**：构建会多出 IL2026/IL3050/IL207x 等 AOT 警告。HTTP 请求/响应 JSON 路径（`HttpRouteDispatcher.Parse<T>` / `GameServerProtocol` 的 `JsonArray.Add`）已于 2026-08-27 在根因清零（改源生成重载）；壳层亦已清零。剩余豁免（DataTable 反射、PluginManager 动态加载、`Results.Json` resolver）逐条登记于 `docs/2026.8.4.安卓性能优化2/nativeaot-verify-report.md` §5.2 并附实测/理由。新增警告需登记到 §5.2，不许静默 suppress。
 6. **已知风险**：`AndroidEnableMarshalMethods=false`（csproj）与 NativeAOT JNI 通道的兼容性未做压力验证；游戏加载链路（loadGame → turn 渲染）在 NativeAOT 下待完整真机验证（2026-08-08 已通过：进入游戏选择界面，0 FATAL）。

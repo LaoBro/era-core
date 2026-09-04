@@ -83,6 +83,9 @@ EraCore.Maui/bin-aot/
 EraCore.Maui/obj-aot/
 EraCore.Maui/artifacts/
 
+# 发布脚本（scripts/publish.ps1）统一收集的可分发产物（exe/apk）
+artifacts/
+
 # Android Native AOT 实验项目产物
 experiments/AndroidNativeAot/bin/
 experiments/AndroidNativeAot/obj/
