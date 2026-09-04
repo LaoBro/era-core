@@ -47,8 +47,16 @@ internal sealed record SafDirectoryPickedRepick(
     string Error,
     bool NeedRepickForWrite);
 
-/// <summary>gamesScanned 的 games 数组元素——{name,fullPath}（替代匿名类型）。</summary>
-internal sealed record GameInfoDto(string Name, string FullPath);
+/// <summary>
+/// gamesScanned 的 games 数组元素——{name,fullPath,irCached,irCacheBytes,irCacheBuiltUtc}（替代匿名类型）。
+/// issues/05：irCached/irCacheBytes/irCacheBuiltUtc 为 IR 缓存存在性提示（非有效性承诺）。
+/// </summary>
+internal sealed record GameInfoDto(
+    string Name,
+    string FullPath,
+    bool IrCached,
+    long IrCacheBytes,
+    string? IrCacheBuiltUtc);
 
 /// <summary>{"type":"gamesScanned","games":[...],"rootDir":...,"rootDirExists":...}</summary>
 internal sealed record GamesScannedMessage(

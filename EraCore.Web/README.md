@@ -45,7 +45,7 @@ npm run build
 | `src/components/ConfirmDialog.vue` | 退出 / 确认 Alert Dialog（遮罩 + 危险文字按钮，Escape/返回取消） |
 | `src/components/StatusBanner.vue` | 顶部可关闭提示条：错误 / 警告 / 成功 / 信息 |
 | `src/components/SpectatorBanner.vue` | 旁观横幅（MAUI/Web 共用）：Agent 操控提示 + 接管按钮 |
-| `src/components/GameRow.vue` | 游戏选择页列表项（文件管理器式整行） |
+| `src/components/GameRow.vue` | 游戏选择页列表项（文件管理器式整行）；issues/05 IR 缓存存在性徽章（大小 + 构建时间 tooltip） |
 
 ## 状态管理
 
@@ -59,6 +59,7 @@ npm run build
 
 - `game.gameDir`：当前加载的具体游戏目录。
 - `game.mainGameDir`：MAUI 游戏库的主目录。
+- `game.scannedGames`：游戏库列表（`GameEntry`）；issues/05 每条携带 IR 缓存存在性提示 `irCached` / `irCacheBytes` / `irCacheBuiltUtc`（来自 `gamesScanned` 消息，HTTP `/game/scan` 不含 → 缺失 = 无提示）。
 - `game.serverState`：`Idle`、`Loading`、`WaitInput`、`Quit`、`Error`。
 - `game.displayState`：终端当前显示内容。
 - `game.reloadStatus`：游戏加载/快速重开是否正在进行。

@@ -15,6 +15,7 @@ using Microsoft.Maui.Storage;
 using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Runtime.Script.Loader;
 using MinorShift.Emuera.Server;
 using MinorShift.Emuera.Terminal.Platform;
 
@@ -934,12 +935,28 @@ internal sealed class BridgeHost : IDisposable
         var dirAccessor = ResolveDirAccessor(rootDir);
         bool rootDirExists = GameScanner.RootDirectoryExists(rootDir, dirAccessor);
         var games = GameScanner.Scan(rootDir, dirAccessor);
-        var gamesPayload = games.Select(g => new GameInfoDto(g.Name, g.FullPath)).ToList();
+        var gamesPayload = BuildGamePayloadWithIrInfo(games);
         var msgJson = JsonSerializer.Serialize(
             new GamesScannedMessage("gamesScanned", gamesPayload, rootDir, rootDirExists),
             MauiJsonContext.Default.GamesScannedMessage);
         _dispatcher.Dispatch(() => _jsBridge.PostMessage(msgJson));
         Console.WriteLine($"[bridge] ScanAndPushGames: {gamesPayload.Count} games, rootDir={rootDir}");
+    }
+
+    /// <summary>
+    /// issues/05：扫库时顺带执行 appdata IRCache 孤儿清理（宽限期 + 活动会话保护，删除清单落日志），
+    /// 并为每个游戏填充 IR 缓存存在性提示（非有效性承诺：大小 + 构建时间取 era_ir.dat mtime）。
+    /// 存在性语义——指纹有效性要等加载期才能算，库扫描期不算也不该算。
+    /// </summary>
+    private static List<GameInfoDto> BuildGamePayloadWithIrInfo(IReadOnlyList<GameEntry> games)
+    {
+        ErbIrCache.CleanupOrphans(games.Select(g => g.FullPath).ToList(), Program.ExeDir);
+        return games.Select(g =>
+        {
+            bool cached = ErbIrCache.TryGetCacheInfo(g.FullPath, out long bytes, out DateTime builtUtc);
+            return new GameInfoDto(g.Name, g.FullPath, cached, bytes,
+                cached ? builtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture) : null);
+        }).ToList();
     }
 
     /// <summary>
@@ -999,7 +1016,7 @@ internal sealed class BridgeHost : IDisposable
         var dirAccessor = ResolveDirAccessor(rootDir);
         bool rootDirExists = GameScanner.RootDirectoryExists(rootDir, dirAccessor);
         var games = GameScanner.Scan(rootDir, dirAccessor);
-        var gamesPayload = games.Select(g => new GameInfoDto(g.Name, g.FullPath)).ToList();
+        var gamesPayload = BuildGamePayloadWithIrInfo(games);
         var msgJson = JsonSerializer.Serialize(
             new GamesScannedMessage("gamesScanned", gamesPayload, rootDir, rootDirExists),
             MauiJsonContext.Default.GamesScannedMessage);

@@ -253,6 +253,43 @@ public class b2IrDiskCacheTests
 		}
 	}
 
+	/// <summary>
+	/// issues/05 句柄常驻回归：hit 会话持常驻读句柄，reload（指纹失效 → miss 重建）前必须显式关闭——
+	/// Windows 上旧读句柄未关则原子替换的 delete-dest 失败，IR 重建被静默跳过（文件 mtime 不变）。
+	/// 同一 loader 实例连跑三轮：miss（建库）→ hit（开句柄）→ 改源 miss（须能重建）。
+	/// </summary>
+	[Fact]
+	public async Task Ir_hit_handle_closed_on_reload_allows_rebuild_on_windows()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		EnableLazy(h);
+		await h.PreloadAsync();
+		var path = h.WriteErb("IRHANDLE.ERB", Corpus);
+		var irFile = FullIrPath(h.TempRoot);
+		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+
+		// 第一轮：miss → 建库
+		var ok1 = await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		Assert.True(ok1, "round1 failed\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+		Assert.True(File.Exists(irFile));
+		var mtimeAfterBuild = File.GetLastWriteTimeUtc(irFile);
+
+		// 第二轮：同一 loader reload → 指纹命中 → 常驻读句柄打开
+		var ok2 = await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		Assert.True(ok2, "round2 failed\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+		Assert.Equal(mtimeAfterBuild, File.GetLastWriteTimeUtc(irFile)); // 命中不重建
+
+		// 第三轮：改源（指纹变）→ miss → 重建。若第二轮读句柄未关，Windows 原子替换的 delete-dest
+		// 会因文件被占而失败 → 重建被静默跳过 → mtime 不变 → 断言失败（句柄泄漏回归）。
+		File.SetLastWriteTimeUtc(path, DateTime.UtcNow); // 提前触碰 mtime，保证改动后指纹前进
+		System.Threading.Thread.Sleep(20);
+		File.WriteAllText(path, Corpus + "\n@EXTRA\n\tRETURN\n", System.Text.Encoding.UTF8);
+		var ok3 = await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		Assert.True(ok3, "round3 failed\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+		Assert.NotEqual(mtimeAfterBuild, File.GetLastWriteTimeUtc(irFile));
+	}
+
 	/// <summary>IR 后背物化回归：私有参数/默认参/GOTO/预处理块在 blob 后背下不误报（沿用 Issue 05/06 语料）。</summary>
 	[Fact]
 	public async Task Ir_second_launch_resolves_private_arg_default_and_goto_without_false_warning()

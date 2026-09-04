@@ -230,6 +230,9 @@ defineExpose({ openChangeDirDialog });
             :key="g.fullPath"
             :name="g.name"
             :last-played="g.name === game.lastPlayedGame"
+            :ir-cached="g.irCached"
+            :ir-cache-bytes="g.irCacheBytes"
+            :ir-cache-built-utc="g.irCacheBuiltUtc"
             @click="onPickGame(g.name, g.fullPath)"
           />
         </ul>

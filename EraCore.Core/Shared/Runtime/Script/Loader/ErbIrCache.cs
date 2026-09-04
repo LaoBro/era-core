@@ -101,6 +101,115 @@ internal static class ErbIrCache
 		return unchecked((long)h);
 	}
 
+	// ===== 方案 B（diagnostic-knobs/issues/05）：content-URI（SAF）游戏缓存搬迁到 app 私有存储 + 孤儿治理 =====
+	// SAF 流不可 seek：IR 缓存留在游戏目录时 ReadBlob 每函数触发整库缓冲重读（31.5MB × 2724 次 ≈ 143s+），
+	// 且 SAF 无原子替换（delete+copy，崩溃窗口留半成品）。正解 = 分平台放置：
+	//   - content-URI 游戏 → <AppDataPaths.Directory>/IRCache/<gameKey>/era_ir.dat（真实文件系统，可 seek + 原子替换）
+	//   - 本地路径（桌面 MAUI / CLI / Server）→ <游戏目录>/_IRCache/era_ir.dat 现状（可 seek/可原子替换，缓存随游戏目录）
+	// gameKey = 归一化 ExeDir 的 Fnv1a64，多游戏隔离（硬需求：appdata 是跨游戏共享目录）。
+
+	/// <summary>IR 缓存根目录（app 私有存储下）。仅 content-URI 游戏使用；本地路径缓存仍在游戏目录。</summary>
+	internal static string IrCacheRoot => Path.Combine(AppDataPaths.Directory, "IRCache");
+
+	/// <summary>归一化 ExeDir 作缓存键输入：去尾部目录分隔符；本地路径取全路径（content URI 保持原样参与哈希）。</summary>
+	private static string NormalizeExeDirForKey(string exeDir)
+	{
+		var s = exeDir.TrimEnd('/', '\\');
+		if (!SafPath.IsContentUri(s))
+		{
+			try { s = Path.GetFullPath(s).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar); }
+			catch { /* 非法路径按原样参与哈希 */ }
+		}
+		return s;
+	}
+
+	/// <summary>游戏目录的缓存键（Fnv1a64 十六进制）。content URI 与本地路径统一语义；多游戏隔离。</summary>
+	internal static string ComputeGameKey(string exeDir)
+		=> Fnv1a64(NormalizeExeDirForKey(exeDir)).ToString("x16", System.Globalization.CultureInfo.InvariantCulture);
+
+	/// <summary>
+	/// 方案 B：IR 缓存文件路径。content-URI（SAF）→ <c>AppDataPaths/IRCache/&lt;gameKey&gt;/era_ir.dat</c>
+	/// （真实文件系统可 seek）；本地路径 → <c>&lt;游戏目录&gt;/_IRCache/era_ir.dat</c>（现状）。
+	/// </summary>
+	internal static string GetIrCachePath(string exeDir)
+	{
+		if (SafPath.IsContentUri(exeDir))
+			return Path.Combine(IrCacheRoot, ComputeGameKey(exeDir), "era_ir.dat");
+		string dir = SafCompat.ResolveSubPath(exeDir, "_IRCache");
+		return SafCompat.CombinePath(dir, "era_ir.dat");
+	}
+
+	/// <summary>
+	/// 存在性提示（非有效性承诺）：IR 缓存文件存在 + 大小 + 构建时间（era_ir.dat mtime）。
+	/// 指纹有效性要等加载期才能算，库扫描期不算也不该算（design/issues/05「提示语义 = 存在性而非有效性」）。
+	/// </summary>
+	internal static bool TryGetCacheInfo(string exeDir, out long bytes, out DateTime lastWriteUtc)
+	{
+		bytes = 0;
+		lastWriteUtc = default;
+		if (string.IsNullOrEmpty(exeDir))
+			return false;
+		string path = GetIrCachePath(exeDir);
+		if (!SafCompat.TryGetFileStats(path, out bytes, out long mtimeTicks) || bytes <= 0)
+			return false;
+		lastWriteUtc = new DateTime(mtimeTicks, DateTimeKind.Utc);
+		return true;
+	}
+
+	/// <summary>孤儿清理宽限期：孤儿 key 目录 mtime 在此期限内不删（SD 卡暂拔/权限暂失的游戏回归时免白付重建）。</summary>
+	private static readonly TimeSpan OrphanGracePeriod = TimeSpan.FromDays(30);
+
+	/// <summary>
+	/// 库扫描时顺带清理 appdata IRCache 下的孤儿 key 目录（不在当前库 keys 集合内的）。
+	/// 宽限期 + 活动会话（<paramref name="activeExeDir"/>，Windows 上读句柄未关时删除会失败）保护；
+	/// 删除清单落日志自证。壳层只调本 API，不懂目录布局；gameKey 归一化逻辑单点在 Core。
+	/// </summary>
+	internal static void CleanupOrphans(IReadOnlyCollection<string> currentExeDirs, string? activeExeDir)
+	{
+		try
+		{
+			var keepKeys = new HashSet<string>(StringComparer.Ordinal);
+			foreach (var dir in currentExeDirs)
+			{
+				if (!string.IsNullOrEmpty(dir))
+					keepKeys.Add(ComputeGameKey(dir));
+			}
+			if (!string.IsNullOrEmpty(activeExeDir))
+				keepKeys.Add(ComputeGameKey(activeExeDir));
+
+			if (!Directory.Exists(IrCacheRoot))
+				return;
+			var removed = new List<string>();
+			foreach (var dir in Directory.EnumerateDirectories(IrCacheRoot))
+			{
+				string key = Path.GetFileName(dir);
+				if (key.Length == 0 || keepKeys.Contains(key))
+					continue;
+				try
+				{
+					if (DateTime.UtcNow - Directory.GetLastWriteTimeUtc(dir) < OrphanGracePeriod)
+						continue; // 宽限期内不删
+				}
+				catch { continue; }
+				try
+				{
+					Directory.Delete(dir, recursive: true);
+					removed.Add(key);
+				}
+				catch (Exception ex)
+				{
+					EmueraLog.Warn("ErbIrCache", $"IR orphan cleanup failed for {key}: {ex.GetType().Name}: {ex.Message}");
+				}
+			}
+			if (removed.Count > 0)
+				EmueraLog.Info("ErbIrCache", $"IR orphan cleanup removed {removed.Count}: {string.Join(",", removed)}");
+		}
+		catch (Exception ex)
+		{
+			EmueraLog.Warn("ErbIrCache", $"IR orphan cleanup skipped: {ex.GetType().Name}: {ex.Message}");
+		}
+	}
+
 	// ===== 读取 / 校验 =====
 
 	/// <summary>
@@ -146,21 +255,21 @@ internal static class ErbIrCache
 		}
 	}
 
-	/// <summary>读单个函数 blob：签名文本行（@ 行 + # 行 + 函数体启用行）。损坏 → 抛（调用方转回退/占位）。</summary>
-	internal static IrBlob ReadBlob(string path, in IrIndexEntry entry)
+	/// <summary>
+	/// 读单个函数 blob：签名文本行（@ 行 + # 行 + 函数体启用行）。损坏 → 抛（调用方转回退/占位）。
+	/// 走调用方传入的流（hit 会话常驻句柄 seek+局部读；content-URI 镜像在 app 私有存储，真实文件系统可 seek）。
+	/// </summary>
+	internal static IrBlob ReadBlob(Stream stream, in IrIndexEntry entry)
 	{
 		var buffer = new byte[entry.BlobLength];
-		using (var stream = SafCompat.OpenRead(path) ?? throw new IOException("IR file missing"))
+		stream.Seek(entry.BlobOffset, SeekOrigin.Begin);
+		int read = 0;
+		while (read < buffer.Length)
 		{
-			stream.Seek(entry.BlobOffset, SeekOrigin.Begin);
-			int read = 0;
-			while (read < buffer.Length)
-			{
-				int n = stream.Read(buffer, read, buffer.Length - read);
-				if (n <= 0)
-					throw new IOException("IR blob truncated");
-				read += n;
-			}
+			int n = stream.Read(buffer, read, buffer.Length - read);
+			if (n <= 0)
+				throw new IOException("IR blob truncated");
+			read += n;
 		}
 		using var ms = new MemoryStream(buffer, writable: false);
 		using var r = new BinaryReader(ms, Encoding.UTF8, leaveOpen: false);

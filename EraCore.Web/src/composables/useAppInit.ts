@@ -216,14 +216,28 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
   // game-library spec ID3 / ID7：scanGames 回复——写入 store 让列表页渲染
   if (type === 'gamesScanned') {
     const rawGames = Array.isArray(m.games) ? m.games : [];
+    type RawGame = {
+      name: string;
+      fullPath: string;
+      irCached?: unknown;
+      irCacheBytes?: unknown;
+      irCacheBuiltUtc?: unknown;
+    };
     const games = rawGames
-      .filter((g): g is { name: string; fullPath: string } =>
+      .filter((g): g is RawGame =>
         !!g &&
         typeof g === 'object' &&
         typeof (g as Record<string, unknown>).name === 'string' &&
         typeof (g as Record<string, unknown>).fullPath === 'string',
       )
-      .map((g) => ({ name: g.name, fullPath: g.fullPath }));
+      .map((g) => ({
+        name: g.name,
+        fullPath: g.fullPath,
+        // issues/05：IR 缓存存在性提示（可选——HTTP /game/scan 响应不含）
+        irCached: g.irCached === true,
+        irCacheBytes: typeof g.irCacheBytes === 'number' ? g.irCacheBytes : 0,
+        irCacheBuiltUtc: typeof g.irCacheBuiltUtc === 'string' ? g.irCacheBuiltUtc : null,
+      }));
     const rootDir = typeof m.rootDir === 'string' ? m.rootDir : null;
     // game-library spec ID13：主目录是否存在（C# HandleScanGames 通过 IGameDirAccessor 检查）
     const rootDirExists = typeof m.rootDirExists === 'boolean' ? m.rootDirExists : null;

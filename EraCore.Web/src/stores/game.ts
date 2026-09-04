@@ -42,12 +42,22 @@ const LAST_PLAYED_GAME_STORAGE_KEY = 'app.lastPlayedGame';
 
 /**
  * game-library spec ID1：扫描到的游戏条目（与 C# `GameEntry` record 对称）。
+ *
+ * issues/05：irCached/irCacheBytes/irCacheBuiltUtc 为 IR 缓存存在性提示（非有效性承诺）——
+ * 游戏更新后下次加载自动重建，提示随下次库刷新更新。仅 MAUI 桥接（gamesScanned）携带，
+ * HTTP /game/scan 响应不含（可选字段，缺失 = 无缓存提示）。
  */
 export interface GameEntry {
   /** 游戏目录名（Path.GetFileName，主目录下的子目录名）。 */
   name: string;
   /** 游戏目录绝对路径。 */
   fullPath: string;
+  /** 是否存在 IR 缓存（era_ir.dat 存在且非空）。 */
+  irCached?: boolean;
+  /** IR 缓存字节数（era_ir.dat 大小）。 */
+  irCacheBytes?: number;
+  /** IR 缓存构建时间（本地时区 "yyyy-MM-dd HH:mm"）。 */
+  irCacheBuiltUtc?: string | null;
 }
 
 /**

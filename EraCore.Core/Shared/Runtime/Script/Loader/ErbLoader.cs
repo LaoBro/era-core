@@ -73,27 +73,63 @@ internal sealed class ErbLoader
 		public bool Available;
 		/// <summary>IR 文件路径（缓存目录）。</summary>
 		public string Path = null!;
+		/// <summary>
+		/// 常驻读句柄（issues/05 句柄常驻）：hit 会话 blob 读取的 open/close 折叠为 1 次，
+		/// 全部经 seek+局部读（content-URI 镜像在 app 私有存储，真实文件系统）。miss 会话为 null
+		/// （_irWriter 写侧与读句柄天然互斥）。生命周期 = IrState 生命周期：reload / 加载失败 /
+		/// 部分重载（<see cref="ErbLoader.ResetIrState"/>）显式关闭——置空后没有第二次机会。
+		/// Windows 桌面跨会话时序（issues/05「留意」）：旧 loader 的读句柄在游戏退出后靠 GC 终结器
+		/// 释放，若新会话在终结前 miss 重建，delete-dest 可能被旧句柄锁住 → IR 写被静默跳过、下次再建，
+		/// 自愈且非致命；同会话内 reload 的锁冲突已由 ResetIrState 先关后建消除。
+		/// </summary>
+		public Stream? ReadStream;
 		/// <summary>（逻辑文件名, 标签名）→ 索引条目。驻留（几 MB 量级），等价 labelDic。</summary>
 		public Dictionary<(string File, string Label), IrIndexEntry> Index = null!;
 		/// <summary>逻辑文件名 → 该文件内按 @ 出现序的索引条目（TryGenerateFromIr 用，免 O(n·files) 逐文件扫全表）。</summary>
 		public Dictionary<string, List<IrIndexEntry>> ByFile = new(StringComparer.OrdinalIgnoreCase);
+
+		/// <summary>读单个函数 blob：优先常驻句柄 seek+局部读；句柄缺失（异常路径）临时开流读一次。</summary>
+		public IrBlob ReadBlob(in IrIndexEntry entry)
+		{
+			var stream = ReadStream;
+			if (stream != null)
+				return ErbIrCache.ReadBlob(stream, entry);
+			using var fresh = SafCompat.OpenRead(Path) ?? throw new IOException("IR file missing");
+			return ErbIrCache.ReadBlob(fresh, entry);
+		}
+
+		/// <summary>显式关闭常驻读句柄（幂等；reload/失败/部分重载的 <c>_ir = null</c> 置空点调用）。</summary>
+		public void CloseHandle()
+		{
+			var s = ReadStream;
+			ReadStream = null;
+			try { s?.Dispose(); } catch { /* 关闭失败不掩盖主流程 */ }
+		}
 	}
 
-	private static string IrCachePath()
-	{
-		string dir = SafCompat.ResolveSubPath(Program.ExeDir, "_IRCache");
-		return SafCompat.CombinePath(dir, "era_ir.dat");
-	}
+	private static string IrCachePath() => ErbIrCache.GetIrCachePath(Program.ExeDir);
 
 	/// <summary>
 	/// b2-irdiskcache 参与判定唯一决策点（真值表穷举于 ErbIrCacheTests）。
-	/// content-URI 一律不参与：SAF 流不可 seek，<see cref="ErbIrCache.ReadBlob"/> 每函数触发
-	/// 整库缓冲重读（2026-09-04 模拟器实测 era_ir.dat 31.5MB × 2724 次 ≈ 143s+），hit 路径
-	/// 严格劣于 B1 源路径；且 SAF 无原子替换，崩溃窗口还会留下半成品库。
-	/// 镜像到 app 私有存储的正解另立 issue（diagnostic-knobs/issues/05）。
+	/// 2026-09-04 方案 B（issues/05）后不再含 content-URI 维度：content-URI（SAF）游戏经
+	/// <see cref="ErbIrCache.GetIrCachePath"/> 把缓存镜像到 app 私有存储（真实文件系统，可 seek +
+	/// 原子替换），读放大止血解除——判定只看 开关 × lazy × 非 AnalysisMode。
 	/// </summary>
-	internal static bool ShouldUseIrCache(bool irDiskCacheConfigured, bool lazyFunctionLoad, bool analysisMode, bool irPathIsContentUri)
-		=> irDiskCacheConfigured && lazyFunctionLoad && !analysisMode && !irPathIsContentUri;
+	internal static bool ShouldUseIrCache(bool irDiskCacheConfigured, bool lazyFunctionLoad, bool analysisMode)
+		=> irDiskCacheConfigured && lazyFunctionLoad && !analysisMode;
+
+	/// <summary>
+	/// b2-irdiskcache：清空本会话 IR 状态并显式关闭常驻读句柄（issues/05 句柄常驻的关闭点——
+	/// reload / 加载失败 / 部分重载的既有 <c>_ir = null</c> 置空处统一走这里）。生成期写器一并
+	/// <see cref="ErbIrCache.IrCacheWriter.Abort"/>（清 tmp，异常路径不留下半截缓存）。
+	/// </summary>
+	private void ResetIrState()
+	{
+		_ir?.CloseHandle();
+		_ir = null;
+		_irWriter?.Abort();
+		_irWriter = null;
+	}
 
 	/// <summary>erb-loader-parallel 03：并行生成度上限——窗口内产物同时驻留 = 上限文件数的解析产物，
 	/// 封顶防内存峰值（spec 实测 eraTW 规模 12 核理想并行度 ~8-10x，取 8；默认度 = ProcessorCount）。
@@ -190,15 +226,14 @@ internal sealed class ErbLoader
 			foreach (var (logical, physical) in pending)
 				_filePathByLogical[logical] = physical;
 			// b2-irdiskcache：IR 参与条件 = 开 IrDiskCacheLoad && lazy && 非 AnalysisMode（唯一决策点
-			// <see cref="ShouldUseIrCache"/>，content-URI 一律不参与——读放大止血，见该函数注释）。
-			// 启动进入文件读取前一次性判定：命中 IR（Available=true，索引驻留）→ 本轮免源扫描直建桩；
-			// 未命中/失效 → B1 源路径跑本轮，收尾重建 IR。指纹基于 pending 文件集合 + 解析相关配置（design §6）。
+			// <see cref="ShouldUseIrCache"/>；content-URI 游戏经方案 B 镜像到 app 私有存储，读放大止血已解除，
+			// 见 ErbIrCache 的 GetIrCachePath 注释）。启动进入文件读取前一次性判定：命中 IR（Available=true，
+			// 索引驻留）→ 本轮免源扫描直建桩；未命中/失效 → B1 源路径跑本轮，收尾重建 IR。
+			// 指纹基于 pending 文件集合 + 解析相关配置（design §6）。
 			string irPath = IrCachePath();
-			bool irPathIsContentUri = SafPath.IsContentUri(irPath);
-			bool irEnabled = ShouldUseIrCache(Config.Config.IrDiskCacheLoad, Config.Config.LazyFunctionLoad, env.AnalysisMode, irPathIsContentUri);
+			bool irEnabled = ShouldUseIrCache(Config.Config.IrDiskCacheLoad, Config.Config.LazyFunctionLoad, env.AnalysisMode);
 			long irFp = 0;
-			_ir = null;
-			_irWriter = null;
+			ResetIrState();
 			if (irEnabled)
 			{
 				irFp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic);
@@ -214,6 +249,10 @@ internal sealed class ErbLoader
 					// 索引区 = 文件加载序写盘；单文件内按 @ 出现序。按 BlobOffset 稳定此序（Dictionary 迭代序不保证）。
 					foreach (var list in ir.ByFile.Values)
 						list.Sort(static (a, b) => a.BlobOffset.CompareTo(b.BlobOffset));
+					// 常驻读句柄（issues/05 句柄常驻）：hit 会话 blob 读取 open/close 折叠为 1 次；
+					// appdata 为真实文件系统，长持读句柄无 SAF 流寿命问题。open 失败（文件恰被删）→
+					// ReadBlob 回落临时开流。
+					ir.ReadStream = SafCompat.OpenRead(irPath);
 					_ir = ir;
 				}
 				else
@@ -223,11 +262,6 @@ internal sealed class ErbLoader
 					_irWriter = new ErbIrCache.IrCacheWriter(irPath);
 				}
 				EmueraLog.Info("ErbIrCache", $"ir hit={_ir.Available} files={pending.Count} fp={irFp:x16}");
-			}
-			else if (irPathIsContentUri)
-			{
-				// 止血自证：SAF 上整库禁用时的可见性——加载走 B1 源路径且不建不读 IR（无重建写税）。
-				EmueraLog.Info("ErbIrCache", $"ir disabled: content-URI not seekable, B1 source path (config IrDiskCacheLoad={Config.Config.IrDiskCacheLoad})");
 			}
 			// erb-loader-parallel 03：默认并行；配置串行或 AnalysisMode 时走 01 完成时的串行路径
 			//（fallback = 语义偏差排查 / 单线程调试的 abort 杠杆；AnalysisMode 的 PrintC 输出与
@@ -295,9 +329,9 @@ internal sealed class ErbLoader
 		catch (Exception e)
 		{
 			ParserMediator.FlushWarningList();
-			// b2-irdiskcache：加载异常 → 放弃本次 IR 生成并清 tmp（不留下半截缓存）。
-			_irWriter?.Abort();
-			_irWriter = null;
+			// b2-irdiskcache：加载异常 → 放弃本次 IR 生成并清 tmp（不留下半截缓存），同时显式关闭
+			// 常驻读句柄（issues/05：加载失败路径的关闭点，置空后没有第二次机会）。
+			ResetIrState();
 #if !HEADLESS
 			System.Media.SystemSounds.Hand.Play();
 #endif
@@ -344,10 +378,10 @@ internal sealed class ErbLoader
 		labelDic.Initialized = false;
 		// lazy-function-load：部分重载加载期间禁用运行时物化桥（成功结束再挂载，见方法尾部）。
 		GlobalStatic.Process!.RuntimeLoader = null;
-		// b2-irdiskcache：部分重载（指定文件集）不走 IR——_ir 置空使本文件集走源生成而非 TryGenerateFromIr 直建桩
-		//（须重读源反映新内容）；单文件增量失效不在 v1 范围（design §6「不做」），本路不生成 _irWriter。
-		_ir = null;
-		_irWriter = null;
+		// b2-irdiskcache：部分重载（指定文件集）不走 IR——ResetIrState 置空并使本文件集走源生成而非
+		// TryGenerateFromIr 直建桩（须重读源反映新内容），同时关闭上一轮常驻读句柄（issues/05 关闭点）；
+		// 单文件增量失效不在 v1 范围（design §6「不做」），本路不生成 _irWriter。
+		ResetIrState();
 
 		await Task.Run(() =>
 		{
@@ -2166,7 +2200,7 @@ internal sealed class ErbLoader
 		{
 			try
 			{
-				var blob = ErbIrCache.ReadBlob(ir.Path, entry);
+				var blob = ir.ReadBlob(entry);
 				ComputeSignatureLines(stub, new BlobLineSource(blob.Lines, stub.Position!.Value.Filename));
 				return;
 			}
@@ -2277,7 +2311,7 @@ internal sealed class ErbLoader
 	{
 		if (_ir is not { Available: true } ir)
 			return null;
-		var blob = ErbIrCache.ReadBlob(ir.Path, entry);
+		var blob = ir.ReadBlob(entry);
 		string filename = stub.Position?.Filename ?? "";
 		return MaterializeFunction(stub, new BlobLineSource(blob.Lines, filename));
 	}

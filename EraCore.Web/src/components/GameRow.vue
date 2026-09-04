@@ -4,17 +4,34 @@
  * 安卓文件管理器式整行布局：左侧文件夹图标、中间游戏名、右侧进入箭头。
  * 上次游玩项使用 --color-surface-raised 与 left-indicator-bar（4px 天蓝，DESIGN.md），
  * 不使用强烈彩色背景。
+ *
+ * issues/05：IR 缓存存在性提示徽章——存在性语义（非有效性承诺），行内显示大小、
+ * 构建时间放 tooltip；游戏更新后下次加载自动重建，提示随下次库刷新更新。
  */
 defineProps<{
   /** 游戏名。 */
   name: string;
   /** 是否上次游玩——列表高亮（left-indicator-bar）。 */
   lastPlayed?: boolean;
+  /** 是否存在 IR 缓存（era_ir.dat 存在且非空）。 */
+  irCached?: boolean;
+  /** IR 缓存字节数（era_ir.dat 大小）。 */
+  irCacheBytes?: number;
+  /** IR 缓存构建时间（本地时区 "yyyy-MM-dd HH:mm"）。 */
+  irCacheBuiltUtc?: string | null;
 }>();
 
 defineEmits<{
   (e: 'click'): void;
 }>();
+
+/** 字节数 → 人类可读 MB 文案（保留一位小数，≥100MB 取整；无数据返回空）。 */
+function formatIrMb(bytes?: number): string {
+  const b = typeof bytes === 'number' && bytes > 0 ? bytes : 0;
+  if (b <= 0) return '';
+  const mb = b / (1024 * 1024);
+  return mb >= 100 ? `${Math.round(mb)}MB` : `${mb.toFixed(1).replace(/\.0$/, '')}MB`;
+}
 </script>
 
 <template>
@@ -28,6 +45,11 @@ defineEmits<{
       <span class="game-row-main">
         <span class="game-row-name">{{ name }}</span>
         <span v-if="lastPlayed" class="game-row-meta">上次游玩</span>
+        <span
+          v-if="irCached"
+          class="game-row-meta game-row-ir"
+          :title="irCacheBuiltUtc ? `IR 缓存构建于 ${irCacheBuiltUtc}` : 'IR 缓存'"
+        >IR {{ formatIrMb(irCacheBytes) }}</span>
       </span>
       <span class="game-row-arrow" aria-hidden="true">
         <svg viewBox="0 0 24 24" role="img">
@@ -135,6 +157,11 @@ defineEmits<{
   content: "|";
   margin-right: 8px;
   opacity: 0.4;
+}
+/* issues/05：IR 缓存存在性提示徽章——成功色弱化，提示仅辅助（不喧宾夺主） */
+.game-row-ir {
+  color: var(--color-success);
+  opacity: 0.85;
 }
 .game-row-arrow {
   color: var(--color-text-muted);
