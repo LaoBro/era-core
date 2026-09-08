@@ -60,12 +60,6 @@ internal sealed class SafGameDirAccessor : IGameDirAccessor
     /// </summary>
     private bool _metadataProbed;
 
-    /// <summary>
-    /// S0-M4（2026-09-08）：SAF 目录 stat 语义探针已执行标志。复位时机与 AgentLog 门控
-    /// 语义同 <see cref="_metadataProbed"/>。
-    /// </summary>
-    private bool _dirStatProbed;
-
     /// <summary>父目录 docId（docId 最后一个 '/' 之前；单段 → 树根）。</summary>
     private string ParentDocIdOf(string docId)
         => docId.LastIndexOf('/') is var s && s < 0
@@ -171,7 +165,6 @@ internal sealed class SafGameDirAccessor : IGameDirAccessor
             _treeAndroidUri = uri;
             _childCache.Clear(); // 树根切换：旧 docId 前缀全部作废，全清缓存
             _metadataProbed = false; // S0-M1：树根切换 → 新 provider 需重新取证
-            _dirStatProbed = false; // S0-M4：同上
             Microsoft.Maui.Storage.Preferences.Set(PrefKey, _treeUri);
             Android.Util.Log.Info("EmueraMaui",
                 $"PickDirectory: took r/w persistable uri, hasWrite={HasWriteAccess()}, uri={_treeUri}");
@@ -656,7 +649,6 @@ internal sealed class SafGameDirAccessor : IGameDirAccessor
         // 是「父id/children」，与 FindChildDocument/ResolveSubPath 的「父id」不一致，不能作 key。
         var docId = ResolveDocId(docUri);
         ProbeMetadataColumns(path); // S0-M1：命中轮首个全树枚举即触发（AgentLog 关 = 零成本布尔检查）
-        ProbeDirStatSemantics(path); // S0-M4：同点触发（issues/13 路线 1 取证，AgentLog 关 = 零成本布尔检查）
         EnumerateUri(docId, result, isDir, pattern, recursive);
         return result.ToArray();
     }
@@ -800,239 +792,6 @@ internal sealed class SafGameDirAccessor : IGameDirAccessor
             EmueraLog.Info("preload", $"S0M1 metadata: probe-ex {ex.GetType().Name}: {ex.Message}");
         }
     }
-
-    // ── S0-M4 SAF 目录 stat 语义探针（2026-09-08，diagnostic-knobs issues/13 路线 1 取证）───────
-
-    /// <summary>S0-M4 探针文件名（非 .erb：不进 pending/fp；固定名便于崩溃残留下轮自清）。</summary>
-    private const string DirStatProbeFileName = "__eracore_safprobe.tmp";
-
-    /// <summary>
-    /// S0-M4：真机取证 SAF 目录级 stat 与「子树变更是否传播到祖先目录 mtime」——issue 13
-    /// 路线 1（命中轮 1 次根目录 stat 检测全树失效）的立项生死判据。进程首个
-    /// <see cref="EnumerateChildren"/> 触发（AgentLog 门控 + 一次性，常态零成本）。
-    /// 流程：BFS（≤64 目录 / ≤4 层，复用 O1 子项缓存顺带预热）找最深含文件目录作深层父目录 →
-    /// 对其祖先链（含样例根）逐个单文档 Query LAST_MODIFIED → 对深层父目录 create → rewrite →
-    /// delete 一个临时探针文件，每步复测整链 mtime。
-    /// 判读：深层变更时 ROOT/中间目录 Δ 恒 0 → 无传播（POSIX 预期），路线 1 死、落路线 2；
-    /// 祖先 Δ≠0 → 有传播，路线 1 活（1 次 stat 全覆盖）。相邻相位间 Sleep(1.1s) 保证 Δ 不被
-    /// mtime 粒度吞掉。探针文件非 .erb 不进 fp（fp 只吃 pending 的 .erb 清单，目录 mtime 同样
-    /// 不进）；create/delete 走既有写路径（O1 缓存精确失效），finally 兜底删除。
-    /// </summary>
-    private void ProbeDirStatSemantics(string sampleRootPath)
-    {
-        if (_dirStatProbed || !AgentLog.Instance.Enabled) return;
-        _dirStatProbed = true; // 无论成败只探一次
-        if (_treeAndroidUri == null || !TryParseUri(sampleRootPath, out var rootDocUri)) return;
-        try
-        {
-            var rootDocId = ResolveDocId(rootDocUri);
-
-            // 1) BFS 找最深含文件目录（同深度优先含 /ERB 的路径——证据贴近 issue 13 的 ERB 树场景）
-            var parentOf = new Dictionary<string, string>();
-            var depthOf = new Dictionary<string, int> { [rootDocId] = 0 };
-            string? deepDir = null;
-            int deepDepth = -1, deepErb = 0, visited = 0;
-            var queue = new Queue<string>();
-            queue.Enqueue(rootDocId);
-            while (queue.Count > 0 && visited < 64)
-            {
-                var dir = queue.Dequeue();
-                visited++;
-                bool hasFile = false;
-                foreach (var child in GetOrQueryChildren(dir))
-                {
-                    if (child.Mime == DocumentsContract.Document.MimeTypeDir)
-                    {
-                        if (depthOf[dir] < 4 && !depthOf.ContainsKey(child.DocId))
-                        {
-                            parentOf[child.DocId] = dir;
-                            depthOf[child.DocId] = depthOf[dir] + 1;
-                            queue.Enqueue(child.DocId);
-                        }
-                    }
-                    else
-                    {
-                        hasFile = true;
-                    }
-                }
-                if (hasFile)
-                {
-                    int isErb = dir.Contains("/ERB", StringComparison.Ordinal) ? 1 : 0;
-                    if (depthOf[dir] > deepDepth || (depthOf[dir] == deepDepth && isErb > deepErb))
-                    {
-                        deepDepth = depthOf[dir];
-                        deepErb = isErb;
-                        deepDir = dir;
-                    }
-                }
-            }
-            if (deepDir == null || deepDir == rootDocId)
-            {
-                EmueraLog.Info("preload",
-                    $"S0M4 dirstat: no subdir with files within 64 dirs/4 levels under {RelId(rootDocId)}, skip");
-                return;
-            }
-
-            // 2) 祖先链（root → … → deepDir）基线 stat——取证点 a：目录单文档 Query LAST_MODIFIED 可用性
-            var chain = new List<string>();
-            var walk = deepDir!;
-            while (true)
-            {
-                chain.Add(walk);
-                if (walk == rootDocId || !parentOf.TryGetValue(walk, out var p)) break;
-                walk = p;
-            }
-            chain.Reverse();
-            var prev = StatAndEmitChain("dirstat", chain, null, 0, null);
-
-            // 3) 深层写探针：create → rewrite → delete，每步复测整链——取证点 b：祖先传播
-            if (!HasWriteAccess())
-            {
-                EmueraLog.Info("preload",
-                    "S0M4 write: FAIL no-write（无持久写授权，相位测试跳过——目录 stat 可用性结论仍有效）");
-                return;
-            }
-            // delete-before-create：上轮崩溃残留自清（残留不进 fp，仅防本轮 rename-去重改名干扰）
-            try
-            {
-                string? leftover = null;
-                foreach (var child in GetOrQueryChildren(deepDir))
-                    if (child.Name == DirStatProbeFileName) leftover = child.DocId;
-                if (leftover != null)
-                {
-                    DocumentsContract.DeleteDocument(_context.ContentResolver!,
-                        DocumentsContract.BuildDocumentUriUsingTree(_treeAndroidUri!, leftover)!);
-                    InvalidateParentOf(leftover);
-                    prev = StatAndEmitChain("cleanup", chain, null, 0, null);
-                    EmueraLog.Info("preload", "S0M4 cleanup: leftover probe file removed, baseline re-taken");
-                }
-            }
-            catch (Exception cex)
-            {
-                EmueraLog.Info("preload", $"S0M4 cleanup-ex {cex.GetType().Name}: {cex.Message}");
-            }
-
-            var deepPath = DocumentsContract.BuildDocumentUriUsingTree(_treeAndroidUri!, deepDir)!.ToString()!;
-            var probePath = CombinePath(deepPath, DirStatProbeFileName);
-            var payload1 = Encoding.UTF8.GetBytes("eracore-s0m4-probe-p1");
-            var payload2 = Encoding.UTF8.GetBytes("eracore-s0m4-probe-p2-longer-payload-0123456789ABCDEF");
-            try
-            {
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-                System.Threading.Thread.Sleep(1100); // 与基线拉开时钟距离（防 mtime 粒度吞 Δ）
-                using (var ws = OpenWrite(probePath))
-                    ws.Write(payload1, 0, payload1.Length);
-                sw.Stop();
-                prev = StatAndEmitChain("create", chain, prev, sw.ElapsedMilliseconds, StatProbeFile(probePath));
-
-                sw.Restart();
-                System.Threading.Thread.Sleep(1100);
-                using (var ws = OpenWrite(probePath))
-                    ws.Write(payload2, 0, payload2.Length);
-                sw.Stop();
-                prev = StatAndEmitChain("rewrite", chain, prev, sw.ElapsedMilliseconds, StatProbeFile(probePath));
-            }
-            finally
-            {
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-                System.Threading.Thread.Sleep(1100);
-                try { Delete(probePath); }
-                catch (Exception dex)
-                {
-                    EmueraLog.Info("preload", $"S0M4 delete-ex {dex.GetType().Name}: {dex.Message}");
-                }
-                sw.Stop();
-                _childCache.Invalidate(deepDir); // Delete 成功已失效；失败（残留）时强制下一查为真读
-                bool gone = true;
-                foreach (var child in GetOrQueryChildren(deepDir))
-                    if (child.Name == DirStatProbeFileName) gone = false;
-                StatAndEmitChain("delete", chain, prev, sw.ElapsedMilliseconds, null);
-                EmueraLog.Info("preload", $"S0M4 verify: gone={gone}");
-            }
-        }
-        catch (Exception ex)
-        {
-            // 探针失败不阻断加载：只留一行证据。
-            EmueraLog.Info("preload", $"S0M4 probe-ex {ex.GetType().Name}: {ex.Message}");
-        }
-    }
-
-    /// <summary>S0-M4：stat 探针文件本体（单文档 LAST_MODIFIED），失败返回 null 不抛。</summary>
-    private long? StatProbeFile(string probePath)
-    {
-        try
-        {
-            var docUri = ResolveExistingFileUri(probePath);
-            return docUri == null ? null : StatDocMtime(ResolveDocId(docUri), out _);
-        }
-        catch { return null; }
-    }
-
-    /// <summary>
-    /// S0-M4：复测整链 mtime 并 emit 一行证据。prev=null（基线/清理后重建）不带 Δ；
-    /// 否则逐目录给 Δ（相对上次相位，ms）。返回本次 mtime 数组供下轮作 prev。
-    /// </summary>
-    private long?[] StatAndEmitChain(string phase, List<string> chain, long?[]? prev, long phaseMs, long? fileMtime)
-    {
-        var cur = new long?[chain.Count];
-        var parts = new string[chain.Count];
-        for (int i = 0; i < chain.Count; i++)
-        {
-            cur[i] = StatDocMtime(chain[i], out var ms);
-            string delta = "";
-            if (prev != null && cur[i].HasValue && prev[i].HasValue)
-            {
-                var d = cur[i]!.Value - prev[i]!.Value;
-                delta = d > 0 ? $"Δ+{d}," : d < 0 ? $"Δ{d}," : "Δ0,";
-            }
-            parts[i] = $"{RelId(chain[i])}={FmtT(cur[i])}({delta}{ms}ms)";
-        }
-        var filePart = fileMtime.HasValue ? $" file={fileMtime.Value}" : "";
-        EmueraLog.Info("preload",
-            $"S0M4 {phase}: [{string.Join(", ", parts)}] ms={phaseMs}{filePart}");
-        return cur;
-    }
-
-    /// <summary>S0-M4：单文档 Query LAST_MODIFIED（目录 stat 取证点本身）——失败/列为空 → null。</summary>
-    private long? StatDocMtime(string docId, out long ms)
-    {
-        ms = 0;
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        try
-        {
-            var docUri = DocumentsContract.BuildDocumentUriUsingTree(_treeAndroidUri!, docId);
-            using var cursor = _context.ContentResolver!.Query(docUri!,
-                new[]
-                {
-                    DocumentsContract.Document.ColumnDocumentId,
-                    DocumentsContract.Document.ColumnLastModified
-                }, null, null, null);
-            long? mtime = cursor?.MoveToFirst() == true && !cursor.IsNull(1) ? cursor.GetLong(1) : null;
-            sw.Stop();
-            LogSaf("StatDoc", docId, $"mtime={mtime?.ToString() ?? "null"}", sw.ElapsedMilliseconds);
-            ms = sw.ElapsedMilliseconds;
-            return mtime;
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            ms = sw.ElapsedMilliseconds;
-            LogSaf("StatDoc", docId, "query-ex", sw.ElapsedMilliseconds, ok: false, failMsg: ex.Message);
-            return null;
-        }
-    }
-
-    /// <summary>S0-M4：链内 docId 的短名（去树根前缀；树根本身显示 ROOT）。</summary>
-    private string RelId(string docId)
-    {
-        var rootId = DocumentsContract.GetTreeDocumentId(_treeAndroidUri!);
-        if (rootId == null || docId == rootId) return "ROOT";
-        var prefix = rootId + "/";
-        return docId.StartsWith(prefix, StringComparison.Ordinal) ? docId[prefix.Length..] : docId;
-    }
-
-    private static string FmtT(long? t)
-        => t.HasValue ? t.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : "-";
 
     /// <summary>取目录子项：缓存命中直接返回（零 IPC 零日志零分配）；未命中则 Query 并回填。</summary>
     private IReadOnlyList<ChildEntry> GetOrQueryChildren(string parentDocId)
