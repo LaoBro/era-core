@@ -67,6 +67,14 @@ internal sealed class ErbLoader
 	/// <summary>IR 生成期增量写器（按文件批量落盘，内存 O(单文件大小)，design §5.1）。仅生成 IR（未命中/失效）时非空。</summary>
 	private ErbIrCache.IrCacheWriter? _irWriter;
 
+	// ===== S0-M2 取证探针（2026-09-05，diagnostic-knobs issues/11）：加载窗 blob I/O 分账 =====
+	// parsescript 段内所有 blob 读取都经 ReadBlobMeasured（ComputeSignature / ReparseFunctionFromIr
+	// 两处咽喉）累计；LoadErbDir 起始清零，phase=parsescript 日志行输出 blobReads/blobBytes/blobMs。
+	// 运行期（加载完成后）懒物化同样吃累计，但该日志只在加载窗打一次，不影响「blob I/O vs 物化」口径。
+	private long _blobReadTicks;
+	private long _blobReadBytes;
+	private int _blobReadCount;
+
 	private sealed class IrState
 	{
 		/// <summary>本进程加载轮是否命中 IR（true = 第二次启动，索引已驻留）。</summary>
@@ -110,6 +118,25 @@ internal sealed class ErbLoader
 	private static string IrCachePath() => ErbIrCache.GetIrCachePath(Program.ExeDir);
 
 	/// <summary>
+	/// S0-M2 取证（2026-09-05）：带分账的 blob 读取——所有加载窗 blob 读统一经此包装，累计
+	/// ticks/字节/次数到 <see cref="_blobReadTicks"/> 等字段（finally 保证异常路径也计入）。
+	/// </summary>
+	private IrBlob ReadBlobMeasured(IrState ir, in IrIndexEntry entry)
+	{
+		long t0 = Stopwatch.GetTimestamp();
+		try
+		{
+			return ir.ReadBlob(entry);
+		}
+		finally
+		{
+			_blobReadTicks += Stopwatch.GetTimestamp() - t0;
+			_blobReadBytes += entry.BlobLength;
+			_blobReadCount++;
+		}
+	}
+
+	/// <summary>
 	/// b2-irdiskcache 参与判定唯一决策点（真值表穷举于 ErbIrCacheTests）。
 	/// 2026-09-04 方案 B（issues/05）后不再含 content-URI 维度：content-URI（SAF）游戏经
 	/// <see cref="ErbIrCache.GetIrCachePath"/> 把缓存镜像到 app 私有存储（真实文件系统，可 seek +
@@ -127,6 +154,9 @@ internal sealed class ErbLoader
 	/// </summary>
 	internal static List<(string Filename, string File)> BuildPendingList(LoaderEnv env, out int firstDirCount, out int erbFileCount)
 	{
+		// S0-M3（2026-09-05）：命中轮清单枚举计时——预判定 / LoadErbDir 各打一条，配合 Preload 的
+		// TreeEnum memo=miss/hit 行判读「2388 文件重复枚举」是否构成间隙②（issues/11 M3）。
+		var sw = Stopwatch.StartNew();
 		var firstDir = env.DirAccessor.GetDirectories(env.ErbDir, "*#*",
 			Config.Config.SearchSubdirectory ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly) ?? [];
 		firstDirCount = firstDir.Length;
@@ -155,6 +185,9 @@ internal sealed class ErbLoader
 				continue;
 			pending.Add((erb.Key, erb.Value));
 		}
+		sw.Stop();
+		EmueraLog.Info("ErbLoader",
+			$"BuildPendingList ms={sw.ElapsedMilliseconds} files={erbFileCount} firstDirs={firstDirCount}");
 		return pending;
 	}
 
@@ -289,6 +322,10 @@ internal sealed class ErbLoader
 			string irPath = IrCachePath();
 			bool irEnabled = ShouldUseIrCache(Config.Config.IrDiskCacheLoad, Config.Config.LazyFunctionLoad, env.AnalysisMode);
 			long irFp = 0;
+			// S0-M2：分账累计清零（reload / 失败路径的残留运行期累计一并归零；blob 读只发生在 ParseScript 及之后）。
+			_blobReadTicks = 0;
+			_blobReadBytes = 0;
+			_blobReadCount = 0;
 			ResetIrState();
 			if (irEnabled)
 			{
@@ -357,7 +394,8 @@ internal sealed class ErbLoader
 			// CA2016：ParseScript 本轮不做取消感知（erb-bounded-lifecycle 只覆盖生成/合并调度），显式不传播令牌
 			await Task.Run(() => ParseScript(), CancellationToken.None);
 			parseSw.Stop();
-			EmueraLog.Info("ErbLoader", $"phase=parsescript ms={parseSw.ElapsedMilliseconds} {GcSnapshot.Diff(gcBeforeParse)}");
+			EmueraLog.Info("ErbLoader", $"phase=parsescript ms={parseSw.ElapsedMilliseconds} {GcSnapshot.Diff(gcBeforeParse)}" +
+				$" blobReads={_blobReadCount} blobBytes={_blobReadBytes} blobMs={(_blobReadTicks * 1000) / Stopwatch.Frequency}");
 			if (displayReport)
 				output.PrintSystemLine(string.Format(trsl.ElapsedTime.Text, parseSw.ElapsedMilliseconds));
 
@@ -2256,7 +2294,7 @@ internal sealed class ErbLoader
 		{
 			try
 			{
-				var blob = ir.ReadBlob(entry);
+				var blob = ReadBlobMeasured(ir, entry);
 				ComputeSignatureLines(stub, new BlobLineSource(blob.Lines, stub.Position!.Value.Filename));
 				return;
 			}
@@ -2367,7 +2405,7 @@ internal sealed class ErbLoader
 	{
 		if (_ir is not { Available: true } ir)
 			return null;
-		var blob = ir.ReadBlob(entry);
+		var blob = ReadBlobMeasured(ir, entry);
 		string filename = stub.Position?.Filename ?? "";
 		return MaterializeFunction(stub, new BlobLineSource(blob.Lines, filename));
 	}

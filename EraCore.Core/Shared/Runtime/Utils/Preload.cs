@@ -24,6 +24,15 @@ static partial class Preload
     /// </summary>
     static readonly ConcurrentDictionary<string, string> pathIndex = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// S0-M3（diagnostic-knobs issues/11，2026-09-05）：轮内全树枚举 memo——树根路径 → 目标扩展名过滤后的文件清单。
+    /// 命中轮 ERB 全树会被枚举 4 次（IR 预判定 / IndexTree / ErhLoader / LoadErbDir.BuildPendingList），
+    /// 去重为 1 次冷枚举 + 3 次命中。失效边界 = <see cref="Clear"/>（ConsoleStateManager.Initialize 轮首调用，
+    /// 恰在 IR 预判定之前）；<see cref="ClearCachedLines"/> 不清（轮内保留正是目的）。树根切换时 content URI
+    /// 路径串必变，不可能命中旧键；目录不存在（null）不缓存。写-读竞态最坏重复枚举一次，语义无损。
+    /// </summary>
+    static readonly ConcurrentDictionary<string, List<string>> s_treeFiles = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>ADR-0019：返回所有已缓存文件路径键，保证与 ErbLoader/ErhLoader 查找键一致。</summary>
     public static IEnumerable<string> GetAllCachedKeys() => files.Keys;
 
@@ -45,6 +54,11 @@ static partial class Preload
     /// <summary>ADR-0019：通过 DirAccessor 加载路径下所有 ERB/CSV/ERH/ERD/ALS 文件到缓存。</summary>
     public static async Task Load(string path, IGameDirAccessor dirAccessor)
     {
+        // S0-M3：内容装载前失效该根 memo——Load（PreloadAsync / LoadTreesAsync 内容路径）语义为
+        // 「重读磁盘快照」：写文件→Load 的测试/重载流程必须看到新增文件。失效后 EnumerateTargetFiles
+        // 重新冷枚举并落新 memo；命中轮消费者（IsIrHitRound / IndexTree / ErhLoader / LoadErbDir）
+        // 不经过本方法，memo 去重不受影响。
+        s_treeFiles.TryRemove(path, out _);
         var startTime = DateTime.Now;
         EmueraLog.Info("preload", $"Load start: {path}");
 
@@ -105,20 +119,41 @@ static partial class Preload
     /// </summary>
     public static void IndexTree(string path, IGameDirAccessor dirAccessor)
     {
+        // S0-M3：计时行把「预检段 / 间隙①」拆开——命中轮此段 = memo 命中时仅剩 pathIndex 回填。
+        var sw = Stopwatch.StartNew();
         var targetFiles = EnumerateTargetFiles(path, dirAccessor);
         if (targetFiles == null)
             return;
         foreach (var filePath in targetFiles)
             pathIndex[SafPath.GetRelativePathFromRoot(path, filePath)] = filePath;
+        sw.Stop();
+        EmueraLog.Info("preload",
+            $"IndexTree root={SafPath.GetLogicalFileName(path)} files={targetFiles.Count} ms={sw.ElapsedMilliseconds}");
     }
 
-    /// <summary>枚举 path 下目标扩展名（.erb/.csv/.erh/.erd/.als）的文件清单，不读内容。目录不存在返回 null。</summary>
+    /// <summary>枚举 path 下目标扩展名（.erb/.csv/.erh/.erd/.als）的文件清单，不读内容。目录不存在返回 null。
+    /// S0-M3：轮内 memo 优先——命中直接返回（零 IPC 零 URI 重建），miss 才走 DirectoryExists + 全树 GetFiles 并落 memo。
+    /// 冷枚举打 Info（含耗时），命中不打（由 IndexTree / BuildPendingList 各自的计时行体现收缩）。</summary>
     private static List<string>? EnumerateTargetFiles(string path, IGameDirAccessor dirAccessor)
     {
+        if (s_treeFiles.TryGetValue(path, out var cached))
+            return cached;
         if (!dirAccessor.DirectoryExists(path))
             return null;
+        var sw = Stopwatch.StartNew();
         var allFiles = dirAccessor.GetFiles(path, "*", SearchOption.AllDirectories);
-        return allFiles.Where(f => IsTargetExtension(Path.GetExtension(SafPath.GetLogicalFileName(f)))).ToList();
+        var filtered = allFiles.Where(f => IsTargetExtension(Path.GetExtension(SafPath.GetLogicalFileName(f)))).ToList();
+        sw.Stop();
+        // 只缓存非空清单：空目录（引擎初始化轮在文件写入前先行枚举的典型场景）不缓存，否则
+        // 同一轮稍后写入的文件会被陈旧空缓存吞掉（LoaderTestHarness Initialize→写语料→reload 即此模式，
+        // 2026-09-05 回归：SelectCase/UncalledSweep 语料 0 装载）。目录不存在（null）同理不缓存。
+        if (filtered.Count > 0)
+        {
+            s_treeFiles[path] = filtered;
+            EmueraLog.Info("preload",
+                $"TreeEnum root={SafPath.GetLogicalFileName(path)} files={filtered.Count} ms={sw.ElapsedMilliseconds} memo=miss");
+        }
+        return filtered;
     }
 
     /// <summary>
@@ -153,6 +188,7 @@ static partial class Preload
     {
         files.Clear();
         pathIndex.Clear();
+        s_treeFiles.Clear(); // S0-M3：轮边界——下轮全树枚举重新冷走，杜绝跨轮陈旧清单
     }
 
     /// <summary>

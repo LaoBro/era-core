@@ -53,6 +53,13 @@ internal sealed class SafGameDirAccessor : IGameDirAccessor
     // 命中零 IPC；写路径（OpenWrite/Delete/CreateDirectory）精确失效；切换树根全清。
     private readonly DirectoryChildCache _childCache = new();
 
+    /// <summary>
+    /// S0-M1（2026-09-05）：SAF 元数据探针已执行标志。AgentLog 关闭（Android 默认）时探针零成本
+    /// （只查一次布尔）；开启时沿首个枚举路径向下 ≤3 层做一次 5 列 Query（SIZE/LAST_MODIFIED）。
+    /// 树根切换（PickDirectory）复位——新 provider 需重新取证。
+    /// </summary>
+    private bool _metadataProbed;
+
     /// <summary>父目录 docId（docId 最后一个 '/' 之前；单段 → 树根）。</summary>
     private string ParentDocIdOf(string docId)
         => docId.LastIndexOf('/') is var s && s < 0
@@ -157,6 +164,7 @@ internal sealed class SafGameDirAccessor : IGameDirAccessor
             _treeUri = uri.ToString();
             _treeAndroidUri = uri;
             _childCache.Clear(); // 树根切换：旧 docId 前缀全部作废，全清缓存
+            _metadataProbed = false; // S0-M1：树根切换 → 新 provider 需重新取证
             Microsoft.Maui.Storage.Preferences.Set(PrefKey, _treeUri);
             Android.Util.Log.Info("EmueraMaui",
                 $"PickDirectory: took r/w persistable uri, hasWrite={HasWriteAccess()}, uri={_treeUri}");
@@ -640,6 +648,7 @@ internal sealed class SafGameDirAccessor : IGameDirAccessor
         // 缓存 key 一律用父文档 URI 的 docId——ResolveDocId 对 children URI（尾带 /children）取到的
         // 是「父id/children」，与 FindChildDocument/ResolveSubPath 的「父id」不一致，不能作 key。
         var docId = ResolveDocId(docUri);
+        ProbeMetadataColumns(path); // S0-M1：命中轮首个全树枚举即触发（AgentLog 关 = 零成本布尔检查）
         EnumerateUri(docId, result, isDir, pattern, recursive);
         return result.ToArray();
     }
@@ -702,6 +711,85 @@ internal sealed class SafGameDirAccessor : IGameDirAccessor
             }
             if (recursive && childIsDir)
                 EnumerateUri(child.DocId, result, isDir, pattern, true);
+        }
+    }
+
+    // ── S0-M1 SAF 元数据探针（2026-09-05，diagnostic-knobs issues/11）─────────────────────
+
+    /// <summary>
+    /// S0-M1：验证 SAF provider 是否对文件行提供 SIZE / LAST_MODIFIED 元数据列——10-B 内容缓存
+    /// 失效检测的前置（现有 IR 指纹在 Android 上内容盲，stat 恒 0）。只探一次（<see cref="_metadataProbed"/>）；
+    /// AgentLog 关闭（Android 默认）时零成本（单次布尔检查）。沿 sampleRootPath 向下（用既有子项缓存，
+    /// 不新增枚举 IPC）找第一个含文件子项的目录，对其做一次 5 列 Query；日志输出 size/mtime 可读比例
+    /// 与前 3 个样例。真机判读：mtime 可读且随内容变化 → 10-B 放行；缺失/恒 0 → 10-B 不立项。
+    /// </summary>
+    private void ProbeMetadataColumns(string sampleRootPath)
+    {
+        if (_metadataProbed || !AgentLog.Instance.Enabled) return;
+        _metadataProbed = true; // 无论成败只探一次
+        if (!TryParseUri(sampleRootPath, out var docUri)) return;
+        try
+        {
+            var docId = ResolveDocId(docUri);
+            string? sampleDir = null;
+            int visited = 0;
+            var queue = new Queue<string>();
+            queue.Enqueue(docId);
+            while (queue.Count > 0 && visited++ < 200 && sampleDir == null)
+            {
+                var dir = queue.Dequeue();
+                foreach (var child in GetOrQueryChildren(dir))
+                {
+                    if (child.Mime == DocumentsContract.Document.MimeTypeDir)
+                    {
+                        if (queue.Count < 200) queue.Enqueue(child.DocId);
+                    }
+                    else if (sampleDir == null)
+                    {
+                        sampleDir = dir; // 该目录含文件行 → 元数据采样点
+                    }
+                }
+            }
+            if (sampleDir == null)
+            {
+                EmueraLog.Info("preload", "S0M1 metadata: no file-bearing dir found, skipped");
+                return;
+            }
+            var childrenUri = DocumentsContract.BuildChildDocumentsUriUsingTree(_treeAndroidUri!, sampleDir);
+            using var cursor = _context.ContentResolver!.Query(childrenUri!,
+                new[]
+                {
+                    DocumentsContract.Document.ColumnDocumentId,
+                    DocumentsContract.Document.ColumnDisplayName,
+                    DocumentsContract.Document.ColumnMimeType,
+                    DocumentsContract.Document.ColumnSize,
+                    DocumentsContract.Document.ColumnLastModified
+                }, null, null, null);
+            if (cursor == null)
+            {
+                EmueraLog.Info("preload", "S0M1 metadata: cursor null (provider rejected extended projection)");
+                return;
+            }
+            int files = 0, sizeOk = 0, mtimeOk = 0;
+            var samples = new List<string>();
+            while (cursor.MoveToNext())
+            {
+                if (cursor.GetString(2) == DocumentsContract.Document.MimeTypeDir) continue;
+                files++;
+                bool hasSize = !cursor.IsNull(3);
+                bool hasMtime = !cursor.IsNull(4);
+                if (hasSize) sizeOk++;
+                if (hasMtime) mtimeOk++;
+                if (samples.Count < 3)
+                    samples.Add($"{cursor.GetString(1) ?? "?"}={(hasSize ? cursor.GetLong(3).ToString() : "-")}B@{(hasMtime ? cursor.GetLong(4).ToString() : "-")}");
+            }
+            EmueraLog.Info("preload",
+                $"S0M1 metadata: dir={sampleDir} files={files} sizeAvail={sizeOk}/{files} mtimeAvail={mtimeOk}/{files} samples=[{string.Join(", ", samples)}]");
+        }
+        catch (Exception ex)
+        {
+            // 探针失败不阻断加载：provider 不支持扩展投影 / 查询异常都只留一行证据。
+            EmueraLog.Info("preload", $"S0M1 metadata: probe-ex {ex.GetType().Name}: {ex.Message}");
         }
     }
 
