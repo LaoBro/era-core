@@ -554,6 +554,159 @@ public class ErbIrCacheTests
 	}
 
 	/// <summary>OpenScope 的带根路径变体：解析 GamePaths 到指定根 + 访问器，dispose 时还原。</summary>
+	// ===== issues/13 M5：清单 sidecar（era_ir.list）——路线 2 显式失效 =====
+
+	[Fact]
+	public void FileList_sidecar_roundtrip_and_corrupt_rejection()
+	{
+		using var scope = OpenScope();
+		var irPath = Path.Combine(Path.GetTempPath(), "emuera-fltest-" + Guid.NewGuid().ToString("N"), "era_ir.dat");
+		Directory.CreateDirectory(Path.GetDirectoryName(irPath)!);
+		var pending = new List<(string Logical, string RelToRoot)>
+		{
+			("A.ERB", "A.ERB"),
+			("EV\\B.ERB", "EV\\B.ERB"),
+		};
+		var tree = new List<string> { "A.ERB", "EV\\B.ERB", "SUB.ERH" };
+
+		Assert.True(ErbIrCache.TryWriteFileList(irPath, pending, tree));
+		Assert.True(ErbIrCache.TryReadFileList(irPath, out var readPending, out var readTree));
+		Assert.Equal(pending, readPending);
+		Assert.Equal(tree, readTree);
+
+		// 损坏（垃圾字节 / 截断）→ false（调用方回退真实枚举，安全方向）
+		File.WriteAllBytes(ErbIrCache.GetFileListPath(irPath), new byte[] { 1, 2, 3 });
+		Assert.False(ErbIrCache.TryReadFileList(irPath, out var rp, out var rt));
+	}
+
+	[Fact]
+	public void TryDeleteCache_removes_ir_and_sidecar_local_layout()
+	{
+		using var scope = OpenScope();
+		string exeDir = GamePaths.Current.ExeDir;
+		string irPath = ErbIrCache.GetIrCachePath(exeDir);
+		Directory.CreateDirectory(Path.GetDirectoryName(irPath)!);
+		File.WriteAllText(irPath, "ir");
+		File.WriteAllText(ErbIrCache.GetFileListPath(irPath), "list");
+
+		Assert.True(ErbIrCache.TryDeleteCache(exeDir));
+		Assert.False(File.Exists(irPath));
+		Assert.False(File.Exists(ErbIrCache.GetFileListPath(irPath)));
+		Assert.True(ErbIrCache.TryDeleteCache(exeDir), "再删幂等（无文件也是成功）");
+	}
+
+	[Fact]
+	public void FileList_replay_matches_enumeration_including_nested_dirs()
+	{
+		// M5 等价钉子：命中轮 sidecar 回放 ≡ 建库轮真实枚举——logical 与重建物理路径逐位一致
+		//（含嵌套子目录），fp 亦恒等（content-URI stat 降级 0，集合一致即指纹一致）。
+		// sidecar 存本地临时目录（存储与内容解耦；真机布局同构——appdata 真实 FS）。
+		const string Root = "content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FFileListReplay";
+		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		using var rootedScope = OpenRootedScope(Root, accessor);
+		var erbDir = SafCompat.ResolveSubPath(Root, "erb");
+		SafCompat.CreateDirectory(erbDir); // stub 走显式注册集合（M4 同款）
+		// stub 的 GetFiles 只返回直接子项（M4 同款限制）——平铺种子，嵌套递归由本地 FS 等价测试覆盖
+		accessor.Seed(SafCompat.CombinePath(erbDir, "TOP.ERB"), Encoding.UTF8.GetBytes("@T\nRETURN\n"));
+		accessor.Seed(SafCompat.CombinePath(erbDir, "SUB.ERH"), Encoding.UTF8.GetBytes("#DIM X\n"));
+
+		Preload.Clear();
+		try
+		{
+			var env = new LoaderEnv(erbDir, erbDir, analysisMode: false, analysisFiles: new List<string>(), debugMode: false)
+			{ DirAccessor = accessor };
+			var scanned = ErbLoader.BuildPendingList(env, null, out var firstDirs, out _);
+			Assert.Single(scanned); // stub 平铺：仅 TOP.ERB（.ERB 过滤）
+
+			// 建库轮收尾写 sidecar（与 LoadErbDir Complete 同构：pending rel 对 + 树清单）
+			var irPath = Path.Combine(Path.GetTempPath(), "emuera-flreplay-" + Guid.NewGuid().ToString("N"), "era_ir.dat");
+			Directory.CreateDirectory(Path.GetDirectoryName(irPath)!);
+			Assert.True(Preload.TryGetTreeFiles(erbDir, out var treeFiles));
+			Assert.Contains("SUB.ERH", treeFiles.Select(f => SafPath.GetRelativePathFromRoot(erbDir, f))); // ② 区含非 .erb（喂 ErhLoader）
+			var pendingRels = scanned.Select(p => (p.Filename, SafPath.GetRelativePathFromRoot(erbDir, p.File))).ToList();
+			var treeRels = treeFiles.Select(f => SafPath.GetRelativePathFromRoot(erbDir, f)).ToList();
+			Assert.True(ErbIrCache.TryWriteFileList(irPath, pendingRels, treeRels));
+
+			Assert.True(ErbIrCache.TryReadFileList(irPath, out var flPending, out var flTree));
+			Assert.Equal(treeRels, flTree);
+			var replayed = ErbLoader.BuildPendingList(env, null, out _, out _, flPending);
+			Assert.Equal(scanned.Count, replayed.Count);
+			for (int i = 0; i < scanned.Count; i++)
+			{
+				Assert.Equal(scanned[i].Filename, replayed[i].Filename);
+				Assert.Equal(scanned[i].File, replayed[i].File);
+			}
+			Assert.Equal(
+				ErbIrCache.ComputeContentFingerprint(scanned.Select(p => (p.Filename, p.File)).ToList(), null, firstDirs),
+				ErbIrCache.ComputeContentFingerprint(replayed.Select(p => (p.Filename, p.File)).ToList(), null, firstDirs));
+		}
+		finally
+		{
+			Preload.Clear();
+		}
+	}
+
+	[Fact]
+	public void FileList_replay_matches_enumeration_local_nested_dirs()
+	{
+		// 本地 FS（真实递归枚举）的嵌套目录等价钉子——stub 只支持平铺，真机 SAF 的递归语义由本测试代言
+		//（M4 同款分工：stub 测 override 侧，递归语义由本地 FS 覆盖）。
+		using var scope = OpenScope();
+		string exeDir = GamePaths.Current.ExeDir;
+		var erbDir = Path.Combine(exeDir, "erb") + Path.DirectorySeparatorChar;
+		Directory.CreateDirectory(Path.Combine(erbDir, "SYS", "EVT"));
+		File.WriteAllText(Path.Combine(erbDir, "TOP.ERB"), "@T\nRETURN\n");
+		File.WriteAllText(Path.Combine(erbDir, "SYS", "A.ERB"), "@A\nRETURN\n");
+		File.WriteAllText(Path.Combine(erbDir, "SYS", "EVT", "B.ERB"), "@B\nRETURN\n");
+		var env = new LoaderEnv(
+			Path.Combine(exeDir, "csv") + Path.DirectorySeparatorChar,
+			erbDir, analysisMode: false, analysisFiles: new List<string>(), debugMode: false)
+		{ DirAccessor = new FileSystemGameDirAccessor() };
+
+		Preload.Clear();
+		try
+		{
+			var scanned = ErbLoader.BuildPendingList(env, null, out var firstDirs, out _);
+			Assert.Equal(3, scanned.Count);
+
+			var irPath = Path.Combine(Path.GetTempPath(), "emuera-fllocal-" + Guid.NewGuid().ToString("N"), "era_ir.dat");
+			Directory.CreateDirectory(Path.GetDirectoryName(irPath)!);
+			Assert.True(Preload.TryGetTreeFiles(erbDir, out var treeFiles));
+			var pendingRels = scanned.Select(p => (p.Filename, SafPath.GetRelativePathFromRoot(erbDir, p.File))).ToList();
+			var treeRels = treeFiles.Select(f => SafPath.GetRelativePathFromRoot(erbDir, f)).ToList();
+			Assert.Equal(3, treeRels.Count);
+			Assert.True(ErbIrCache.TryWriteFileList(irPath, pendingRels, treeRels));
+
+			Assert.True(ErbIrCache.TryReadFileList(irPath, out var flPending, out var flTree));
+			Assert.Equal(treeRels, flTree);
+			var replayed = ErbLoader.BuildPendingList(env, null, out _, out _, flPending);
+			Assert.Equal(scanned.Count, replayed.Count);
+			for (int i = 0; i < scanned.Count; i++)
+			{
+				Assert.Equal(scanned[i].Filename, replayed[i].Filename);
+				Assert.Equal(scanned[i].File, replayed[i].File);
+			}
+		}
+		finally
+		{
+			Preload.Clear();
+		}
+	}
+
+	[Fact]
+	public void GameKey_unifies_content_uri_encoding_forms()
+	{
+		// issues/13 M5：content URI 的编码形态不统一（引擎侧 SAF 树 URI 保持 %3A/%2F 编码、
+		// 扫库侧出现裸 `:` `/`）曾使加载侧缓存键与扫库侧探测键分叉——TryGetCacheInfo 恒 false
+		//（徽章假阴）、TryDeleteCache 删空。规范化统一按解码形态哈希，两侧收敛。
+		using var _scope = OpenScope();
+		const string encoded = "content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FTK1.29.3";
+		const string decoded = "content://com.android.externalstorage.documents/tree/primary:emuera/document/primary:emuera/TK1.29.3";
+		Assert.Equal(ErbIrCache.ComputeGameKey(encoded), ErbIrCache.ComputeGameKey(decoded));
+		// 本地路径语义不变
+		Assert.NotEqual(ErbIrCache.ComputeGameKey(@"C:\games\a"), ErbIrCache.ComputeGameKey(@"C:\games\a\b"));
+	}
+
 	private static IDisposable OpenRootedScope(string root, IGameDirAccessor accessor)
 	{
 		var previous = GamePaths.Current;

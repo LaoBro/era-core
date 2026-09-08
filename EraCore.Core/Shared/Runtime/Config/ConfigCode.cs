@@ -81,6 +81,9 @@ internal enum ConfigCode
 	// issues/12 M4：命中轮用 IR 头存 firstDir 清单替代 SAF GetDirectories("*#*") 通配扫描（默认 true）。
 	// FALSE = 命中轮恒走扫描（回退硬门）；建库轮写侧与指纹口径不受此开关影响，翻回 true 免整库重建。
 	IrFirstDirList = 302,
+	// issues/13 M5：命中轮用清单 sidecar 回放替代全树枚举（默认 true，仅 content-URI 游戏生效——
+	// 本地路径真实 stat 自愈，不走回放）。FALSE = 命中轮恒走真实枚举（回退硬门）；建库轮写侧不受影响。
+	IrFileListCache = 303,
 	ChangeMasterNameIfDebug = 34,
 	LastKey = 35,
 	ButtonWrap = 36,

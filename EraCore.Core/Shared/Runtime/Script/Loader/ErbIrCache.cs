@@ -141,6 +141,16 @@ internal static class ErbIrCache
 			try { s = Path.GetFullPath(s).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar); }
 			catch { /* 非法路径按原样参与哈希 */ }
 		}
+		else
+		{
+			// issues/13 M5：content URI 统一按**解码形态**参与哈希——同一游戏的目录串在不同来源间
+			// 编码形态不一致（引擎侧 SAF 树 URI 保持 %3A/%2F 编码；扫库侧 rootDir/拼接路径出现裸
+			// `:` `/`），编码形态哈希使「加载侧缓存键」与「扫库侧探测键」分叉：TryGetCacheInfo 恒
+			// false（徽章假阴）、TryDeleteCache 删空。解码后两侧收敛（%2F 解为 `/` 恰好同构）。
+			// 键只用于哈希不作路径，双解码歧义（%252F 类）概率可忽略。
+			try { s = Uri.UnescapeDataString(s); }
+			catch { /* 残留编码形态按原样参与哈希 */ }
+		}
 		return s;
 	}
 
@@ -175,6 +185,151 @@ internal static class ErbIrCache
 			return false;
 		lastWriteUtc = new DateTime(mtimeTicks, DateTimeKind.Utc);
 		return true;
+	}
+
+	// ── issues/13 M5：脚本清单 sidecar（era_ir.list）───────────────────────────────────────
+	// 设计（issues/13 方案 §1 + 实施修订）：IR 旁文件存两个清单——
+	// ① 建库轮最终 pending 的（逻辑名, 相对根名）有序对：命中轮 BuildPendingList 回放（权威合并序，
+	//    零 SAF IPC——砍掉 15.6s 冷 TreeEnum）。逻辑名与相对根名分开存：firstDir 文件逻辑名是相对
+	//    firstDir 的（≠ 相对 ERB 根），回放时物理路径只能从相对根名重建。
+	// ② ERB 根全树（目标扩展名过滤后）相对名清单：命中轮播种 Preload 树枚举 memo（实施修订——
+	//    IndexTree 之外 ErhLoader 的 .erh 枚举也走同一 memo，不播种则 ERH 段反而冷枚举 15.6s）。
+	// 选 sidecar 而非 IR v3 加区：零格式 churn（v2 窗口留给 10-B）；重扫 = 删文件；陈旧 sidecar 算出的
+	// fp 必 ≠ IR 存的 fp → miss 重建重写（「清单与 IR 不同步」唯一可检形态，入 IR 则恒真不可检）。
+	// 物理路径不入文件（URI 基座跨重授可能变）：命中轮经 CombinePath(root, rel) 重建。
+	// 新鲜度 = 路线 2（显式失效，用户是权威）：SAF 上 fp 本就内容盲，fp 自证恒真是设计语义。
+	// 布局：[int32 pendingCount]×(UTF8 逻辑名, UTF8 相对根名) [int32 treeCount]×UTF8 相对根名。
+	// 缺失/损坏/越界 → false（调用方回退真实枚举，安全方向；仅 SAF 游戏读写，本地路径不生成）。
+
+	/// <summary>sidecar 路径：与 era_ir.dat 同目录（SAF 游戏 = appdata 真实文件系统，可原子替换）。</summary>
+	internal static string GetFileListPath(string irCachePath)
+		=> Path.Combine(Path.GetDirectoryName(irCachePath)!, "era_ir.list");
+
+	/// <summary>sidecar 条数上界（防损坏文件把 List 撑爆；真实规模 ~2.5K）。</summary>
+	private const int FileListMaxEntries = 1_000_000;
+
+	internal static bool TryReadFileList(string irCachePath,
+		out List<(string Logical, string RelToRoot)> pendingRels, out List<string> treeRels)
+	{
+		pendingRels = [];
+		treeRels = [];
+		try
+		{
+			var path = GetFileListPath(irCachePath);
+			if (!File.Exists(path))
+				return false;
+			using var r = new BinaryReader(File.OpenRead(path));
+			int pendingCount = r.ReadInt32();
+			if (pendingCount is < 0 or > FileListMaxEntries)
+				return false;
+			var pending = new List<(string, string)>(Math.Min(pendingCount, 1 << 20));
+			for (int i = 0; i < pendingCount; i++)
+			{
+				string logical = r.ReadString();
+				string relToRoot = r.ReadString();
+				if (logical.Length == 0 || relToRoot.Length == 0)
+					return false;
+				pending.Add((logical, relToRoot));
+			}
+			int treeCount = r.ReadInt32();
+			if (treeCount is < 0 or > FileListMaxEntries)
+				return false;
+			var tree = new List<string>(Math.Min(treeCount, 1 << 20));
+			for (int i = 0; i < treeCount; i++)
+			{
+				string rel = r.ReadString();
+				if (rel.Length == 0)
+					return false;
+				tree.Add(rel);
+			}
+			if (r.BaseStream.Position != r.BaseStream.Length)
+				return false; // 尾部杂字节 = 半截/损坏
+			pendingRels = pending;
+			treeRels = tree;
+			return true;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	/// <summary>写 sidecar（tmp + 原子替换；同目录为真实文件系统）。失败返回 false（无 sidecar = 命中轮回退枚举，无害）。</summary>
+	internal static bool TryWriteFileList(string irCachePath,
+		IReadOnlyList<(string Logical, string RelToRoot)> pendingRels, IReadOnlyList<string> treeRels)
+	{
+		try
+		{
+			var path = GetFileListPath(irCachePath);
+			var tmp = path + ".tmp";
+			using (var w = new BinaryWriter(File.Create(tmp)))
+			{
+				w.Write(pendingRels.Count);
+				foreach (var (logical, rel) in pendingRels)
+				{
+					w.Write(logical);
+					w.Write(rel);
+				}
+				w.Write(treeRels.Count);
+				foreach (var rel in treeRels)
+					w.Write(rel);
+			}
+			if (!SafCompat.TryAtomicReplaceLocal(tmp, path))
+			{
+				try { File.Delete(tmp); } catch { /* 残留 tmp 无害（下次写覆盖） */ }
+				return false;
+			}
+			return true;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	/// <summary>
+	/// issues/13 M5：重扫按钮后端——删除本游戏的 IR 缓存与清单 sidecar，下次加载强制全扫重建。
+	/// 双布局：SAF（appdata IRCache/&lt;gameKey&gt;/）与本地（&lt;游戏目录&gt;/_IRCache/）。
+	/// 尽力而为：删除失败（如 IR 读句柄被运行中的会话持有）返回 false，调用方提示关闭游戏后重试；
+	/// 部分删除安全——缺 sidecar = 命中轮回退枚举（fp 照旧按枚举清单算），等价于 M4 前现状。
+	/// </summary>
+	internal static bool TryDeleteCache(string exeDir)
+	{
+		if (string.IsNullOrEmpty(exeDir))
+			return false;
+		bool ok = true;
+		try
+		{
+			if (SafPath.IsContentUri(exeDir))
+			{
+				string irPath = GetIrCachePath(exeDir);
+				string dir = Path.GetDirectoryName(irPath)!;
+				foreach (var name in new[] { Path.GetFileName(irPath), Path.GetFileName(GetFileListPath(irPath)) })
+				{
+					try { var p = Path.Combine(dir, name); if (File.Exists(p)) File.Delete(p); }
+					catch { ok = false; }
+				}
+			}
+			else
+			{
+				string dir = SafCompat.ResolveSubPath(exeDir, "_IRCache");
+				foreach (var name in new[] { "era_ir.dat", "era_ir.list" })
+				{
+					try
+					{
+						var p = SafCompat.CombinePath(dir, name);
+						if (File.Exists(p))
+							File.Delete(p);
+					}
+					catch { ok = false; }
+				}
+			}
+			return ok;
+		}
+		catch
+		{
+			return false;
+		}
 	}
 
 	/// <summary>孤儿清理宽限期：孤儿 key 目录 mtime 在此期限内不删（SD 卡暂拔/权限暂失的游戏回归时免白付重建）。</summary>

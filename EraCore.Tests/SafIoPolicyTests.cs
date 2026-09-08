@@ -43,19 +43,21 @@ public class SafIoPolicyTests
         {
             // （issues/12 M4 前移行号基线：ConfigData +3 行（IrFirstDirList 两处 ConfigItem）、
             //   ErbIrCache +21 行（v2 头/清单区/文档）——直连 I/O 调用点归属逐一复核未变）
-            ["Config/ConfigData.cs:939"] = 1,
-            ["Config/ConfigData.cs:986"] = 1,
-            ["Config/ConfigData.cs:987"] = 1,
-            ["Config/ConfigData.cs:991"] = 1,
-            ["Config/ConfigData.cs:994"] = 1,
-            ["Config/ConfigData.cs:1051"] = 1,
-            ["Config/ConfigData.cs:1058"] = 1,
-            ["Config/ConfigData.cs:1059"] = 1,
-            ["Config/ConfigData.cs:1065"] = 1,
-            ["Config/ConfigData.cs:1072"] = 1,
-            ["Config/ConfigData.cs:1073"] = 1,
+            // （issues/13 M5 前移行号基线：ConfigData +2 行（IrFileListCache ConfigItem）——
+            //   直连 I/O 调用点归属逐一复核未变，纯行号平移）
+            ["Config/ConfigData.cs:941"] = 1,
+            ["Config/ConfigData.cs:988"] = 1,
+            ["Config/ConfigData.cs:989"] = 1,
+            ["Config/ConfigData.cs:993"] = 1,
+            ["Config/ConfigData.cs:996"] = 1,
+            ["Config/ConfigData.cs:1053"] = 1,
+            ["Config/ConfigData.cs:1060"] = 1,
+            ["Config/ConfigData.cs:1061"] = 1,
+            ["Config/ConfigData.cs:1067"] = 1,
             ["Config/ConfigData.cs:1074"] = 1,
+            ["Config/ConfigData.cs:1075"] = 1,
             ["Config/ConfigData.cs:1076"] = 1,
+            ["Config/ConfigData.cs:1078"] = 1,
             ["Config/JSON/JSONConfig.cs:20"] = 1,
             ["Config/JSON/JSONConfig.cs:22"] = 1,
             ["Config/JSON/JSONConfig.cs:26"] = 1,
@@ -66,10 +68,21 @@ public class SafIoPolicyTests
             ["Config/JSON/JSONConfig.cs:49"] = 1,
             ["Script/Data/ConstantData.cs:224"] = 1,
             ["Script/Data/ConstantData.cs:1714"] = 1,
-            ["Script/Loader/ErbIrCache.cs:201"] = 1,
-            ["Script/Loader/ErbIrCache.cs:204"] = 1,
-            ["Script/Loader/ErbIrCache.cs:211"] = 1,
-            ["Script/Loader/ErbIrCache.cs:217"] = 1,
+            // （issues/13 M5：ErbIrCache +清单 sidecar 读写与 TryDeleteCache——全部落在 appdata
+            //   IRCache 布局与本地 _IRCache（真实文件系统），content-URI 永不直连，归属同孤儿清理；
+            //   +gameKey 解码规范化 +10 行（NormalizeExeDirForKey），直连 I/O 行号整体平移：
+            //   CleanupOrphans 四调用点现居 356/359/366/372）
+            ["Script/Loader/ErbIrCache.cs:219"] = 1,
+            ["Script/Loader/ErbIrCache.cs:221"] = 1,
+            ["Script/Loader/ErbIrCache.cs:265"] = 1,
+            ["Script/Loader/ErbIrCache.cs:279"] = 1,
+            ["Script/Loader/ErbIrCache.cs:309"] = 2,
+            ["Script/Loader/ErbIrCache.cs:321"] = 1,
+            ["Script/Loader/ErbIrCache.cs:322"] = 1,
+            ["Script/Loader/ErbIrCache.cs:356"] = 1,
+            ["Script/Loader/ErbIrCache.cs:359"] = 1,
+            ["Script/Loader/ErbIrCache.cs:366"] = 1,
+            ["Script/Loader/ErbIrCache.cs:372"] = 1,
             ["Script/Statements/Instraction.Child.cs:2715"] = 1,
             ["Script/Statements/Instraction.Child.cs:2779"] = 1,
             ["Utils/EncodingHandler.cs:22"] = 1,

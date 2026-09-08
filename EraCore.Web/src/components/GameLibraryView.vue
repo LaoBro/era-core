@@ -4,7 +4,9 @@ import { useGameStore, mapLoadGameErrorCode, formatMainGameDirForDisplay } from 
 import { useConnectionStore } from '../stores/connection';
 import type { GameLibrarySource } from '../lib/gameLibrary';
 import ChangeDirDialog from './ChangeDirDialog.vue';
+import ConfirmDialog from './ConfirmDialog.vue';
 import GameRow from './GameRow.vue';
+import { rescanIrCache } from '../lib/mauiBridge';
 import StatusBanner from './StatusBanner.vue';
 
 /**
@@ -91,6 +93,18 @@ watch(currentError, () => scheduleErrorBannerAutoDismiss(), { immediate: true })
 
 // ---------- 「更改目录」入口（统一走 ChangeDirDialog） ----------
 const dirDialogVisible = ref(false);
+
+// issues/13 M5：重扫脚本缓存（路线 2 显式失效）——⋮ 菜单 → 确认 → 删 IR+sidecar，下次启动建库轮。
+const rescanTarget = ref<{ name: string; fullPath: string } | null>(null);
+function onRequestRescan(name: string, fullPath: string): void {
+  rescanTarget.value = { name, fullPath };
+}
+function onConfirmRescan(): void {
+  if (rescanTarget.value) {
+    rescanIrCache(rescanTarget.value.fullPath);
+    rescanTarget.value = null;
+  }
+}
 
 /** 以指定路径为主目录并发起扫描——成功与否由 source 判断，失败写本地错误。 */
 async function scanDir(dir: string): Promise<void> {
@@ -234,6 +248,7 @@ defineExpose({ openChangeDirDialog });
             :ir-cache-bytes="g.irCacheBytes"
             :ir-cache-built-utc="g.irCacheBuiltUtc"
             @click="onPickGame(g.name, g.fullPath)"
+            @rescan="onRequestRescan(g.name, g.fullPath)"
           />
         </ul>
       </div>
@@ -241,6 +256,17 @@ defineExpose({ openChangeDirDialog });
 
     <!-- 共享「更改目录」对话框（MAUI 原生 / Web 浏览 + 手动输入） -->
     <ChangeDirDialog v-model:visible="dirDialogVisible" :source="source" />
+
+    <!-- issues/13 M5：重扫脚本缓存确认——删 IR+sidecar 不可逆（下次启动付一次建库轮 ~30s），需用户确认 -->
+    <ConfirmDialog
+      :visible="rescanTarget !== null"
+      title="重扫脚本缓存"
+      :message="rescanTarget ? `删除 ${rescanTarget.name} 的脚本缓存并重建？下次进入该游戏时将重新全量扫描（约需 30 秒）。若已更换 mod，这是让新脚本生效的方式。` : ''"
+      confirm-label="删除并重扫"
+      @confirm="onConfirmRescan"
+      @cancel="rescanTarget = null"
+      @update:visible="rescanTarget = null"
+    />
   </div>
 </template>
 

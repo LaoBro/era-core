@@ -117,6 +117,7 @@ internal sealed record ConfigMessage(
     string LazyFunctionLoad,
     string IrDiskCacheLoad,
     string IrFirstDirList,
+    string IrFileListCache,
     string ParallelErbLoad,
     string ParallelParseScript,
     string SweepGatePolicy,
@@ -126,6 +127,9 @@ internal sealed record ConfigMessage(
 
 /// <summary>{"type":"backButtonPressed"}</summary>
 internal sealed record BackButtonPressedMessage(string Type);
+
+/// <summary>{"type":"irCacheRescanned","ok":bool}——issues/13 M5 重扫（删 IR+sidecar）结果回执。</summary>
+internal sealed record IrCacheRescannedMessage(string Type, bool Ok, string Path);
 
 /// <summary>
 /// Headless Server GET /state 的最小子集——MAUI Windows 远程探测只读 state / gameDir。
@@ -154,6 +158,7 @@ internal sealed record HeadlessStateResponse(string? State, string? GameDir);
 [JsonSerializable(typeof(LayoutMessage))]
 [JsonSerializable(typeof(ConfigMessage))]
 [JsonSerializable(typeof(BackButtonPressedMessage))]
+[JsonSerializable(typeof(IrCacheRescannedMessage))]
 [JsonSerializable(typeof(HeadlessStateResponse))]
 internal partial class MauiJsonContext : JsonSerializerContext
 {

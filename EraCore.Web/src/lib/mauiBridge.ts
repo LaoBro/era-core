@@ -219,6 +219,15 @@ export function loadGameFromPath(path: string): void {
   postInput(JSON.stringify({ type: 'loadGame', path }));
 }
 
+/**
+ * issues/13 M5：重扫脚本缓存（库卡片 ⋮ 菜单入口）——请求 C# 删该游戏的
+ * era_ir.dat + era_ir.list，下次启动即建库轮。C# 回执 `{"type":"irCacheRescanned","ok":bool,"path":...}`。
+ * PC 库同款 action 通用（本地布局 = 删 _IRCache 下两文件）。
+ */
+export function rescanIrCache(path: string): void {
+  postInput(JSON.stringify({ type: 'rescanIrCache', path }));
+}
+
 // ---------- game-library spec ID3：MAUI 桥接新消息（JS → C#）----------
 //
 // 两个新消息投递函数：
@@ -327,7 +336,7 @@ export function setDisplayReportOverride(value: DisplayReportOverride): void {
  * - parallelErbLoad：ERB 并行读取
  * - parallelParseScript：未调用函数解析并行化
  */
-export type PerfOverrideKey = 'lazyFunctionLoad' | 'irDiskCacheLoad' | 'irFirstDirList' | 'parallelErbLoad' | 'parallelParseScript';
+export type PerfOverrideKey = 'lazyFunctionLoad' | 'irDiskCacheLoad' | 'irFirstDirList' | 'irFileListCache' | 'parallelErbLoad' | 'parallelParseScript';
 
 /**
  * 设置页「性能（启动加载）」三态——请求 C# 覆盖游戏对应 emuera.config 项。

@@ -115,6 +115,8 @@ internal sealed class Config
 	public static bool IrDiskCacheLoad => Current!._data.GetConfigValue<bool>(ConfigCode.IrDiskCacheLoad);
 	/// <summary>issues/12 M4：命中轮用 IR 头存 firstDir 清单替代 SAF GetDirectories("*#*") 通配扫描（默认 true）；FALSE = 命中轮恒走扫描，建库轮写侧与指纹不受影响。</summary>
 	public static bool IrFirstDirList => Current!._data.GetConfigValue<bool>(ConfigCode.IrFirstDirList);
+	/// <summary>issues/13 M5：命中轮用清单 sidecar 回放替代全树枚举（默认 true）；仅 content-URI 游戏生效，FALSE = 恒走真实枚举，建库轮写侧不受影响。</summary>
+	public static bool IrFileListCache => Current!._data.GetConfigValue<bool>(ConfigCode.IrFileListCache);
 	public static DisplayWarningFlag FunctionNotFoundWarning => Current!._data.GetConfigValue<DisplayWarningFlag>(ConfigCode.FunctionNotFoundWarning);
 	public static DisplayWarningFlag FunctionNotCalledWarning => Current!._data.GetConfigValue<DisplayWarningFlag>(ConfigCode.FunctionNotCalledWarning);
 	public static bool ChangeMasterNameIfDebug => Current!._data.GetConfigValue<bool>(ConfigCode.ChangeMasterNameIfDebug);

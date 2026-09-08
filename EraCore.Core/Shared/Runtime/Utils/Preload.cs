@@ -134,6 +134,35 @@ static partial class Preload
     /// <summary>枚举 path 下目标扩展名（.erb/.csv/.erh/.erd/.als）的文件清单，不读内容。目录不存在返回 null。
     /// S0-M3：轮内 memo 优先——命中直接返回（零 IPC 零 URI 重建），miss 才走 DirectoryExists + 全树 GetFiles 并落 memo。
     /// 冷枚举打 Info（含耗时），命中不打（由 IndexTree / BuildPendingList 各自的计时行体现收缩）。</summary>
+    /// <summary>
+    /// issues/13 M5：命中轮 memo 播种——sidecar 全树清单（相对名）经 CombinePath 重建全路径回填
+    /// <see cref="s_treeFiles"/>，让 IndexTree / ErhLoader（.erh 枚举同走 memo）/ 任何
+    /// EnumerateTargetFiles 消费者免冷枚举（真机 15.6s/次）。已有 memo（真实枚举先到）不覆盖；
+    /// 空清单不回填（与枚举侧「空清单不缓存」语义一致）。陈旧清单的后果 = 幽灵条目读失败告警，
+    /// 路线 2 语义下由用户重扫收敛（fp 只吃 .erb 清单，.erh 幽灵不触发自动失效）。
+    /// </summary>
+    public static void SeedTreeMemo(string rootDir, IReadOnlyList<string> relNames, IGameDirAccessor dirAccessor)
+    {
+        if (relNames.Count == 0 || s_treeFiles.ContainsKey(rootDir))
+            return;
+        var full = new List<string>(relNames.Count);
+        foreach (var rel in relNames)
+            full.Add(dirAccessor.CombinePath(rootDir, rel.Replace('\\', '/')));
+        s_treeFiles[rootDir] = full;
+    }
+
+    /// <summary>issues/13 M5：建库轮收尾取全树清单（写 sidecar ② 区用）。memo 未填充（空树等）返回 false。</summary>
+    internal static bool TryGetTreeFiles(string rootDir, out IReadOnlyList<string> fullPaths)
+    {
+        if (s_treeFiles.TryGetValue(rootDir, out var cached))
+        {
+            fullPaths = cached;
+            return true;
+        }
+        fullPaths = Array.Empty<string>();
+        return false;
+    }
+
     private static List<string>? EnumerateTargetFiles(string path, IGameDirAccessor dirAccessor)
     {
         if (s_treeFiles.TryGetValue(path, out var cached))

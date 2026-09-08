@@ -156,14 +156,33 @@ internal sealed class ErbLoader
 	/// 走 <see cref="Preload.EnumerateFilesFromTree"/>（与缓存键同源的 Preload 语义全树枚举——
 	/// launch7 真机实测 Config.GetFiles 的 SAF 通配/displayName 差异会丢文件/路径变形，弃用）。
 	/// </summary>
-	internal static List<(string Filename, string File)> BuildPendingList(LoaderEnv env, List<string>? firstDirOverride, out List<string> firstDirs, out int erbFileCount)
+	internal static List<(string Filename, string File)> BuildPendingList(LoaderEnv env, List<string>? firstDirOverride, out List<string> firstDirs, out int erbFileCount,
+		IReadOnlyList<(string Logical, string RelToRoot)>? fileListOverride = null)
 	{
 		// S0-M3（2026-09-05）：命中轮清单枚举计时——预判定 / LoadErbDir 各打一条，配合 Preload 的
 		// TreeEnum memo=miss/hit 行判读「2388 文件重复枚举」是否构成间隙②（issues/11 M3）。
 		var sw = Stopwatch.StartNew();
+		// issues/13 M5：清单 sidecar 回放（命中轮）——pending 按建库轮存储序直接重建（零枚举 IPC，
+		// 真机砍掉 15.6s 冷 TreeEnum）；存储序即权威合并序（建库轮写的即最终合并序）；物理路径经
+		// CombinePath(root, 相对根名) 重建（URI 基座跨重授稳定）。陈旧清单由 fp 兜底（调用方 miss →
+		// 丢弃重扫）。新鲜度 = 路线 2 显式失效（用户重扫，issues/13 裁定）。
 		// issues/12 M4 取证①：GetDirectories 单独计时（确认真机 16.4s 差值 ≈15.9s 的归属；override 轮 -1）
 		long firstDirScanMs;
 		string[] firstDirFull;
+		if (fileListOverride != null)
+		{
+			firstDirScanMs = -1;
+			firstDirs = firstDirOverride ?? [];
+			erbFileCount = fileListOverride.Count;
+			var replayed = new List<(string Filename, string File)>(fileListOverride.Count);
+			foreach (var (logical, relToRoot) in fileListOverride)
+				replayed.Add((logical, ResolveFirstDirPath(env, relToRoot)));
+			sw.Stop();
+			EmueraLog.Info("ErbLoader",
+				$"BuildPendingList ms={sw.ElapsedMilliseconds} files={replayed.Count} firstDirs={firstDirs.Count} " +
+				$"firstDirScanMs=-1 src=ir fileListSrc=list({fileListOverride.Count})");
+			return replayed;
+		}
 		if (firstDirOverride != null)
 		{
 			firstDirScanMs = -1;
@@ -213,7 +232,7 @@ internal sealed class ErbLoader
 		sw.Stop();
 		EmueraLog.Info("ErbLoader",
 			$"BuildPendingList ms={sw.ElapsedMilliseconds} files={erbFileCount} firstDirs={firstDirs.Count} " +
-			$"firstDirScanMs={firstDirScanMs} src={(firstDirOverride != null ? "ir" : "scan")}");
+			$"firstDirScanMs={firstDirScanMs} src={(firstDirOverride != null ? "ir" : "scan")} fileListSrc=enum");
 		return pending;
 	}
 
@@ -254,14 +273,31 @@ internal sealed class ErbLoader
 			// FALSE = 恒扫描）；无 v2 IR / 损坏 → null → 照旧扫描。清单正确性由 fp（含清单）判定。
 			List<string>? irFirstDirs =
 				Config.Config.IrFirstDirList && ErbIrCache.TryReadFirstDirs(irPath, out var irFd) ? irFd : null;
-			var pending = BuildPendingList(env, irFirstDirs, out var firstDirsUsed, out _);
+			// issues/13 M5：清单 sidecar（有序 pending 对 + 全树清单）。读侧受旋钮 + content-URI 门双门控
+			//（本地路径真实 stat 自愈，不走回放——2026-09-09 用户裁定 Windows/CLI 保留自动失效）。
+			List<(string Logical, string RelToRoot)>? irFileList = null;
+			List<string>? irTreeRels = null;
+			if (Config.Config.IrFileListCache && SafPath.IsContentUri(env.ErbDir)
+				&& ErbIrCache.TryReadFileList(irPath, out var flPending, out var flTree))
+			{
+				irFileList = flPending;
+				irTreeRels = flTree;
+			}
+			var pending = BuildPendingList(env, irFirstDirs, out var firstDirsUsed, out _, irFileList);
 			long fp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic, firstDirsUsed);
 			bool hit = ErbIrCache.TryLoad(irPath, fp, out _);
+			if (hit && irTreeRels != null)
+			{
+				// issues/13 M5：命中轮播种树枚举 memo——IndexTree / ErhLoader（.erh 同走 memo）免冷枚举。
+				// 唯一播种点（miss 轮不播种，防陈旧清单污染后续真实枚举；Preload.Clear 已在本判定前跑过）。
+				Preload.SeedTreeMemo(env.ErbDir, irTreeRels, env.DirAccessor);
+			}
 			// issue 09 真机排障（launch6 fp 分歧）：指纹 = 文件集合 + firstDir 清单 + 解析配置集 + Rename 表——
 			// 打印输入快照便于与 LoadErbDir 的 ir hit 行逐项对比定位漂移来源。
 			EmueraLog.Info("ErbIrCache",
 				$"pre-hit check hit={hit} files={pending.Count} fp={fp:x16} " +
 				$"firstDirSrc={(irFirstDirs != null ? $"ir({irFirstDirs.Count})" : "scan")} " +
+				$"fileListSrc={(irFileList != null ? $"ir({irFileList.Count})" : "enum")} " +
 				$"ic={Config.Config.IgnoreCase} rf={Config.Config.UseRenameFile} rp={Config.Config.UseReplaceFile} " +
 				$"ra={(int)Config.Config.ReduceArgumentOnLoad} nr={Config.Config.NeedReduceArgumentOnLoad} " +
 				$"t3={Config.Config.SystemIgnoreTripleSymbol} rename={ParserMediator.RenameDic.Count}");
@@ -354,9 +390,13 @@ internal sealed class ErbLoader
 		// 无 v2 IR / 损坏 → null → 照旧扫描）——与 IsIrHitRound 预判定同源同拨。
 		List<string>? irFirstDirs =
 			irEnabled && Config.Config.IrFirstDirList && ErbIrCache.TryReadFirstDirs(irPath, out var loadFd) ? loadFd : null;
+		// issues/13 M5：sidecar 清单（与 IsIrHitRound 同源同拨；陈旧自愈见下方 discard-rescan 分支）。
+		List<(string Logical, string RelToRoot)>? irFileList =
+			irEnabled && Config.Config.IrFileListCache && SafPath.IsContentUri(env.ErbDir)
+			&& ErbIrCache.TryReadFileList(irPath, out var loadFl, out _) ? loadFl : null;
 		// issue 09：待载清单构建唯一路径（缓存命中轮与启动 IR 预判定共用；命中轮无缓存 →
 		// Preload 语义枚举，见 <see cref="BuildPendingList"/>）。
-		List<(string Filename, string File)> pending = BuildPendingList(env, irFirstDirs, out List<string> firstDirs, out int erbFileCount);
+		List<(string Filename, string File)> pending = BuildPendingList(env, irFirstDirs, out List<string> firstDirs, out int erbFileCount, irFileList);
 		List<string> isOnlyEvent = [];
 		noError = true;
 		var starttime = DateTime.Now;
@@ -393,12 +433,13 @@ internal sealed class ErbLoader
 				}
 				else
 				{
-					if (irFirstDirs != null)
+					if (irFirstDirs != null || irFileList != null)
 					{
-						// issues/12 M4 自愈兜底：IR 头存清单被 fp 判为陈旧（如新增 *#* 目录）→ 不得用于
-						// 实际加载（否则新目录的 ERB 永不进清单、fp 永不收敛）→ 丢弃重扫，重算 fp 与清单。
+						// issues/12 M4 + issues/13 M5 自愈兜底：IR 头存 firstDir 或 sidecar 清单被 fp 判为
+						// 陈旧（增删/改名/清单与 IR 不同步）→ 不得用于实际加载（新文件永不进清单、
+						// fp 永不收敛）→ 丢弃全量重扫，重算 fp 与清单；收尾 Complete 重写 sidecar。
 						EmueraLog.Info("ErbIrCache",
-							$"ir miss with ir-firstDirs({irFirstDirs.Count}) → discard and rescan firstDirs");
+							$"ir miss with ir-firstDirs({irFirstDirs?.Count ?? 0})/ir-fileList({irFileList?.Count ?? 0}) → discard and rescan");
 						pending = BuildPendingList(env, null, out firstDirs, out erbFileCount);
 						irFp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic, firstDirs);
 					}
@@ -468,8 +509,24 @@ internal sealed class ErbLoader
 			// 生成失败静默（进程继续走 B1 路径，下次再试；design §5.1 异常策略），成功即下次启动命中。
 			if (_irWriter is { } writer)
 			{
-				writer.Complete(irFp, firstDirs);
+				bool irWritten = writer.Complete(irFp, firstDirs);
 				_irWriter = null;
+				// issues/13 M5：IR 落盘成功后写清单 sidecar（pending 有序对 + 全树相对名清单）。
+				// 仅 SAF 游戏（本地路径不走回放，不生成）；树清单取自本轮枚举 memo（BuildPendingList
+				// 或 LoadTreesAsync 填充）。写失败无害（命中轮缺 sidecar → 回退枚举，收敛）。
+				if (irWritten && SafPath.IsContentUri(env.ErbDir)
+					&& Preload.TryGetTreeFiles(env.ErbDir, out var treeFiles))
+				{
+					var pendingRels = new List<(string Logical, string RelToRoot)>(pending.Count);
+					foreach (var (logical, physical) in pending)
+						pendingRels.Add((logical, SafPath.GetRelativePathFromRoot(env.ErbDir, physical)));
+					var treeRels = new List<string>(treeFiles.Count);
+					foreach (var f in treeFiles)
+						treeRels.Add(SafPath.GetRelativePathFromRoot(env.ErbDir, f));
+					if (ErbIrCache.TryWriteFileList(irPath, pendingRels, treeRels))
+						EmueraLog.Info("ErbIrCache",
+							$"ir fileList sidecar written: pending={pendingRels.Count} tree={treeRels.Count}");
+				}
 			}
 
 #if DEBUG

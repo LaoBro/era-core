@@ -159,6 +159,8 @@ internal sealed class ConfigData
 		configArray.Add(new ConfigItem<bool>(ConfigCode.IrDiskCacheLoad, "関数の内容をIRディスクキャッシュする", "Cache function bodies to IR disk cache", true));
 		// issues/12 M4：命中轮 IR 头存 firstDir 清单开关（默认 true）；FALSE = 命中轮恒走 SAF 扫描（回退硬门），写侧/指纹不受影响。
 		configArray.Add(new ConfigItem<bool>(ConfigCode.IrFirstDirList, "命中ラウンドでIR保存のfirstDirリストを使う", "Use IR-stored firstDir list on hit rounds", true));
+		// issues/13 M5：命中轮清单 sidecar 回放开关（默认 true，仅 content-URI 游戏生效）；FALSE = 恒走真实枚举，写侧不受影响。
+		configArray.Add(new ConfigItem<bool>(ConfigCode.IrFileListCache, "命中ラウンドでIR保存のファイルリストを使う", "Use IR-stored file list on hit rounds", true));
 
 
 		configArray.Add(new ConfigItem<bool>(ConfigCode.ChangeMasterNameIfDebug, "デバッグコマンドを使用した時にMASTERの名前を変更する", "Change MASTER mame in debug", true));

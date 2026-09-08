@@ -507,10 +507,11 @@ export const useGameStore = defineStore('game', () => {
    * 设置页分段控件据此渲染初始值；切换时投递 setPerfOverride 请求 C# 切换 + 持久化，
    * C# 推回 config 消息后同步回此值。仅在下次进游戏时生效，默认 'auto'（不干预游戏配置）。
    */
-  const perfOverrides = ref<Record<'lazyFunctionLoad' | 'irDiskCacheLoad' | 'irFirstDirList' | 'parallelErbLoad' | 'parallelParseScript', 'auto' | 'off' | 'on'>>({
+  const perfOverrides = ref<Record<'lazyFunctionLoad' | 'irDiskCacheLoad' | 'irFirstDirList' | 'irFileListCache' | 'parallelErbLoad' | 'parallelParseScript', 'auto' | 'off' | 'on'>>({
     lazyFunctionLoad: 'auto',
     irDiskCacheLoad: 'auto',
     irFirstDirList: 'auto',
+    irFileListCache: 'auto',
     parallelErbLoad: 'auto',
     parallelParseScript: 'auto',
   });
@@ -1057,6 +1058,19 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
+   * issues/13 M5：重扫回执（irCacheRescanned ok=true）——把该游戏的 IR 缓存徽章清掉。
+   * 缓存已删（下次启动建库轮），徽章保持存在会误导「还有缓存」。
+   */
+  function applyIrCacheRescanned(path: string): void {
+    const target = scannedGames.value.find((g) => g.fullPath === path);
+    if (target) {
+      target.irCached = false;
+      target.irCacheBytes = undefined;
+      target.irCacheBuiltUtc = null;
+    }
+  }
+
+  /**
    * Web/HTTP 模式：请求 server 扫描主目录下的游戏（复用 C# `GameScanner.Scan`）。
    *
    * 浏览器沙箱不能枚举本地文件系统（GamePicker 因此只能手动输入路径），但 C# server
@@ -1513,6 +1527,7 @@ export const useGameStore = defineStore('game', () => {
     setMainGameDir,
     setLastPlayedGame,
     setScannedGames,
+    applyIrCacheRescanned,
     // Web/HTTP 模式：server 代扫 + 目录浏览
     scanGamesHttp,
     browseDirectoryHttp,

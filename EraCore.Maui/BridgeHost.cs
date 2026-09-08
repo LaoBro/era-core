@@ -113,6 +113,12 @@ internal sealed class BridgeHost : IDisposable
     /// </summary>
     internal const string PerfIrFirstDirListKey = "app.perf.irFirstDirList";
 
+    /// <summary>
+    /// Preferences key——清单 sidecar 回放覆盖（<see cref="ConfigCode.IrFileListCache"/>，issues/13 M5）；
+    /// off = 命中轮恒走真实枚举（回退硬门），仅 content-URI 游戏生效，建库轮写侧不受影响。
+    /// </summary>
+    internal const string PerfIrFileListCacheKey = "app.perf.irFileListCache";
+
     /// <summary>Preferences key——ERB 并行读取覆盖（<see cref="ConfigCode.ParallelErbLoad"/>）。</summary>
     internal const string PerfParallelErbLoadKey = "app.perf.parallelErbLoad";
 
@@ -173,6 +179,7 @@ internal sealed class BridgeHost : IDisposable
             ["lazyFunctionLoad"] = (PerfLazyFunctionLoadKey, ConfigCode.LazyFunctionLoad),
             ["irDiskCacheLoad"] = (PerfIrDiskCacheLoadKey, ConfigCode.IrDiskCacheLoad),
             ["irFirstDirList"] = (PerfIrFirstDirListKey, ConfigCode.IrFirstDirList),
+            ["irFileListCache"] = (PerfIrFileListCacheKey, ConfigCode.IrFileListCache),
             ["parallelErbLoad"] = (PerfParallelErbLoadKey, ConfigCode.ParallelErbLoad),
             ["parallelParseScript"] = (PerfParallelParseScriptKey, ConfigCode.ParallelParseScript),
         };
@@ -664,6 +671,12 @@ internal sealed class BridgeHost : IDisposable
                 if (type == "exitGame")
                 {
                     HandleExitGame();
+                    return;
+                }
+                // issues/13 M5：重扫脚本缓存——删 IR + sidecar，下次该游戏加载强制全扫重建（库卡片菜单入口）
+                if (type == "rescanIrCache")
+                {
+                    HandleRescanIrCache(doc.RootElement);
                     return;
                 }
                 // game-library spec ID6：Android 存储权限检查与请求
@@ -1547,6 +1560,49 @@ internal sealed class BridgeHost : IDisposable
     /// 收到 loadGame 消息仅写日志，不抛错——保证向后兼容。
     /// </para>
     /// </summary>
+    /// <summary>
+    /// issues/13 M5：重扫脚本缓存（库卡片 ⋮ 菜单入口）——删该游戏的 era_ir.dat + era_ir.list，
+    /// 下次启动即建库轮。本消息不触碰运行中的会话（库阶段游戏未加载）；删除失败（IR 读句柄被
+    /// 持有等）回执 ok=false，Vue 端提示。PC 库同款 action 通用（本地布局 = 删 _IRCache 两文件）。
+    /// </summary>
+    private void HandleRescanIrCache(JsonElement root)
+    {
+        if (!root.TryGetProperty("path", out var pathEl) || pathEl.ValueKind != JsonValueKind.String)
+        {
+            Console.WriteLine("[bridge] HandleRescanIrCache: missing or non-string 'path' field");
+            return;
+        }
+        var path = pathEl.GetString();
+        if (string.IsNullOrEmpty(path))
+        {
+            Console.WriteLine("[bridge] HandleRescanIrCache: empty path");
+            return;
+        }
+        bool ok = false;
+        try
+        {
+            ok = ErbIrCache.TryDeleteCache(path);
+            Console.WriteLine($"[bridge] HandleRescanIrCache: path={path} ok={ok}");
+            AgentLog.Instance.Write($"[bridge] HandleRescanIrCache: path={path} ok={ok}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[bridge] HandleRescanIrCache: threw: {ex}");
+            AgentLog.Instance.Write($"[bridge] HandleRescanIrCache: threw: {ex}");
+        }
+        var ack = JsonSerializer.Serialize(
+            new IrCacheRescannedMessage("irCacheRescanned", ok, path),
+            MauiJsonContext.Default.IrCacheRescannedMessage);
+        _dispatcher.Dispatch(() => _jsBridge.PostMessage(ack));
+        if (ok)
+        {
+            // issues/13 M5：删除成功 → 重推扫库列表（徽章从权威数据 TryGetCacheInfo 更新，
+            // 不依赖 ack 链路；与既有 ScanAndPushGames 单一真相源同构）。rootDir 用
+            // _mainGameDir——库阶段最后一次 scanGames 已设置并持久化。
+            ScanAndPushGames(_mainGameDir);
+        }
+    }
+
     private void HandleLoadGame(JsonElement root)
     {
         if (!root.TryGetProperty("path", out var pathEl) || pathEl.ValueKind != JsonValueKind.String)
@@ -1636,6 +1692,7 @@ internal sealed class BridgeHost : IDisposable
                 ReadPerfOverride(PerfLazyFunctionLoadKey),
                 ReadPerfOverride(PerfIrDiskCacheLoadKey),
                 ReadPerfOverride(PerfIrFirstDirListKey),
+                ReadPerfOverride(PerfIrFileListCacheKey),
                 ReadPerfOverride(PerfParallelErbLoadKey),
                 ReadPerfOverride(PerfParallelParseScriptKey),
                 SweepGatePolicyCodec.ToConfigString(ReadSweepGatePolicyPreference()),

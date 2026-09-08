@@ -167,7 +167,7 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
       game.displayReportOverride = m.displayReportOverride;
     }
     // 性能（启动加载）覆盖三态的 C# 权威状态——设置页据此渲染分段控件初始值
-    for (const perfKey of ['lazyFunctionLoad', 'irDiskCacheLoad', 'irFirstDirList', 'parallelErbLoad', 'parallelParseScript'] as const) {
+    for (const perfKey of ['lazyFunctionLoad', 'irDiskCacheLoad', 'irFirstDirList', 'irFileListCache', 'parallelErbLoad', 'parallelParseScript'] as const) {
       const value = m[perfKey];
       if (value === 'auto' || value === 'off' || value === 'on') {
         game.perfOverrides[perfKey] = value;
@@ -196,6 +196,14 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
   // issue 05（MAUI 托管）：控制状态同步——C# BridgeHost.ControlPumpAsync 在控制事件发生时
   // 推 {"type":"controlStatus","controller":{kind,leaseExpiresAt}|null,"state":"idle"|"held"}，
   // 前端据此切 旁观/可操作（输入栏启用/禁用 + 接管按钮）。对应 HTTP 模式的 /control 轮询语义。
+  // issues/13 M5：重扫回执——ok 时把该游戏的 IR 徽章清掉（缓存已删除，下次启动重建）
+  if (type === 'irCacheRescanned') {
+    if (typeof m.path === 'string' && m.ok === true) {
+      game.applyIrCacheRescanned(m.path);
+    }
+    return;
+  }
+
   if (type === 'controlStatus') {
     const conn = useConnectionStore();
     const ctrl = parseBridgeController(m.controller);

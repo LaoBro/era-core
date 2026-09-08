@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue';
+import PopupMenu from './PopupMenu.vue';
+import type { PopupMenuItem } from './menuTypes';
 /**
  * GameRow.vue — 游戏选择页列表项（ui-redesign-spec §4 组件清单 / §5.3 + DESIGN.md）。
  * 安卓文件管理器式整行布局：左侧文件夹图标、中间游戏名、右侧进入箭头。
@@ -8,7 +11,7 @@
  * issues/05：IR 缓存存在性提示徽章——存在性语义（非有效性承诺），行内显示大小、
  * 构建时间放 tooltip；游戏更新后下次加载自动重建，提示随下次库刷新更新。
  */
-defineProps<{
+const props = defineProps<{
   /** 游戏名。 */
   name: string;
   /** 是否上次游玩——列表高亮（left-indicator-bar）。 */
@@ -21,9 +24,24 @@ defineProps<{
   irCacheBuiltUtc?: string | null;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'click'): void;
+  (e: 'rescan'): void;
 }>();
+
+/** 相对时间（徽章内联展示，响应式跟随 prop）。 */
+const relTime = computed(() => formatRelTime(props.irCacheBuiltUtc));
+
+/** ⋮ 菜单项——路线 2 显式失效的唯一入口（issues/13 裁定：仅库卡片菜单）。 */
+const menuItems: PopupMenuItem[] = [
+  {
+    type: 'item',
+    id: 'rescan-ir-cache',
+    label: '重扫脚本缓存',
+    danger: true,
+    onClick: onRescanItemClick,
+  },
+];
 
 /** 字节数 → 人类可读 MB 文案（保留一位小数，≥100MB 取整；无数据返回空）。 */
 function formatIrMb(bytes?: number): string {
@@ -31,6 +49,35 @@ function formatIrMb(bytes?: number): string {
   if (b <= 0) return '';
   const mb = b / (1024 * 1024);
   return mb >= 100 ? `${Math.round(mb)}MB` : `${mb.toFixed(1).replace(/\.0$/, '')}MB`;
+}
+
+/**
+ * issues/13 M5：建库时间的相对形式——徽章内联展示（安卓触屏无 hover，tooltip 不可见，
+ * 「陈旧可见」要求时间一眼可读）。"yyyy-MM-dd HH:mm" 本地时区串手工解析（避免 WebView
+ * 对非 ISO 串的解析差异）；≥60 天回退绝对日期。
+ */
+function formatRelTime(builtUtc?: string | null): string {
+  if (!builtUtc) return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(builtUtc);
+  if (!m) return '';
+  const built = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
+  const diffMs = Date.now() - built.getTime();
+  if (Number.isNaN(diffMs) || diffMs < 0) return '';
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return '刚刚';
+  if (min < 60) return `${min}分钟前`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}小时前`;
+  const day = Math.floor(hr / 24);
+  if (day < 60) return `${day}天前`;
+  return `${m[1]}-${m[2]}-${m[3]}`;
+}
+
+// issues/13 M5：卡片 ⋮ 菜单（仅 irCached 时渲染）——「重扫脚本缓存」入口（路线 2 显式失效）
+const menuOpen = ref(false);
+function onRescanItemClick(): void {
+  menuOpen.value = false;
+  emit('rescan');
 }
 </script>
 
@@ -49,7 +96,7 @@ function formatIrMb(bytes?: number): string {
           v-if="irCached"
           class="game-row-meta game-row-ir"
           :title="irCacheBuiltUtc ? `IR 缓存构建于 ${irCacheBuiltUtc}` : 'IR 缓存'"
-        >IR {{ formatIrMb(irCacheBytes) }}</span>
+        >IR {{ formatIrMb(irCacheBytes) }}<template v-if="relTime"> · {{ relTime }}</template></span>
       </span>
       <span class="game-row-arrow" aria-hidden="true">
         <svg viewBox="0 0 24 24" role="img">
@@ -57,6 +104,25 @@ function formatIrMb(bytes?: number): string {
         </svg>
       </span>
     </button>
+    <button
+      v-if="irCached"
+      type="button"
+      class="game-row-menu-btn"
+      aria-label="更多操作"
+      @click.stop="menuOpen = true"
+    >
+      <svg viewBox="0 0 24 24" role="img" aria-hidden="true">
+        <circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" />
+      </svg>
+    </button>
+    <Transition name="popup">
+      <PopupMenu
+        v-if="menuOpen"
+        class="game-row-menu"
+        :items="menuItems"
+        @close="menuOpen = false"
+      />
+    </Transition>
   </li>
 </template>
 
@@ -65,11 +131,49 @@ function formatIrMb(bytes?: number): string {
   position: relative;
   list-style: none;
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  overflow: hidden;
   border-radius: var(--radius-control);
   transition: background-color var(--motion-mid) ease;
+}
+/* issues/13 M5：卡片 ⋮ 按钮（仅 irCached 渲染）——「重扫脚本缓存」入口 */
+.game-row-menu-btn {
+  width: 40px;
+  height: 48px;
+  margin-right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--color-text);
+  border: none;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: background-color var(--motion-fast);
+}
+.game-row-menu-btn:hover {
+  background: var(--state-layer-hover);
+}
+.game-row-menu-btn:active {
+  background: var(--state-layer-active);
+}
+.game-row-menu-btn:focus-visible {
+  background: var(--state-layer-focus);
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+.game-row-menu-btn svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+  stroke: none;
+}
+.game-row-menu {
+  position: absolute;
+  right: 8px;
+  top: calc(100% - 6px);
+  z-index: 30;
+  min-width: 176px;
 }
 .game-row.last-played {
   background: transparent;
