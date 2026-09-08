@@ -323,10 +323,11 @@ export function setDisplayReportOverride(value: DisplayReportOverride): void {
  * 性能（启动加载）覆盖三态 key——对应 emuera.config 的启动加载性能开关。
  * - lazyFunctionLoad：懒函数加载（安卓上若感觉懒加载拖慢运行可切 'off' 回 eager）
  * - irDiskCacheLoad：IR 磁盘缓存（引擎侧仅在懒函数加载开启时生效）
+ * - irFirstDirList：IR 头存 firstDir 清单（issues/12 M4；off = 命中轮恒走 SAF 目录扫描）
  * - parallelErbLoad：ERB 并行读取
  * - parallelParseScript：未调用函数解析并行化
  */
-export type PerfOverrideKey = 'lazyFunctionLoad' | 'irDiskCacheLoad' | 'parallelErbLoad' | 'parallelParseScript';
+export type PerfOverrideKey = 'lazyFunctionLoad' | 'irDiskCacheLoad' | 'irFirstDirList' | 'parallelErbLoad' | 'parallelParseScript';
 
 /**
  * 设置页「性能（启动加载）」三态——请求 C# 覆盖游戏对应 emuera.config 项。

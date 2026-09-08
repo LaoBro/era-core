@@ -100,7 +100,7 @@ internal sealed record LayoutMessage(
 
 /// <summary>
 /// {"type":"config","maxLog":...,"agentLogEnabled":...,"displayReportOverride":"auto"|"off"|"on",
-///  "lazyFunctionLoad":...,"irDiskCacheLoad":...,"parallelErbLoad":...,"parallelParseScript":...,
+///  "lazyFunctionLoad":...,"irDiskCacheLoad":...,"irFirstDirList":...,"parallelErbLoad":...,"parallelParseScript":...,
 ///  "sweepGatePolicy":"auto"|"forceon"|"forceoff","safReadDegree":"auto"|&lt;1-64&gt;,
 ///  "maxParallelErbFiles":"auto"|"4"|"8"|"16","dimLockPolicy":"auto"|"nolock"}
 /// （后四字段为性能（启动加载）覆盖三态："auto"|"off"|"on"，缺省 auto=跟随游戏配置；
@@ -116,6 +116,7 @@ internal sealed record ConfigMessage(
     string DisplayReportOverride,
     string LazyFunctionLoad,
     string IrDiskCacheLoad,
+    string IrFirstDirList,
     string ParallelErbLoad,
     string ParallelParseScript,
     string SweepGatePolicy,

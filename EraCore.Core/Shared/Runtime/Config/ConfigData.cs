@@ -157,6 +157,8 @@ internal sealed class ConfigData
 		configArray.Add(new ConfigItem<bool>(ConfigCode.LazyFunctionLoad, "未呼び出し関数の本体解析を遅延する", "Defer uncalled function body parsing", true));
 		// b2-irdiskcache（B 线 B2）：默认 true（spec 已决）；FALSE = 完全回到 B1 现状（回退硬门）。
 		configArray.Add(new ConfigItem<bool>(ConfigCode.IrDiskCacheLoad, "関数の内容をIRディスクキャッシュする", "Cache function bodies to IR disk cache", true));
+		// issues/12 M4：命中轮 IR 头存 firstDir 清单开关（默认 true）；FALSE = 命中轮恒走 SAF 扫描（回退硬门），写侧/指纹不受影响。
+		configArray.Add(new ConfigItem<bool>(ConfigCode.IrFirstDirList, "命中ラウンドでIR保存のfirstDirリストを使う", "Use IR-stored firstDir list on hit rounds", true));
 
 
 		configArray.Add(new ConfigItem<bool>(ConfigCode.ChangeMasterNameIfDebug, "デバッグコマンドを使用した時にMASTERの名前を変更する", "Change MASTER mame in debug", true));
@@ -320,6 +322,7 @@ internal sealed class ConfigData
 		// lazy-function-load（B 线 B1）：默认 true（Issue 04 门禁全绿 + 复测远超预注册线 → 默认开，沿 ParallelErbLoad 先例不做观望期）。
 		configArray[i++] = new ConfigItem<bool>(ConfigCode.LazyFunctionLoad, "未呼び出し関数の本体解析を遅延する", true);
 		configArray[i++] = new ConfigItem<bool>(ConfigCode.IrDiskCacheLoad, "関数の内容をIRディスクキャッシュする", true);
+		configArray[i++] = new ConfigItem<bool>(ConfigCode.IrFirstDirList, "命中ラウンドでIR保存のfirstDirリストを使う", true);
 		//configArray[i++] = new ConfigItem<List<string>>(ConfigCode.IgnoreWarningFiles, "指定したファイル中の警告を無視する", new List<string>());
 		configArray[i++] = new ConfigItem<bool>(ConfigCode.ChangeMasterNameIfDebug, "デバッグコマンドを使用した時にMASTERの名前を変更する", true);
 		configArray[i++] = new ConfigItem<bool>(ConfigCode.ButtonWrap, "ボタンの途中で行を折りかえさない", false);

@@ -113,6 +113,8 @@ internal sealed class Config
 	public static bool LazyFunctionLoad => Current!._data.GetConfigValue<bool>(ConfigCode.LazyFunctionLoad);
 	/// <summary>b2-irdiskcache（B 线 B2）：函数粒度 IR 磁盘缓存开关（默认 true）。生效前提 = 与 LazyFunctionLoad 同为 true 且非 AnalysisMode；否则 IR 不建不读（回退硬门）。</summary>
 	public static bool IrDiskCacheLoad => Current!._data.GetConfigValue<bool>(ConfigCode.IrDiskCacheLoad);
+	/// <summary>issues/12 M4：命中轮用 IR 头存 firstDir 清单替代 SAF GetDirectories("*#*") 通配扫描（默认 true）；FALSE = 命中轮恒走扫描，建库轮写侧与指纹不受影响。</summary>
+	public static bool IrFirstDirList => Current!._data.GetConfigValue<bool>(ConfigCode.IrFirstDirList);
 	public static DisplayWarningFlag FunctionNotFoundWarning => Current!._data.GetConfigValue<DisplayWarningFlag>(ConfigCode.FunctionNotFoundWarning);
 	public static DisplayWarningFlag FunctionNotCalledWarning => Current!._data.GetConfigValue<DisplayWarningFlag>(ConfigCode.FunctionNotCalledWarning);
 	public static bool ChangeMasterNameIfDebug => Current!._data.GetConfigValue<bool>(ConfigCode.ChangeMasterNameIfDebug);

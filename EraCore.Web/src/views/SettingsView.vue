@@ -44,6 +44,7 @@ function choosePerfOverride(key: PerfOverrideKey, value: DisplayReportOverride):
 const perfRows: Array<{ key: PerfOverrideKey; label: string }> = [
   { key: 'lazyFunctionLoad', label: '懒函数加载' },
   { key: 'irDiskCacheLoad', label: 'IR 磁盘缓存' },
+  { key: 'irFirstDirList', label: 'IR firstDir 清单（命中轮免目录扫描）' },
   { key: 'parallelErbLoad', label: '并行读取 ERB' },
   { key: 'parallelParseScript', label: '并行解析未调用函数' },
 ];

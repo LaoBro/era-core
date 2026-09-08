@@ -247,13 +247,14 @@ public class ErbIrCacheTests
 		{ DirAccessor = new FileSystemGameDirAccessor() };
 
 		// 建一个合法（空函数集）IR：指纹来自同一清单构建路径——BuildPendingList 即 IsIrHitRound 内部所用。
-		var pending = ErbLoader.BuildPendingList(env, out _, out _);
+		// issues/12 M4：指纹含 firstDir 清单、IR 写入清单区（IsIrHitRound 读侧与 fp 口径逐位一致）。
+		var pending = ErbLoader.BuildPendingList(env, null, out var firstDirs, out _);
 		Assert.NotEmpty(pending);
-		long fp = ErbIrCache.ComputeContentFingerprint(pending, null);
+		long fp = ErbIrCache.ComputeContentFingerprint(pending, null, firstDirs);
 		string irPath = ErbIrCache.GetIrCachePath(tempRoot);
 		Directory.CreateDirectory(Path.GetDirectoryName(irPath)!);
 		using (var writer = new ErbIrCache.IrCacheWriter(irPath))
-			Assert.True(writer.Complete(fp));
+			Assert.True(writer.Complete(fp, firstDirs));
 
 		Assert.True(ErbLoader.IsIrHitRound(env), "valid IR + 开关齐备 → 命中轮（跳过内容 Preload）");
 
@@ -287,7 +288,7 @@ public class ErbIrCacheTests
 			var env = new LoaderEnv(
 				erbDir, erbDir, analysisMode: false, analysisFiles: new List<string>(), debugMode: false)
 			{ DirAccessor = accessor };
-			var pending = ErbLoader.BuildPendingList(env, out _, out _);
+			var pending = ErbLoader.BuildPendingList(env, null, out _, out _);
 			Assert.Single(pending);
 			Assert.Equal("MAIN.ERB", pending[0].Filename);
 
@@ -348,6 +349,203 @@ public class ErbIrCacheTests
 			Assert.Equal(
 				ErbIrCache.ComputeContentFingerprint(fromTree, null),
 				ErbIrCache.ComputeContentFingerprint(fromCache, null));
+		}
+		finally
+		{
+			Preload.Clear();
+		}
+	}
+
+	// ===== issues/12 M4：IR 头存 firstDir 清单（命中轮免 SAF 通配扫描）=====
+
+	[Fact]
+	public void FirstDirs_roundTrip_nonEmpty_and_empty_list()
+	{
+		using var _ = OpenScope();
+		string dir = Path.Combine(Path.GetTempPath(), "emuera-irfd-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(dir);
+		try
+		{
+			string path = Path.Combine(dir, "era_ir.dat");
+			using (var w = new ErbIrCache.IrCacheWriter(path))
+				Assert.True(w.Complete(123, ["1#EV", "sub\\2#EV2"]));
+			Assert.True(ErbIrCache.TryReadFirstDirs(path, out var dirs));
+			// 写入序 = 权威加载序，读回逐位一致
+			Assert.Equal(new List<string> { "1#EV", "sub\\2#EV2" }, dirs);
+
+			// count=0 是合法状态（v2 IR 确认无 *#* 目录）——「有/无清单」以 version==2 为准
+			string emptyPath = Path.Combine(dir, "era_ir_empty.dat");
+			using (var w = new ErbIrCache.IrCacheWriter(emptyPath))
+				Assert.True(w.Complete(456, []));
+			Assert.True(ErbIrCache.TryReadFirstDirs(emptyPath, out var emptyDirs));
+			Assert.Empty(emptyDirs);
+		}
+		finally
+		{
+			try { Directory.Delete(dir, recursive: true); } catch { }
+		}
+	}
+
+	[Fact]
+	public void TryReadFirstDirs_rejects_missing_or_corrupt_file()
+	{
+		using var scope = OpenScope();
+		string path = Path.Combine(Path.GetTempPath(), "emuera-irfd-bad-" + Guid.NewGuid().ToString("N") + ".dat");
+		// v1 尺寸（40B）的垃圾头：magic/版本/边界校验任一失败即判废
+		File.WriteAllBytes(path, new byte[40]);
+		try
+		{
+			Assert.False(ErbIrCache.TryReadFirstDirs(path, out _));
+			Assert.False(ErbIrCache.TryLoad(path, 0, out _));
+			// 文件缺失同样 false（调用方回退 SAF 扫描）
+			Assert.False(ErbIrCache.TryReadFirstDirs(path + ".missing", out _));
+		}
+		finally
+		{
+			try { File.Delete(path); } catch { }
+		}
+	}
+
+	[Fact]
+	public void Fingerprint_includes_firstDir_set_order_invariant()
+	{
+		using var _ = OpenScope();
+		var noDirs = ErbIrCache.ComputeContentFingerprint(Files, null);
+		var forward = ErbIrCache.ComputeContentFingerprint(Files, null, ["1#A", "2#B"]);
+		var reversed = ErbIrCache.ComputeContentFingerprint(Files, null, ["2#B", "1#A"]);
+		// 集合语义：清单顺序无关（SAF 扫描序不稳定，与文件集合同款钉子）
+		Assert.Equal(forward, reversed);
+		// 任何 *#* 目录增删 → fp 变 → 命中轮 miss → 全扫重建自愈
+		Assert.NotEqual(noDirs, forward);
+		Assert.NotEqual(forward, ErbIrCache.ComputeContentFingerprint(Files, null, ["1#A"]));
+	}
+
+	[Fact]
+	public void BuildPendingList_firstDir_override_matches_scan_local()
+	{
+		var tempRoot = Path.Combine(Path.GetTempPath(), "emuera-irfd-eq-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(tempRoot);
+		var previousPaths = GamePaths.Current;
+		GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
+		var config = new ConfigData();
+		using var scope = new RootedScope(GlobalStatic.OpenScope(config), tempRoot, previousPaths);
+		var erbDir = Path.Combine(tempRoot, "erb") + Path.DirectorySeparatorChar;
+		Directory.CreateDirectory(Path.Combine(erbDir, "1#EV"));
+		Directory.CreateDirectory(Path.Combine(erbDir, "1#EV", "NEST"));
+		Directory.CreateDirectory(Path.Combine(erbDir, "2#EV2"));
+		File.WriteAllText(Path.Combine(erbDir, "1#EV", "A.ERB"), "@A\nRETURN\n");
+		File.WriteAllText(Path.Combine(erbDir, "1#EV", "NEST", "B.ERB"), "@B\nRETURN\n");
+		File.WriteAllText(Path.Combine(erbDir, "TOP.ERB"), "@T\nRETURN\n");
+		File.WriteAllText(Path.Combine(erbDir, "2#EV2", "C.ERB"), "@C\nRETURN\n");
+		var env = new LoaderEnv(
+			Path.Combine(tempRoot, "csv") + Path.DirectorySeparatorChar,
+			erbDir, analysisMode: false, analysisFiles: new List<string>(), debugMode: false)
+		{ DirAccessor = new FileSystemGameDirAccessor() };
+
+		Preload.Clear();
+		try
+		{
+			// 建库轮：扫描路径取清单
+			var scanned = ErbLoader.BuildPendingList(env, null, out var scanDirs, out _);
+			Assert.Equal(2, scanDirs.Count);
+			// 命中轮：同一清单走 override（清 memo 模拟冷缓存）
+			Preload.Clear();
+			var fromIr = ErbLoader.BuildPendingList(env, scanDirs, out var irDirs, out _);
+			// override 与扫描的待载清单逐位一致（含 firstDir 嵌套子目录文件）+ 清单原样透传
+			Assert.Equal(scanned, fromIr);
+			Assert.Equal(scanDirs, irDirs);
+			// 合并序语义保持：firstDir 段（3 文件）整体在前、主枚举文件（TOP.ERB）收尾
+			Assert.Equal(4, fromIr.Count);
+			Assert.Equal(3, fromIr.FindIndex(p => p.Filename == "TOP.ERB"));
+		}
+		finally
+		{
+			Preload.Clear();
+		}
+	}
+
+	[Fact]
+	public void BuildPendingList_firstDir_override_resolves_content_uri_dirs()
+	{
+		// InMemory stub 的 GetDirectories 恒空（真机 SAF 才有目录扫描）——本钉子专攻 override 侧：
+		// 相对名经 accessor.CombinePath 重建目录 document URI 后，子树文件枚举正确
+		//（BuildDocumentUriUsingTree 语义，裸拼接会被 Android 解析成目录本身）。
+		const string Root = "content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FFirstDirOverride";
+		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		using var rootedScope = OpenRootedScope(Root, accessor);
+		var erbDir = SafCompat.ResolveSubPath(Root, "erb");
+		SafCompat.CreateDirectory(erbDir);
+		SafCompat.CreateDirectory(SafCompat.CombinePath(erbDir, "1#EV")); // stub 的 DirectoryExists 走显式注册集合
+		accessor.Seed(SafCompat.CombinePath(SafCompat.CombinePath(erbDir, "1#EV"), "A.ERB"), Encoding.UTF8.GetBytes("@A\nRETURN\n"));
+		accessor.Seed(SafCompat.CombinePath(erbDir, "TOP.ERB"), Encoding.UTF8.GetBytes("@T\nRETURN\n"));
+
+		Preload.Clear();
+		try
+		{
+			var env = new LoaderEnv(
+				erbDir, erbDir, analysisMode: false, analysisFiles: new List<string>(), debugMode: false)
+			{ DirAccessor = accessor };
+			var pending = ErbLoader.BuildPendingList(env, new List<string> { "1#EV" }, out var firstDirs, out _);
+			Assert.Equal(2, pending.Count);
+			// Filename 相对 firstDir（既有语义：firstDir 段的枚举源即 <see cref="Preload.EnumerateFilesFromTree"/> 的 per-dir 视角）
+			Assert.Equal("A.ERB", pending[0].Filename); // firstDir 文件在前
+			Assert.Equal("TOP.ERB", pending[1].Filename);
+			Assert.Equal(new List<string> { "1#EV" }, firstDirs); // override 原样透传（进 fp 口径）
+		}
+		finally
+		{
+			Preload.Clear();
+		}
+	}
+
+	[Fact]
+	public void IsIrHitRound_uses_ir_firstDir_list_and_self_heals_on_new_dir()
+	{
+		var tempRoot = Path.Combine(Path.GetTempPath(), "emuera-irfd-hit-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(tempRoot);
+		var previousPaths = GamePaths.Current;
+		GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
+		var config = new ConfigData();
+		using var scope = new RootedScope(GlobalStatic.OpenScope(config), tempRoot, previousPaths);
+		config.GetConfigItem(ConfigCode.IrDiskCacheLoad).SetValue(true);
+		config.GetConfigItem(ConfigCode.LazyFunctionLoad).SetValue(true);
+		var erbDir = Path.Combine(tempRoot, "erb") + Path.DirectorySeparatorChar;
+		Directory.CreateDirectory(Path.Combine(erbDir, "1#EV"));
+		File.WriteAllText(Path.Combine(erbDir, "1#EV", "A.ERB"), "@A\nRETURN\n");
+		File.WriteAllText(Path.Combine(erbDir, "TOP.ERB"), "@T\nRETURN\n");
+		var env = new LoaderEnv(
+			Path.Combine(tempRoot, "csv") + Path.DirectorySeparatorChar,
+			erbDir, analysisMode: false, analysisFiles: new List<string>(), debugMode: false)
+		{ DirAccessor = new FileSystemGameDirAccessor() };
+
+		// 建库轮：扫描清单 + fp（含清单）→ 写 IR（含清单区）
+		var pending = ErbLoader.BuildPendingList(env, null, out var firstDirs, out _);
+		var dir = Assert.Single(firstDirs);
+		Assert.Equal("1#EV", dir);
+		long fp = ErbIrCache.ComputeContentFingerprint(pending, null, firstDirs);
+		string irPath = ErbIrCache.GetIrCachePath(tempRoot);
+		Directory.CreateDirectory(Path.GetDirectoryName(irPath)!);
+		using (var writer = new ErbIrCache.IrCacheWriter(irPath))
+			Assert.True(writer.Complete(fp, firstDirs));
+
+		Preload.Clear();
+		try
+		{
+			// 命中轮：预判定读 IR 清单（零扫描）→ fp 一致 → hit
+			Assert.True(ErbLoader.IsIrHitRound(env), "IR + 清单一致 → 命中轮（跳过内容 Preload + 免目录扫描）");
+		}
+		finally
+		{
+			Preload.Clear();
+		}
+
+		// 自愈钉子：新增 *#* 目录（含新 .ERB）→ 文件集合变 → fp miss → 预判定 false → 建库轮回退全扫重建
+		Directory.CreateDirectory(Path.Combine(erbDir, "2#NEW"));
+		File.WriteAllText(Path.Combine(erbDir, "2#NEW", "NEW.ERB"), "@N\nRETURN\n");
+		Preload.Clear();
+		try
+		{
+			Assert.False(ErbLoader.IsIrHitRound(env), "新增 *#* 目录 → fp 失配 → 走完整 Preload（自愈）");
 		}
 		finally
 		{

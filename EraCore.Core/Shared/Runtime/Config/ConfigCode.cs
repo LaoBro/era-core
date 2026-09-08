@@ -78,6 +78,9 @@ internal enum ConfigCode
 	// b2-irdiskcache（B 线 B2）：函数粒度 IR 磁盘缓存开关（默认 true）；FALSE = 完全回到 B1 现状。
 	// 生效前提 = IrDiskCacheLoad && LazyFunctionLoad && !AnalysisMode；eager 下 IR 不建不读。沿 LazyFunctionLoad 先例。
 	IrDiskCacheLoad = 301,
+	// issues/12 M4：命中轮用 IR 头存 firstDir 清单替代 SAF GetDirectories("*#*") 通配扫描（默认 true）。
+	// FALSE = 命中轮恒走扫描（回退硬门）；建库轮写侧与指纹口径不受此开关影响，翻回 true 免整库重建。
+	IrFirstDirList = 302,
 	ChangeMasterNameIfDebug = 34,
 	LastKey = 35,
 	ButtonWrap = 36,

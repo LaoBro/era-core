@@ -107,6 +107,12 @@ internal sealed class BridgeHost : IDisposable
     /// </summary>
     internal const string PerfIrDiskCacheLoadKey = "app.perf.irDiskCacheLoad";
 
+    /// <summary>
+    /// Preferences key——IR 头存 firstDir 清单覆盖（<see cref="ConfigCode.IrFirstDirList"/>，issues/12 M4）；
+    /// off = 命中轮恒走 SAF GetDirectories("*#*") 扫描（回退硬门），建库轮写侧/指纹不受影响。
+    /// </summary>
+    internal const string PerfIrFirstDirListKey = "app.perf.irFirstDirList";
+
     /// <summary>Preferences key——ERB 并行读取覆盖（<see cref="ConfigCode.ParallelErbLoad"/>）。</summary>
     internal const string PerfParallelErbLoadKey = "app.perf.parallelErbLoad";
 
@@ -166,6 +172,7 @@ internal sealed class BridgeHost : IDisposable
         {
             ["lazyFunctionLoad"] = (PerfLazyFunctionLoadKey, ConfigCode.LazyFunctionLoad),
             ["irDiskCacheLoad"] = (PerfIrDiskCacheLoadKey, ConfigCode.IrDiskCacheLoad),
+            ["irFirstDirList"] = (PerfIrFirstDirListKey, ConfigCode.IrFirstDirList),
             ["parallelErbLoad"] = (PerfParallelErbLoadKey, ConfigCode.ParallelErbLoad),
             ["parallelParseScript"] = (PerfParallelParseScriptKey, ConfigCode.ParallelParseScript),
         };
@@ -1628,6 +1635,7 @@ internal sealed class BridgeHost : IDisposable
             new ConfigMessage("config", maxLog, AgentLog.Instance.Enabled, displayReportOverride,
                 ReadPerfOverride(PerfLazyFunctionLoadKey),
                 ReadPerfOverride(PerfIrDiskCacheLoadKey),
+                ReadPerfOverride(PerfIrFirstDirListKey),
                 ReadPerfOverride(PerfParallelErbLoadKey),
                 ReadPerfOverride(PerfParallelParseScriptKey),
                 SweepGatePolicyCodec.ToConfigString(ReadSweepGatePolicyPreference()),

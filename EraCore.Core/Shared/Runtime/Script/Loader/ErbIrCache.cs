@@ -28,12 +28,18 @@ internal sealed class IrIndexKeyComparer : IEqualityComparer<(string File, strin
 /// 已做行连接）。物化时以 blob 文本流作为 <c>ReparseFunction</c> 的输入，复用既有单函数解析循环 —— 第二次
 /// 启动不重读源文件、不重扫全文件。
 ///
-/// 文件布局（单文件 + 尾部内部索引）：
+/// 文件布局（v2，单文件 + 尾部内部索引 + firstDir 清单区）：
 /// <code>
-/// [文件头] [blob 区（每函数一个 blob，按文件加载序）] [名字索引区]
+/// [文件头] [blob 区（每函数一个 blob，按文件加载序）] [名字索引区] [firstDir 清单区]
 /// </code>
 /// 启动只读「文件头 + 索引区」（索引区整体读入驻留，几 MB 量级）；blob 本体（几十 MB）启动完全不读，物化时按需
 /// seek 读单个 blob。详见 design.md §4。
+///
+/// v2（diagnostic-knobs/issues/12 M4）：新增 firstDir 清单区——建库轮 <see cref="ErbLoader.BuildPendingList"/> 扫描到的
+/// <c>*#*</c> 目录相对名有序清单写盘，命中轮读本地替代 SAF 通配扫描（真机冷树 ≈15.9s/进程）。
+/// count=0 是合法状态（无 firstDir 的游戏照常受益——扫描成本恰恰来自「零命中仍付全款」）；
+/// 「有无清单」以 formatVersion==2 为准。清单进内容指纹（集合语义）：任何 <c>*#*</c> 目录增删 → fp 变 →
+/// miss → 命中轮回退全扫重建，自愈。与 issues/08（blob `$` 清单）同 v2 窗口发布，用户只付一次整库重建。
 ///
 /// 失效 = 全量失效（v1）：引擎版本键 或 内容指纹（文件集合 + 解析相关配置）任一不匹配 → 整库判废 → 回退 B1 源路径
 /// → 加载收尾重建。详见 design.md §6。
@@ -41,8 +47,8 @@ internal sealed class IrIndexKeyComparer : IEqualityComparer<(string File, strin
 internal static class ErbIrCache
 {
 	private const string Magic = "ERIR";
-	/// <summary>IR 布局版本（IR 布局演进时自增，独立于引擎版本）。</summary>
-	private const int FormatVersion = 1;
+	/// <summary>IR 布局版本（IR 布局演进时自增，独立于引擎版本）。v2 = issues/12 M4 firstDir 清单区。</summary>
+	private const int FormatVersion = 2;
 	/// <summary>边界硬上限（design.md §8，v1 文本 IR 体积 &lt; 源总大小，估 &lt;80MB；eraTW 实测后微调）。超限即判废不生成。</summary>
 	internal const long MaxIrFileBytes = 200L * 1024 * 1024;
 
@@ -60,14 +66,16 @@ internal static class ErbIrCache
 	internal readonly record struct FileStamp(string Logical, long Length, long MtimeTicks);
 
 	/// <summary>
-	/// 内容指纹 = FNV-1a 滚动哈希（文件集合 + 解析相关配置集 + Rename 宏表）。
+	/// 内容指纹 = FNV-1a 滚动哈希（文件集合 + firstDir 清单 + 解析相关配置集 + Rename 宏表）。
 	/// 文件集合先按（逻辑名, 物理路径）排序再哈希——指纹语义是「集合 + 配置」，与加载序无关；
 	/// SAF 上 pending 序 = Preload 读取完成序（并行 degree&gt;1 时逐轮随机），顺序直接进哈希曾使
 	/// 指纹逐轮漂移、IR 永远 miss + 每轮白付整库重建写（2026-09-04 模拟器实测，回归钉
 	/// ErbIrCacheTests.Fingerprint_is_invariant_under_input_order）。
+	/// v2（issues/12 M4）：firstDir 清单同样按集合语义（Ordinal 排序）进哈希——任何 <c>*#*</c>
+	/// 目录增删 → fp 变 → 命中轮 miss → 全扫重建自愈。建库轮写入序（权威加载序）不进哈希。
 	/// </summary>
 	internal static long ComputeContentFingerprint(IReadOnlyList<(string Logical, string Physical)> files,
-		IReadOnlyDictionary<string, string>? renameDic)
+		IReadOnlyDictionary<string, string>? renameDic, IReadOnlyList<string>? firstDirs = null)
 	{
 		ulong h = Fnv1a64Init;
 		// 文件集合：每文件（逻辑名, 长度, mtime）——脚本增删/改名/改动 → 指纹变化
@@ -80,6 +88,16 @@ internal static class ErbIrCache
 			h = Fnv1a(h, len.ToString(System.Globalization.CultureInfo.InvariantCulture));
 			h = Fnv1a(h, mtime.ToString(System.Globalization.CultureInfo.InvariantCulture));
 		}
+		// firstDir 清单（issues/12 M4）：先哈希条数再逐条（消 ["ab"] 与 ["a","b"] 的拼接歧义）。
+		// null（v1 语义/无清单）与空清单（v2 确认无 *#* 目录）语义不同，分别进哈希。
+		if (firstDirs != null)
+		{
+			h = Fnv1a(h, $"FD{firstDirs.Count}");
+			var dirs = new List<string>(firstDirs);
+			dirs.Sort(StringComparer.Ordinal);
+			foreach (var d in dirs)
+				h = Fnv1a(h, d);
+		}
 		// 解析相关配置集（design.md §6 白名单）：影响预解析/函数签名/比较的配置。
 		h = Fnv1a(h, Config.Config.IgnoreCase ? "IC1" : "IC0");
 		h = Fnv1a(h, Config.Config.UseRenameFile ? "RF1" : "RF0");
@@ -87,6 +105,9 @@ internal static class ErbIrCache
 		h = Fnv1a(h, ((int)Config.Config.ReduceArgumentOnLoad).ToString(System.Globalization.CultureInfo.InvariantCulture));
 		h = Fnv1a(h, Config.Config.NeedReduceArgumentOnLoad ? "NR1" : "NR0");
 		h = Fnv1a(h, Config.Config.SystemIgnoreTripleSymbol ? "T3" : "T0");
+		// SearchSubdirectory（issues/12 M4 起）：firstDir 清单是扫描结果的存储形态，其口径受本配置影响
+		//（TopDirectoryOnly 只扫 erb 根级 *#*）——不改则清单跨配置陈旧、firstDir 优先序漂移。
+		h = Fnv1a(h, Config.Config.SearchSubdirectory ? "SS1" : "SS0");
 		// Rename 宏表内容（_Replace/_Rename 预处理依赖；按 key 排序保证同表同序）。
 		if (renameDic is { Count: > 0 })
 		{
@@ -225,7 +246,7 @@ internal static class ErbIrCache
 			if (stream == null)
 				return false;
 			using var r = new BinaryReader(stream, Encoding.UTF8, leaveOpen: false);
-			ReadHeader(r, out int formatVersion, out long engineKeyOnDisk, out long fingerprintOnDisk, out int functionCount, out int indexOffset, out int indexLength, out int blobBytes);
+			ReadHeader(r, out int formatVersion, out long engineKeyOnDisk, out long fingerprintOnDisk, out int functionCount, out int indexOffset, out int indexLength, out int blobBytes, out _, out _);
 			if (formatVersion != FormatVersion)
 				return false;
 			if (engineKeyOnDisk != engineKey)
@@ -305,8 +326,8 @@ internal static class ErbIrCache
 	/// </summary>
 	internal sealed class IrCacheWriter : IDisposable
 	{
-		/// <summary>文件头固定占位长度（对齐 <see cref="ErbIrCache.WriteHeader"/> 恰好 40 字节）。</summary>
-		private const int HeaderBytes = 40;
+		/// <summary>文件头固定占位长度（对齐 <see cref="ErbIrCache.WriteHeader"/> 恰好 48 字节；v2 = v1 的 40 + firstDir 两字段 8）。</summary>
+		private const int HeaderBytes = 48;
 		private readonly string _path;
 		private readonly string _tmpPath;
 		private Stream? _stream;
@@ -352,8 +373,12 @@ internal static class ErbIrCache
 			}
 		}
 
-		/// <summary>写索引区 + 回填文件头 + fsync + 原子替换。超边界/失败 → 清 tmp、不产生最终文件，返回 false。</summary>
-		internal bool Complete(long contentFingerprint)
+		/// <summary>
+		/// 写索引区 + firstDir 清单区（issues/12 M4，<paramref name="firstDirs"/> = 建库轮扫描到的相对名
+		/// 有序清单；null/空清单均写 count=0 区）+ 回填文件头 + fsync + 原子替换。
+		/// 超边界/失败 → 清 tmp、不产生最终文件，返回 false。
+		/// </summary>
+		internal bool Complete(long contentFingerprint, IReadOnlyList<string>? firstDirs = null)
 		{
 			if (_poisoned)
 			{
@@ -376,6 +401,14 @@ internal static class ErbIrCache
 					_w.Write(len);
 				}
 				int indexLength = checked((int)_stream.Position - indexOffset);
+				// firstDir 清单区（v2）：int32 条数 + 逐条相对名。count=0 照常写区（占位语义：
+				// 命中轮读侧凭 formatVersion==2 判「有清单」，空清单 = 确认无 *#* 目录 → 命中轮零扫描）。
+				int firstDirOffset = checked((int)_stream.Position);
+				int firstDirCount = firstDirs?.Count ?? 0;
+				_w!.Write(firstDirCount);
+				for (int i = 0; i < firstDirCount; i++)
+					_w.Write(firstDirs![i]);
+				int firstDirLength = checked((int)_stream.Position - firstDirOffset);
 				if (_stream.Length > MaxIrFileBytes)
 				{
 					EmueraLog.Info("ErbIrCache", $"IR skipped: size {_stream.Length} exceeds bound {MaxIrFileBytes}");
@@ -383,7 +416,7 @@ internal static class ErbIrCache
 					return false;
 				}
 				_stream.Seek(0, SeekOrigin.Begin);
-				WriteHeader(_w, _functionCount, indexOffset, indexLength, _blobBytes, contentFingerprint, EngineVersionKey);
+				WriteHeader(_w, _functionCount, indexOffset, indexLength, _blobBytes, firstDirOffset, firstDirLength, contentFingerprint, EngineVersionKey);
 				_w.Flush();
 				_stream.Flush();
 #if !HEADLESS
@@ -444,7 +477,7 @@ internal static class ErbIrCache
 
 	// ===== 序列化原语 =====
 
-	private static void WriteHeader(BinaryWriter w, int functionCount, int indexOffset, int indexLength, int blobBytes, long contentFingerprint, long engineKey)
+	private static void WriteHeader(BinaryWriter w, int functionCount, int indexOffset, int indexLength, int blobBytes, int firstDirOffset, int firstDirLength, long contentFingerprint, long engineKey)
 	{
 		w.Write(Magic[0]); w.Write(Magic[1]); w.Write(Magic[2]); w.Write(Magic[3]);
 		w.Write(FormatVersion);
@@ -454,9 +487,11 @@ internal static class ErbIrCache
 		w.Write(indexOffset);
 		w.Write(indexLength);
 		w.Write(blobBytes);
+		w.Write(firstDirOffset); // v2（issues/12 M4）
+		w.Write(firstDirLength);
 	}
 
-	private static void ReadHeader(BinaryReader r, out int formatVersion, out long engineKey, out long fingerprint, out int functionCount, out int indexOffset, out int indexLength, out int blobBytes)
+	private static void ReadHeader(BinaryReader r, out int formatVersion, out long engineKey, out long fingerprint, out int functionCount, out int indexOffset, out int indexLength, out int blobBytes, out int firstDirOffset, out int firstDirLength)
 	{
 		var mag = new char[4];
 		mag[0] = r.ReadChar(); mag[1] = r.ReadChar(); mag[2] = r.ReadChar(); mag[3] = r.ReadChar();
@@ -469,6 +504,50 @@ internal static class ErbIrCache
 		indexOffset = r.ReadInt32();
 		indexLength = r.ReadInt32();
 		blobBytes = r.ReadInt32();
+		firstDirOffset = r.ReadInt32(); // v2（issues/12 M4）
+		firstDirLength = r.ReadInt32();
+	}
+
+	/// <summary>
+	/// v2（issues/12 M4）：读 IR 头存的 firstDir 相对名清单（建库轮写入序 = 权威加载序）。
+	/// 命中轮预判定 / LoadErbDir 在构建待载清单前调用，用清单替代 SAF <c>GetDirectories("*#*")</c>
+	/// 冷树通配扫描（真机 ≈15.9s/进程；本地 appdata 文件，µs 级）。
+	/// 返回 false = 无 IR / 非 v2 / 引擎版本不符 / 头或清单区损坏——调用方回退 SAF 扫描；
+	/// 返回 true 且空清单 = v2 IR 确认无 <c>*#*</c> 目录（合法，命中轮零扫描）。
+	/// 不校验内容指纹——清单正确性由调用方把清单喂进 <see cref="ComputeContentFingerprint"/> 后
+	/// 经 <see cref="TryLoad"/> 判定，陈旧清单必然 fp miss → 全扫重建自愈。
+	/// </summary>
+	internal static bool TryReadFirstDirs(string path, out List<string> firstDirs)
+	{
+		firstDirs = [];
+		try
+		{
+			using var stream = SafCompat.OpenRead(path);
+			if (stream == null)
+				return false;
+			using var r = new BinaryReader(stream, Encoding.UTF8, leaveOpen: false);
+			ReadHeader(r, out int formatVersion, out long engineKeyOnDisk, out _, out _, out _, out _, out _, out int firstDirOffset, out int firstDirLength);
+			if (formatVersion != FormatVersion)
+				return false;
+			if (engineKeyOnDisk != EngineVersionKey)
+				return false;
+			if (firstDirOffset < 0 || firstDirLength < 4 || firstDirOffset + firstDirLength > stream.Length)
+				return false;
+			stream.Seek(firstDirOffset, SeekOrigin.Begin);
+			int count = r.ReadInt32();
+			// 边界防御：条数与区域长度必须自洽（每条至少 1 字节头），损坏即判废回退扫描
+			if (count < 0 || firstDirLength - 4 < count)
+				return false;
+			var dirs = new List<string>(count);
+			for (int i = 0; i < count; i++)
+				dirs.Add(r.ReadString());
+			firstDirs = dirs;
+			return true;
+		}
+		catch
+		{
+			return false;
+		}
 	}
 
 	private static IrIndexEntry ReadIndexEntry(BinaryReader r)

@@ -502,14 +502,15 @@ export const useGameStore = defineStore('game', () => {
    */
   const displayReportOverride = ref<'auto' | 'off' | 'on'>('off');
   /**
-   * 性能（启动加载）覆盖三态——C# 权威状态（来自 config 消息的 lazyFunctionLoad 等四个字段）。
+   * 性能（启动加载）覆盖三态——C# 权威状态（来自 config 消息的 lazyFunctionLoad 等五个字段）。
    * 'auto'=跟随游戏 emuera.config；'off'=强制关；'on'=强制开。
    * 设置页分段控件据此渲染初始值；切换时投递 setPerfOverride 请求 C# 切换 + 持久化，
    * C# 推回 config 消息后同步回此值。仅在下次进游戏时生效，默认 'auto'（不干预游戏配置）。
    */
-  const perfOverrides = ref<Record<'lazyFunctionLoad' | 'irDiskCacheLoad' | 'parallelErbLoad' | 'parallelParseScript', 'auto' | 'off' | 'on'>>({
+  const perfOverrides = ref<Record<'lazyFunctionLoad' | 'irDiskCacheLoad' | 'irFirstDirList' | 'parallelErbLoad' | 'parallelParseScript', 'auto' | 'off' | 'on'>>({
     lazyFunctionLoad: 'auto',
     irDiskCacheLoad: 'auto',
+    irFirstDirList: 'auto',
     parallelErbLoad: 'auto',
     parallelParseScript: 'auto',
   });
