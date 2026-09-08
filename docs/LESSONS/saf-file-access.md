@@ -28,6 +28,7 @@
 | 20 | Task.Run 后台线程丢 AsyncLocal scope | 进 Task.Run 前捕获字符串/实例值 | 2026-08-04 |
 | 21 | 覆盖写不失效父目录 | 只有新建文档才失效；过度失效抵消预取 | 2026-08-04 |
 | 22 | **ImageNameTable sprite 名解析对 content:// 失效（2026-08-08）** | `Path.GetRelativePath` 对 content:// 无效；改 documentId 前缀比较 | 2026-08-08 |
+| 23 | **枚举输出作字典键必须 OrdinalIgnoreCase——displayName 是磁盘真实大小写（2026-09-09）** | 引擎固定名请求恒大写 `GAMEBASE.CSV`，provider 返回 `GameBase.csv`；懒读被 SAF 大小写不敏感解析掩盖，精确字典 miss | 2026-09-09 |
 
 ---
 
@@ -354,3 +355,18 @@ new FileStream(SavDir + "global.sav", FileMode.Create, FileAccess.Write); // 打
 - **SAF URI 的"目录相对路径"同样不能走 `System.IO.Path`**——与既有「禁止 Path.GetFileName*」教训同源。凡是"相对路径/目录"计算，content:// 一律走 `SafPath`（documentId 语义）。
 - **共享层代码的"已知未实现"标记会跨平台爆雷**：ImageNameTable 长期只被 Windows 路径触发，Android 接入资源通道后才暴露。改动平台接入时，要顺带审计共享层里标注"待适配"的路径处理。
 - 截图/Network 面板的 `ERR_NAME_NOT_RESOLVED` 是"拦截通道放行到网络层"的统一信号（PathHandler 拒 或 拦截未生效都会走到这），需配 logcat 的 `GameAssetPathHandler: serve|reject` 区分。
+
+## 23. 枚举输出作字典键必须 OrdinalIgnoreCase——displayName 是磁盘真实大小写（2026-09-09）
+
+**场景**：10-B（issues/10）CSV/ERH 内容缓存（`SrcContentCache`）：建库轮把 provider children 枚举的 displayName（`GameBase.csv`）连同解码行写入 era_src.dat 快照；命中轮引擎按固定名请求 `CombinePath(csvDir, "GAMEBASE.CSV")` 查快照。字典用 `StringComparer.Ordinal`。
+
+**结果**：快照报告 hit（327 条全载入内存），但 16 个固定名 CSV（GAMEBASE/ABL/FLAG…）全部查不到 → 退回 SAF 懒读，CSV 段从 54ms 回潮到 ~10.7s。而 CHARA*.CSV / .ERH（路径来自枚举输出本身）全部命中——同一份快照一半命中一半 miss，极具迷惑性。
+
+**根因**：ExternalStorageProvider 的 displayName 返回**磁盘真实大小写**（`GameBase.csv`、`VariableSize.csv`），而 ERA 引擎对固定名 CSV 恒用全大写硬编码（`loadDataTo(CombinePath(csvDir, "GAMEBASE.CSV"))`）。懒读时代这条差异被 SAF 的**大小写不敏感解析**（OpenInputStream 按 displayName 不区分大小写匹配）完全掩盖——任何"枚举输出 → 精确字符串字典 → 按引擎请求串查表"的新缓存层都会在固定名上 miss。与教训 7（目录名 `csv`/`CSV`）同族但方向相反：7 是"我们的查找要忽略大小写"，23 是"**provider 给的名字与引擎要的名字大小写不一致，且运行时解析不报错**"。
+
+**解决**：快照字典 `StringComparer.OrdinalIgnoreCase`（镜像 SAF 解析语义）。排障手法值得复用：在快照命中日志里打 2 个**键样例**、在首个查表 miss 时打**请求串样例**——两串字符级对照一轮定位（真机 R11，s10b-r9.txt）。
+
+**教训**：
+- **SAF 把"名字不一致"这类错误静默吞掉**：底层解析大小写不敏感意味着错误配置照常工作，只有当新缓存层引入精确匹配时才爆。给 SAF 数据建精确索引前，先问"这个键的书写者有几种"。
+- **引擎硬编码大写 + 磁盘任意大小写**是 ERA 游戏生态的既成事实（Windows 不区分大小写惯出来的），任何平台的缓存/索引键都必须镜像目标文件系统解析语义，而不是镜像写入方的字节。
+- "一半命中一半 miss"的快照 → 按键**来源**分组排查：来自枚举输出的键（真实名）命中，来自引擎字面量的键（约定名）miss——差异即线索。
