@@ -28,6 +28,7 @@ public class SafIoPolicyTests
             ["Config/JSON/JSONConfig.cs"] = "应用私有 setting.json 存储",
             ["Script/Data/ConstantData.cs"] = "仅 accessor 缺失时的本地回退",
             ["Script/Loader/ErbIrCache.cs"] = "issues/05 方案 B：app 私有存储（AppDataPaths）IRCache 孤儿清理——非游戏内容路径（content-URI 永不落此分支）",
+            ["Script/Loader/SrcContentCache.cs"] = "issues/10 10-B：CSV/ERH 内容缓存——appdata IRCache 布局（真实文件系统 tmp 原子替换/自愈删除），游戏内容永经 accessor",
             ["Script/Statements/Instraction.Child.cs"] = "阶段 3：声音文件访问",
             ["Utils/EncodingHandler.cs"] = "阶段 1：编码探测",
             ["Utils/SafCompat.cs"] = "本地路径分支的合法实现",
@@ -45,19 +46,21 @@ public class SafIoPolicyTests
             //   ErbIrCache +21 行（v2 头/清单区/文档）——直连 I/O 调用点归属逐一复核未变）
             // （issues/13 M5 前移行号基线：ConfigData +2 行（IrFileListCache ConfigItem）——
             //   直连 I/O 调用点归属逐一复核未变，纯行号平移）
-            ["Config/ConfigData.cs:941"] = 1,
-            ["Config/ConfigData.cs:988"] = 1,
-            ["Config/ConfigData.cs:989"] = 1,
-            ["Config/ConfigData.cs:993"] = 1,
-            ["Config/ConfigData.cs:996"] = 1,
-            ["Config/ConfigData.cs:1053"] = 1,
-            ["Config/ConfigData.cs:1060"] = 1,
-            ["Config/ConfigData.cs:1061"] = 1,
-            ["Config/ConfigData.cs:1067"] = 1,
-            ["Config/ConfigData.cs:1074"] = 1,
-            ["Config/ConfigData.cs:1075"] = 1,
+            // （issues/10 10-B 前移行号基线：ConfigData +2 行（SrcContentCache ConfigItem）——
+            //   直连 I/O 调用点归属逐一复核未变，纯行号平移）
+            ["Config/ConfigData.cs:943"] = 1,
+            ["Config/ConfigData.cs:990"] = 1,
+            ["Config/ConfigData.cs:991"] = 1,
+            ["Config/ConfigData.cs:995"] = 1,
+            ["Config/ConfigData.cs:998"] = 1,
+            ["Config/ConfigData.cs:1055"] = 1,
+            ["Config/ConfigData.cs:1062"] = 1,
+            ["Config/ConfigData.cs:1063"] = 1,
+            ["Config/ConfigData.cs:1069"] = 1,
             ["Config/ConfigData.cs:1076"] = 1,
+            ["Config/ConfigData.cs:1077"] = 1,
             ["Config/ConfigData.cs:1078"] = 1,
+            ["Config/ConfigData.cs:1080"] = 1,
             ["Config/JSON/JSONConfig.cs:20"] = 1,
             ["Config/JSON/JSONConfig.cs:22"] = 1,
             ["Config/JSON/JSONConfig.cs:26"] = 1,
@@ -72,17 +75,31 @@ public class SafIoPolicyTests
             //   IRCache 布局与本地 _IRCache（真实文件系统），content-URI 永不直连，归属同孤儿清理；
             //   +gameKey 解码规范化 +10 行（NormalizeExeDirForKey），直连 I/O 行号整体平移：
             //   CleanupOrphans 四调用点现居 356/359/366/372）
-            ["Script/Loader/ErbIrCache.cs:219"] = 1,
-            ["Script/Loader/ErbIrCache.cs:221"] = 1,
-            ["Script/Loader/ErbIrCache.cs:265"] = 1,
-            ["Script/Loader/ErbIrCache.cs:279"] = 1,
-            ["Script/Loader/ErbIrCache.cs:309"] = 2,
-            ["Script/Loader/ErbIrCache.cs:321"] = 1,
-            ["Script/Loader/ErbIrCache.cs:322"] = 1,
-            ["Script/Loader/ErbIrCache.cs:356"] = 1,
-            ["Script/Loader/ErbIrCache.cs:359"] = 1,
-            ["Script/Loader/ErbIrCache.cs:366"] = 1,
+            // （issues/10 10-B 前移行号基线：ErbIrCache +GetSrcCachePath/+TryDeleteCache 扩 era_src.dat
+            //   +13 行——直连 I/O 调用点归属逐一复核未变，纯行号平移，CleanupOrphans 四点现居 369/372/379/385）
+            ["Script/Loader/ErbIrCache.cs:231"] = 1,
+            ["Script/Loader/ErbIrCache.cs:233"] = 1,
+            ["Script/Loader/ErbIrCache.cs:277"] = 1,
+            ["Script/Loader/ErbIrCache.cs:291"] = 1,
+            ["Script/Loader/ErbIrCache.cs:322"] = 2,
+            ["Script/Loader/ErbIrCache.cs:334"] = 1,
+            ["Script/Loader/ErbIrCache.cs:335"] = 1,
+            ["Script/Loader/ErbIrCache.cs:369"] = 1,
             ["Script/Loader/ErbIrCache.cs:372"] = 1,
+            ["Script/Loader/ErbIrCache.cs:379"] = 1,
+            ["Script/Loader/ErbIrCache.cs:385"] = 1,
+            // （issues/10 10-B：SrcContentCache——era_src.dat 只落 appdata IRCache/<gameKey>/
+            //   （真实文件系统，目录自建 + tmp 原子替换 + 损坏自愈删除）；游戏内容永远经 accessor，
+            //   content-URI 不直连。归属同 ErbIrCache app 私有存储布局。
+            //   路线 2 改版（2026-09-09 用户裁定）：v2 扁平格式，元数据校验拆除）
+            ["Script/Loader/SrcContentCache.cs:148"] = 1,
+            ["Script/Loader/SrcContentCache.cs:150"] = 1,
+            ["Script/Loader/SrcContentCache.cs:157"] = 1,
+            ["Script/Loader/SrcContentCache.cs:159"] = 1,
+            ["Script/Loader/SrcContentCache.cs:165"] = 1,
+            ["Script/Loader/SrcContentCache.cs:203"] = 1,
+            ["Script/Loader/SrcContentCache.cs:208"] = 1,
+            ["Script/Loader/SrcContentCache.cs:239"] = 1,
             ["Script/Statements/Instraction.Child.cs:2715"] = 1,
             ["Script/Statements/Instraction.Child.cs:2779"] = 1,
             ["Utils/EncodingHandler.cs:22"] = 1,

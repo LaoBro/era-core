@@ -46,6 +46,7 @@ const perfRows: Array<{ key: PerfOverrideKey; label: string }> = [
   { key: 'irDiskCacheLoad', label: 'IR 磁盘缓存' },
   { key: 'irFirstDirList', label: 'IR firstDir 清单（命中轮免目录扫描）' },
   { key: 'irFileListCache', label: 'IR 脚本清单（命中轮免全树枚举）' },
+  { key: 'srcContentCache', label: 'CSV/ERH 内容缓存（命中轮免逐文件读）' },
   { key: 'parallelErbLoad', label: '并行读取 ERB' },
   { key: 'parallelParseScript', label: '并行解析未调用函数' },
 ];

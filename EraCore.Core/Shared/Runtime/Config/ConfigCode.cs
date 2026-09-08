@@ -84,6 +84,10 @@ internal enum ConfigCode
 	// issues/13 M5：命中轮用清单 sidecar 回放替代全树枚举（默认 true，仅 content-URI 游戏生效——
 	// 本地路径真实 stat 自愈，不走回放）。FALSE = 命中轮恒走真实枚举（回退硬门）；建库轮写侧不受影响。
 	IrFileListCache = 303,
+	// issues/10 10-B：CSV/ERH 源内容缓存（era_src.dat，默认 true，仅 content-URI 游戏生效）——
+	// 命中轮免 SAF 逐文件懒读（真机读窗 13.3s），重水化前逐目录元数据校验（修改/删除/已知目录
+	// 内新增可检）。FALSE = 命中轮回到懒读现状；建库轮写侧不受影响。
+	SrcContentCache = 304,
 	ChangeMasterNameIfDebug = 34,
 	LastKey = 35,
 	ButtonWrap = 36,

@@ -336,7 +336,7 @@ export function setDisplayReportOverride(value: DisplayReportOverride): void {
  * - parallelErbLoad：ERB 并行读取
  * - parallelParseScript：未调用函数解析并行化
  */
-export type PerfOverrideKey = 'lazyFunctionLoad' | 'irDiskCacheLoad' | 'irFirstDirList' | 'irFileListCache' | 'parallelErbLoad' | 'parallelParseScript';
+export type PerfOverrideKey = 'lazyFunctionLoad' | 'irDiskCacheLoad' | 'irFirstDirList' | 'irFileListCache' | 'srcContentCache' | 'parallelErbLoad' | 'parallelParseScript';
 
 /**
  * 设置页「性能（启动加载）」三态——请求 C# 覆盖游戏对应 emuera.config 项。

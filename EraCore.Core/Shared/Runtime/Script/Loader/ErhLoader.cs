@@ -419,11 +419,14 @@ internal sealed class ErhLoader
 		// 桌面 / 缓存未命中 .erd 时的兜底枚举。
 		// erb-loader-parallel 02：缓存已含 .erd 时跳过——SAF 路径省一次全树遍历
 		// （Preload 装载的键即 DirAccessor 全树枚举产物，两来源集合一致）
+		// issues/10 10-B（R12 真机取证）：命中轮 files 缓存为空——兜底必须走树清单 memo
+		//（EnumerateFilesFromTree，零 IPC）而非 accessor 全树冷走：后者逐目录冷查询
+		//（本游戏 ~130 目录 ≈ 10.4s，把整段 ERH 从 41ms 拖到 10.6s）；两来源集合等价。
 		if (fromCache == 0)
 		{
-			foreach (var path in env.DirAccessor.GetFiles(env.ErbDir, "*.erd", SearchOption.AllDirectories))
+			foreach (var pair in Preload.EnumerateFilesFromTree(env.ErbDir, env.DirAccessor, ".erd"))
 			{
-				AddErdPath(path);
+				AddErdPath(pair.Value);
 				fromEnum++;
 			}
 		}

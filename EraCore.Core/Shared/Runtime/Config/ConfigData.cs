@@ -161,6 +161,8 @@ internal sealed class ConfigData
 		configArray.Add(new ConfigItem<bool>(ConfigCode.IrFirstDirList, "命中ラウンドでIR保存のfirstDirリストを使う", "Use IR-stored firstDir list on hit rounds", true));
 		// issues/13 M5：命中轮清单 sidecar 回放开关（默认 true，仅 content-URI 游戏生效）；FALSE = 恒走真实枚举，写侧不受影响。
 		configArray.Add(new ConfigItem<bool>(ConfigCode.IrFileListCache, "命中ラウンドでIR保存のファイルリストを使う", "Use IR-stored file list on hit rounds", true));
+		// issues/10 10-B：CSV/ERH 源内容缓存开关（默认 true，仅 content-URI 游戏生效）；FALSE = 命中轮回到懒读现状，写侧不受影响。
+		configArray.Add(new ConfigItem<bool>(ConfigCode.SrcContentCache, "命中ラウンドでCSV/ERH内容キャッシュを使う", "Use CSV/ERH content cache on hit rounds", true));
 
 
 		configArray.Add(new ConfigItem<bool>(ConfigCode.ChangeMasterNameIfDebug, "デバッグコマンドを使用した時にMASTERの名前を変更する", "Change MASTER mame in debug", true));

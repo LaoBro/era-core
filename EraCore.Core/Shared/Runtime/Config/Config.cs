@@ -117,6 +117,8 @@ internal sealed class Config
 	public static bool IrFirstDirList => Current!._data.GetConfigValue<bool>(ConfigCode.IrFirstDirList);
 	/// <summary>issues/13 M5：命中轮用清单 sidecar 回放替代全树枚举（默认 true）；仅 content-URI 游戏生效，FALSE = 恒走真实枚举，建库轮写侧不受影响。</summary>
 	public static bool IrFileListCache => Current!._data.GetConfigValue<bool>(ConfigCode.IrFileListCache);
+	/// <summary>issues/10 10-B：CSV/ERH 源内容缓存（era_src.dat，默认 true）；仅 content-URI 游戏生效，FALSE = 命中轮回到懒读现状。</summary>
+	public static bool SrcContentCache => Current!._data.GetConfigValue<bool>(ConfigCode.SrcContentCache);
 	public static DisplayWarningFlag FunctionNotFoundWarning => Current!._data.GetConfigValue<DisplayWarningFlag>(ConfigCode.FunctionNotFoundWarning);
 	public static DisplayWarningFlag FunctionNotCalledWarning => Current!._data.GetConfigValue<DisplayWarningFlag>(ConfigCode.FunctionNotCalledWarning);
 	public static bool ChangeMasterNameIfDebug => Current!._data.GetConfigValue<bool>(ConfigCode.ChangeMasterNameIfDebug);

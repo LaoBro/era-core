@@ -588,10 +588,14 @@ public class ErbIrCacheTests
 		Directory.CreateDirectory(Path.GetDirectoryName(irPath)!);
 		File.WriteAllText(irPath, "ir");
 		File.WriteAllText(ErbIrCache.GetFileListPath(irPath), "list");
+		// issues/10 10-B：era_src.dat（CSV/ERH 内容缓存）随重扫同清——三件套一起失效
+		string srcPath = ErbIrCache.GetSrcCachePath(exeDir);
+		File.WriteAllText(srcPath, "src");
 
 		Assert.True(ErbIrCache.TryDeleteCache(exeDir));
 		Assert.False(File.Exists(irPath));
 		Assert.False(File.Exists(ErbIrCache.GetFileListPath(irPath)));
+		Assert.False(File.Exists(srcPath));
 		Assert.True(ErbIrCache.TryDeleteCache(exeDir), "再删幂等（无文件也是成功）");
 	}
 

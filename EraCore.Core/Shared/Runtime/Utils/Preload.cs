@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Runtime.Script.Loader;
 using trerror = MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.Error;
 
 namespace MinorShift.Emuera.Runtime.Utils;
@@ -218,6 +219,9 @@ static partial class Preload
         files.Clear();
         pathIndex.Clear();
         s_treeFiles.Clear(); // S0-M3：轮边界——下轮全树枚举重新冷走，杜绝跨轮陈旧清单
+        // issues/10 10-B：CSV/ERH 内容快照同属轮界生命周期（重水化每轮先自清，此处兜底防
+        // 「命中轮 → 快照留存 → 同进程改文件 → 非命中轮」序列把旧行喂给 OpenOnCache）。
+        SrcContentCache.ClearRound();
     }
 
     /// <summary>

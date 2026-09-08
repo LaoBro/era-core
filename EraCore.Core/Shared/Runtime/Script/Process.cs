@@ -186,6 +186,10 @@ internal sealed partial class Process(EmueraConsole view)
 			logWriter?.WriteLine("File:Preload:Start");
 			if (ErbLoader.IsIrHitRound(env))
 			{
+				// issues/10 10-B：CSV/ERH 内容缓存重水化（era_src.dat 清单校验 → 轮内快照，
+				// EraStreamReader.OpenOnCache 咽喉消费）。必须先于 LoadBaseCsv（GAMEBASE/固定名 CSV）；
+				// 校验的逐目录查询顺带预热 O1 子项缓存，IndexTree 的 CSV 树枚举由冷变热。
+				SrcContentCache.TryRehydrate(env);
 				// 命中轮：跳过内容读取，只枚举文件清单建路径索引（运行期报错回显按需定位源文件用）。
 				Preload.IndexTree(env.ErbDir, env.DirAccessor);
 				Preload.IndexTree(env.CsvDir, env.DirAccessor);
@@ -193,6 +197,9 @@ internal sealed partial class Process(EmueraConsole view)
 			else
 			{
 				await Preload.LoadTreesAsync(env.ErbDir, env.CsvDir, env.DirAccessor);
+				// issues/10 10-B：建库轮收尾写 CSV/ERH 内容缓存（行来自 Preload.files、元数据来自
+				// 已暖的子项缓存 → 零额外 IPC；门控在方法内：旋钮 304 + SAF + IR 启用）。
+				SrcContentCache.TryWriteAfterPreload(env);
 			}
 			logWriter?.WriteLine("File:Preload:End " + stopWatch.ElapsedMilliseconds + "ms");
 

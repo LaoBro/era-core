@@ -119,6 +119,12 @@ internal sealed class BridgeHost : IDisposable
     /// </summary>
     internal const string PerfIrFileListCacheKey = "app.perf.irFileListCache";
 
+    /// <summary>
+    /// Preferences key——CSV/ERH 源内容缓存覆盖（<see cref="ConfigCode.SrcContentCache"/>，issues/10 10-B）；
+    /// off = 命中轮回到 SAF 懒读现状（回退硬门），仅 content-URI 游戏生效，建库轮写侧不受影响。
+    /// </summary>
+    internal const string PerfSrcContentCacheKey = "app.perf.srcContentCache";
+
     /// <summary>Preferences key——ERB 并行读取覆盖（<see cref="ConfigCode.ParallelErbLoad"/>）。</summary>
     internal const string PerfParallelErbLoadKey = "app.perf.parallelErbLoad";
 
@@ -180,6 +186,7 @@ internal sealed class BridgeHost : IDisposable
             ["irDiskCacheLoad"] = (PerfIrDiskCacheLoadKey, ConfigCode.IrDiskCacheLoad),
             ["irFirstDirList"] = (PerfIrFirstDirListKey, ConfigCode.IrFirstDirList),
             ["irFileListCache"] = (PerfIrFileListCacheKey, ConfigCode.IrFileListCache),
+            ["srcContentCache"] = (PerfSrcContentCacheKey, ConfigCode.SrcContentCache),
             ["parallelErbLoad"] = (PerfParallelErbLoadKey, ConfigCode.ParallelErbLoad),
             ["parallelParseScript"] = (PerfParallelParseScriptKey, ConfigCode.ParallelParseScript),
         };
@@ -1693,6 +1700,7 @@ internal sealed class BridgeHost : IDisposable
                 ReadPerfOverride(PerfIrDiskCacheLoadKey),
                 ReadPerfOverride(PerfIrFirstDirListKey),
                 ReadPerfOverride(PerfIrFileListCacheKey),
+                ReadPerfOverride(PerfSrcContentCacheKey),
                 ReadPerfOverride(PerfParallelErbLoadKey),
                 ReadPerfOverride(PerfParallelParseScriptKey),
                 SweepGatePolicyCodec.ToConfigString(ReadSweepGatePolicyPreference()),

@@ -171,6 +171,18 @@ internal static class ErbIrCache
 	}
 
 	/// <summary>
+	/// issues/10 10-B：CSV/ERH 源内容缓存路径——与 era_ir.dat 同目录（同 gameKey，重扫/孤儿治理同生命周期）。
+	/// 本地路径布局同样定义（供重扫删除；内容缓存本体只对 SAF 游戏生成）。
+	/// </summary>
+	internal static string GetSrcCachePath(string exeDir)
+	{
+		if (SafPath.IsContentUri(exeDir))
+			return Path.Combine(IrCacheRoot, ComputeGameKey(exeDir), "era_src.dat");
+		string dir = SafCompat.ResolveSubPath(exeDir, "_IRCache");
+		return SafCompat.CombinePath(dir, "era_src.dat");
+	}
+
+	/// <summary>
 	/// 存在性提示（非有效性承诺）：IR 缓存文件存在 + 大小 + 构建时间（era_ir.dat mtime）。
 	/// 指纹有效性要等加载期才能算，库扫描期不算也不该算（design/issues/05「提示语义 = 存在性而非有效性」）。
 	/// </summary>
@@ -304,7 +316,8 @@ internal static class ErbIrCache
 			{
 				string irPath = GetIrCachePath(exeDir);
 				string dir = Path.GetDirectoryName(irPath)!;
-				foreach (var name in new[] { Path.GetFileName(irPath), Path.GetFileName(GetFileListPath(irPath)) })
+				// issues/10 10-B：era_src.dat（CSV/ERH 内容缓存）随重扫同清——三件套一起失效
+				foreach (var name in new[] { Path.GetFileName(irPath), Path.GetFileName(GetFileListPath(irPath)), Path.GetFileName(GetSrcCachePath(exeDir)) })
 				{
 					try { var p = Path.Combine(dir, name); if (File.Exists(p)) File.Delete(p); }
 					catch { ok = false; }
@@ -313,7 +326,7 @@ internal static class ErbIrCache
 			else
 			{
 				string dir = SafCompat.ResolveSubPath(exeDir, "_IRCache");
-				foreach (var name in new[] { "era_ir.dat", "era_ir.list" })
+				foreach (var name in new[] { "era_ir.dat", "era_ir.list", "era_src.dat" })
 				{
 					try
 					{

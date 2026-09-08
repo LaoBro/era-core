@@ -118,6 +118,7 @@ internal sealed record ConfigMessage(
     string IrDiskCacheLoad,
     string IrFirstDirList,
     string IrFileListCache,
+    string SrcContentCache,
     string ParallelErbLoad,
     string ParallelParseScript,
     string SweepGatePolicy,

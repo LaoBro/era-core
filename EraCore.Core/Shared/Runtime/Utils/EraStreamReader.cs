@@ -1,6 +1,7 @@
 using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Runtime.Script.Loader;
 using MinorShift.Emuera.Runtime.Script.Parser;
 using MinorShift.Emuera.Runtime.Utils;
 using System;
@@ -50,6 +51,15 @@ internal sealed partial class EraStreamReader : IDisposable
 		if (cached != null)
 		{
 			_fileLines = cached;
+			return true;
+		}
+		// issues/10 10-B：CSV/ERH 内容缓存轮内快照（命中轮重水化，重水化前经逐目录元数据校验）。
+		// 本类是 CSV（GAMEBASE/固定名/CHARA/VarExt/.als）与 ERH 读取的唯一咽喉——在 Preload miss 后
+		// 查快照即全覆盖；miss（未重水化 / 条目未缓存）照旧走 DirAccessor 懒读。
+		var srcCached = SrcContentCache.TryGetLines(path);
+		if (srcCached != null)
+		{
+			_fileLines = srcCached;
 			return true;
 		}
 		// 缓存未命中：走 DirAccessor（SAF content URI 无需 ContentResolver，不抛 FileNotFoundException）
