@@ -34,7 +34,7 @@ namespace EraCore.Maui;
 /// <para>
 /// <b>启动时序（spec ID7 + issue 05）</b>：构造不启动托管 server。Vue 启动后 <c>postMessage({"type":"ready"})</c>，
 /// <see cref="OnInputFromJs"/> 识别 ready 后调 <see cref="Start"/>；Start 建 <see cref="HttpListenerHost"/> +
-/// <see cref="SessionRegistry.CreateMauiSessionAsync"/> 建共享会话 + 起 turn/control 泵 + 写 agent 发现记录。
+/// <see cref="SessionRegistry.CreateMauiSessionAsync(MinorShift.Emuera.Runtime.Config.ConfigData, bool)"/> 建共享会话 + 起 turn/control 泵 + 写 agent 发现记录。
 /// Vue ready 是会话启动的前置条件，第一帧 turn（全量 diff）自然推给已 ready 的 Vue。
 /// </para>
 /// <para>
@@ -1747,7 +1747,7 @@ internal sealed class BridgeHost : IDisposable
     /// <b>步骤</b>：
     /// <list type="number">
     ///   <item>建 <see cref="HttpListenerHost"/>（port=0 自动选空闲端口）——agent 经 localhost HTTP+WS 连接</item>
-    ///   <item><see cref="SessionRegistry.CreateMauiSessionAsync"/> 建共享会话（游戏已由 OnReloadGame 初始化）</item>
+    ///   <item><see cref="SessionRegistry.CreateMauiSessionAsync(MinorShift.Emuera.Runtime.Config.ConfigData, bool)"/> 建共享会话（游戏已由 OnReloadGame 初始化）</item>
     ///   <item>订阅 OutputHub turn 广播 → <see cref="TurnPumpAsync"/> 转发 WebView；起 <see cref="ControlPumpAsync"/> 同步控制状态</item>
     ///   <item>写 agent 发现记录（端口 + token + gameDir）</item>
     /// </list>
@@ -1777,7 +1777,7 @@ internal sealed class BridgeHost : IDisposable
     /// 后台初始化托管 server + 共享会话（issue 05）——<see cref="Start"/> 的异步主体，UI 线程不阻塞。
     /// <para>
     /// 顺序：建 <see cref="HttpListenerHost"/>（port=0 自动选空闲端口）→
-    /// <see cref="SessionRegistry.CreateMauiSessionAsync"/> 建共享会话 →
+    /// <see cref="SessionRegistry.CreateMauiSessionAsync(MinorShift.Emuera.Runtime.Config.ConfigData, bool)"/> 建共享会话 →
     /// 订阅 OutputHub turn 广播（<see cref="TurnPumpAsync"/>）+ 起 <see cref="ControlPumpAsync"/> →
     /// 写 agent 发现记录。
     /// </para>
