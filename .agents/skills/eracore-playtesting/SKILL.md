@@ -33,6 +33,7 @@ python -m eracore_agent maui load --path "D:\era\TK"
 - **端口/token/主目录来源**：Windows 读 `%LOCALAPPDATA%\EmueraCore\eracore-maui-server.json`；Android 自动 `adb logcat -d -s EmueraMaui` 解析 `eracore-control-server port=...` 行并 `adb forward`（加 `--adb` 强制走此路径；`games`/`load --name` 缺省用 app 同步的 `mainGameDir`，无需手输 SAF URI）。
 - **`load` 是异步受理**：返回 `accepted` 后 CLI 轮询 `/state` 等 `gameDir` 变为目标目录（默认 15s，`--wait-timeout` 可调；超时不算失败——加载可能仍在进行）。
 - **加载链路与手点完全一致**（C# 转 Vue `loadGameFromPath` → `OnReloadGame`）：测量启动耗时用 logcat 的 `OnReloadGame` / `hosted session` 标记，口径不被自动化污染。
+- **真机息屏必须先提醒用户点亮**（2026-09-09 实测教训）：息屏触发 USB 节电——`adb logcat -d` 曾实测 30s 超时，且 CPU 调度不同使加载耗时与亮屏**不可比**（息屏轮次数据作废）。检测：`adb shell "dumpsys deviceidle get screen"` 返回 `false` 即息屏。注意本机 shell 无 `INJECT_EVENTS` / `WRITE_SECURE_SETTINGS` 权限——`input keyevent` 亮屏和改息屏超时都会被 SecurityException 拒绝，**只能提醒用户手动点亮并在整个测量期间保持**。
 - **加载完成后**：`start` + `acquire` 即可接管这一局（复用 MAUI 会话，不需要也不要再 load_game）。
 - 退出游戏回列表页后发现记录仍有效（gameDir 置空、server 不下线）——此时可再 `maui load` 换下一个游戏。
 
