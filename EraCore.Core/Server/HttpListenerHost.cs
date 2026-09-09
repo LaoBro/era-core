@@ -46,12 +46,27 @@ internal sealed class HttpListenerHost : IDisposable
     /// <summary>测试接缝：会话注册表（供测试经此访问当前 session）。</summary>
     internal SessionRegistry Sessions => _sessions;
 
-    public HttpListenerHost(int port, ITerminalSetup terminalSetup, ConfigData configData, bool? displayReportOverride = null)
+    /// <param name="displayReportOverride">启动日志覆盖三态（null=跟随配置）。</param>
+    /// <param name="scanGameDirHandler">
+    /// 宿主可选的 <c>POST /game/scan</c> 实现（MAUI 注入带 SAF accessor 的扫描；
+    /// <c>null</c> = 走默认 <see cref="GameServerProtocol.ScanGameDir"/>）。见 <see cref="HttpRouteDispatcher"/> 同名委托。
+    /// </param>
+    /// <param name="loadGameHandler">
+    /// 宿主可选的 <c>POST /load-game</c> 实现（MAUI 注入转交 <c>MainPage.OnReloadGame</c> 的实现；
+    /// <c>null</c> = 走默认 <see cref="GameServerProtocol.LoadGame"/>）。见 <see cref="HttpRouteDispatcher"/> 同名委托。
+    /// </param>
+    public HttpListenerHost(
+        int port,
+        ITerminalSetup terminalSetup,
+        ConfigData configData,
+        bool? displayReportOverride = null,
+        Func<string, HttpResult?>? scanGameDirHandler = null,
+        Func<string, ControlIdentity?, HttpResult?>? loadGameHandler = null)
     {
         _config = new GameConfigService(configData, displayReportOverride);
         _sessions = new SessionRegistry(terminalSetup, _config, GameServerProtocol.ReadAgentLease());
         _protocol = new GameServerProtocol(_sessions, _config);
-        _dispatcher = new HttpRouteDispatcher(_protocol);
+        _dispatcher = new HttpRouteDispatcher(_protocol, ServerJsonContext.Default, scanGameDirHandler, loadGameHandler);
 
         if (port == 0)
             port = FindFreePort();

@@ -19,6 +19,7 @@ from .config import (
     save_server_record,
 )
 from .emuera_client import EmueraClient, EmueraHttpError
+from .maui import cmd_maui_status, cmd_maui_games, cmd_maui_load
 
 
 SERVER_NOT_RUNNING = "server 未运行，先 `eracore_agent start`"
@@ -630,6 +631,34 @@ def build_parser() -> argparse.ArgumentParser:
 
     watch = sub.add_parser("watch", help="只读旁观终端输出")
     watch.set_defaults(func=cmd_watch)
+
+    # issues/13 M6：MAUI 控制面命令组——面向「app 已启动但还没加载游戏」的场景
+    maui = sub.add_parser("maui", help="驱动 MAUI app 的控制面（未加载游戏时也可用）")
+    maui_sub = maui.add_subparsers(dest="maui_command", required=True)
+
+    maui_status = maui_sub.add_parser("status", help="查看 MAUI 控制 server 与会话状态")
+    maui_status.add_argument("--adb", action="store_true",
+                             help="强制走 adb logcat 解析端口（Android；缺省先试 Windows 发现记录）")
+    maui_status.set_defaults(func=cmd_maui_status)
+
+    maui_games = maui_sub.add_parser("games", help="列出主目录下的游戏（走 MAUI 宿主的 scan 实现）")
+    maui_games.add_argument("--root-dir", default=None,
+                            help="游戏库主目录（缺省用 app 同步的 mainGameDir）")
+    maui_games.add_argument("--adb", action="store_true",
+                            help="强制走 adb logcat 解析端口（Android）")
+    maui_games.set_defaults(func=cmd_maui_games)
+
+    maui_load = maui_sub.add_parser("load", help="触发 MAUI 加载某个游戏（异步受理 + 轮询确认）")
+    target = maui_load.add_mutually_exclusive_group(required=True)
+    target.add_argument("--path", help="游戏目录绝对路径（Windows）或 SAF content URI（Android）")
+    target.add_argument("--name", help="主目录下的游戏名（先 scan 主目录解析出 fullPath）")
+    maui_load.add_argument("--root-dir", default=None,
+                           help="--name 解析用的主目录（缺省用 app 同步的 mainGameDir）")
+    maui_load.add_argument("--wait-timeout", type=float, default=15.0,
+                           help="等待 gameDir 出现的超时秒数（默认 15；超时不算失败）")
+    maui_load.add_argument("--adb", action="store_true",
+                           help="强制走 adb logcat 解析端口（Android）")
+    maui_load.set_defaults(func=cmd_maui_load)
     return parser
 
 

@@ -1,9 +1,13 @@
 using System;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using EraCore.Maui.JsBridge;
 using EraCore.Maui.Json;
+using EraCore.Maui.Services;
 using MinorShift.Emuera;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Server;
 using MinorShift.Emuera.Terminal.Platform;
 
 namespace EraCore.Maui;
@@ -52,6 +56,10 @@ public partial class MainPage : ContentPage
     private ConfigData _configData;
     private ITerminalSetup _terminalSetup;
     private bool _urlSet;
+    /// <summary>issues/13 M6：Vue 是否已握手（收到首条 scanGames = 前端已挂载且消息处理器就位）。</summary>
+    private bool _vueReady;
+    /// <summary>issues/13 M6：控制面 <c>POST /load-game</c> 暂存的游戏目录——等 Vue 握手后投递。</summary>
+    private string? _autoLoadPendingPath;
 
     /// <summary>
     /// DI 注入构造——<see cref="MauiProgram"/> 注册的 <see cref="ConfigData"/> + <see cref="ITerminalSetup"/> 单例经 MAUI DI 容器注入。
@@ -68,10 +76,20 @@ public partial class MainPage : ContentPage
         _jsBridge = JsBridgeFactory.Create();
         _configData = configData;
         _terminalSetup = terminalSetup;
+        // issues/13 M6：app 级托管控制 server 提前到启动期——必须在 RecreateHost 之前，
+        // 因为 BridgeHost 建会话时直接复用它（不再自行 new HttpListenerHost）。
+        // 起不来就抛——静默降级会让 agent 连不上却无任何痕迹，比启动期硬失败更难查。
+        var controlServer = MauiControlServer.EnsureStarted(configData, terminalSetup);
+        // 注册控制面回调——此时 this 已可用（字段已赋值），实现见两个方法。
+        controlServer.ScanGameDirSink = ScanGamesForControlServer;
+        controlServer.LoadGameSink = RequestAutoLoadGame;
         // issue 05：远程模式已废弃（RemoteSessionProbe 已删），无需再等 HandlerChanged 里的探测——
         // 全平台（Windows/Android）都在构造时创建 BridgeHost，保证 Vue 的 ready/scanGames 消息
         // 一来即有 InputReceived 订阅者处理（否则 Windows 会卡在「正在扫描游戏列表…」）。
         RecreateHost();
+        // issues/13 M6：主目录同步给控制面——CLI 的 games / load --name 依赖它
+        //（Android 上主目录是 SAF content URI，手写命令行极易出错，由 app 说出更可靠）。
+        controlServer.NotifyMainGameDir(_host?.MainGameDir);
 
         // HandlerChanged 是 MAUI WebView 平台原生视图就绪的最早可靠时机（spec ID8）。
         // 在此 Attach IJsBridge（订阅 WebMessageReceived / AddJavascriptInterface）+ 设 URL 加载 Vue。
@@ -171,7 +189,139 @@ public partial class MainPage : ContentPage
     private void RecreateHost()
     {
         _host?.Dispose();
-        _host = new BridgeHost(Dispatcher, _configData, _terminalSetup, _jsBridge, OnReloadGame, OnGameExited);
+        _host = new BridgeHost(Dispatcher, _configData, _terminalSetup, _jsBridge, OnReloadGame, OnGameExited, OnVueReady);
+    }
+
+    /// <summary>
+    /// issues/13 M6：Vue 握手——<see cref="BridgeHost.HandleScanGames"/> 收到首条 <c>scanGames</c> 时回调。
+    /// <para>
+    /// 幂等守卫：退出游戏再重开会重建 BridgeHost，届时 Vue 会再发 scanGames；
+    /// <c>_vueReady</c> 置 true 后不再重复投递（pending 早已清空，重复投递会误触发第二次加载）。
+    /// </para>
+    /// </summary>
+    private void OnVueReady()
+    {
+        if (_vueReady)
+            return;
+        _vueReady = true;
+        Console.WriteLine("[maui] OnVueReady: Vue handshake received (first scanGames)");
+#if ANDROID
+        Android.Util.Log.Info("EmueraMaui", "OnVueReady: Vue handshake received");
+#endif
+        FlushAutoLoad();
+    }
+
+    /// <summary>
+    /// issues/13 M6：把暂存的自动加载路径投递给 Vue——由 Vue 调它现成的
+    /// <c>loadGameFromPath(path)</c>，走与用户手点<b>完全相同</b>的链路。
+    /// <para>
+    /// 为何不直接在 C# 侧初始化：那样会绕过 Vue 的 game store 状态更新（UI 不切 terminal 视图），
+    /// 且要另写一套状态同步。转交 Vue 后前端逻辑零新增。
+    /// </para>
+    /// </summary>
+    private void FlushAutoLoad()
+    {
+        var path = _autoLoadPendingPath;
+        if (path == null)
+            return;
+        _autoLoadPendingPath = null;
+        try
+        {
+            var msg = JsonSerializer.Serialize(
+                new AutoLoadGameMessage("autoLoadGame", path),
+                MauiJsonContext.Default.AutoLoadGameMessage);
+            // PostMessage（WindowsJsBridge → ExecuteScriptAsync）只能在 UI 线程调——
+            // 本方法可能从控制面 HTTP 线程（load sink）或 OnInputFromJs 链路进入，
+            // 与 BridgeHost 所有 PostMessage 调用点一样必须 Dispatcher.Dispatch。
+            // 另注意 WindowsJsBridge.PostMessage 失败只写日志不抛——不能靠 try 感知失败，
+            // 只能靠 logcat/console 里有无 "PostMessage failed" 排查。
+            Dispatcher.Dispatch(() =>
+            {
+                _jsBridge.PostMessage(msg);
+                Console.WriteLine($"[maui] autoLoadGame dispatched to Vue: {path}");
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[maui] autoLoadGame dispatch failed: {ex}");
+        }
+    }
+
+    /// <summary>
+    /// issues/13 M6：控制面 <c>POST /game/scan</c> 的宿主实现——
+    /// 与 UI 扫描共用 <see cref="BridgeHost.ResolveDirAccessor"/>，
+    /// 使 Android 的 SAF <c>content://</c> 树 URI 也能枚举（Core 默认实现硬编码
+    /// <c>FileSystemGameDirAccessor</c>，对 content URI 一律不可用）。
+    /// </summary>
+    /// <returns>扫描结果；异常时返回 <c>null</c> 回落 Core 默认实现。</returns>
+    private HttpResult? ScanGamesForControlServer(string rootDir)
+    {
+        try
+        {
+            var accessor = BridgeHost.ResolveDirAccessor(rootDir);
+            var exists = GameScanner.RootDirectoryExists(rootDir, accessor);
+            var games = exists ? GameScanner.Scan(rootDir, accessor) : Array.Empty<GameEntry>();
+            var arr = new JsonArray();
+            foreach (var g in games)
+            {
+                arr.Add((JsonNode)new JsonObject { ["name"] = g.Name, ["fullPath"] = g.FullPath });
+            }
+            var payload = new JsonObject
+            {
+                ["rootDir"] = rootDir,
+                ["rootDirExists"] = exists,
+                ["games"] = arr,
+            }.ToJsonString();
+            Console.WriteLine($"[maui] control scan: rootDir={rootDir}, {games.Count} games");
+            return HttpResult.Text(payload);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[maui] control scan failed, falling back: {ex}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// issues/13 M6：控制面 <c>POST /load-game</c> 的宿主实现——
+    /// 只暂存路径并请 Vue 代加载，<b>不在此同步初始化运行时</b>（IO 重，且会绕过 Vue 状态）。
+    /// <para>
+    /// 返回 <c>accepted</c> 表示已受理，实际加载是异步的——调用方需轮询 <c>GET /state</c>
+    /// 等 <c>gameDir</c> 变为目标路径。
+    /// </para>
+    /// </summary>
+    /// <returns>
+    /// 受理结果；<c>null</c> 表示不接管（空路径等，回落 Core 默认实现的 400 语义）；
+    /// token 不匹配时返回 403。
+    /// </returns>
+    private HttpResult? RequestAutoLoadGame(string gameDir, ControlIdentity? identity)
+    {
+        if (string.IsNullOrWhiteSpace(gameDir))
+            return null;
+
+        // token 校验：提供了就必须匹配——避免 localhost 上串台或误触。
+        // 未提供时放行（便于手动 curl 调试；风险面仅限本机 loopback）。
+        var expected = MauiControlServer.Instance?.Token;
+        var presented = identity?.Token;
+        if (!string.IsNullOrEmpty(presented) && presented != expected)
+        {
+            return HttpResult.Text(
+                """{"error":{"code":"BAD_TOKEN","message":"token mismatch"}}""",
+                statusCode: 403);
+        }
+
+        Console.WriteLine($"[maui] control load-game accepted: {gameDir}");
+        _autoLoadPendingPath = gameDir;
+        if (_vueReady)
+            FlushAutoLoad();
+
+        var payload = new JsonObject
+        {
+            ["accepted"] = true,
+            ["gameDir"] = gameDir,
+            ["state"] = _vueReady ? "dispatched" : "pending",
+        }.ToJsonString();
+        return HttpResult.Text(payload);
     }
 
     /// <summary>ADR-0019：防止 auto-start 被多次触发。
@@ -339,6 +489,8 @@ public partial class MainPage : ContentPage
                 _configData = newConfig;
                 _terminalSetup = newTerminal;
                 RecreateHost();
+                // issues/13 M6：主目录可能随本次 scanGames 改变——同步给控制面刷新发现记录
+                MauiControlServer.Instance?.NotifyMainGameDir(_host?.MainGameDir);
                 // Vue 已 ready（首次 ready 信号早已收到），直接启动新游戏循环
                 _host?.Start();
                 Console.WriteLine("[maui] OnReloadGame: new BridgeHost started");
@@ -349,6 +501,14 @@ public partial class MainPage : ContentPage
     protected override void OnDisappearing()
     {
         base.OnDisappearing();
+        // issues/13 M6：解绑控制面回调——sink 持有本页实例方法，不摘会让已销毁的 MainPage
+        // 被 app 级 MauiControlServer 钉住（每次页面重建泄漏一个）。
+        var controlServer = MauiControlServer.Instance;
+        if (controlServer != null)
+        {
+            controlServer.LoadGameSink = null;
+            controlServer.ScanGameDirSink = null;
+        }
         _host?.Dispose();
     }
 

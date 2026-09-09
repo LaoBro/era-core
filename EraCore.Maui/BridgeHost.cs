@@ -11,6 +11,7 @@ using System.Threading.Channels;
 using System.Threading.Tasks;
 using EraCore.Maui.JsBridge;
 using EraCore.Maui.Json;
+using EraCore.Maui.Services;
 using Microsoft.Maui.Storage;
 using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
@@ -431,6 +432,19 @@ internal sealed class BridgeHost : IDisposable
 #endif
     private readonly Action<string>? _onReloadGame;
     private readonly Action? _onGameExited;
+    /// <summary>
+    /// issues/13 M6：Vue 前端握手回调——收到 Vue 首条 <c>scanGames</c> 时触发一次（幂等由调用方保证）。
+    /// <para>
+    /// 为何以此刻为握手点：Vue 在 <c>App.vue onMounted</c> 里注册 <c>__onTurn</c> / <c>__onMessage</c>
+    /// 并立即发 <c>scanGames</c>。收到它 = 前端已挂载且消息处理器就位，此后
+    /// <c>IJsBridge.PostMessage</c> 推过去的消息不会丢。
+    /// </para>
+    /// <para>
+    /// 用途：<c>POST /load-game</c> 到达时若前端还没就绪，C# 侧先暂存路径，
+    /// 等本回调触发后再投递 <c>autoLoadGame</c>，避免消息石沉大海。
+    /// </para>
+    /// </summary>
+    private readonly Action? _onVueReady;
     private readonly CancellationTokenSource _cts = new();
     // issue 05：MAUI 托管 Server——共享层会话由 HttpListenerHost 的 SessionRegistry 持有，
     // WebView 经 OutputHub 订阅 turn（TurnPumpAsync）投递 + session.IO 入输入；
@@ -440,8 +454,8 @@ internal sealed class BridgeHost : IDisposable
     private HttpSessionIO? _sessionIO;
     private Task? _turnPump;
     private Task? _controlPump;
-    private string? _discoveryPath;
-    private string? _discoveryToken;
+    // 注：agent 发现记录（端口 + token + gameDir）的所有权已移到 MauiControlServer（issues/13 M6）——
+    // server 生命周期 = app 生命周期，记录随之在 app 启动期创建、会话起止时更新，不再随 Dispose 删除。
     private bool _disposed;
     private bool _started;
     private bool _readyReceived;
@@ -485,13 +499,16 @@ internal sealed class BridgeHost : IDisposable
     /// <param name="onReloadGame">issue 09 hot-swap reload 回调——传游戏目录绝对路径让 MainPage 重建 BridgeHost。</param>
     /// <param name="onGameExited">game-library spec ID10 退出游戏回调——BridgeHost 处理 <c>exitGame</c>
     /// 后调此回调让 MainPage 重建 BridgeHost（新 host 不启动游戏循环，等 Vue 触发 scanGames）。</param>
+    /// <param name="onVueReady">issues/13 M6：Vue 前端握手回调——收到首条 <c>scanGames</c> 时触发
+    /// （见同名字段文档）。用于延迟投递到达过早的控制面消息。</param>
     internal BridgeHost(
         IDispatcher dispatcher,
         ConfigData configData,
         ITerminalSetup terminalSetup,
         IJsBridge jsBridge,
         Action<string>? onReloadGame = null,
-        Action? onGameExited = null)
+        Action? onGameExited = null,
+        Action? onVueReady = null)
     {
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _configData = configData ?? throw new ArgumentNullException(nameof(configData));
@@ -499,6 +516,7 @@ internal sealed class BridgeHost : IDisposable
         _jsBridge = jsBridge ?? throw new ArgumentNullException(nameof(jsBridge));
         _onReloadGame = onReloadGame;
         _onGameExited = onGameExited;
+        _onVueReady = onVueReady;
 
         // game-library spec ID5：从 Preferences 读 mainGameDir——无值时按平台回退
         // Windows: Documents/emuera；Android: null（待权限引导后设置）
@@ -991,7 +1009,9 @@ internal sealed class BridgeHost : IDisposable
     /// Android SAF 的 <c>content://</c> URI 必须使用持久化的 SAF accessor；
     /// 传统路径则使用当前游戏 accessor（或本地文件系统 fallback）。
     /// </summary>
-    private static IGameDirAccessor ResolveDirAccessor(string? rootDir)
+    // internal：MainPage 的控制面 scan 实现（issues/13 M6）复用同一套 accessor 选择逻辑，
+    // 避免"HTTP 端点用文件系统 accessor、UI 用 SAF accessor"两份分叉。
+    internal static IGameDirAccessor ResolveDirAccessor(string? rootDir)
     {
         if (rootDir?.StartsWith("content://", StringComparison.Ordinal) == true)
         {
@@ -1039,6 +1059,16 @@ internal sealed class BridgeHost : IDisposable
         }
 
         Console.WriteLine($"[bridge] HandleScanGames: rootDir={rootDir}");
+        // issues/13 M6：Vue 握手——首条 scanGames 证明前端已挂载且注册了 __onMessage。
+        // 幂等由 MainPage 侧守卫（_vueReady 字段），此处每次都通知。
+        try
+        {
+            _onVueReady?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[bridge] HandleScanGames: onVueReady threw: {ex}");
+        }
         // game-library spec ID13：检查主目录是否存在——Vue 端区分「目录不存在」vs「无游戏」
         var dirAccessor = ResolveDirAccessor(rootDir);
         bool rootDirExists = GameScanner.RootDirectoryExists(rootDir, dirAccessor);
@@ -1758,32 +1788,42 @@ internal sealed class BridgeHost : IDisposable
     /// </summary>
     private async Task StartHostedSessionAsync()
     {
-        HttpListenerHost? serverHost = null;
         try
         {
             if (_disposed)
                 return;
 
-            // 1. 建 HttpListener 宿主（port=0 自动选空闲端口，issue 05 MAUI 托管 server）。
-            //    共享层会话由宿主内 SessionRegistry 持有——agent 经 localhost HTTP+WS 连接同一会话。
-            serverHost = new HttpListenerHost(
-                port: 0,
-                _terminalSetup,
-                _configData,
-                displayReportOverride: _configData.OverrideDisplayReport);
-            _serverHost = serverHost;
-            if (_disposed)
+            // 1. 复用 app 级控制 server（issues/13 M6）——不再自行 new HttpListenerHost。
+            //    原因：server 必须比「加载游戏」早出生，否则 agent 在未加载游戏时探不到 MAUI；
+            //    且两套 server 会抢同一个发现文件（agent 连到的端口上没有会话）。
+            //    _serverHost 此处仅作「本 host 当前借用哪个 server」的引用，所有权归 MauiControlServer——
+            //    Dispose 时只退会话，不 Dispose server。
+            var serverHost = MauiControlServer.Instance?.Host;
+            if (serverHost == null)
             {
-                // Dispose 先到且已读过 _serverHost（null）——这里释放刚建的 host 防止泄漏
-                _serverHost = null;
-                serverHost.Dispose();
+                ShowError("控制 server 未启动，无法创建游戏会话");
                 return;
             }
+            _serverHost = serverHost;
+            if (_disposed)
+                return;
 
-            // 2. 建共享 session——游戏已由 OnReloadGame 初始化（GamePaths.Current 已 Resolve + ConfigData 已加载），
-            //    CreateMauiSessionAsync 允许注册表为空（区别于 HTTP 的 /load-game 建首个 session）。
+            // 2. 先销毁可能残留的旧会话，再建新的——hot-swap 竞态守卫。
+            //    共享 SessionRegistry 后（issues/13 M6），旧 BridgeHost.Dispose 的
+            //    DeleteSessionAsync 跑在后台线程，可能与本次 Create 抢锁：
+            //    CreateMauiSessionAsync 见到「已有未结束会话」会直接返 Conflict 而不重建。
+            //    改造前新旧 host 各有独立 SessionRegistry，天然无此竞态。
+            //    此处已处后台线程（Task.Run），Session.Dispose join 游戏循环不阻塞 UI。
+            //    无会话时 DeleteSessionAsync 返 NotFound，无副作用。
+            await serverHost.Sessions.DeleteSessionAsync();
+            if (_disposed)
+                return;
+
+            // 3. 建共享 session——游戏已由 OnReloadGame 初始化（GamePaths.Current 已 Resolve + ConfigData 已加载），
             //    fullDiffOnFirstTurn=true：MAUI WebView 桥接无 GET /snapshot 入口，首帧 diff 须全量。
-            var createResult = await serverHost.Sessions.CreateMauiSessionAsync(fullDiffOnFirstTurn: true);
+            //    显式传 _configData：共享 server 构造时绑的是启动期占位配置，会话必须用真实配置
+            //    （含 OnReloadGame 应用的性能覆盖旋钮），否则 ErbLoader 读到的是占位值。
+            var createResult = await serverHost.Sessions.CreateMauiSessionAsync(_configData, fullDiffOnFirstTurn: true);
             if (_disposed)
                 return;
             if (createResult.Status != SessionCreateStatus.Created)
@@ -1792,7 +1832,7 @@ internal sealed class BridgeHost : IDisposable
                 return;
             }
 
-            // 3. 订阅 turn 广播 → WebView。订阅发生在 session 首帧之前（Initialize 在后台 Task 跑），
+            // 4. 订阅 turn 广播 → WebView。订阅发生在 session 首帧之前（Initialize 在后台 Task 跑），
             //    首帧全量 diff 不会丢。同时起控制事件泵同步前端控制状态（旁观/可操作切换）。
             var subscription = await serverHost.Sessions.TryGetWsSubscriptionAsync();
             if (_disposed)
@@ -1807,11 +1847,12 @@ internal sealed class BridgeHost : IDisposable
             _turnPump = Task.Run(() => TurnPumpAsync(subscription.Reader, subscription.Hub));
             _controlPump = Task.Run(() => ControlPumpAsync(_session));
 
-            // 4. 写 agent 发现记录（端口 + token + gameDir）——eracore_agent start 侦测后复用本会话
-            WriteDiscoveryRecord();
+            // 5. 更新 agent 发现记录（端口 + token + gameDir）——eracore_agent start 侦测后复用本会话。
+            //    记录的所有权在 MauiControlServer（app 级）：此处只补充 gameDir，不负责创建/删除。
+            MauiControlServer.Instance?.NotifySessionStarted(GamePaths.Current?.ExeDir);
 
-            Console.WriteLine($"[bridge] hosted server on port {_serverHost.Port}, session {createResult.SessionId}");
-            AgentLog.Instance.Write($"[bridge] hosted server on port {_serverHost.Port}, session {createResult.SessionId}");
+            Console.WriteLine($"[bridge] hosted session on port {_serverHost.Port}, session {createResult.SessionId}");
+            AgentLog.Instance.Write($"[bridge] hosted session on port {_serverHost.Port}, session {createResult.SessionId}");
 #if ANDROID
             // O4：游戏加载完成 → 后台预热 sav + 游戏根目录子项缓存（原 GameLoopAsync runLoop 开头逻辑，托管后移此）
             var prefetchExeDir = GamePaths.Current?.ExeDir;
@@ -1824,15 +1865,8 @@ internal sealed class BridgeHost : IDisposable
             Console.WriteLine($"[bridge] hosted session start failed: {ex}");
             AgentLog.Instance.Write($"[bridge] hosted session start failed: {ex}");
             ShowFatalError(ex);
-            // 失败路径：释放尚未挂到 _serverHost 的局部 host（已挂载的由 Dispose 收尾）
-            if (serverHost != null && !ReferenceEquals(serverHost, _serverHost))
-            {
-                try { serverHost.Dispose(); }
-                catch (Exception disposeEx)
-                {
-                    AgentLog.Instance.Write($"[bridge] hosted session start cleanup dispose failed: {disposeEx.Message}");
-                }
-            }
+            // 共享 server 不在此释放——所有权归 MauiControlServer（app 级，随进程退出）。
+            // 会话建失败时注册表内无活跃会话，无需额外清理。
         }
     }
 
@@ -1948,72 +1982,6 @@ internal sealed class BridgeHost : IDisposable
                 break;
         }
         PushControlStatus(session);
-    }
-
-    // ===== agent 发现记录（issue 05）：MAUI 托管 server 的端口 + token 供 eracore_agent 侦测复用 =====
-
-    /// <summary>发现记录路径——Windows <c>%LOCALAPPDATA%\EmueraCore\eracore-maui-server.json</c>（Android 托管后置）。</summary>
-    private static string? DiscoveryFilePath()
-    {
-        try
-        {
-            var dir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            return string.IsNullOrEmpty(dir) ? null : Path.Combine(dir, "EmueraCore", "eracore-maui-server.json");
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    /// <summary>写发现记录：<c>{host,port,token,gameDir,startedByAgent:false,mauiHosted:true}</c>。
-    /// token 由 MAUI 生成（所有权翻转——不再由 agent 生成），agent 读取后作为身份凭证。</summary>
-    private void WriteDiscoveryRecord()
-    {
-        try
-        {
-            var path = DiscoveryFilePath();
-            if (path == null || _serverHost == null)
-                return;
-            var dir = Path.GetDirectoryName(path);
-            if (dir != null)
-                Directory.CreateDirectory(dir);
-            _discoveryToken ??= Guid.NewGuid().ToString("N");
-            var record = new JsonObject
-            {
-                ["host"] = "127.0.0.1",
-                ["port"] = _serverHost.Port,
-                ["token"] = _discoveryToken,
-                ["gameDir"] = GamePaths.Current?.ExeDir,
-                ["startedByAgent"] = false,
-                ["mauiHosted"] = true,
-            }.ToJsonString();
-            File.WriteAllText(path, record);
-            _discoveryPath = path;
-            Console.WriteLine($"[bridge] discovery record written: {path} port={_serverHost.Port}");
-            AgentLog.Instance.Write($"[bridge] discovery record written: {path} port={_serverHost.Port}");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[bridge] discovery record write failed: {ex.Message}");
-            AgentLog.Instance.Write($"[bridge] discovery record write failed: {ex.Message}");
-        }
-    }
-
-    /// <summary>删发现记录（Dispose / 退出游戏时）——server 随会话结束，agent 不应再连。</summary>
-    private void DeleteDiscoveryRecord()
-    {
-        if (_discoveryPath == null)
-            return;
-        try
-        {
-            File.Delete(_discoveryPath);
-        }
-        catch
-        {
-            // 删除失败无害——agent 探活失败会自然放弃
-        }
-        _discoveryPath = null;
     }
 
 #if ANDROID
@@ -2175,30 +2143,33 @@ internal sealed class BridgeHost : IDisposable
             AgentLog.Instance.Write($"[bridge] Dispose session IO close failed: {ex.Message}");
         }
 
-        // 3. 删 agent 发现记录——server 随会话结束，agent 不再连
-        DeleteDiscoveryRecord();
+        // 3. 通知控制 server 会话已结束——只把 gameDir 置空，**不删发现记录**：
+        //    issues/13 M6 后 server 生命周期 = app 生命周期，删记录会让 agent 在列表页阶段
+        //    又回到「探不到 MAUI」的状态（那正是本次改造要解决的问题）。
+        MauiControlServer.Instance?.NotifySessionEnded();
 
-        // 4. 停托管 server——后台线程 join session（spec ID9：不阻塞 UI）。
-        //    Session.Dispose 会 GetAwaiter().GetResult() join 游戏循环；游戏循环多在
-        //    ReadLineAsync await，IO.Close 后毫秒级退出。
+        // 4. 退会话——server 是 app 级共享的，不能 Dispose（否则整个控制面没了）。
+        //    只经 SessionRegistry 销毁本 host 建的会话（等价 DELETE /session，无 identity 故不检查控制权）；
+        //    后台线程跑：Session.Dispose 会 join 游戏循环，不阻塞 UI（spec ID9）。
+        //    游戏循环多在 ReadLineAsync await，IO.Close 后毫秒级退出。
         var host = _serverHost;
         _serverHost = null;
         _session = null;
         _sessionIO = null;
         if (host != null)
         {
-            _ = Task.Run(() =>
+            _ = Task.Run(async () =>
             {
                 try
                 {
-                    host.Dispose();
+                    await host.Sessions.DeleteSessionAsync();
                 }
                 catch (Exception ex)
                 {
-                    AgentLog.Instance.Write($"[bridge] server host dispose failed: {ex.Message}");
-                    Console.WriteLine($"[bridge] server host dispose failed: {ex}");
+                    AgentLog.Instance.Write($"[bridge] session delete failed: {ex.Message}");
+                    Console.WriteLine($"[bridge] session delete failed: {ex}");
                 }
-                // mem-leak-fix：host.Dispose 已 join 游戏循环（Session.Dispose 内 GetAwaiter().GetResult()），
+                // mem-leak-fix：DeleteSessionAsync 已 join 游戏循环（Session.Dispose 内 GetAwaiter().GetResult()），
                 // 此时 GlobalStatic.Scope.Dispose 的静态根清理必然已完成——在此触发 Full GC，
                 // 让已释放的游戏运行时内存可见回落（Preferences 开关默认 true）。
                 TryCollectAfterGameExit();

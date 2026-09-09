@@ -711,3 +711,55 @@ describe('handleMauiMessage - controlStatus (issue 05)', () => {
     expect(conn.canInput).toBe(true);
   });
 });
+
+// ---------- handleMauiMessage：autoLoadGame（issues/13 M6 控制面自动加载）----------
+
+describe('handleMauiMessage - autoLoadGame (issues/13 M6)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('合法 path → 投递 loadGame 给 C#（走与手点相同的 loadGameFromPath 链路）', async () => {
+    const postMessage = vi.fn();
+    vi.stubGlobal('window', {
+      location: { protocol: 'https:', hostname: 'app.local' },
+      chrome: { webview: { postMessage } },
+    });
+
+    await initAppState();
+    postMessage.mockClear();
+
+    const handler = (window as any).__onMessage as ((msg: unknown) => void) | undefined;
+    expect(typeof handler).toBe('function');
+
+    handler!({ type: 'autoLoadGame', path: 'D://emuera//TK' });
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(postMessage.mock.calls[0][0])).toEqual({
+      type: 'loadGame',
+      path: 'D://emuera//TK',
+    });
+  });
+
+  it('path 非字符串 → 不投递（避免把脏路径交给 C# 初始化）', async () => {
+    const postMessage = vi.fn();
+    vi.stubGlobal('window', {
+      location: { protocol: 'https:', hostname: 'app.local' },
+      chrome: { webview: { postMessage } },
+    });
+
+    await initAppState();
+    postMessage.mockClear();
+
+    const handler = (window as any).__onMessage as ((msg: unknown) => void) | undefined;
+    handler!({ type: 'autoLoadGame', path: 123 });
+    handler!({ type: 'autoLoadGame' });
+    handler!({ type: 'autoLoadGame', path: '   ' });
+
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+});

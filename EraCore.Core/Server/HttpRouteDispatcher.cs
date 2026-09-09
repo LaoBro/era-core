@@ -1,3 +1,4 @@
+using System;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -45,6 +46,29 @@ internal sealed class HttpRouteDispatcher
     /// </summary>
     private readonly JsonSerializerContext _requestContext;
 
+    /// <summary>
+    /// 宿主可选的 <c>POST /game/scan</c> 实现——<c>(rootDir) =&gt; HttpResult?</c>。
+    /// <para>
+    /// 为何需要：默认 <see cref="GameServerProtocol.ScanGameDir"/> 硬编码
+    /// <c>FileSystemGameDirAccessor</c>，Android 的 SAF <c>content://</c> 树 URI 无法枚举。
+    /// MAUI 宿主注入自己的实现（按路径选 SAF / 文件系统 accessor）后此处优先。
+    /// </para>
+    /// <para>返回 <c>null</c> 表示"本次不接管"，回落到默认实现——宿主可据此做条件接管。</para>
+    /// </summary>
+    private readonly Func<string, HttpResult?>? _scanGameDirHandler;
+
+    /// <summary>
+    /// 宿主可选的 <c>POST /load-game</c> 实现——<c>(gameDir, identity) =&gt; HttpResult?</c>。
+    /// <para>
+    /// 为何需要：默认 <see cref="GameServerProtocol.LoadGame"/> 走
+    /// <c>SessionRegistry.ReplaceForLoadGameAsync</c>，它会（a）硬编码文件系统 accessor、
+    /// （b）绕过 MAUI 运行期初始化与性能覆盖旋钮、（c）新建 <c>OutputHub</c> 使 WebView 侧
+    /// turn 订阅失效。MAUI 宿主注入实现把请求转交 <c>MainPage.OnReloadGame</c>，走同一条手工链路。
+    /// </para>
+    /// <para>返回 <c>null</c> 表示"本次不接管"，回落到默认实现。</para>
+    /// </summary>
+    private readonly Func<string, ControlIdentity?, HttpResult?>? _loadGameHandler;
+
     public HttpRouteDispatcher(GameServerProtocol protocol)
         : this(protocol, ServerJsonContext.Default)
     {
@@ -54,6 +78,22 @@ internal sealed class HttpRouteDispatcher
     {
         _protocol = protocol;
         _requestContext = requestJsonContext;
+    }
+
+    /// <summary>
+    /// 宿主回调版构造——注入 <c>/game/scan</c> / <c>/load-game</c> 的宿主实现（见两个委托的文档）。
+    /// 两委托均可为 <c>null</c>（此时行为与前两个构造逐字节一致——Core 层零漂移）。
+    /// </summary>
+    public HttpRouteDispatcher(
+        GameServerProtocol protocol,
+        JsonSerializerContext requestJsonContext,
+        Func<string, HttpResult?>? scanGameDirHandler,
+        Func<string, ControlIdentity?, HttpResult?>? loadGameHandler)
+    {
+        _protocol = protocol;
+        _requestContext = requestJsonContext;
+        _scanGameDirHandler = scanGameDirHandler;
+        _loadGameHandler = loadGameHandler;
     }
 
     /// <summary>
@@ -109,6 +149,13 @@ internal sealed class HttpRouteDispatcher
             return InvalidJsonLoadGame();
         if (string.IsNullOrWhiteSpace(payload.gameDir))
             return MissingGameDir();
+        if (_loadGameHandler is { } loadHandler)
+        {
+            // 宿主接管（MAUI：转交 MainPage.OnReloadGame）——返回 null 表示不接管，走默认实现
+            var hosted = loadHandler(payload.gameDir, ResolveIdentity(request, payload.token));
+            if (hosted.HasValue)
+                return hosted.Value;
+        }
         return _protocol.LoadGame(payload.gameDir, ResolveIdentity(request, payload.token));
     }
 
@@ -119,6 +166,13 @@ internal sealed class HttpRouteDispatcher
             return InvalidJsonScanGame();
         if (string.IsNullOrWhiteSpace(payload.rootDir))
             return MissingRootDir();
+        if (_scanGameDirHandler is { } scanHandler)
+        {
+            // 宿主接管（MAUI：带 SAF accessor 的扫描）——返回 null 表示不接管，走默认实现
+            var hosted = scanHandler(payload.rootDir);
+            if (hosted.HasValue)
+                return hosted.Value;
+        }
         return GameServerProtocol.ScanGameDir(payload.rootDir);
     }
 

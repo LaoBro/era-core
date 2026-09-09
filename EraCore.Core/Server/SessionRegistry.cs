@@ -79,7 +79,23 @@ internal sealed class SessionRegistry
     /// 已有活跃 session → Conflict；否则销毁旧 session（若有）后建新 session。
     /// </summary>
     /// <param name="fullDiffOnFirstTurn">首帧 diff 是否返回全量（MAUI WebView 桥接无 snapshot 入口，须 true）。</param>
-    public async Task<SessionCreateResult> CreateMauiSessionAsync(bool fullDiffOnFirstTurn = true)
+    /// <summary>
+    /// 用 <c>_configService.Current</c> 建会话——无显式 ConfigData 时的原行为（Kestrel / 测试路径）。
+    /// </summary>
+    public Task<SessionCreateResult> CreateMauiSessionAsync(bool fullDiffOnFirstTurn = true)
+        => CreateMauiSessionAsync(_configService.Current, fullDiffOnFirstTurn);
+
+    /// <summary>
+    /// 用显式 <paramref name="configData"/> 建 MAUI 会话。
+    /// <para>
+    /// 为何需要：server 生命周期提升到 app 级后（agent 在未加载游戏时也要能连上），
+    /// <see cref="HttpListenerHost"/> 构造时的 <c>ConfigData</c> 是启动期占位实例，
+    /// <c>_configService.Current</c> 不再是游戏真实配置。MAUI 侧
+    /// <c>MainPage.OnReloadGame</c> 已初始化好真实 <c>ConfigData</c>（含性能覆盖旋钮），
+    /// 必须由此重载注入，否则会话会用占位配置加载 ERB。
+    /// </para>
+    /// </summary>
+    public async Task<SessionCreateResult> CreateMauiSessionAsync(ConfigData configData, bool fullDiffOnFirstTurn = true)
     {
         await _sessionLock.WaitAsync();
         try
@@ -89,7 +105,7 @@ internal sealed class SessionRegistry
 
             DestroySession("session_replaced");
 
-            var session = CreateSessionCore(_configService.Current, fullDiffOnFirstTurn);
+            var session = CreateSessionCore(configData, fullDiffOnFirstTurn);
             return new SessionCreateResult(SessionCreateStatus.Created, session.Id, session.CreatedAt, session.StateString);
         }
         finally

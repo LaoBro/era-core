@@ -1,6 +1,6 @@
 ---
 name: eracore-playtesting
-description: Playtest Emuera games via eracore_agent. Use when driving test_game or an ERB game, handing control to the user, or recovering after a steal or CONTROL_LOST.
+description: Playtest Emuera games via eracore_agent. Use when driving test_game or an ERB game, handing control to the user, recovering after a steal or CONTROL_LOST, or driving the MAUI app (list games / auto-load / measure load time) before a session exists.
 ---
 
 # Emuera Playtesting
@@ -12,12 +12,29 @@ description: Playtest Emuera games via eracore_agent. Use when driving test_game
 ## 0. 连接目标（谁被操控）
 
 `eracore_agent` 背靠一个单实例会话。`start` 的复用优先级（自高到低）：
-1. **MAUI 托管 server**（用户正在 MAUI 应用里玩的那一局——`%LOCALAPPDATA%\EmueraCore\eracore-maui-server.json`，端口/token/游戏目录动态）。命中即复用，不另起 server，不 load_game 抢占。
+1. **MAUI 托管 server**（用户正在 MAUI 应用里玩的那一局——`%LOCALAPPDATA%\EmueraCore\eracore-maui-server.json`，端口/token/游戏目录动态）。命中即复用，不另起 server，不 load_game 抢占。**该记录在 MAUI app 启动到列表页时就已存在**（控制 server 随 app 启动上线）——所以未加载游戏时 `start` 也能复用 MAUI，不会退回 standalone。
 2. **本地记录** `.eracore-server.json`（上次 `start` 拉起的 standalone server）。
 3. `--host:--port` 上已在跑的 server。
 4. 都没有才用 `--eracore-path` 二进制拉起新 server。
 
 所以：若用户正在 MAUI 里玩，直接 `start` 就会连到那一局（agent 与 user 共享同一局，控制权排他）。
+
+## 0.5 MAUI 控制面（未加载游戏时也可用）
+
+`python -m eracore_agent maui <subcommand>` 驱动 MAUI app 本体。控制 server 在 app 启动期即上线，因此可以**在没有任何游戏会话时**列出游戏并触发加载：
+
+```bash
+python -m eracore_agent maui status           # 探活：state / gameDir / mainGameDir / 端口
+python -m eracore_agent maui games            # 列主目录下的游戏（Android SAF 路径同样可用）
+python -m eracore_agent maui load --name TK   # 按名加载（先 scan 主目录解析出 fullPath）
+python -m eracore_agent maui load --path "D:\era\TK"
+```
+
+- **端口/token/主目录来源**：Windows 读 `%LOCALAPPDATA%\EmueraCore\eracore-maui-server.json`；Android 自动 `adb logcat -d -s EmueraMaui` 解析 `eracore-control-server port=...` 行并 `adb forward`（加 `--adb` 强制走此路径；`games`/`load --name` 缺省用 app 同步的 `mainGameDir`，无需手输 SAF URI）。
+- **`load` 是异步受理**：返回 `accepted` 后 CLI 轮询 `/state` 等 `gameDir` 变为目标目录（默认 15s，`--wait-timeout` 可调；超时不算失败——加载可能仍在进行）。
+- **加载链路与手点完全一致**（C# 转 Vue `loadGameFromPath` → `OnReloadGame`）：测量启动耗时用 logcat 的 `OnReloadGame` / `hosted session` 标记，口径不被自动化污染。
+- **加载完成后**：`start` + `acquire` 即可接管这一局（复用 MAUI 会话，不需要也不要再 load_game）。
+- 退出游戏回列表页后发现记录仍有效（gameDir 置空、server 不下线）——此时可再 `maui load` 换下一个游戏。
 
 ## 1. 启动序列
 

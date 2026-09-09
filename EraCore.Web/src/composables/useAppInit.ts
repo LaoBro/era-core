@@ -5,6 +5,7 @@ import {
   registerTurnHandler,
   registerMessageHandler,
   scanGames as scanGamesBridge,
+  loadGameFromPath,
 } from '../lib/mauiBridge';
 
 /**
@@ -253,6 +254,20 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
       `[useAppInit] gamesScanned: ${games.length} games, rootDir=${rootDir}, rootDirExists=${rootDirExists}`,
     );
     game.setScannedGames(games, rootDir, rootDirExists);
+    return;
+  }
+
+  // issues/13 M6：C# 控制面转来的自动加载请求（POST /load-game 经 MauiControlServer 抵达）。
+  // C# 侧刻意不自行初始化运行时，而是请 Vue 调它现成的 loadGameFromPath——
+  // 走与用户点击列表项完全相同的链路，game store 状态天然正确，无需另写 UI 同步逻辑。
+  if (type === 'autoLoadGame') {
+    const path = m.path;
+    if (typeof path !== 'string' || !path.trim()) {
+      console.warn('[useAppInit] autoLoadGame: missing or non-string path');
+      return;
+    }
+    console.log('[useAppInit] autoLoadGame:', path);
+    loadGameFromPath(path);
     return;
   }
 

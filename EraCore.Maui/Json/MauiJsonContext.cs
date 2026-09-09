@@ -133,6 +133,17 @@ internal sealed record BackButtonPressedMessage(string Type);
 internal sealed record IrCacheRescannedMessage(string Type, bool Ok, string Path);
 
 /// <summary>
+/// {"type":"autoLoadGame","path":...}——issues/13 M6：C# → Vue 的"请帮我加载这个游戏"消息。
+/// <para>
+/// 由控制面 <c>POST /load-game</c> 触发，C# 侧<b>不自行初始化运行时</b>，而是请 Vue 调它现成的
+/// <c>loadGameFromPath(path)</c>。这样走的是与用户手点完全相同的链路
+/// （Vue → loadGame → HandleLoadGame → MainPage.OnReloadGame → RecreateHost + Start），
+/// 前端 game store 状态天然正确，无需在 C# 侧另写一套 UI 状态同步。
+/// </para>
+/// </summary>
+internal sealed record AutoLoadGameMessage(string Type, string Path);
+
+/// <summary>
 /// Headless Server GET /state 的最小子集——MAUI Windows 远程探测只读 state / gameDir。
 /// 其余字段（sessionId / 窗口布局）忽略。
 /// </summary>
@@ -160,6 +171,7 @@ internal sealed record HeadlessStateResponse(string? State, string? GameDir);
 [JsonSerializable(typeof(ConfigMessage))]
 [JsonSerializable(typeof(BackButtonPressedMessage))]
 [JsonSerializable(typeof(IrCacheRescannedMessage))]
+[JsonSerializable(typeof(AutoLoadGameMessage))]
 [JsonSerializable(typeof(HeadlessStateResponse))]
 internal partial class MauiJsonContext : JsonSerializerContext
 {
