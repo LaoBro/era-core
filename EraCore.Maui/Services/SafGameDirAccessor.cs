@@ -1,4 +1,5 @@
 #if ANDROID
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Text;
@@ -52,6 +53,26 @@ internal sealed class SafGameDirAccessor : IGameDirAccessor
     // O1 目录级子项缓存（saf-accel 计划）：目录 docId → 子项列表。
     // 命中零 IPC；写路径（OpenWrite/Delete/CreateDirectory）精确失效；切换树根全清。
     private readonly DirectoryChildCache _childCache = new();
+
+    /// <summary>
+    /// issues/14 A1+A2：basePath → 基座解析与快路径凭据。<see cref="CombinePath"/> 对
+    /// 同一 basePath 的 <c>Uri.Parse</c> + <see cref="ResolveDocId"/> 结果恒同（纯函数），真机
+    /// 命中轮曾对同一目录重复解析 7308 次 ≈ 2.90s。键 = basePath 原串；条目数 = 不同目录数
+    /// （游戏目录树内数十级），无需上限。树根切换无需失效——缓存键是完整 basePath 而非树根。
+    /// A2：<see cref="CombinePaths"/> 快路径凭据——ChildPrefix（Android 构建一次的子 URI 基座）
+    /// + CharEncodings（逐字符编码表，值 = Android 对该字符的实测编码输出；null = 结构异常 →
+    /// 含它的文件名走逐条 JNI）。
+    /// </summary>
+    private sealed class BaseResolution
+    {
+        public Android.Net.Uri BaseUri = null!;
+        public string DocId = "";
+        public string? ChildPrefix;
+        public Dictionary<char, string?> CharEncodings = new();
+    }
+
+    private readonly ConcurrentDictionary<string, BaseResolution> _baseResolutionCache =
+        new(StringComparer.Ordinal);
 
     /// <summary>
     /// S0-M1（2026-09-05）：SAF 元数据探针已执行标志。AgentLog 关闭（Android 默认）时探针零成本
@@ -595,13 +616,9 @@ internal sealed class SafGameDirAccessor : IGameDirAccessor
         {
             try
             {
-                var baseUri = Android.Net.Uri.Parse(basePath);
-                if (baseUri != null)
-                {
-                    var docId = ResolveDocId(baseUri);
-                    var childUri = DocumentsContract.BuildDocumentUriUsingTree(_treeAndroidUri!, $"{docId}/{filename}");
-                    return childUri!.ToString()!;
-                }
+                var entry = ResolveBaseCached(basePath);
+                var childUri = DocumentsContract.BuildDocumentUriUsingTree(_treeAndroidUri!, $"{entry.DocId}/{filename}");
+                return childUri!.ToString()!;
             }
             catch
             {
@@ -610,6 +627,227 @@ internal sealed class SafGameDirAccessor : IGameDirAccessor
         }
         var trimmed = basePath.TrimEnd('/');
         return $"{trimmed}/{filename}";
+    }
+
+    /// <summary>
+    /// issues/14 A1+A2：批量拼接。基座解析整批一次（A1）；快路径 = <c>prefix + "%2F" + 逐字符编码</c>
+    /// （A2，0 JNI）——字符编码表由 <see cref="ResolveBaseCached"/> 前缀探针 + <see cref="EnsureCharsVerified"/>
+    /// 逐字符探针（每新字符 1 次 JNI，终身缓存）向 Android 实测填充，**任何字符核验不过 → 含它的
+    /// 文件名退回逐条 JNI**；批次内首个快路径条目再与 Android 实建结果逐字节比对一次（邻接性 sanity），
+    /// 不等整批退回逐条。失败语义与 <see cref="CombinePath"/> 一致：单条异常回退字符串拼接。
+    /// </summary>
+    public IReadOnlyList<string> CombinePaths(string basePath, IReadOnlyList<string> filenames)
+    {
+        // 非 content 路径（混合场景兜底）：语义 = 逐条 CombinePath，直接走 DIM 默认。
+        if (!basePath.StartsWith("content://", StringComparison.Ordinal) || _treeAndroidUri == null)
+            return CombinePathsFallback(basePath, filenames);
+
+        BaseResolution entry;
+        try
+        {
+            entry = ResolveBaseCached(basePath);
+        }
+        catch
+        {
+            return CombinePathsFallback(basePath, filenames);
+        }
+
+        var result = new string[filenames.Count];
+        if (entry.ChildPrefix != null)
+        {
+            try
+            {
+                EnsureCharsVerified(entry, filenames);
+                int fastCount = 0;
+                int firstFastIdx = -1;
+                string? firstFastValue = null;
+                for (int i = 0; i < filenames.Count; i++)
+                {
+                    var encoded = TryFastEncode(entry.ChildPrefix, entry, filenames[i]);
+                    if (encoded != null)
+                    {
+                        result[i] = encoded;
+                        if (firstFastIdx < 0)
+                        {
+                            firstFastIdx = i;
+                            firstFastValue = encoded;
+                        }
+                        fastCount++;
+                    }
+                    else
+                    {
+                        result[i] = BuildViaJni(entry.DocId, filenames[i]) ?? FastFallback(basePath, filenames[i]);
+                    }
+                }
+                // 邻接性 sanity：首个快路径条目与 Android 实建结果逐字节比对——
+                // 不等说明存在未预期的上下文相关编码，整批退回逐条 JNI（宁可慢不可错）。
+                if (firstFastIdx >= 0)
+                {
+                    var jni = BuildViaJni(entry.DocId, filenames[firstFastIdx]);
+                    if (jni != firstFastValue)
+                    {
+                        entry.ChildPrefix = null;
+                        entry.CharEncodings.Clear();
+                        return CombinePathsFallback(basePath, filenames);
+                    }
+                }
+                Android.Util.Log.Info("EmueraMaui",
+                    $"[saf] combinePaths n={filenames.Count} fast={fastCount} jni={filenames.Count - fastCount} " +
+                    $"prefix=ok chars={entry.CharEncodings.Count}");
+                return result;
+            }
+            catch
+            {
+                // 落入下方逐条兜底
+            }
+        }
+
+        for (int i = 0; i < filenames.Count; i++)
+            result[i] = BuildViaJni(entry.DocId, filenames[i]) ?? FastFallback(basePath, filenames[i]);
+        return result;
+    }
+
+    /// <summary>快路径编码：前缀 + "%2F" + 逐字符编码（"/" 由前缀探针 ③ 核验为恒定 "%2F"）；
+    /// 含未捕获/捕获失败字符 → null（JNI 兜底）。</summary>
+    private static string? TryFastEncode(string prefix, BaseResolution entry, string name)
+    {
+        if (name.Length == 0)
+            return null;
+        var sb = new System.Text.StringBuilder(prefix.Length + name.Length * 4 + 8);
+        sb.Append(prefix).Append("%2F");
+        foreach (var c in name)
+        {
+            // issues/14 A2："/" 不入字符表（前缀探针 ③ 已核验其编码恒为 "%2F"），拼接侧直接替换。
+            if (c == '/')
+            {
+                sb.Append("%2F");
+                continue;
+            }
+            if (!entry.CharEncodings.TryGetValue(c, out var enc) || enc == null)
+                return null;
+            sb.Append(enc);
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// 逐字符捕获：每个新字符用 1 次 JNI 取 Android 对它的**实测编码输出**（剥掉前缀 + "%2F"
+    /// 后原样缓存）——不做任何托管预测，复刻对错的问题不存在。拼接结果的正确性由
+    /// <see cref="CombinePaths"/> 的批次首条实核（邻接性 sanity）兜底。代理对（非 BMP）不捕获
+    /// （Java 单代理编码行为实现细节敏感）→ null → 含它的文件名走逐条 JNI。
+    /// </summary>
+    private void EnsureCharsVerified(BaseResolution entry, IReadOnlyList<string> filenames)
+    {
+        var prefix = entry.ChildPrefix!;
+        lock (entry)
+        {
+            foreach (var name in filenames)
+            {
+                foreach (var c in name)
+                {
+                    if (c == '/' || entry.CharEncodings.ContainsKey(c))
+                        continue; // "/" 由前缀探针 ③ 核验（拼接侧确定性替换）
+                    if (c >= 0xD800 && c <= 0xDFFF)
+                    {
+                        entry.CharEncodings[c] = null;
+                        continue;
+                    }
+                    string? captured = null;
+                    try
+                    {
+                        var probe = DocumentsContract.BuildDocumentUriUsingTree(
+                            _treeAndroidUri!, $"{entry.DocId}/{c}")?.ToString();
+                        var head = prefix + "%2F";
+                        if (probe != null && probe.StartsWith(head, StringComparison.Ordinal)
+                            && probe.Length > head.Length)
+                            captured = probe[head.Length..];
+                    }
+                    catch
+                    {
+                        captured = null;
+                    }
+                    entry.CharEncodings[c] = captured;
+                }
+            }
+        }
+    }
+
+    /// <summary>A1 逐条 JNI 构建；失败返回 null（调用方回退字符串拼接）。</summary>
+    private string? BuildViaJni(string docId, string filename)
+    {
+        try
+        {
+            return DocumentsContract.BuildDocumentUriUsingTree(
+                _treeAndroidUri!, $"{docId}/{filename}")?.ToString();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string FastFallback(string basePath, string filename)
+    {
+        var trimmed = basePath.TrimEnd('/');
+        return $"{trimmed}/{filename}";
+    }
+
+    /// <summary>
+    /// 基座解析记忆化查询点——未命中才做 Parse + ResolveDocId（纯函数，结果可缓存）+ 一次
+    /// A2 前缀探针（2 次 JNI，每目录终身一次）：用只含白名单字符的探针名让 Android 构建子 URI，
+    /// 核验 (a) 输出以 "/探针名" 结尾、(b) 树 URI 前缀吻合、(c) 全字符集探针名与直拼预测逐字节
+    /// 一致。任一不过 → ChildPrefix = null，快路径整目录禁用（A1 逐条 JNI 兜底）。
+    /// </summary>
+    private BaseResolution ResolveBaseCached(string basePath)
+    {
+        return _baseResolutionCache.GetOrAdd(basePath, static (path, self) =>
+        {
+            var baseUri = Android.Net.Uri.Parse(path)
+                ?? throw new ArgumentException($"Uri.Parse returned null: {path}");
+            var docId = ResolveDocId(baseUri);
+
+            // A2 前缀探针——快路径的唯一正确性来源：Android 自己编码 documentId，托管侧零猜测。
+            // BuildDocumentUriUsingTree 输出形态（实测）：.../document/<encode(docId)>%2F<encode(name)>——
+            // documentId 整段编码，段内 "/" → %2F。三条探针：①纯 "0" 定位前缀；②全白名单字符集
+            // 名核验「白名单字符编码恒等」；③含 "/" 的名核验分隔符编码（快路径要做 "/"→%2F 替换）。
+            // 任一不满足 → ChildPrefix null → 快路径整目录禁用（A1 逐条 JNI 兜底）。
+            const string Sep = "%2F";
+            const string ProbeName1 = "0";
+            const string ProbeName2 = "aA0-_.~!()*'";
+            const string ProbeName3 = "S/0";
+            string? prefix = null;
+            try
+            {
+                var probe1 = DocumentsContract.BuildDocumentUriUsingTree(
+                    self._treeAndroidUri!, $"{docId}/{ProbeName1}")?.ToString();
+                var probe2 = DocumentsContract.BuildDocumentUriUsingTree(
+                    self._treeAndroidUri!, $"{docId}/{ProbeName2}")?.ToString();
+                var probe3 = DocumentsContract.BuildDocumentUriUsingTree(
+                    self._treeAndroidUri!, $"{docId}/{ProbeName3}")?.ToString();
+                if (probe1 != null && probe2 != null && probe3 != null
+                    && probe1.EndsWith(Sep + ProbeName1, StringComparison.Ordinal))
+                {
+                    var candidate = probe1[..^((Sep + ProbeName1).Length)];
+                    if (probe2 == candidate + Sep + ProbeName2
+                        && probe3 == candidate + Sep + ProbeName3.Replace("/", Sep))
+                        prefix = candidate;
+                }
+            }
+            catch
+            {
+                prefix = null;
+            }
+            return new BaseResolution { BaseUri = baseUri, DocId = docId, ChildPrefix = prefix };
+        }, this);
+    }
+
+    /// <summary>issues/14 A1：逐条兜底循环——与 IGameDirAccessor.CombinePaths 默认实现同语义。</summary>
+    private IReadOnlyList<string> CombinePathsFallback(string basePath, IReadOnlyList<string> filenames)
+    {
+        var result = new string[filenames.Count];
+        for (int i = 0; i < filenames.Count; i++)
+            result[i] = CombinePath(basePath, filenames[i]);
+        return result;
     }
 
     public string GetParentPath(string path)

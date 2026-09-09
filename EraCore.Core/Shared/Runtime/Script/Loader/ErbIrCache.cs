@@ -210,8 +210,12 @@ internal static class ErbIrCache
 	// fp 必 ≠ IR 存的 fp → miss 重建重写（「清单与 IR 不同步」唯一可检形态，入 IR 则恒真不可检）。
 	// 物理路径不入文件（URI 基座跨重授可能变）：命中轮经 CombinePath(root, rel) 重建。
 	// 新鲜度 = 路线 2（显式失效，用户是权威）：SAF 上 fp 本就内容盲，fp 自证恒真是设计语义。
-	// 布局：[int32 pendingCount]×(UTF8 逻辑名, UTF8 相对根名) [int32 treeCount]×UTF8 相对根名。
+	// 布局：[int32 pendingCount]×(UTF8 逻辑名, UTF8 相对根名) [int32 treeCount]×UTF8 相对根名
+	//      [int32 csvTreeCount]×UTF8 相对根名（issues/14 B：可选尾段——csvTreeRels 非 null 才写）。
 	// 缺失/损坏/越界 → false（调用方回退真实枚举，安全方向；仅 SAF 游戏读写，本地路径不生成）。
+	// issues/14 B 兼容语义：无尾段 = legacy sidecar（14 之前构建），读侧照常回放 pending + ERB 树
+	//（保住既得收益），仅 CSV 退回冷枚举（484ms）——不强制重建（强制 = legacy 用户多付一次 15.6s
+	// 全树枚举，远贵于 484ms）。legacy 由命中轮自愈重写收敛（ErbLoader 命中轮收尾）。
 
 	/// <summary>sidecar 路径：与 era_ir.dat 同目录（SAF 游戏 = appdata 真实文件系统，可原子替换）。</summary>
 	internal static string GetFileListPath(string irCachePath)
@@ -222,9 +226,20 @@ internal static class ErbIrCache
 
 	internal static bool TryReadFileList(string irCachePath,
 		out List<(string Logical, string RelToRoot)> pendingRels, out List<string> treeRels)
+		=> TryReadFileListFull(irCachePath, out pendingRels, out treeRels, out _, out _);
+
+	/// <summary>
+	/// issues/14 B：带 CSV 树区的完整读。csvTreeRels = null 表示 legacy sidecar（无 CSV 尾段，
+	/// 命中轮 CSV 走冷枚举 + 自愈重写）；legacySidecar 相应置 true。尾部杂字节仍判损坏。
+	/// </summary>
+	internal static bool TryReadFileListFull(string irCachePath,
+		out List<(string Logical, string RelToRoot)> pendingRels, out List<string> treeRels,
+		out List<string>? csvTreeRels, out bool legacySidecar)
 	{
 		pendingRels = [];
 		treeRels = [];
+		csvTreeRels = null;
+		legacySidecar = false; // 失败路径恒 false——legacy 标记只在成功返回时有意义（调用方契约）
 		try
 		{
 			var path = GetFileListPath(irCachePath);
@@ -254,10 +269,28 @@ internal static class ErbIrCache
 					return false;
 				tree.Add(rel);
 			}
-			if (r.BaseStream.Position != r.BaseStream.Length)
-				return false; // 尾部杂字节 = 半截/损坏
+			// issues/14 B：CSV 尾段可选——EOF 即 legacy；存在则严格校验（越界/空串/尾部杂字节 = 损坏）。
+			var csv = default(List<string>);
+			if (r.BaseStream.Position < r.BaseStream.Length)
+			{
+				int csvCount = r.ReadInt32();
+				if (csvCount is < 0 or > FileListMaxEntries)
+					return false;
+				csv = new List<string>(Math.Min(csvCount, 1 << 20));
+				for (int i = 0; i < csvCount; i++)
+				{
+					string rel = r.ReadString();
+					if (rel.Length == 0)
+						return false;
+					csv.Add(rel);
+				}
+				if (r.BaseStream.Position != r.BaseStream.Length)
+					return false;
+			}
 			pendingRels = pending;
 			treeRels = tree;
+			csvTreeRels = csv;
+			legacySidecar = csv == null;
 			return true;
 		}
 		catch
@@ -266,9 +299,15 @@ internal static class ErbIrCache
 		}
 	}
 
-	/// <summary>写 sidecar（tmp + 原子替换；同目录为真实文件系统）。失败返回 false（无 sidecar = 命中轮回退枚举，无害）。</summary>
+	/// <summary>
+	/// 写 sidecar（tmp + 原子替换；同目录为真实文件系统）。失败返回 false（无 sidecar = 命中轮回退枚举，无害）。
+	/// issues/14 B：<paramref name="csvTreeRels"/> 非 null 才写 CSV 尾段（建库轮取
+	/// Preload.TryGetTreeFiles(env.CsvDir)——数据由 LoadTreesAsync 的 CSV 枚举顺手填好）；
+	/// 传 null = 写 legacy 布局（CSV 目录缺失等场景），命中轮自愈兜底。
+	/// </summary>
 	internal static bool TryWriteFileList(string irCachePath,
-		IReadOnlyList<(string Logical, string RelToRoot)> pendingRels, IReadOnlyList<string> treeRels)
+		IReadOnlyList<(string Logical, string RelToRoot)> pendingRels, IReadOnlyList<string> treeRels,
+		IReadOnlyList<string>? csvTreeRels = null)
 	{
 		try
 		{
@@ -285,6 +324,12 @@ internal static class ErbIrCache
 				w.Write(treeRels.Count);
 				foreach (var rel in treeRels)
 					w.Write(rel);
+				if (csvTreeRels != null)
+				{
+					w.Write(csvTreeRels.Count);
+					foreach (var rel in csvTreeRels)
+						w.Write(rel);
+				}
 			}
 			if (!SafCompat.TryAtomicReplaceLocal(tmp, path))
 			{

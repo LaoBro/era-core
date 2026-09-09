@@ -580,6 +580,62 @@ public class ErbIrCacheTests
 	}
 
 	[Fact]
+	public void FileList_sidecar_csv_section_roundtrip_and_legacy_read()
+	{
+		// issues/14 B：CSV 尾段三态——①新格式 round-trip；②legacy（无尾段）读成功且 legacy=true；
+		// ③尾段越界 = 损坏。简单读签名（2 out）对两种布局都必须继续可用（调用方零改动契约）。
+		using var scope = OpenScope();
+		var irPath = Path.Combine(Path.GetTempPath(), "emuera-flcsv-" + Guid.NewGuid().ToString("N"), "era_ir.dat");
+		Directory.CreateDirectory(Path.GetDirectoryName(irPath)!);
+		var pending = new List<(string Logical, string RelToRoot)> { ("A.ERB", "A.ERB") };
+		var tree = new List<string> { "A.ERB", "SUB.ERH" };
+		var csv = new List<string> { "GAMEBASE.CSV", "ABL\\ABL0.CSV" };
+
+		// ① 新格式（带 CSV 尾段）
+		Assert.True(ErbIrCache.TryWriteFileList(irPath, pending, tree, csv));
+		Assert.True(ErbIrCache.TryReadFileListFull(irPath, out var p1, out var t1, out var c1, out var legacy1));
+		Assert.False(legacy1);
+		Assert.Equal(pending, p1);
+		Assert.Equal(tree, t1);
+		Assert.Equal(csv, c1);
+		// 简单读对带尾段文件照常工作（忽略尾段）
+		Assert.True(ErbIrCache.TryReadFileList(irPath, out _, out var t1Simple));
+		Assert.Equal(tree, t1Simple);
+
+		// ② legacy 布局（csvTreeRels=null → 不写尾段，与 14 之前字节兼容）
+		Assert.True(ErbIrCache.TryWriteFileList(irPath, pending, tree));
+		Assert.True(ErbIrCache.TryReadFileListFull(irPath, out var p2, out var t2, out var c2, out var legacy2));
+		Assert.True(legacy2);
+		Assert.Null(c2);
+		Assert.Equal(pending, p2);
+		Assert.Equal(tree, t2);
+		Assert.True(ErbIrCache.TryReadFileList(irPath, out var p2Simple, out var t2Simple));
+		Assert.Equal(pending, p2Simple);
+		Assert.Equal(tree, t2Simple);
+
+		// ③ 新格式 + 尾部杂字节 = 损坏（不再被当作合法尾段）
+		using (var fs = File.Open(ErbIrCache.GetFileListPath(irPath), FileMode.Append))
+			fs.WriteByte(0xFF);
+		Assert.False(ErbIrCache.TryReadFileListFull(irPath, out _, out _, out _, out _));
+	}
+
+	[Fact]
+	public void CombinePaths_default_matches_CombinePath_loop()
+	{
+		// issues/14 A1：DIM 默认实现 ≡ 逐条 CombinePath（所有未重写批量的实现的行为契约，
+		// 也是 replay/SeedTreeMemo 换装后的等价性兜底）。
+		var accessor = new FileSystemGameDirAccessor();
+		var basePath = Path.Combine(Path.GetTempPath(), "emuera-cp-" + Guid.NewGuid().ToString("N"));
+		string[] rels = ["TOP.ERB", "SYS\\A.ERB", "SYS\\EVT\\B.ERB", "SUB.ERH"];
+		// DIM 只能经接口分派调用（类类型上不可见）——生产调用点（Preload/ErbLoader）恰都以接口持有。
+		IGameDirAccessor accessorItf = accessor;
+		var batched = accessorItf.CombinePaths(basePath, rels);
+		Assert.Equal(rels.Length, batched.Count);
+		for (int i = 0; i < rels.Length; i++)
+			Assert.Equal(accessor.CombinePath(basePath, rels[i]), batched[i]);
+	}
+
+	[Fact]
 	public void TryDeleteCache_removes_ir_and_sidecar_local_layout()
 	{
 		using var scope = OpenScope();

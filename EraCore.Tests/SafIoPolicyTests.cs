@@ -38,96 +38,29 @@ public class SafIoPolicyTests
             ["Utils/PluginSystem/PluginManager.cs"] = "阶段 3：Android 插件策略",
         };
 
-    // 行号基线是有意严格的：修改含裸 I/O 的代码时，必须重新确认其 SAF 归属。
-    private static readonly IReadOnlyDictionary<string, int> KnownDirectIoCallSites =
+    // 每文件调用总数基线（issues/14 裁定降级，2026-09-09）：原行号级基线在每次平移时产生
+    // 纯机械警报（issues/12 M4 / 13 M5 / 10-B / 14 四次平移，直连 I/O 归属从未变化）。
+    // 降级为每文件总数后仍能抓住两类真问题——「白名单文件内新增直连调用」（计数上涨）、
+    // 「新文件直连」（文件级白名单拦下）；行号平移不再触发。基线 = 上限：删除调用（计数
+    // 下降）无需改基线（与本文件原注释惯例一致）；超出必须先作出明确的 SAF 设计决定。
+    // 基线值 = 2026-09-09 用测试同款规则实测（scan 脚本见 .scratch/diagnostic-knobs/scan_direct_io.py）。
+    private static readonly IReadOnlyDictionary<string, int> KnownDirectIoCallCounts =
         new Dictionary<string, int>(StringComparer.Ordinal)
         {
-            // （issues/12 M4 前移行号基线：ConfigData +3 行（IrFirstDirList 两处 ConfigItem）、
-            //   ErbIrCache +21 行（v2 头/清单区/文档）——直连 I/O 调用点归属逐一复核未变）
-            // （issues/13 M5 前移行号基线：ConfigData +2 行（IrFileListCache ConfigItem）——
-            //   直连 I/O 调用点归属逐一复核未变，纯行号平移）
-            // （issues/10 10-B 前移行号基线：ConfigData +2 行（SrcContentCache ConfigItem）——
-            //   直连 I/O 调用点归属逐一复核未变，纯行号平移）
-            ["Config/ConfigData.cs:943"] = 1,
-            ["Config/ConfigData.cs:990"] = 1,
-            ["Config/ConfigData.cs:991"] = 1,
-            ["Config/ConfigData.cs:995"] = 1,
-            ["Config/ConfigData.cs:998"] = 1,
-            ["Config/ConfigData.cs:1055"] = 1,
-            ["Config/ConfigData.cs:1062"] = 1,
-            ["Config/ConfigData.cs:1063"] = 1,
-            ["Config/ConfigData.cs:1069"] = 1,
-            ["Config/ConfigData.cs:1076"] = 1,
-            ["Config/ConfigData.cs:1077"] = 1,
-            ["Config/ConfigData.cs:1078"] = 1,
-            ["Config/ConfigData.cs:1080"] = 1,
-            ["Config/JSON/JSONConfig.cs:20"] = 1,
-            ["Config/JSON/JSONConfig.cs:22"] = 1,
-            ["Config/JSON/JSONConfig.cs:26"] = 1,
-            ["Config/JSON/JSONConfig.cs:30"] = 1,
-            ["Config/JSON/JSONConfig.cs:34"] = 1,
-            ["Config/JSON/JSONConfig.cs:36"] = 1,
-            ["Config/JSON/JSONConfig.cs:48"] = 1,
-            ["Config/JSON/JSONConfig.cs:49"] = 1,
-            ["Script/Data/ConstantData.cs:224"] = 1,
-            ["Script/Data/ConstantData.cs:1714"] = 1,
-            // （issues/13 M5：ErbIrCache +清单 sidecar 读写与 TryDeleteCache——全部落在 appdata
-            //   IRCache 布局与本地 _IRCache（真实文件系统），content-URI 永不直连，归属同孤儿清理；
-            //   +gameKey 解码规范化 +10 行（NormalizeExeDirForKey），直连 I/O 行号整体平移：
-            //   CleanupOrphans 四调用点现居 356/359/366/372）
-            // （issues/10 10-B 前移行号基线：ErbIrCache +GetSrcCachePath/+TryDeleteCache 扩 era_src.dat
-            //   +13 行——直连 I/O 调用点归属逐一复核未变，纯行号平移，CleanupOrphans 四点现居 369/372/379/385）
-            ["Script/Loader/ErbIrCache.cs:231"] = 1,
-            ["Script/Loader/ErbIrCache.cs:233"] = 1,
-            ["Script/Loader/ErbIrCache.cs:277"] = 1,
-            ["Script/Loader/ErbIrCache.cs:291"] = 1,
-            ["Script/Loader/ErbIrCache.cs:322"] = 2,
-            ["Script/Loader/ErbIrCache.cs:334"] = 1,
-            ["Script/Loader/ErbIrCache.cs:335"] = 1,
-            ["Script/Loader/ErbIrCache.cs:369"] = 1,
-            ["Script/Loader/ErbIrCache.cs:372"] = 1,
-            ["Script/Loader/ErbIrCache.cs:379"] = 1,
-            ["Script/Loader/ErbIrCache.cs:385"] = 1,
-            // （issues/10 10-B：SrcContentCache——era_src.dat 只落 appdata IRCache/<gameKey>/
-            //   （真实文件系统，目录自建 + tmp 原子替换 + 损坏自愈删除）；游戏内容永远经 accessor，
-            //   content-URI 不直连。归属同 ErbIrCache app 私有存储布局。
-            //   路线 2 改版（2026-09-09 用户裁定）：v2 扁平格式，元数据校验拆除）
-            ["Script/Loader/SrcContentCache.cs:148"] = 1,
-            ["Script/Loader/SrcContentCache.cs:150"] = 1,
-            ["Script/Loader/SrcContentCache.cs:157"] = 1,
-            ["Script/Loader/SrcContentCache.cs:159"] = 1,
-            ["Script/Loader/SrcContentCache.cs:165"] = 1,
-            ["Script/Loader/SrcContentCache.cs:203"] = 1,
-            ["Script/Loader/SrcContentCache.cs:208"] = 1,
-            ["Script/Loader/SrcContentCache.cs:239"] = 1,
-            ["Script/Statements/Instraction.Child.cs:2715"] = 1,
-            ["Script/Statements/Instraction.Child.cs:2779"] = 1,
-            ["Utils/EncodingHandler.cs:22"] = 1,
-            ["Utils/EncodingHandler.cs:84"] = 1,
-            ["Utils/SafCompat.cs:28"] = 1,
-            ["Utils/SafCompat.cs:34"] = 1,
-            ["Utils/SafCompat.cs:40"] = 1,
-            ["Utils/SafCompat.cs:46"] = 1,
-            ["Utils/SafCompat.cs:65"] = 1,
-            ["Utils/SafCompat.cs:78"] = 1,
-            ["Utils/SafCompat.cs:79"] = 1,
-            ["Utils/SafCompat.cs:88"] = 2,
-            ["Utils/SafCompat.cs:94"] = 1,
-            ["Utils/SafCompat.cs:101"] = 1,
-            ["Utils/SafCompat.cs:107"] = 1,
-            ["Utils/SafCompat.cs:113"] = 1,
-            ["Utils/SafCompat.cs:120"] = 1,
-            ["Utils/SafCompat.cs:128"] = 1,
-            ["Utils/SafCompat.cs:129"] = 1,
-            ["Utils/SafCompat.cs:210"] = 1,
-            ["Utils/SafCompat.cs:233"] = 1,
-            ["Utils/SafCompat.cs:234"] = 1,
-            ["Utils/SafCompat.cs:235"] = 1,
-            ["Utils/Sys.cs:16"] = 1,
-            ["Utils/EvilMask/Utils.cs:243"] = 1,
-            ["Utils/PluginSystem/PluginManager.cs:288"] = 1,
-            ["Utils/PluginSystem/PluginManager.cs:294"] = 1,
-            ["Utils/PluginSystem/PluginManager.cs:295"] = 1,
+            ["Config/ConfigData.cs"] = 13,
+            ["Config/JSON/JSONConfig.cs"] = 8,
+            ["Script/Data/ConstantData.cs"] = 2,
+            ["Script/Loader/ErbIrCache.cs"] = 12,
+            ["Script/Loader/SrcContentCache.cs"] = 8,
+            // 历史遗留：行号基线曾登记 2 处（:2715/:2779），现实际为 0（调用已移除、行号基线陈旧）。
+            // 显式登记 0：未来该文件新增调用时按「超出基线」报错并附带归属理由。
+            ["Script/Statements/Instraction.Child.cs"] = 0,
+            ["Utils/EncodingHandler.cs"] = 2,
+            ["Utils/SafCompat.cs"] = 20,
+            ["Utils/Sys.cs"] = 1,
+            ["Utils/EvilMask/Lang.cs"] = 0,
+            ["Utils/EvilMask/Utils.cs"] = 1,
+            ["Utils/PluginSystem/PluginManager.cs"] = 3,
         };
 
     [Fact]
@@ -135,6 +68,7 @@ public class SafIoPolicyTests
     {
         var runtimeDir = Path.Combine(FindRepositoryRoot(), "EraCore.Core", "Shared", "Runtime");
         var violations = new List<string>();
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var path in Directory.EnumerateFiles(runtimeDir, "*.cs", SearchOption.AllDirectories))
         {
             var lines = File.ReadAllLines(path);
@@ -146,21 +80,26 @@ public class SafIoPolicyTests
                     || line.StartsWith("/*", StringComparison.Ordinal)
                     || line.StartsWith("*", StringComparison.Ordinal))
                     continue;
-                var directIoCalls = DirectIo.Matches(line).Count;
-                if (directIoCalls == 0)
-                    continue;
-                if (!KnownDirectIoFiles.TryGetValue(relativePath, out var reason))
-                {
-                    violations.Add($"{relativePath}:{index + 1}: {directIoCalls} new direct I/O call(s); no SAF classification exists.");
-                    continue;
-                }
+                counts[relativePath] = counts.GetValueOrDefault(relativePath) + DirectIo.Matches(line).Count;
+            }
+        }
 
-                var callSite = $"{relativePath}:{index + 1}";
-                if (!KnownDirectIoCallSites.TryGetValue(callSite, out var allowedCalls)
-                    || directIoCalls > allowedCalls)
-                {
-                    violations.Add($"{callSite}: {directIoCalls} call(s) is outside the explicit baseline ({reason}).");
-                }
+        foreach (var (relativePath, actual) in counts.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            // 0 调用文件不进入判定（旧实现的同款跳过）——否则全仓未白名单文件都会误报。
+            if (actual == 0)
+                continue;
+            if (!KnownDirectIoFiles.TryGetValue(relativePath, out var reason))
+            {
+                violations.Add($"{relativePath}: {actual} new direct I/O call(s); no SAF classification exists.");
+                continue;
+            }
+
+            // 未登记文件 = 基线 0；实际 ≤ 基线（删除无需改基线）不报，超出才拦。
+            var allowed = KnownDirectIoCallCounts.GetValueOrDefault(relativePath);
+            if (actual > allowed)
+            {
+                violations.Add($"{relativePath}: {actual} call(s) exceeds documented baseline {allowed} ({reason}).");
             }
         }
 

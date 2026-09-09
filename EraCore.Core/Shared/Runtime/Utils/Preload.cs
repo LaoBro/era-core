@@ -146,10 +146,13 @@ static partial class Preload
     {
         if (relNames.Count == 0 || s_treeFiles.ContainsKey(rootDir))
             return;
-        var full = new List<string>(relNames.Count);
-        foreach (var rel in relNames)
-            full.Add(dirAccessor.CombinePath(rootDir, rel.Replace('\\', '/')));
-        s_treeFiles[rootDir] = full;
+        // issues/14 A1：批量拼接——SAF 逐条 CombinePath 曾占播种 ~1.4s（2532 次 Parse+ResolveDocId
+        // 重复），批量后基座解析一次。顺序与逐条一致（CombinePaths 契约）。
+        var normalized = new string[relNames.Count];
+        for (int i = 0; i < relNames.Count; i++)
+            normalized[i] = relNames[i].Replace('\\', '/');
+        var full = dirAccessor.CombinePaths(rootDir, normalized);
+        s_treeFiles[rootDir] = new List<string>(full);
     }
 
     /// <summary>issues/13 M5：建库轮收尾取全树清单（写 sidecar ② 区用）。memo 未填充（空树等）返回 false。</summary>

@@ -177,10 +177,18 @@ internal sealed class ErbLoader
 			// S0-M6（空档取证，2026-09-09）：回放 = 2388 次 DirAccessor.CombinePath（SAF URI 重建，
 			// 真机 ~0.3ms/次 ≈ 750ms/轮 × 命中轮两次 prehit+LoadErbDir）——单独计时验证是否值得做
 			// tree URI 前缀缓存（同一父目录只 BuildDocumentUriUsingTree 一次，尾段 documentId 拼接）。
+			// issues/14 A1：取证确认（两轮 combine=1135/364ms 全归属）→ 换 CombinePaths 批量 +
+			// SAF 基座记忆化，探针保留作前后对照。
 			var combineSw = Stopwatch.StartNew();
+			var rels = new string[fileListOverride.Count];
+			for (int i = 0; i < fileListOverride.Count; i++)
+				rels[i] = SafPath.IsContentUri(env.ErbDir)
+					? fileListOverride[i].RelToRoot.Replace('\\', '/')
+					: fileListOverride[i].RelToRoot;
+			var physical = env.DirAccessor.CombinePaths(env.ErbDir, rels);
 			var replayed = new List<(string Filename, string File)>(fileListOverride.Count);
-			foreach (var (logical, relToRoot) in fileListOverride)
-				replayed.Add((logical, ResolveFirstDirPath(env, relToRoot)));
+			for (int i = 0; i < fileListOverride.Count; i++)
+				replayed.Add((fileListOverride[i].Logical, physical[i]));
 			combineSw.Stop();
 			sw.Stop();
 			EmueraLog.Info("ErbLoader",
@@ -283,11 +291,13 @@ internal sealed class ErbLoader
 			//（本地路径真实 stat 自愈，不走回放——2026-09-09 用户裁定 Windows/CLI 保留自动失效）。
 			List<(string Logical, string RelToRoot)>? irFileList = null;
 			List<string>? irTreeRels = null;
+			List<string>? irCsvTreeRels = null;
 			if (Config.Config.IrFileListCache && SafPath.IsContentUri(env.ErbDir)
-				&& ErbIrCache.TryReadFileList(irPath, out var flPending, out var flTree))
+				&& ErbIrCache.TryReadFileListFull(irPath, out var flPending, out var flTree, out var flCsv, out _))
 			{
 				irFileList = flPending;
 				irTreeRels = flTree;
+				irCsvTreeRels = flCsv;
 			}
 		var pending = BuildPendingList(env, irFirstDirs, out var firstDirsUsed, out _, irFileList);
 		// S0-M6（空档取证，2026-09-09）：BPL#1 done → pre-hit 行之间真机实测 ~1.4s 无日志盲区——
@@ -305,11 +315,15 @@ internal sealed class ErbLoader
 		{
 			// issues/13 M5：命中轮播种树枚举 memo——IndexTree / ErhLoader（.erh 同走 memo）免冷枚举。
 			// 唯一播种点（miss 轮不播种，防陈旧清单污染后续真实枚举；Preload.Clear 已在本判定前跑过）。
+			// issues/14 B：双根播种——ERB 根 + CSV 根（兄弟目录，sidecar CSV 尾段非 null 时；
+			// legacy sidecar 无尾段 → CSV 维持冷枚举，命中轮收尾自愈重写）。SeedTreeMemo 幂等（已有 memo 跳过）。
 			var seedSw = System.Diagnostics.Stopwatch.StartNew();
 			Preload.SeedTreeMemo(env.ErbDir, irTreeRels, env.DirAccessor);
+			if (irCsvTreeRels != null)
+				Preload.SeedTreeMemo(env.CsvDir, irCsvTreeRels, env.DirAccessor);
 			seedSw.Stop();
 			seedMs = seedSw.ElapsedMilliseconds;
-			seedCount = irTreeRels.Count;
+			seedCount = irTreeRels.Count + (irCsvTreeRels?.Count ?? 0);
 		}
 		EmueraLog.Info("ErbIrCache",
 			$"prehit breakdown: fp={fpSw.ElapsedMilliseconds}ms tryload={tryLoadSw.ElapsedMilliseconds}ms " +
@@ -413,9 +427,15 @@ internal sealed class ErbLoader
 		List<string>? irFirstDirs =
 			irEnabled && Config.Config.IrFirstDirList && ErbIrCache.TryReadFirstDirs(irPath, out var loadFd) ? loadFd : null;
 		// issues/13 M5：sidecar 清单（与 IsIrHitRound 同源同拨；陈旧自愈见下方 discard-rescan 分支）。
-		List<(string Logical, string RelToRoot)>? irFileList =
-			irEnabled && Config.Config.IrFileListCache && SafPath.IsContentUri(env.ErbDir)
-			&& ErbIrCache.TryReadFileList(irPath, out var loadFl, out _) ? loadFl : null;
+		// issues/14 B：legacy 标记供命中轮收尾自愈重写（CSV 尾段缺失 → CSV 冷枚举一次后升级格式）。
+		List<(string Logical, string RelToRoot)>? irFileList = null;
+		bool irSidecarLegacy = false;
+		if (irEnabled && Config.Config.IrFileListCache && SafPath.IsContentUri(env.ErbDir)
+			&& ErbIrCache.TryReadFileListFull(irPath, out var loadFl, out _, out _, out var loadLegacy))
+		{
+			irFileList = loadFl;
+			irSidecarLegacy = loadLegacy;
+		}
 		// issue 09：待载清单构建唯一路径（缓存命中轮与启动 IR 预判定共用；命中轮无缓存 →
 		// Preload 语义枚举，见 <see cref="BuildPendingList"/>）。
 		List<(string Filename, string File)> pending = BuildPendingList(env, irFirstDirs, out List<string> firstDirs, out int erbFileCount, irFileList);
@@ -545,10 +565,39 @@ internal sealed class ErbLoader
 					var treeRels = new List<string>(treeFiles.Count);
 					foreach (var f in treeFiles)
 						treeRels.Add(SafPath.GetRelativePathFromRoot(env.ErbDir, f));
-					if (ErbIrCache.TryWriteFileList(irPath, pendingRels, treeRels))
+					// issues/14 B：CSV 树尾段——建库轮 CSV memo 已由 LoadTreesAsync 填充，顺手取相对名；
+					// memo 未填充（CSV 目录缺失等）→ 传 null 写 legacy 布局，命中轮自愈兜底。
+					List<string>? csvTreeRels = null;
+					if (Preload.TryGetTreeFiles(env.CsvDir, out var csvTreeFiles))
+					{
+						csvTreeRels = new List<string>(csvTreeFiles.Count);
+						foreach (var f in csvTreeFiles)
+							csvTreeRels.Add(SafPath.GetRelativePathFromRoot(env.CsvDir, f));
+					}
+					if (ErbIrCache.TryWriteFileList(irPath, pendingRels, treeRels, csvTreeRels))
 						EmueraLog.Info("ErbIrCache",
-							$"ir fileList sidecar written: pending={pendingRels.Count} tree={treeRels.Count}");
+							$"ir fileList sidecar written: pending={pendingRels.Count} tree={treeRels.Count} csvTree={csvTreeRels?.Count.ToString() ?? "absent"}");
 				}
+			}
+			else if (_ir is { Available: true } && irSidecarLegacy && SafPath.IsContentUri(env.ErbDir)
+				&& Preload.TryGetTreeFiles(env.ErbDir, out var healTree)
+				&& Preload.TryGetTreeFiles(env.CsvDir, out var healCsv))
+			{
+				// issues/14 B：legacy sidecar 命中轮自愈——本命中轮 CSV 冷枚举（484ms）已把 CSV memo
+				// 填好（ERB memo 由播种填充），数据齐了就地升级格式，legacy 用户只付一次冷枚举。
+				// 失败无害（下次命中轮再试；legacy 读语义永不劣化于 14 之前）。
+				var pendingRels = new List<(string Logical, string RelToRoot)>(pending.Count);
+				foreach (var (logical, physical) in pending)
+					pendingRels.Add((logical, SafPath.GetRelativePathFromRoot(env.ErbDir, physical)));
+				var treeRels = new List<string>(healTree.Count);
+				foreach (var f in healTree)
+					treeRels.Add(SafPath.GetRelativePathFromRoot(env.ErbDir, f));
+				var csvRels = new List<string>(healCsv.Count);
+				foreach (var f in healCsv)
+					csvRels.Add(SafPath.GetRelativePathFromRoot(env.CsvDir, f));
+				if (ErbIrCache.TryWriteFileList(irPath, pendingRels, treeRels, csvRels))
+					EmueraLog.Info("ErbIrCache",
+						$"ir fileList sidecar upgraded (legacy→csv): pending={pendingRels.Count} tree={treeRels.Count} csvTree={csvRels.Count}");
 			}
 
 #if DEBUG
