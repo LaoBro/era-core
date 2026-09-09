@@ -174,13 +174,19 @@ internal sealed class ErbLoader
 			firstDirScanMs = -1;
 			firstDirs = firstDirOverride ?? [];
 			erbFileCount = fileListOverride.Count;
+			// S0-M6（空档取证，2026-09-09）：回放 = 2388 次 DirAccessor.CombinePath（SAF URI 重建，
+			// 真机 ~0.3ms/次 ≈ 750ms/轮 × 命中轮两次 prehit+LoadErbDir）——单独计时验证是否值得做
+			// tree URI 前缀缓存（同一父目录只 BuildDocumentUriUsingTree 一次，尾段 documentId 拼接）。
+			var combineSw = Stopwatch.StartNew();
 			var replayed = new List<(string Filename, string File)>(fileListOverride.Count);
 			foreach (var (logical, relToRoot) in fileListOverride)
 				replayed.Add((logical, ResolveFirstDirPath(env, relToRoot)));
+			combineSw.Stop();
 			sw.Stop();
 			EmueraLog.Info("ErbLoader",
 				$"BuildPendingList ms={sw.ElapsedMilliseconds} files={replayed.Count} firstDirs={firstDirs.Count} " +
-				$"firstDirScanMs=-1 src=ir fileListSrc=list({fileListOverride.Count})");
+				$"firstDirScanMs=-1 src=ir fileListSrc=list({fileListOverride.Count}) " +
+				$"combine={combineSw.ElapsedMilliseconds}ms(n={fileListOverride.Count})");
 			return replayed;
 		}
 		if (firstDirOverride != null)
@@ -283,15 +289,31 @@ internal sealed class ErbLoader
 				irFileList = flPending;
 				irTreeRels = flTree;
 			}
-			var pending = BuildPendingList(env, irFirstDirs, out var firstDirsUsed, out _, irFileList);
-			long fp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic, firstDirsUsed);
-			bool hit = ErbIrCache.TryLoad(irPath, fp, out _);
-			if (hit && irTreeRels != null)
-			{
-				// issues/13 M5：命中轮播种树枚举 memo——IndexTree / ErhLoader（.erh 同走 memo）免冷枚举。
-				// 唯一播种点（miss 轮不播种，防陈旧清单污染后续真实枚举；Preload.Clear 已在本判定前跑过）。
-				Preload.SeedTreeMemo(env.ErbDir, irTreeRels, env.DirAccessor);
-			}
+		var pending = BuildPendingList(env, irFirstDirs, out var firstDirsUsed, out _, irFileList);
+		// S0-M6（空档取证，2026-09-09）：BPL#1 done → pre-hit 行之间真机实测 ~1.4s 无日志盲区——
+		// 三步分账：fp（content URI 走 stat 降级，预期纯内存毫秒级）/ TryLoad（IR 索引区 ~14647 条
+		// entry 读取）/ SeedTreeMemo（逐条 CombinePath 播种，与 BPL replay 同款开销模式）。
+		var fpSw = System.Diagnostics.Stopwatch.StartNew();
+		long fp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic, firstDirsUsed);
+		fpSw.Stop();
+		var tryLoadSw = System.Diagnostics.Stopwatch.StartNew();
+		bool hit = ErbIrCache.TryLoad(irPath, fp, out _);
+		tryLoadSw.Stop();
+		long seedMs = -1;
+		int seedCount = 0;
+		if (hit && irTreeRels != null)
+		{
+			// issues/13 M5：命中轮播种树枚举 memo——IndexTree / ErhLoader（.erh 同走 memo）免冷枚举。
+			// 唯一播种点（miss 轮不播种，防陈旧清单污染后续真实枚举；Preload.Clear 已在本判定前跑过）。
+			var seedSw = System.Diagnostics.Stopwatch.StartNew();
+			Preload.SeedTreeMemo(env.ErbDir, irTreeRels, env.DirAccessor);
+			seedSw.Stop();
+			seedMs = seedSw.ElapsedMilliseconds;
+			seedCount = irTreeRels.Count;
+		}
+		EmueraLog.Info("ErbIrCache",
+			$"prehit breakdown: fp={fpSw.ElapsedMilliseconds}ms tryload={tryLoadSw.ElapsedMilliseconds}ms " +
+			$"seed={seedMs}ms(n={seedCount})");
 			// issue 09 真机排障（launch6 fp 分歧）：指纹 = 文件集合 + firstDir 清单 + 解析配置集 + Rename 表——
 			// 打印输入快照便于与 LoadErbDir 的 ir hit 行逐项对比定位漂移来源。
 			EmueraLog.Info("ErbIrCache",

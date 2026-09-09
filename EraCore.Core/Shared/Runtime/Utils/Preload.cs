@@ -180,8 +180,11 @@ static partial class Preload
         if (filtered.Count > 0)
         {
             s_treeFiles[path] = filtered;
+            // S0-M6（空档取证，2026-09-09）：seedKeys>0 且仍 miss = 播种 key 与查询 key 错位
+            //（SeedTreeMemo 播种在 env.ErbDir，CSV/ERH 子树查询走各自子目录 key）——
+            // 证实「sidecar 全树清单为何没救 CSV 冷枚举（TreeEnum 473ms）」的根因归属。
             EmueraLog.Info("preload",
-                $"TreeEnum root={SafPath.GetLogicalFileName(path)} files={filtered.Count} ms={sw.ElapsedMilliseconds} memo=miss");
+                $"TreeEnum root={SafPath.GetLogicalFileName(path)} files={filtered.Count} ms={sw.ElapsedMilliseconds} memo=miss seedKeys={s_treeFiles.Count}");
         }
         return filtered;
     }
