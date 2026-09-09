@@ -336,11 +336,11 @@ dotnet test EraCore.Maui.Tests/EraCore.Maui.Tests.csproj
 # 前端测试（Vitest，13 个测试文件，224 用例）
 cd EraCore.Web && npm test
 
-# Python 端到端（使用 test_game）
-python tests/test_jsonl.py --binary D:/LaoBro/Emuera.MCP/EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe --game-dir test_game
+# Python 端到端（使用 test_game；相对路径基于仓库根，binary 缺省时脚本会自动查找）
+python tests/test_jsonl.py --binary EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe --game-dir test_game
 
 # 全部回归测试（先 C# 单测+构建，再全量 Python 套件，14 套件）
-python tests/run_all.py --binary D:/LaoBro/Emuera.MCP/EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe --game-dir test_game
+python tests/run_all.py --binary EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe --game-dir test_game
 ```
 
 `tests/README.md` 是测试的权威文档。

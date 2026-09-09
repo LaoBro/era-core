@@ -72,7 +72,7 @@ python tests/run_all.py --binary EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe -
 在 Windows 命令行中，如果相对路径启动失败，请使用绝对路径，例如：
 
 ```bash
-D:/LaoBro/Emuera.MCP/EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe
+D:/LaoBro/era-core/EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe
 ```
 
 ## JSONL 协议测试
