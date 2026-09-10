@@ -150,7 +150,7 @@ static partial class Preload
         // 重复），批量后基座解析一次。顺序与逐条一致（CombinePaths 契约）。
         var normalized = new string[relNames.Count];
         for (int i = 0; i < relNames.Count; i++)
-            normalized[i] = relNames[i].Replace('\\', '/');
+            normalized[i] = SafPath.RelToPhysical(relNames[i]);
         var full = dirAccessor.CombinePaths(rootDir, normalized);
         s_treeFiles[rootDir] = new List<string>(full);
     }

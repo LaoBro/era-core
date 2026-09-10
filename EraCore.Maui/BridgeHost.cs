@@ -17,6 +17,7 @@ using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Script.Loader;
+using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.Server;
 using MinorShift.Emuera.Terminal.Platform;
 
@@ -1005,23 +1006,31 @@ internal sealed class BridgeHost : IDisposable
     }
 
     /// <summary>
-    /// 按主目录路径选择正确的文件访问器。
-    /// Android SAF 的 <c>content://</c> URI 必须使用持久化的 SAF accessor；
-    /// 传统路径则使用当前游戏 accessor（或本地文件系统 fallback）。
+    /// 按主目录路径形态选择正确的文件访问器——形态是唯一判据，不复用任何既有状态。
+    /// Android SAF 的 <c>content://</c> URI 必须使用持久化的 SAF accessor；真实路径一律走
+    /// <see cref="FileSystemGameDirAccessor"/>。
     /// </summary>
+    /// <remarks>
+    /// issues/15：原先「非 content 路径复用 <c>GamePaths.Current?.DirAccessor</c>」是 bug——
+    /// 上一局若加载的是 SAF 游戏，<c>Current.DirAccessor</c> 留存 <see cref="SafGameDirAccessor"/>，
+    /// 此时对 legacy 真实路径主目录重扫会把真实路径喂给 SAF accessor（其 CombinePath /
+    /// ResolveDocId 全程假设 content URI）→ 必然失败。形态一致才谈复用，这里直接不复用。
+    /// </remarks>
     // internal：MainPage 的控制面 scan 实现（issues/13 M6）复用同一套 accessor 选择逻辑，
     // 避免"HTTP 端点用文件系统 accessor、UI 用 SAF accessor"两份分叉。
     internal static IGameDirAccessor ResolveDirAccessor(string? rootDir)
     {
-        if (rootDir?.StartsWith("content://", StringComparison.Ordinal) == true)
+        if (SafPath.IsContentUri(rootDir))
         {
 #if ANDROID
             if (SafGameDirAccessor.Instance is { } safAccessor)
                 return safAccessor;
 #endif
+            // 非 Android 平台（Windows）不会产出 content URI——此分支实际不可达。
+            // 落到下面的 FileSystem 仅为防御（不为 null 破坏调用方），不是"content URI 可用 FileSystem 读"。
         }
 
-        return GamePaths.Current?.DirAccessor ?? new FileSystemGameDirAccessor();
+        return new FileSystemGameDirAccessor();
     }
 
     /// <summary>
@@ -1169,9 +1178,13 @@ internal sealed class BridgeHost : IDisposable
     {
         bool granted;
 #if ANDROID
-        // ADR-0019：SAF 替代了 MANAGE_EXTERNAL_STORAGE，不需要存储权限。
-        // 始终返 granted=true，让 Vue 跳过 PermissionGuide 直接进入游戏列表。
-        granted = true;
+        // issues/15：MANAGE_EXTERNAL_STORAGE（「所有文件访问」）授权流程复活——真读系统状态
+        //（Settings 特殊应用权限开关 / appops 授权后为 true）。声明已回补 AndroidManifest。
+        // API <30 无「所有文件访问」概念（scoped storage 之前），按已授权处理。
+        if (OperatingSystem.IsAndroidVersionAtLeast(30))
+            granted = Android.OS.Environment.IsExternalStorageManager;
+        else
+            granted = true;
 #else
         // Windows MAUI 不检查 Android 权限——默认视为已授权
         granted = true;
@@ -1578,10 +1591,57 @@ internal sealed class BridgeHost : IDisposable
     /// </summary>
     private void HandleRequestPermission()
     {
-        // ADR-0019：SAF 替代了 MANAGE_EXTERNAL_STORAGE，不需要跳转系统设置。
-        // 此方法保留为空操作——Vue 因 permissionStatus 永远 granted 已不会调用。
-        Console.WriteLine("[bridge] HandleRequestPermission: no-op (SAF replaces MANAGE_EXTERNAL_STORAGE)");
-        AgentLog.Instance.Write("[bridge] HandleRequestPermission: no-op (SAF replaces MANAGE_EXTERNAL_STORAGE)");
+#if ANDROID
+        // issues/15：拉起「所有文件访问」专用设置页。AOSP 有两个动作常量，ROM 支持面不一：
+        // - MANAGE_APP_ALL_FILES_ACCESS_PERMISSION（API 30+，data=package: uri → 直达本应用开关页）
+        // - MANAGE_ALL_FILES_ACCESS_PERMISSION（API 30+，列表页——部分 ROM 只注册这个）
+        // 逐个尝试，全部失败回退应用详情页（用户手动找「特殊应用权限」）。
+        // 日志走 Android.Util.Log（Console 在真机 Release 不进 logcat，取证期必须可观测）。
+        if (OperatingSystem.IsAndroidVersionAtLeast(30))
+        {
+            var packageName = Android.App.Application.Context.PackageName;
+            string[] actions =
+            [
+                Android.Provider.Settings.ActionManageAppAllFilesAccessPermission,
+                Android.Provider.Settings.ActionManageAllFilesAccessPermission,
+            ];
+            foreach (var action in actions)
+            {
+                try
+                {
+                    var intent = new Android.Content.Intent(
+                        action, Android.Net.Uri.Parse($"package:{packageName}"));
+                    intent.AddFlags(Android.Content.ActivityFlags.NewTask);
+                    Android.App.Application.Context.StartActivity(intent);
+                    Android.Util.Log.Info("EmueraMaui",
+                        $"[bridge] HandleRequestPermission: launched {action}");
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    Android.Util.Log.Warn("EmueraMaui",
+                        $"[bridge] HandleRequestPermission: {action} failed: {ex.Message}");
+                }
+            }
+            Android.Util.Log.Warn("EmueraMaui",
+                "[bridge] HandleRequestPermission: all dedicated actions failed → app details fallback");
+        }
+        try
+        {
+            var fallback = new Android.Content.Intent(
+                Android.Provider.Settings.ActionApplicationDetailsSettings,
+                Android.Net.Uri.Parse($"package:{Android.App.Application.Context.PackageName}"));
+            fallback.AddFlags(Android.Content.ActivityFlags.NewTask);
+            Android.App.Application.Context.StartActivity(fallback);
+        }
+        catch (Exception ex2)
+        {
+            Android.Util.Log.Error("EmueraMaui",
+                $"[bridge] HandleRequestPermission: fallback also failed: {ex2.Message}");
+        }
+#else
+        Console.WriteLine("[bridge] HandleRequestPermission: no-op (non-Android)");
+#endif
     }
 
     /// <summary>

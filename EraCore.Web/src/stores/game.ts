@@ -295,6 +295,12 @@ export const useGameStore = defineStore('game', () => {
   /** 最近一次 scanGames 的 rootDir——列表页底部展示「主目录: <path>」用。 */
   const scanRootDir = ref<string | null>(null);
   /**
+   * issues/15：Android「所有文件访问」（MANAGE_EXTERNAL_STORAGE）授权状态——
+   * null = 未知（未查询过）。由 permissionStatus 消息（checkPermission 回复）写入，
+   * MauiGameList 菜单项据此渲染「已授权 / 申请」。
+   */
+  const allFilesAccess = ref<boolean | null>(null);
+  /**
    * game-library spec ID13：最近一次 scanGames 的 rootDir 是否存在——
    * C# HandleScanGames 通过 IGameDirAccessor.DirectoryExists(rootDir) 检查后，
    * 经 gamesScanned 消息携带。
@@ -1261,6 +1267,11 @@ export const useGameStore = defineStore('game', () => {
     mauiError.value = null;
   }
 
+  /** issues/15：写入「所有文件访问」授权状态——permissionStatus 消息（checkPermission 回复）触发。 */
+  function setAllFilesAccess(granted: boolean): void {
+    allFilesAccess.value = granted;
+  }
+
   /** 设置游戏静默状态提示——前端静默监控收到 gameThreadStatus 回复时调用。 */
   function setGameStatusHint(hint: 'running' | 'stopped'): void {
     gameStatusHint.value = hint;
@@ -1522,6 +1533,9 @@ export const useGameStore = defineStore('game', () => {
     lastPlayedGame,
     scannedGames,
     scanRootDir,
+    // issues/15：Android「所有文件访问」授权状态
+    allFilesAccess,
+    setAllFilesAccess,
     scanRootDirExists,
     scanStatus,
     exitStatus,

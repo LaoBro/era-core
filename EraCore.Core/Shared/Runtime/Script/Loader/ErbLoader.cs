@@ -182,9 +182,10 @@ internal sealed class ErbLoader
 			var combineSw = Stopwatch.StartNew();
 			var rels = new string[fileListOverride.Count];
 			for (int i = 0; i < fileListOverride.Count; i++)
-				rels[i] = SafPath.IsContentUri(env.ErbDir)
-					? fileListOverride[i].RelToRoot.Replace('\\', '/')
-					: fileListOverride[i].RelToRoot;
+				// issues/15 §0.3：一律归一到本平台分隔符。原写法只在 content URI 分支归一、
+				// 本地分支原样使用；而 sidecar 的存储契约是 `\` 分隔，Android legacy 下 `\`
+				// 不是分隔符 → 拼出 `erb/ABL\ABL.ERB` 死路径，且物理路径进指纹会让 fp 分叉永 miss。
+				rels[i] = SafPath.RelToPhysical(fileListOverride[i].RelToRoot);
 			var physical = env.DirAccessor.CombinePaths(env.ErbDir, rels);
 			var replayed = new List<(string Filename, string File)>(fileListOverride.Count);
 			for (int i = 0; i < fileListOverride.Count; i++)
@@ -287,12 +288,14 @@ internal sealed class ErbLoader
 			// FALSE = 恒扫描）；无 v2 IR / 损坏 → null → 照旧扫描。清单正确性由 fp（含清单）判定。
 			List<string>? irFirstDirs =
 				Config.Config.IrFirstDirList && ErbIrCache.TryReadFirstDirs(irPath, out var irFd) ? irFd : null;
-			// issues/13 M5：清单 sidecar（有序 pending 对 + 全树清单）。读侧受旋钮 + content-URI 门双门控
-			//（本地路径真实 stat 自愈，不走回放——2026-09-09 用户裁定 Windows/CLI 保留自动失效）。
+			// issues/13 M5：清单 sidecar（有序 pending 对 + 全树清单）。读侧受旋钮 + 形态门双门控。
+			// issues/15 §0.3：形态门由 ErbIrCache.UseFileListSidecar 统一给出——Android legacy
+			// （真实路径）也开，因为其"本地路径"是 FUSE 挂载，枚举与 SAF 同量级（真机 569ms）；
+			// 桌面仍关（2026-09-09 裁定「Windows/CLI 保留自动失效」）。
 			List<(string Logical, string RelToRoot)>? irFileList = null;
 			List<string>? irTreeRels = null;
 			List<string>? irCsvTreeRels = null;
-			if (Config.Config.IrFileListCache && SafPath.IsContentUri(env.ErbDir)
+			if (Config.Config.IrFileListCache && ErbIrCache.UseFileListSidecar(env.ErbDir)
 				&& ErbIrCache.TryReadFileListFull(irPath, out var flPending, out var flTree, out var flCsv, out _))
 			{
 				irFileList = flPending;
@@ -554,9 +557,10 @@ internal sealed class ErbLoader
 				bool irWritten = writer.Complete(irFp, firstDirs);
 				_irWriter = null;
 				// issues/13 M5：IR 落盘成功后写清单 sidecar（pending 有序对 + 全树相对名清单）。
-				// 仅 SAF 游戏（本地路径不走回放，不生成）；树清单取自本轮枚举 memo（BuildPendingList
+				// 门控 = ErbIrCache.UseFileListSidecar（issues/15 §0.3 后与读侧同口径：SAF 恒开，
+				// Android legacy 也开，桌面关）；树清单取自本轮枚举 memo（BuildPendingList
 				// 或 LoadTreesAsync 填充）。写失败无害（命中轮缺 sidecar → 回退枚举，收敛）。
-				if (irWritten && SafPath.IsContentUri(env.ErbDir)
+				if (irWritten && ErbIrCache.UseFileListSidecar(env.ErbDir)
 					&& Preload.TryGetTreeFiles(env.ErbDir, out var treeFiles))
 				{
 					var pendingRels = new List<(string Logical, string RelToRoot)>(pending.Count);
@@ -579,7 +583,7 @@ internal sealed class ErbLoader
 							$"ir fileList sidecar written: pending={pendingRels.Count} tree={treeRels.Count} csvTree={csvTreeRels?.Count.ToString() ?? "absent"}");
 				}
 			}
-			else if (_ir is { Available: true } && irSidecarLegacy && SafPath.IsContentUri(env.ErbDir)
+			else if (_ir is { Available: true } && irSidecarLegacy && ErbIrCache.UseFileListSidecar(env.ErbDir)
 				&& Preload.TryGetTreeFiles(env.ErbDir, out var healTree)
 				&& Preload.TryGetTreeFiles(env.CsvDir, out var healCsv))
 			{

@@ -271,6 +271,14 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
     return;
   }
 
+  // issues/15：「所有文件访问」授权状态（checkPermission 的回复）——写入 store 供菜单项渲染
+  if (type === 'permissionStatus') {
+    if (typeof m.granted === 'boolean') {
+      game.setAllFilesAccess(m.granted);
+    }
+    return;
+  }
+
   // game-library spec ID3 / ID10 / ID12：exitGame 处理完成——清状态 + 自动重新扫描
   if (type === 'gameExited') {
     console.log('[useAppInit] gameExited: completing exit and rescanning');

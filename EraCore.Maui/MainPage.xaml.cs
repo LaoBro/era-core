@@ -7,6 +7,10 @@ using EraCore.Maui.Json;
 using EraCore.Maui.Services;
 using MinorShift.Emuera;
 using MinorShift.Emuera.Runtime.Config;
+// SafPath 仅在 ANDROID 分支（accessor 形态判定）使用——条件 using，免 Windows 构建报未使用
+#if ANDROID
+using MinorShift.Emuera.Runtime.Utils;
+#endif
 using MinorShift.Emuera.Server;
 using MinorShift.Emuera.Terminal.Platform;
 
@@ -403,10 +407,11 @@ public partial class MainPage : ContentPage
             Exception? initError = null;
             try
             {
-                // ADR-0019：按路径选 DirAccessor——SAF URI 用 SafGameDirAccessor，本地路径用 FileSystem
+                // ADR-0019：按路径形态选 DirAccessor——SAF URI 用 SafGameDirAccessor，本地路径用 FileSystem。
+                // issues/15：形态判据统一走 SafPath.IsContentUri（此前是第四份手写 StartsWith）。
 #if ANDROID
                 var dirAccessor = (IGameDirAccessor?)(
-                    gamePath.StartsWith("content://", StringComparison.Ordinal)
+                    SafPath.IsContentUri(gamePath)
                         ? SafGameDirAccessor.Instance
                         : new FileSystemGameDirAccessor());
 #else
@@ -421,7 +426,7 @@ public partial class MainPage : ContentPage
                 var paths = GamePaths.Resolve(gamePath, dirAccessor);
                 paths.Validate(); // 校验失败抛 GamePathValidationException
 #if ANDROID
-                if (gamePath.StartsWith("content://", StringComparison.Ordinal)
+                if (SafPath.IsContentUri(gamePath)
                     && dirAccessor is SafGameDirAccessor saf)
                 {
                     var safHasWrite = dirAccessor.HasWriteAccess();
@@ -462,7 +467,7 @@ public partial class MainPage : ContentPage
 #if ANDROID
                 Android.Util.Log.Info("EmueraMaui",
                     $"OnReloadGame init completed: ExeDir={paths.ExeDir}, hasWrite={hasWrite}");
-                if (!hasWrite && gamePath.StartsWith("content://", StringComparison.Ordinal))
+                if (!hasWrite && SafPath.IsContentUri(gamePath))
                 {
                     Android.Util.Log.Warn("EmueraMaui",
                         "OnReloadGame: SAF tree has no write permission — saves will fail until user re-picks directory");

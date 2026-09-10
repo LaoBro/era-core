@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+	xmlns:tools="http://schemas.android.com/tools">
 	<application android:allowBackup="true" android:icon="@mipmap/appicon" android:roundIcon="@mipmap/appicon_round" android:supportsRtl="true">
 		<!-- A0 补充：导出 agent.log 用——FileProvider 把 app 私有目录文件分享给系统面板（零权限） -->
 		<provider
@@ -14,5 +15,11 @@
 	</application>
 	<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 	<uses-permission android:name="android.permission.INTERNET" />
-	<!-- ADR-0019: MANAGE_EXTERNAL_STORAGE 已由 SAF 替代，不需要此权限 -->
+	<!-- ADR-0019: 曾以 SAF 完全替代存储权限。
+	     issues/15 取证：重新声明 MANAGE_EXTERNAL_STORAGE（「所有文件访问」特殊权限）——
+	     声明本身不获权，授权走系统设置页 / appops（adb shell appops set ... allow）。
+	     未授权时行为与既往完全一致（SAF 兜底）；IsExternalStorageManager 检测在 BridgeHost spec ID6。 -->
+	<uses-permission
+		android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+		tools:ignore="ScopedStorage" />
 </manifest>

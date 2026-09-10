@@ -300,6 +300,28 @@ export function getGameThreadStatus(): void {
 }
 
 /**
+ * issues/15：查询 Android「所有文件访问」（MANAGE_EXTERNAL_STORAGE）授权状态。
+ *
+ * C# `BridgeHost.HandleCheckPermission`（spec ID6）真读 `Environment.IsExternalStorageManager`
+ * 回复 `{"type":"permissionStatus","granted":true/false}`——由 useAppInit 的 handleMauiMessage
+ * 写入 game store。Windows 恒 true（item 不显示，回复无害）。
+ */
+export function checkAllFilesAccess(): void {
+  postInput(JSON.stringify({ type: 'checkPermission' }));
+}
+
+/**
+ * issues/15：跳转系统「所有文件访问」专用设置页（只列本应用的开关）。
+ *
+ * C# 拉起 `Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION`；用户开关后返回 app，
+ * 调用方（MauiGameList 菜单）经 visibilitychange 触发 {@link checkAllFilesAccess} 复查。
+ * ROM 阉割该页时 C# 回退应用详情页。Windows no-op。
+ */
+export function requestAllFilesAccess(): void {
+  postInput(JSON.stringify({ type: 'requestPermission' }));
+}
+
+/**
  * A0（saf-accel 计划）：设置页「文件日志（agent.log）」开关——请求 C# 切换 AgentLog 状态。
  *
  * C# `BridgeHost.HandleSetAgentLogEnabled` 收到后：

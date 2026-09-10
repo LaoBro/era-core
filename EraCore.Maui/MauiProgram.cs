@@ -10,6 +10,7 @@ using MinorShift.Emuera.Terminal.Platform;
 #if ANDROID
 using Android.Webkit;
 using Microsoft.Maui.Handlers;
+using MinorShift.Emuera.Runtime.Script.Loader; // ErbIrCache（issues/15 S0：IR 缓存落点开关）
 #endif
 
 namespace EraCore.Maui;
@@ -62,6 +63,15 @@ public static class MauiProgram
 		{
 			AppDataPaths.Configure(FileSystem.AppDataDirectory);
 #if ANDROID
+			// issues/15：安卓本地路径（legacy 直通模式）的两项平台策略。两者都是「安卓外部存储
+			// 慢于桌面假设」这一事实的落地，桌面（Windows/CLI/Server）恒保持默认 false。
+			// S0 落点：IR 缓存不放游戏目录的 _IRCache/（污染可见目录 + 只读挂载下每轮重建）。
+			ErbIrCache.PreferAppDataForLocalPaths = true;
+			// §0.3 清单 sidecar：legacy 也读写 era_ir.list。真机实测命中轮冷枚举 2532 文件 569ms
+			// （占命中轮 36%）——与 SAF 同量级，因为 /storage/emulated/0 是 FUSE 挂载，
+			// 枚举成本与是否 IPC 无关。开 sidecar 免掉这一整段。
+			ErbIrCache.FileListSidecarForLocalPaths = true;
+
 			// erb-bounded-lifecycle 观测收尾：EmueraLog → logcat。Release 下 DebuggerSink 空操作、
 			// stderr 丢失——真机/模拟器 logcat 此前看不到 LoadPendingParallel / phase=genmerge 等
 			// 阶段标记，崩溃判别缺时间线。级别 → LogPriority，tag 用 "Emuera" 与桥接层 "EmueraMaui" 区分。

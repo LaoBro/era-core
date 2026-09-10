@@ -142,4 +142,20 @@ internal static class SafPath
 			return Path.GetFileName(fullPath);
 		}
 	}
+
+	/// <summary>
+	/// issues/15 §0.3：sidecar 存的相对名 → 本平台物理相对名。
+	/// <para>
+	/// <see cref="GetRelativePathFromRoot"/> 的存储契约是分隔符统一为 <c>\</c>（对齐 Config.getFiles /
+	/// Windows）。重建物理路径时必须再归一回<b>本平台</b>分隔符：Android 上 <c>\</c> 不是分隔符，
+	/// 原样拼接会拼出 <c>erb/ABL\ABL.ERB</c> 这种打不开的死路径；且物理路径进内容指纹，
+	/// 分隔符不一致会让命中轮 fp 与建库轮分叉 → 永远 miss。
+	/// </para>
+	/// <para>Windows：两次替换后全为 <c>\</c>；Android：全为 <c>/</c>。与枚举直接产出的路径形态一致。</para>
+	/// </summary>
+	public static string RelToPhysical(string relToRoot)
+	{
+		var sep = Path.DirectorySeparatorChar;
+		return relToRoot.Replace('\\', sep).Replace('/', sep);
+	}
 }

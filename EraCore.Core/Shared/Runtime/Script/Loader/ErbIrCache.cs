@@ -126,11 +126,55 @@ internal static class ErbIrCache
 	// SAF 流不可 seek：IR 缓存留在游戏目录时 ReadBlob 每函数触发整库缓冲重读（31.5MB × 2724 次 ≈ 143s+），
 	// 且 SAF 无原子替换（delete+copy，崩溃窗口留半成品）。正解 = 分平台放置：
 	//   - content-URI 游戏 → <AppDataPaths.Directory>/IRCache/<gameKey>/era_ir.dat（真实文件系统，可 seek + 原子替换）
-	//   - 本地路径（桌面 MAUI / CLI / Server）→ <游戏目录>/_IRCache/era_ir.dat 现状（可 seek/可原子替换，缓存随游戏目录）
+	//   - 本地路径（桌面 MAUI / CLI / Server）→ <游戏目录>/_IRCache/era_ir.dat（可 seek/可原子替换，缓存随游戏目录）
+	//   - 本地路径 + Android（issues/15 legacy 直通模式）→ 同 content-URI 走 appdata，见 PreferAppDataForLocalPaths
 	// gameKey = 归一化 ExeDir 的 Fnv1a64，多游戏隔离（硬需求：appdata 是跨游戏共享目录）。
 
-	/// <summary>IR 缓存根目录（app 私有存储下）。仅 content-URI 游戏使用；本地路径缓存仍在游戏目录。</summary>
+	/// <summary>IR 缓存根目录（app 私有存储下）。</summary>
 	internal static string IrCacheRoot => Path.Combine(AppDataPaths.Directory, "IRCache");
+
+	/// <summary>
+	/// issues/15 S0：Android 宿主置 <c>true</c>——本地路径（legacy 直通模式）游戏也把 IR 缓存放 appdata。
+	/// <para>
+	/// 安卓上 IR 缓存的既有落点就是 appdata（此前游戏目录恒为 SAF content URI，走的正是 appdata 布局）。
+	/// legacy 模式让游戏目录变成真实路径，若沿用本地布局会在游戏目录里新建 <c>_IRCache/</c>：
+	/// 污染用户可见目录（云同步 / 文件管理器 / 媒体扫描），且只读挂载（OTG、部分 SD）下写失败即每轮重建。
+	/// 故安卓上两种模式统一 appdata；桌面（Windows MAUI / CLI / Server）保持「缓存随游戏目录走」不变。
+	/// </para>
+	/// <para>启动期一次性设置（MauiProgram），此后只读——与 <see cref="AppDataPaths.Configure"/> 同时序。</para>
+	/// </summary>
+	internal static bool PreferAppDataForLocalPaths { get; set; }
+
+	/// <summary>
+	/// IR 缓存是否落 appdata 私有目录——content URI 恒真；本地路径取决于 <see cref="PreferAppDataForLocalPaths"/>。
+	/// 所有落点判定必须经此，禁止在调用点重复 <see cref="SafPath.IsContentUri"/> 分叉（重复分叉会与落点漂移）。
+	/// </summary>
+	private static bool UseAppDataLayout(string exeDir)
+		=> SafPath.IsContentUri(exeDir) || PreferAppDataForLocalPaths;
+
+	/// <summary>
+	/// issues/15 §0.3：Android 宿主置 <c>true</c>——本地路径（legacy 直通模式）游戏也读写清单 sidecar。
+	/// <para>
+	/// 原门控理由（ErbLoader「本地路径真实 stat 自愈，不走回放」）隐含「本地路径枚举很快」——
+	/// 那是桌面 NTFS 的经验（同规模 &lt;50ms）。Android legacy 的本地路径是 /storage/emulated/0，
+	/// 走 FUSE/sdcardfs：真机实测命中轮冷枚举 2532 文件 <c>ms=569</c>（占命中轮 1.56s 的 36%），
+	/// 与 SAF 下的 484ms 同量级 —— <b>枚举成本与是否 IPC 无关</b>。
+	/// sidecar 存的是相对根的路径（形态无关），有效性由指纹兜底，而 legacy 下 mtime 真实、
+	/// 改文件自动失效已实测生效。
+	/// </para>
+	/// <para>桌面（Windows MAUI / CLI / Server）保持 <c>false</c>——2026-09-09 裁定
+	/// 「Windows/CLI 保留自动失效」不变。</para>
+	/// <para>启动期一次性设置（MauiProgram），此后只读。</para>
+	/// </summary>
+	internal static bool FileListSidecarForLocalPaths { get; set; }
+
+	/// <summary>
+	/// 清单 sidecar 是否可用于该游戏目录——content URI 恒真；本地路径取决于
+	/// <see cref="FileListSidecarForLocalPaths"/>。**读写两侧共用此判据**，禁止在调用点重复分叉
+	///（读写口径漂移会让写出的 sidecar 永远读不回来）。
+	/// </summary>
+	internal static bool UseFileListSidecar(string exeDir)
+		=> SafPath.IsContentUri(exeDir) || FileListSidecarForLocalPaths;
 
 	/// <summary>归一化 ExeDir 作缓存键输入：去尾部目录分隔符；本地路径取全路径（content URI 保持原样参与哈希）。</summary>
 	private static string NormalizeExeDirForKey(string exeDir)
@@ -160,11 +204,12 @@ internal static class ErbIrCache
 
 	/// <summary>
 	/// 方案 B：IR 缓存文件路径。content-URI（SAF）→ <c>AppDataPaths/IRCache/&lt;gameKey&gt;/era_ir.dat</c>
-	/// （真实文件系统可 seek）；本地路径 → <c>&lt;游戏目录&gt;/_IRCache/era_ir.dat</c>（现状）。
+	/// （真实文件系统可 seek）；本地路径 → <c>&lt;游戏目录&gt;/_IRCache/era_ir.dat</c>（桌面）或同样进
+	/// appdata（Android legacy 模式，见 <see cref="PreferAppDataForLocalPaths"/>）。
 	/// </summary>
 	internal static string GetIrCachePath(string exeDir)
 	{
-		if (SafPath.IsContentUri(exeDir))
+		if (UseAppDataLayout(exeDir))
 			return Path.Combine(IrCacheRoot, ComputeGameKey(exeDir), "era_ir.dat");
 		string dir = SafCompat.ResolveSubPath(exeDir, "_IRCache");
 		return SafCompat.CombinePath(dir, "era_ir.dat");
@@ -176,7 +221,7 @@ internal static class ErbIrCache
 	/// </summary>
 	internal static string GetSrcCachePath(string exeDir)
 	{
-		if (SafPath.IsContentUri(exeDir))
+		if (UseAppDataLayout(exeDir))
 			return Path.Combine(IrCacheRoot, ComputeGameKey(exeDir), "era_src.dat");
 		string dir = SafCompat.ResolveSubPath(exeDir, "_IRCache");
 		return SafCompat.CombinePath(dir, "era_src.dat");
@@ -346,7 +391,8 @@ internal static class ErbIrCache
 
 	/// <summary>
 	/// issues/13 M5：重扫按钮后端——删除本游戏的 IR 缓存与清单 sidecar，下次加载强制全扫重建。
-	/// 双布局：SAF（appdata IRCache/&lt;gameKey&gt;/）与本地（&lt;游戏目录&gt;/_IRCache/）。
+	/// 落点由 <see cref="GetIrCachePath"/> 单一决定（appdata 或 &lt;游戏目录&gt;/_IRCache/，见
+	/// <see cref="PreferAppDataForLocalPaths"/>）。
 	/// 尽力而为：删除失败（如 IR 读句柄被运行中的会话持有）返回 false，调用方提示关闭游戏后重试；
 	/// 部分删除安全——缺 sidecar = 命中轮回退枚举（fp 照旧按枚举清单算），等价于 M4 前现状。
 	/// </summary>
@@ -357,30 +403,16 @@ internal static class ErbIrCache
 		bool ok = true;
 		try
 		{
-			if (SafPath.IsContentUri(exeDir))
+			// issues/15 S0：落点唯一真相源 = GetIrCachePath。此处曾按 IsContentUri 自己分叉一遍，
+			// 该重复分叉在 Android legacy 模式下会去删 <游戏目录>/_IRCache/（目录不存在、什么也没删到）
+			// 却返 ok=true——重扫删除静默失效。三件套文件名同样由各 getter 推导，本地/SAF 布局通用。
+			string irPath = GetIrCachePath(exeDir);
+			string dir = Path.GetDirectoryName(irPath)!;
+			// issues/10 10-B：era_src.dat（CSV/ERH 内容缓存）随重扫同清——三件套一起失效
+			foreach (var name in new[] { Path.GetFileName(irPath), Path.GetFileName(GetFileListPath(irPath)), Path.GetFileName(GetSrcCachePath(exeDir)) })
 			{
-				string irPath = GetIrCachePath(exeDir);
-				string dir = Path.GetDirectoryName(irPath)!;
-				// issues/10 10-B：era_src.dat（CSV/ERH 内容缓存）随重扫同清——三件套一起失效
-				foreach (var name in new[] { Path.GetFileName(irPath), Path.GetFileName(GetFileListPath(irPath)), Path.GetFileName(GetSrcCachePath(exeDir)) })
-				{
-					try { var p = Path.Combine(dir, name); if (File.Exists(p)) File.Delete(p); }
-					catch { ok = false; }
-				}
-			}
-			else
-			{
-				string dir = SafCompat.ResolveSubPath(exeDir, "_IRCache");
-				foreach (var name in new[] { "era_ir.dat", "era_ir.list", "era_src.dat" })
-				{
-					try
-					{
-						var p = SafCompat.CombinePath(dir, name);
-						if (File.Exists(p))
-							File.Delete(p);
-					}
-					catch { ok = false; }
-				}
+				try { var p = Path.Combine(dir, name); if (File.Exists(p)) File.Delete(p); }
+				catch { ok = false; }
 			}
 			return ok;
 		}
