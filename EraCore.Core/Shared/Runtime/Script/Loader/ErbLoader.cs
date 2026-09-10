@@ -67,6 +67,22 @@ internal sealed class ErbLoader
 	/// <summary>IR 生成期增量写器（按文件批量落盘，内存 O(单文件大小)，design §5.1）。仅生成 IR（未命中/失效）时非空。</summary>
 	private ErbIrCache.IrCacheWriter? _irWriter;
 
+	/// <summary>
+	/// issues/17 A′：命中轮的待载文件全集（逻辑名，与 <see cref="IrState.ByFile"/> 同比较器）。
+	/// <para>
+	/// 用途：补出"该文件确实没有函数"这一信息。IR 索引只记录<b>有函数</b>的文件
+	///（<see cref="ErbIrCache.IrCacheWriter.AppendFile"/> 对 <c>blobs.Count == 0</c> 直接 return），
+	/// 故 0 函数/空文件/纯注释文件在命中轮查不到条目，旧判据下只能回落读源——SAF 下每文件约 25ms，
+	/// 真机 25 个文件累计 ~620ms，且因主循环按序 <c>await</c> 而串行阻塞整条流水线。
+	/// </para>
+	/// <para>
+	/// 正确性：<c>fp = ComputeContentFingerprint(pending, …)</c> 已把文件集合纳入内容指纹，
+	/// 文件增删必改 fp 必 miss 重建——故"命中轮 pending 全集"与"建库轮实际处理过的文件集合"必然一致。
+	/// 仅命中（<see cref="IrState.Available"/>）时非 null；<see cref="ResetIrState"/> 清空。
+	/// </para>
+	/// </summary>
+	private HashSet<string>? _irAllFiles;
+
 	// ===== S0-M2 取证探针（2026-09-05，diagnostic-knobs issues/11）：加载窗 blob I/O 分账 =====
 	// parsescript 段内所有 blob 读取都经 ReadBlobMeasured（ComputeSignature / ReparseFunctionFromIr
 	// 两处咽喉）累计；LoadErbDir 起始清零，phase=parsescript 日志行输出 blobReads/blobBytes/blobMs。
@@ -361,6 +377,7 @@ internal sealed class ErbLoader
 		_ir = null;
 		_irWriter?.Abort();
 		_irWriter = null;
+		_irAllFiles = null; // issues/17 A′：全集只对应当前 _ir，随之一并失效
 	}
 
 	/// <summary>erb-loader-parallel 03：并行生成度上限——窗口内产物同时驻留 = 上限文件数的解析产物，
@@ -475,6 +492,11 @@ internal sealed class ErbLoader
 					// ReadBlob 回落临时开流。
 					ir.ReadStream = SafCompat.OpenRead(irPath);
 					_ir = ir;
+					// issues/17 A′：命中轮全集。比较器与 IrState.ByFile 一致（OrdinalIgnoreCase），
+					// 保证 Contains 与 TryGetValue 同口径——否则会出现"两边都查不到/口径不一"的静默错判。
+					_irAllFiles = new HashSet<string>(pending.Count, StringComparer.OrdinalIgnoreCase);
+					foreach (var (logical, _) in pending)
+						_irAllFiles.Add(logical);
 				}
 				else
 				{
@@ -956,12 +978,32 @@ internal sealed class ErbLoader
 		bool deferCrossFileChecks)
 	{
 		// b2-irdiskcache：IR 命中 → 本文件由索引直建桩，免读源文件（design §5.2）——第二次启动的大头收益所在。
-		// 无本文件条目（空文件）→ 回落源路径（零函数，产物等价）。
-		if (_ir is { Available: true } irHit && irHit.ByFile.TryGetValue(filename, out var irEntries) && irEntries.Count > 0)
+		// issues/17 A′：命中判定分三段（旧实现只有 (1)(3)，把 (2) 误并进 (3)）——
+		//   (1) ByFile 命中且有条目 → IR 桩。真机 2363/2388 走此路，SAF 下总耗仅 38ms，本就无问题；
+		//   (2) ByFile 未命中、但文件在命中轮全集内 → **该文件确实没有函数**（IR 索引只记有函数的文件），
+		//       直接建空产物 return。旧实现落到 (3)：SAF 下每个白付 ~25ms 读源解析（25 个文件 ≈ 620ms），
+		//       且主循环按序 await 使这 25 次阻塞串行放大到整轮 genmerge 的 100%；
+		//   (3) 不在全集内（异常/陈旧路径）→ 回落源路径，保持既有安全语义。
+		if (_ir is { Available: true } irHit)
 		{
-			TryGenerateFromIr(filename, irEntries, art);
-			return;
+			if (irHit.ByFile.TryGetValue(filename, out var irEntries) && irEntries.Count > 0)
+			{
+				Interlocked.Increment(ref _irStubFiles); // issues/17 观测
+				TryGenerateFromIr(filename, irEntries, art);
+				return;
+			}
+			if (_irAllFiles?.Contains(filename) == true)
+			{
+				Interlocked.Increment(ref _irNoFuncFiles); // issues/17 取证：A′ 新省下的文件数
+				return; // 空产物——IR 已证明此文件无函数，无需读源
+			}
 		}
+
+		// issues/17：走到此处即回落读源。IR 可用时本不该到达（判据漏了 → fallbackOnIrHit 非 0 可即时
+		// 发现）；IR 不可用（冷枚举轮）则是常态——SAF 下逐文件走跨进程读，正是修复前 620ms 的来源。
+		Interlocked.Increment(ref _sourceFallbackFiles);
+		if (_ir is { Available: true })
+			Interlocked.Increment(ref _sourceFallbackOnIrHit);
 
 		using var eReader = new EraStreamReader(Config.Config.UseRenameFile && ParserMediator.RenameDic != null);
 
@@ -1409,9 +1451,24 @@ internal sealed class ErbLoader
 	/// 生成期共享写仍集中在 <see cref="MergeErbFile"/>（主 async 流按序执行）；worker 经 per-task
 	/// AsyncLocal（警告缓冲/ScanLineMirror）与 deferCrossFileChecks 空视图做到无共享写。进度行随合并按序补发。
 	/// </summary>
+	// issues/17 genmerge 逐文件分账（「IR 桩 / 无函数 / 回落读源」）。并行 worker 写入，故用 Interlocked。
+	// 保留为常驻观测而非一次性探针：它是 A′ 的体检指标——fallbackSrc 若回升到与文件数同量级，
+	// 说明"在全集内却无 IR 条目"的判据失效（如全集构建异常），无需重跑取证即可发现。
+	// 取证期的临时探针（三段 Stopwatch 计时 + 落源文件名样本）已随 issue 17 结论落定拆除。
+	private int _irStubFiles;
+	/// <summary>判为"在命中轮全集内、但无 IR 条目"（= 确认该文件无函数）而免读源的文件数（issues/17 A′ 的收益口径）。</summary>
+	private int _irNoFuncFiles;
+	private int _sourceFallbackFiles;
+	/// <summary>其中"IR 已 Available 却仍回落"的条数——应恒为 0。</summary>
+	private int _sourceFallbackOnIrHit;
+
 	private async Task LoadPendingParallel(List<(string Filename, string File)> pending, List<string> isOnlyEvent,
 		bool displayReport, DateTime starttime, CancellationToken externalCt)
 	{
+		_irStubFiles = 0;
+		_irNoFuncFiles = 0;
+		_sourceFallbackFiles = 0;
+		_sourceFallbackOnIrHit = 0;
 		if (pending.Count == 0)
 			return;
 		int window = Math.Clamp(TestWindowOverride ?? ResolveMaxParallelErbFiles(Config.Config.OverrideMaxParallelErbFiles, Environment.ProcessorCount), 1, pending.Count);
@@ -1486,6 +1543,12 @@ internal sealed class ErbLoader
 			}
 			EmueraLog.Info("ErbLoader",
 				$"LoadPendingParallel: window={window} started={nextToStart} merged={merged} peakActive={peakActive} canceled={Volatile.Read(ref canceledCount)} ms={phaseSw.ElapsedMilliseconds}");
+			// issues/17 取证：本轮 genmerge 的「IR 桩 / 回落读源」分账。
+			// H1 判据：irAvailable=True 时 fallbackOnIrHit 应恒为 0；非 0 即"IR 命中轮白读全库源文件"。
+			// issues/17 观测行（A′ 体检）：命中轮 fallbackSrc 应为 0、irNoFunc 应为"0 函数文件数"；
+			// fallbackOnIrHit 恒 0 否则判据有漏。冷枚举轮（IR 不可用）fallbackSrc=n、irStub=0 属常态。
+			EmueraLog.Info("ErbLoader",
+				$"LoadPendingParallel(issues/17): irStub={Volatile.Read(ref _irStubFiles)} irNoFunc={Volatile.Read(ref _irNoFuncFiles)} fallbackSrc={Volatile.Read(ref _sourceFallbackFiles)} fallbackOnIrHit={Volatile.Read(ref _sourceFallbackOnIrHit)}");
 		}
 	}
 
