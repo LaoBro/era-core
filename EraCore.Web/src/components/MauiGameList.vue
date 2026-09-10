@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useGameStore } from '../stores/game';
 import { useUiStore } from '../stores/ui';
-import { mauiGameLibrarySource } from '../lib/gameLibrary';
+import { mauiGameLibrarySource, isAndroidMauiEnvironment } from '../lib/gameLibrary';
 import { isMauiEnvironment, checkAllFilesAccess, requestAllFilesAccess } from '../lib/mauiBridge';
 import GameLibraryView from './GameLibraryView.vue';
 import PopupMenu, { type PopupMenuItem } from './PopupMenu.vue';
@@ -11,13 +11,18 @@ import PopupMenu, { type PopupMenuItem } from './PopupMenu.vue';
  * MauiGameList — MAUI 游戏选择页（PickerShell）。
  *
  * 只是 GameLibraryView（与 Web 共用一份设计）的薄 wrapper——
- * 平台差异只剩右上角 ⋮ 菜单（更改目录 / 重新扫描 / 主题 / 所有文件访问）：
+ * 平台差异只剩右上角 ⋮ 菜单（更改目录 / 浏览存储目录 / 重新扫描 / 主题 / 所有文件访问）：
  * - 数据获取（扫描/加载）经 mauiGameLibrarySource（C# 桥接）
  * - 「更改目录」直接弹原生 FolderPicker（Windows）/ SAF（Android），
  *   与 Web（手动输入对话框）的区别即平台能力差异
+ * - 「浏览存储目录…」（issues/15 S2，Android）：打开 ChangeDirDialog 的页内浏览器，
+ *   逐层选出**真实路径**目录 → 切到 legacy 直读模式（性能收益见 issue 15/17）
  */
 const game = useGameStore();
 const ui = useUiStore();
+
+/** GameLibraryView 实例引用——「浏览存储目录…」经其暴露方法打开页内浏览对话框。 */
+const glvRef = ref<InstanceType<typeof GameLibraryView> | null>(null);
 
 /** 顶部 ⋮ 菜单展开状态。 */
 const showMenu = ref(false);
@@ -27,6 +32,11 @@ const showMenu = ref(false);
 const showAllFilesItem = computed(
   () => isMauiEnvironment() && (game.mainGameDir?.startsWith('content://') ?? false),
 );
+
+/** issues/15 S2：「浏览存储目录…」——仅 Android（Windows 有 FolderPicker，且无 legacy 场景）。
+ *  入口恒显示（不 gate 在授权状态上）：未授权时浏览会失败并提示去授权，
+ *  而非让用户看不到这条路的存续。 */
+const showBrowseDirItem = computed(() => isAndroidMauiEnvironment());
 
 /** issues/15：从系统设置页返回 app 后复查授权状态（visibilitychange 触发一次）。 */
 function onVisibilityRecheck(): void {
@@ -67,6 +77,19 @@ const dirMenuItems = computed<PopupMenuItem[]>(() => [
     disabled: isScanning.value,
     onClick: onRescan,
   },
+  // issues/15 S2：页内真实路径浏览器——选出真实路径目录即切到 legacy 直读模式。
+  // 与上面的「更改目录」（原生 SAF picker，只产 content:// URI）并列，互不影响。
+  ...(showBrowseDirItem.value
+    ? [
+        {
+          type: 'item' as const,
+          id: 'browse-dir',
+          label: '浏览存储目录...',
+          disabled: isScanning.value,
+          onClick: onBrowseStorageDir,
+        },
+      ]
+    : []),
   // issues/15：Android「所有文件访问」——legacy 存储模式（issue 15）的授权入口。
   // 仅 SAF 模式显示；授权后标签同步，legacy accessor 接入时经此开关切换。
   ...(showAllFilesItem.value
@@ -101,6 +124,17 @@ function onChangeMainDir(): void {
   void mauiGameLibrarySource.pickMainDir();
 }
 
+/**
+ * issues/15 S2：打开页内真实路径浏览器（ChangeDirDialog）——
+ * 逐层选出一个**真实路径**主目录，从而切到 legacy 直读模式。
+ * 授权未给时对话框内会提示去申请（入口恒显示，见 showBrowseDirItem）。
+ */
+function onBrowseStorageDir(): void {
+  game.clearMauiError();
+  game.clearLoadGameError();
+  glvRef.value?.openChangeDirDialog();
+}
+
 /** 重新扫描——以当前主目录为起点重扫（未选目录时退化为更改目录）。 */
 function onRescan(): void {
   const dir = game.scanRootDir ?? game.mainGameDir;
@@ -114,7 +148,7 @@ function onRescan(): void {
 </script>
 
 <template>
-  <GameLibraryView :source="mauiGameLibrarySource">
+  <GameLibraryView ref="glvRef" :source="mauiGameLibrarySource">
     <template #appbar-actions>
       <button
         type="button"

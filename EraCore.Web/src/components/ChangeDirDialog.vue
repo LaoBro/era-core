@@ -1,20 +1,24 @@
 <script setup lang="ts">
 /**
- * ChangeDirDialog.vue — Web/HTTP 的「更改目录」对话框（手动输入路径）。
+ * ChangeDirDialog.vue — 「更改目录」对话框（手动输入路径 + 页内目录浏览）。
  *
- * MAUI 不改目录走这里——其右上角 ⋮ 菜单「更改目录」直接弹原生 FolderPicker/SAF
- * （见 MauiGameList.vue），本对话框仅服务 Web/HTTP：页面体（路径行 / 游戏列表）
- * 不再内联目录浏览，改目录由右上角菜单 → 本对话框承担，与 MAUI 的交互路径对齐。
+ * 两个平台共用：
+ * - **Web/HTTP**：手动输入 + 页内浏览（`source.listDirs` 走 server `/game/dirs`）。
+ * - **MAUI**：右上角 ⋮ 菜单「更改目录」直接弹原生选择器（Windows FolderPicker / Android SAF），
+ *   本对话框作为**并列第二条路**——issues/15 S2（C2）的「浏览存储目录…」入口打开它，
+ *   逐层选出一个**真实路径**目录，从而切到 legacy 直读模式（SAF picker 只产 content:// URI，
+ *   拿不到真实路径）。MAUI 侧浏览走 `listDirectories` / `storageRoots` 桥接消息。
  *
- * 内容：手动路径输入（Web 验收入口） + 「浏览」页面内目录浏览（source.listDirs）自动填框；
- * 确认（「扫描」）→ `source.scan(inputPath)`（server /game/scan），传输失败时保留框体。
+ * 内容：手动路径输入 + 「浏览」页面内目录浏览（`source.listDirs`）自动填框；
+ * 确认（「扫描」）→ `source.scan(inputPath)`（server /game/scan 或 bridge scanGames），
+ * 传输失败时保留框体。
  *
  * 视觉与交互遵循 ConfirmDialog.vue 的 Alert 式对话框约定（半透明遮罩 + 表面容器、
  * 点击遮罩 / Escape 关闭），按钮复用全局 .btn-primary / .btn-outline。
  */
-import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { useGameStore } from '../stores/game';
-import type { GameLibrarySource, DirListResult } from '../lib/gameLibrary';
+import type { GameLibrarySource, DirListResult, StorageRoot } from '../lib/gameLibrary';
 
 const props = defineProps<{
   /** 是否显示。 */
@@ -45,6 +49,9 @@ watch(
     if (v) {
       inputPath.value = game.scanRootDir ?? game.mainGameDir ?? '';
       browsing.value = false;
+      browseLoading.value = false;
+      inRootsView.value = false;
+      roots.value = null;
       localError.value = null;
       previouslyFocused = document.activeElement instanceof HTMLElement
         ? document.activeElement
@@ -83,8 +90,29 @@ const browsePath = ref<string>('');
 const browseDirs = ref<string[]>([]);
 const browseParent = ref<string | null>(null);
 const browseInput = ref<string>('');
+/** 正在读目录（桥接往返 / 慢卷枚举）——给浏览区块一个 loading 态。 */
+const browseLoading = ref(false);
+/** 存储根清单；null = 尚未取到或取失败（此时不显示根列表）。 */
+const roots = ref<StorageRoot[] | null>(null);
+/** 当前是否显示的是「存储根」列表（区别于普通子目录列表）。 */
+const inRootsView = ref(false);
 
-/** 切换目录浏览——首次打开以当前输入路径为起点加载子目录。 */
+/** 数据源是否提供挂载点清单——MAUI 有（问 C#），Web 没有（可直接从任意路径起浏览）。 */
+const canBrowseRoots = computed(() => typeof props.source.storageRoots === 'function');
+
+/**
+ * 是否为可直接浏览的**真实路径**。
+ *
+ * `content://`（SAF）与空串都不是——此时真实路径浏览器没有可用起点，退到存储根清单。
+ * 判定宽松（只要有根形态即可），真正能否列举由 `source.listDirs` 说了算。
+ */
+function isRealPath(p: string): boolean {
+  const t = p.trim();
+  if (!t || t.startsWith('content://')) return false;
+  return t.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(t);
+}
+
+/** 切目录浏览——首次打开以当前输入路径为起点加载子目录。 */
 async function toggleBrowse(): Promise<void> {
   if (browsing.value) {
     browsing.value = false;
@@ -94,15 +122,29 @@ async function toggleBrowse(): Promise<void> {
   await enterBrowse(inputPath.value.trim());
 }
 
-/** 进入目录浏览指定路径。 */
+/**
+ * 进入目录浏览指定路径。
+ *
+ * issues/15 S2：路径不是真实路径（空 / `content://`）且数据源能给出挂载点时，
+ * 改为展示**存储根清单**——这是 Android 从 SAF 切到 legacy 时的常态起点
+ * （当前主目录本身就是 `content://`）。
+ */
 async function enterBrowse(dir: string): Promise<void> {
   const target = dir.trim();
+  if (!isRealPath(target) && canBrowseRoots.value) {
+    await showRoots();
+    return;
+  }
+
   browsePath.value = target;
   browseInput.value = target;
+  browseLoading.value = true;
   const result: DirListResult | null = await props.source.listDirs(target);
+  browseLoading.value = false;
   if (result === null) {
     browseDirs.value = [];
     browseParent.value = null;
+    inRootsView.value = false;
     localError.value = `无法访问目录：${target || '(空)'}`;
     return;
   }
@@ -110,7 +152,42 @@ async function enterBrowse(dir: string): Promise<void> {
   browseInput.value = result.currentPath;
   browseDirs.value = result.dirs;
   browseParent.value = result.parentPath;
+  inRootsView.value = false;
   localError.value = null;
+}
+
+/**
+ * 读取并展示存储根清单（MAUI：C# 的 `StorageManager` / `DriveInfo`）。
+ *
+ * 失败（未授权「所有文件访问」时枚举会被系统拒绝）走 {@link localError} 提示授权，
+ * 而不是静默空列表——2026-09-11 裁定：入口恒显示，失败时提示授权。
+ */
+async function showRoots(): Promise<void> {
+  browseLoading.value = true;
+  const list = (await props.source.storageRoots?.()) ?? null;
+  browseLoading.value = false;
+  if (!list || list.length === 0) {
+    roots.value = null;
+    inRootsView.value = false;
+    browsePath.value = '';
+    browseInput.value = '';
+    browseDirs.value = [];
+    browseParent.value = null;
+    localError.value = '无法读取存储位置——若尚未授权，请先在 ⋮ 菜单中「申请所有文件访问权限」。';
+    return;
+  }
+  roots.value = list;
+  inRootsView.value = true;
+  browsePath.value = '';
+  browseInput.value = '';
+  browseDirs.value = [];
+  browseParent.value = null;
+  localError.value = null;
+}
+
+/** 点击存储根——进入该卷浏览。 */
+async function onPickRoot(path: string): Promise<void> {
+  await enterBrowse(path);
 }
 
 /** 前往目录浏览器输入框中的路径。 */
@@ -162,7 +239,12 @@ onUnmounted(() => document.removeEventListener('keydown', onDocKeydown));
         aria-label="更改目录"
       >
         <h2 class="cd-title">更改目录</h2>
-        <p class="cd-hint">输入游戏主目录（可包含多个游戏），或用「浏览」选择目录。</p>
+        <p class="cd-hint">
+          输入游戏主目录（可包含多个游戏），或用「浏览」逐层选择目录。
+          <template v-if="canBrowseRoots">
+            选择真实路径目录（如 /storage/emulated/0/…）可启用直读模式，加载更快。
+          </template>
+        </p>
 
         <!-- 手动路径输入 + 目录浏览辅助 -->
         <div class="cd-path-row">
@@ -184,13 +266,13 @@ onUnmounted(() => document.removeEventListener('keydown', onDocKeydown));
 
         <p v-if="localError" class="cd-error">{{ localError }}</p>
 
-        <!-- 页面内目录浏览（source.listDirs） -->
+        <!-- 页面内目录浏览（source.listDirs；MAUI 走 listDirectories / storageRoots 桥接） -->
         <div v-if="browsing" class="cd-browser">
           <div class="cd-browser-path-row">
             <button
               type="button"
               class="btn-outline"
-              :disabled="!browseParent"
+              :disabled="!browseParent || inRootsView"
               @click="onBrowseUp"
             >⬆ 上级</button>
             <input
@@ -202,9 +284,36 @@ onUnmounted(() => document.removeEventListener('keydown', onDocKeydown));
               @keyup.enter="onBrowseGo"
             />
             <button type="button" class="btn-primary" @click="onBrowseGo">前往</button>
+            <!-- issues/15 S2：回到挂载点清单（MAUI；Web 无挂载点概念，不显示） -->
+            <button
+              v-if="canBrowseRoots"
+              type="button"
+              class="btn-outline"
+              title="回到存储位置列表"
+              @click="showRoots"
+            >存储</button>
           </div>
-          <div class="cd-browser-dirs">
-            <ul v-if="browseDirs.length" class="cd-dir-list">
+
+          <div v-if="browseLoading" class="cd-browser-loading">
+            <span class="cd-spinner" aria-hidden="true" />
+            <span>正在读取目录…</span>
+          </div>
+
+          <div v-else class="cd-browser-dirs">
+            <!-- 存储根清单（issues/15 S2）：挂载点由系统给，作为浏览起点 -->
+            <ul v-if="inRootsView && roots?.length" class="cd-dir-list">
+              <li v-for="r in roots" :key="r.path">
+                <button type="button" class="cd-dir-row" @click="onPickRoot(r.path)">
+                  <span class="cd-dir-icon" aria-hidden="true">💾</span>
+                  <span class="cd-dir-name">
+                    {{ r.label }}
+                    <span class="cd-dir-sub">{{ r.path }}</span>
+                  </span>
+                  <span class="cd-dir-arrow" aria-hidden="true">›</span>
+                </button>
+              </li>
+            </ul>
+            <ul v-else-if="browseDirs.length" class="cd-dir-list">
               <li v-for="d in browseDirs" :key="d">
                 <button type="button" class="cd-dir-row" @click="onPickDir(d)">
                   <span class="cd-dir-icon" aria-hidden="true">📁</span>
@@ -213,10 +322,15 @@ onUnmounted(() => document.removeEventListener('keydown', onDocKeydown));
                 </button>
               </li>
             </ul>
-            <div v-else class="cd-browser-empty">此目录下没有子目录</div>
+            <div v-else class="cd-browser-empty">
+              {{ inRootsView ? '没有可用的存储位置' : '此目录下没有子目录' }}
+            </div>
           </div>
+
           <div class="cd-browser-footer">
-            <span class="cd-browser-path" :title="browsePath">{{ browsePath || '(空路径)' }}</span>
+            <span class="cd-browser-path" :title="browsePath">
+              {{ inRootsView ? '请选择存储位置后进入' : (browsePath || '(空路径)') }}
+            </span>
             <button
               type="button"
               class="btn-primary"

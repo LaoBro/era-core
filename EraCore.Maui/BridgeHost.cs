@@ -619,6 +619,8 @@ internal sealed class BridgeHost : IDisposable
     ///   <item>game-library spec ID3：<c>{"type":"scanGames","rootDir":...}</c> /
     ///       <c>{"type":"listDirectories","dirPath":...}</c> / <c>{"type":"exitGame"}</c>——
     ///       分别调 <see cref="HandleScanGames"/> / <see cref="HandleListDirectories"/> / <see cref="HandleExitGame"/></item>
+    ///   <item>issues/15 S2：<c>{"type":"getStorageRoots"}</c>——页内真实路径浏览器的可浏览根清单，
+    ///       调 <see cref="HandleGetStorageRoots"/></item>
     ///   <item><c>{"type":"getGameThreadStatus"}</c>——前端静默探测游戏线程存活，调 <see cref="HandleGetGameThreadStatus"/></item>
     ///   <item><c>{"type":"control","action":...}</c>——issue 05 托管控制权桥接（acquire/release/status），
     ///       调 <see cref="HandleControlMessage"/>，让 WebView 用户能接管 agent 控制权</item>
@@ -692,6 +694,12 @@ internal sealed class BridgeHost : IDisposable
                 if (type == "listDirectories")
                 {
                     HandleListDirectories(doc.RootElement);
+                    return;
+                }
+                // issues/15 S2：页内真实路径浏览器的根清单（主存储 + SD/OTG），前端猜不出挂载点
+                if (type == "getStorageRoots")
+                {
+                    HandleGetStorageRoots();
                     return;
                 }
                 if (type == "exitGame")
@@ -1095,10 +1103,16 @@ internal sealed class BridgeHost : IDisposable
 
     /// <summary>
     /// 处理 Vue 端 listDirectories 消息（game-library spec ID3 / ID8）——
-    /// 列举 dirPath 下的子目录并回复 <c>directoriesListed</c>，用于 Android 目录浏览器弹窗。
+    /// 列举 dirPath 下的子目录并回复 <c>directoriesListed</c>，供页内目录浏览器弹窗
+    /// （Vue 端 <c>ChangeDirDialog.vue</c> 的浏览区块）渲染。
     /// <para>
     /// 回复格式：<c>{"type":"directoriesListed","currentPath":...,"parentPath":...|"null","subDirectories":[...]}</c>。
     /// dirPath 缺失时使用 <see cref="_mainGameDir"/>（若也为 null 则回复空结果）。
+    /// </para>
+    /// <para>
+    /// <b>issues/15 S2</b>：本方法对<b>真实路径</b>同样可用——<see cref="ResolveDirAccessor"/>
+    /// 按路径形态分流，真实路径拿到 <c>FileSystemGameDirAccessor</c>，故 legacy 模式的页内浏览器
+    /// 无需另写一条列举链。content URI 仍走 <c>SafGameDirAccessor</c>（ADR-0019 兜底未撤）。
     /// </para>
     /// </summary>
     private void HandleListDirectories(JsonElement root)
@@ -1118,6 +1132,134 @@ internal sealed class BridgeHost : IDisposable
             MauiJsonContext.Default.DirectoriesListedMessage);
         _dispatcher.Dispatch(() => _jsBridge.PostMessage(msgJson));
     }
+
+    /// <summary>
+    /// 处理 Vue 端 getStorageRoots 消息（issues/15 S2，C2 页内真实路径浏览器）——
+    /// 回复本机可浏览的<b>真实路径</b>根清单，让页面内浏览器有一个不依赖用户输入绝对路径的起点。
+    /// <para>
+    /// 回复格式：<c>{"type":"storageRoots","roots":[{path,label,primary,removable}]}</c>。
+    /// </para>
+    /// <para>
+    /// <b>为何由 C# 给根而不是前端猜</b>：卷挂载点（<c>/storage/emulated/0</c>、
+    /// <c>/storage/XXXX-XXXX</c>）随 ROM 与插卡情况变化，前端没有任何可靠来源。
+    /// Android 走 <c>StorageManager.StorageVolumes</c>（API 30+ 的 <c>StorageVolume.Directory</c>
+    /// 是卷根，非 app 私有子目录）；取不到时回落 <c>GetExternalFilesDirs</c> 的 app 私有路径裁剪出卷根。
+    /// 其余平台回落到 <c>DriveInfo.GetDrives()</c> 的就绪盘——让这条链在桌面也能端到端测。
+    /// </para>
+    /// <para>
+    /// <b>不检查 MANAGE_EXTERNAL_STORAGE</b>：未授权时列举会在前端表现为空列表 + 错误提示
+    /// （2026-09-11 裁定：入口恒显示，失败时提示授权，而非隐藏入口）。
+    /// </para>
+    /// </summary>
+    private void HandleGetStorageRoots()
+    {
+        var roots = CollectStorageRoots();
+        var msg = JsonSerializer.Serialize(
+            new StorageRootsMessage("storageRoots", roots),
+            MauiJsonContext.Default.StorageRootsMessage);
+        _dispatcher.Dispatch(() => _jsBridge.PostMessage(msg));
+        Console.WriteLine($"[bridge] HandleGetStorageRoots: {roots.Count} roots [{string.Join(", ", roots.Select(r => r.Path))}]");
+    }
+
+    /// <summary>
+    /// issues/15 S2：枚举本机可浏览的真实路径根。主存储排最前，其余按路径序稳定排列。
+    /// 任何平台异常都吞掉并返回已收集部分——根清单不该让前端挂住（前端另有超时兜底）。
+    /// </summary>
+    private static List<StorageRootDto> CollectStorageRoots()
+    {
+        var roots = new List<StorageRootDto>();
+#if ANDROID
+        // 未授权「所有文件访问」时本机没有任何**可浏览**的真实路径——scoped storage 会拒绝对
+        // /storage/emulated/0 的直接路径访问。此处返回空清单，让前端给出「去申请权限」的提示，
+        // 而不是给出一堆点进去必然空的根（2026-09-11 裁定：入口恒显示，失败时提示授权）。
+        if (!HasAllFilesAccess())
+            return roots;
+        try
+        {
+            var context = Android.App.Application.Context;
+            // StorageVolume.Directory（卷根，非 app 私有子目录）是 API 30+——低版本没有「卷根」
+            // 概念（scoped storage 之前），直接走下面的 app 私有目录裁剪兜底。
+            // 单一 30 守卫同时覆盖块内的 StorageVolumes(24+)/IsPrimary(24+)/IsRemovable(24+)。
+            if (OperatingSystem.IsAndroidVersionAtLeast(30))
+            {
+                var storageManager = context.GetSystemService(Android.Content.Context.StorageService)
+                    as Android.OS.Storage.StorageManager;
+                if (storageManager is not null)
+                {
+                    foreach (var volume in storageManager.StorageVolumes)
+                    {
+                        string? path = volume.Directory?.AbsolutePath;
+                        if (string.IsNullOrEmpty(path))
+                            continue;
+                        roots.Add(new StorageRootDto(
+                            path!,
+                            volume.IsPrimary ? "内部存储" : "可移动存储",
+                            volume.IsPrimary,
+                            volume.IsRemovable));
+                    }
+                }
+            }
+
+            if (roots.Count == 0)
+                roots.AddRange(DeriveRootsFromAppExternalDirs(context.GetExternalFilesDirs(null)));
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[bridge] CollectStorageRoots(android) failed: {ex.Message}");
+        }
+#else
+        // 桌面：就绪盘即可浏览根（Windows MAUI 亦可走页内浏览器，无需 adb 就能验证这条链）
+        foreach (var drive in DriveInfo.GetDrives())
+        {
+            try
+            {
+                if (!drive.IsReady)
+                    continue;
+                string label = string.IsNullOrEmpty(drive.VolumeLabel)
+                    ? drive.Name
+                    : $"{drive.VolumeLabel} ({drive.Name.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)})";
+                roots.Add(new StorageRootDto(
+                    drive.RootDirectory.FullName, label,
+                    drive.DriveType == DriveType.Fixed, drive.DriveType == DriveType.Removable));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[bridge] CollectStorageRoots(drive {drive.Name}) skipped: {ex.Message}");
+            }
+        }
+#endif
+        return roots
+            .GroupBy(r => r.Path, StringComparer.Ordinal)
+            .Select(g => g.First())
+            .OrderByDescending(r => r.Primary)
+            .ThenBy(r => r.Path, StringComparer.Ordinal)
+            .ToList();
+    }
+
+#if ANDROID
+    /// <summary>
+    /// 兜底：从 <c>GetExternalFilesDirs</c> 的 app 私有目录裁出卷根。
+    /// 形如 <c>/storage/emulated/0/Android/data/&lt;pkg&gt;/files</c> →
+    /// <c>/storage/emulated/0</c>；裁不出（形态意外）的条目直接丢弃，绝不把 app 私有目录当根给出。
+    /// </summary>
+    private static IEnumerable<StorageRootDto> DeriveRootsFromAppExternalDirs(Java.IO.File[]? dirs)
+    {
+        if (dirs is null)
+            yield break;
+        const string marker = "/Android/";
+        for (int i = 0; i < dirs.Length; i++)
+        {
+            string? full = dirs[i]?.AbsolutePath;
+            if (string.IsNullOrEmpty(full))
+                continue;
+            int cut = full!.IndexOf(marker, StringComparison.Ordinal);
+            if (cut <= 0)
+                continue;
+            string root = full.Substring(0, cut);
+            yield return new StorageRootDto(root, i == 0 ? "内部存储" : "可移动存储", i == 0, i != 0);
+        }
+    }
+#endif
 
     /// <summary>
     /// 处理 Vue 端 exitGame 消息（game-library spec ID3 / ID10）——
@@ -1176,25 +1318,36 @@ internal sealed class BridgeHost : IDisposable
     /// </summary>
     private void HandleCheckPermission()
     {
-        bool granted;
-#if ANDROID
-        // issues/15：MANAGE_EXTERNAL_STORAGE（「所有文件访问」）授权流程复活——真读系统状态
-        //（Settings 特殊应用权限开关 / appops 授权后为 true）。声明已回补 AndroidManifest。
-        // API <30 无「所有文件访问」概念（scoped storage 之前），按已授权处理。
-        if (OperatingSystem.IsAndroidVersionAtLeast(30))
-            granted = Android.OS.Environment.IsExternalStorageManager;
-        else
-            granted = true;
-#else
-        // Windows MAUI 不检查 Android 权限——默认视为已授权
-        granted = true;
-#endif
+        bool granted = HasAllFilesAccess();
         var msg = JsonSerializer.Serialize(
             new PermissionStatusMessage("permissionStatus", granted),
             MauiJsonContext.Default.PermissionStatusMessage);
         _dispatcher.Dispatch(() => _jsBridge.PostMessage(msg));
         Console.WriteLine($"[bridge] HandleCheckPermission: granted={granted}");
         AgentLog.Instance.Write($"[bridge] HandleCheckPermission: granted={granted}");
+    }
+
+    /// <summary>
+    /// issues/15：本机是否已获「所有文件访问」（Android <c>MANAGE_EXTERNAL_STORAGE</c>）。
+    /// <para>
+    /// Android API 30+ 真读系统状态（Settings 特殊应用权限开关 / appops 授权后为 true）；
+    /// API &lt;30 无此概念（scoped storage 之前），视为已授权；非 Android 平台恒 true。
+    /// </para>
+    /// <para>
+    /// <b>为何抽成方法</b>：除权限查询外，<see cref="CollectStorageRoots"/> 也要用它——未授权时
+    /// 直接路径访问会被系统拒绝，给出根清单只会让用户点进去看到空列表，不如返回空让前端提示授权。
+    /// </para>
+    /// </summary>
+    private static bool HasAllFilesAccess()
+    {
+#if ANDROID
+        if (!OperatingSystem.IsAndroidVersionAtLeast(30))
+            return true;
+        return Android.OS.Environment.IsExternalStorageManager;
+#else
+        // Windows MAUI 不检查 Android 权限——默认视为已授权
+        return true;
+#endif
     }
 
     /// <summary>

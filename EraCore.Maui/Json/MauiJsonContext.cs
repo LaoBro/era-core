@@ -72,6 +72,25 @@ internal sealed record DirectoriesListedMessage(
     string? ParentPath,
     List<string> SubDirectories);
 
+/// <summary>
+/// storageRoots 的 roots 数组元素——issues/15 S2（C2 页内真实路径浏览器）的可浏览根。
+/// <paramref name="Path"/> 是真实文件路径（非 content URI），由系统给出挂载点，前端不猜。
+/// </summary>
+internal sealed record StorageRootDto(
+    string Path,
+    string Label,
+    bool Primary,
+    bool Removable);
+
+/// <summary>
+/// {"type":"storageRoots","roots":[{path,label,primary,removable}]}
+/// <para>
+/// issues/15 S2：页内真实路径浏览器的起点清单。Android 由 <c>StorageManager.StorageVolumes</c>
+/// 给（主存储 + SD/OTG 卷），Windows 由 <c>DriveInfo</c> 给就绪盘。
+/// </para>
+/// </summary>
+internal sealed record StorageRootsMessage(string Type, List<StorageRootDto> Roots);
+
 /// <summary>{"type":"gameExited"}</summary>
 internal sealed record GameExitedMessage(string Type);
 
@@ -163,6 +182,8 @@ internal sealed record HeadlessStateResponse(string? State, string? GameDir);
 [JsonSerializable(typeof(GameInfoDto))]
 [JsonSerializable(typeof(GamesScannedMessage))]
 [JsonSerializable(typeof(DirectoriesListedMessage))]
+[JsonSerializable(typeof(StorageRootDto))]
+[JsonSerializable(typeof(StorageRootsMessage))]
 [JsonSerializable(typeof(GameExitedMessage))]
 [JsonSerializable(typeof(PermissionStatusMessage))]
 [JsonSerializable(typeof(GameThreadStatusMessage))]

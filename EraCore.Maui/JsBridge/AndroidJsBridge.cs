@@ -35,9 +35,11 @@ namespace EraCore.Maui.JsBridge;
 /// 方法注解 <c>[JavascriptInterface]</c> 是 Android 4.2+ 的安全要求（仅注解的方法对 JS 可见）。
 /// </para>
 /// <para>
-/// game-library spec ID11：原 <c>PickFolderAsync</c> 空桩已删除——Android 不再走平台 picker，
-/// 改由 <see cref="BridgeHost.HandleListDirectories"/> + Vue 端 <c>DirectoryBrowser.vue</c> 弹窗选目录。
-/// 接口默认实现（<c>Task.FromResult&lt;string?&gt;(null)</c>）兜底，Android 路径不会到达此方法。
+/// game-library spec ID11：原 <c>PickFolderAsync</c> 空桩已删除——Android 的「更改目录」走
+/// SAF 原生选择器（<c>pickSafDirectory</c>，ADR-0019）；issues/15 S2 的页内真实路径浏览器
+/// 另走 <see cref="BridgeHost.HandleListDirectories"/> + <c>getStorageRoots</c>
+/// （Vue 端 <c>ChangeDirDialog.vue</c> 浏览区块）。接口默认实现
+/// （<c>Task.FromResult&lt;string?&gt;(null)</c>）兜底，Android 路径不会到达此方法。
 /// </para>
 /// </remarks>
 internal sealed class AndroidJsBridge : IJsBridge
