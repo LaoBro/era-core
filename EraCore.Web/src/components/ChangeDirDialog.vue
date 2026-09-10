@@ -9,9 +9,9 @@
  *   逐层选出一个**真实路径**目录，从而切到 legacy 直读模式（SAF picker 只产 content:// URI，
  *   拿不到真实路径）。MAUI 侧浏览走 `listDirectories` / `storageRoots` 桥接消息。
  *
- * 内容：手动路径输入 + 「浏览」页面内目录浏览（`source.listDirs`）自动填框；
- * 确认（「扫描」）→ `source.scan(inputPath)`（server /game/scan 或 bridge scanGames），
- * 传输失败时保留框体。
+ * 内容：手动路径输入（未展开浏览时）+ 面包屑式页内浏览（`source.listDirs` 逐层列举，
+ * 「上级/前往/存储」收编为可点面包屑段）；浏览中确认（「扫描此目录」）→ 直接
+ * `source.scan(browsePath)` 并关闭（手动模式下仍是填框 + 「扫描」），传输失败时保留框体。
  *
  * 视觉与交互遵循 ConfirmDialog.vue 的 Alert 式对话框约定（半透明遮罩 + 表面容器、
  * 点击遮罩 / Escape 关闭），按钮复用全局 .btn-primary / .btn-outline。
@@ -46,6 +46,13 @@ const emit = defineEmits<{
 
 const game = useGameStore();
 
+/**
+ * Android（MAUI 桥接）下手动输入整个隐藏——真机软键盘输入长路径纯属折磨，
+ * 且 Android 目录起点恒有存储根兜底，手动输入没有不可替代的场景（用户 2026-09-11 确认）。
+ * Web/HTTP（桌面浏览器）保留手动输入：粘贴路径是正经用法。
+ */
+const isAndroidMaui = computed(() => isAndroidMauiEnvironment());
+
 /** 手动路径输入——打开时预填当前主目录（scanRootDir 优先，fallback mainGameDir）。 */
 const inputPath = ref<string>('');
 
@@ -72,10 +79,12 @@ watch(
         ? document.activeElement
         : null;
       await nextTick();
-      inputRef.value?.focus();
+      // UX 改版：浏览展开时不聚焦手动输入框——真机上会拉起软键盘把目录列表顶出视口。
+      if (!props.autoBrowse) inputRef.value?.focus();
       // issues/15 S3：菜单入口承诺「点到即见目录」——打开即展开浏览区。
-      // enterBrowse 自带起点分派：当前目录是真实路径就从它起，否则列存储根。
-      if (props.autoBrowse) {
+      // Android 下无条件展开（手动输入已隐藏，浏览是唯一模式）；enterBrowse
+      // 自带起点分派：当前目录是真实路径就从它起，否则列存储根。
+      if (props.autoBrowse || isAndroidMaui.value) {
         browsing.value = true;
         await enterBrowse(inputPath.value.trim());
       }
@@ -107,12 +116,10 @@ async function onConfirm(): Promise<void> {
   close();
 }
 
-// ---------- 页面内目录浏览（source.listDirs 自动填框） ----------
+// ---------- 页面内目录浏览（面包屑导航 + 单步「扫描此目录」） ----------
 const browsing = ref(false);
 const browsePath = ref<string>('');
 const browseDirs = ref<string[]>([]);
-const browseParent = ref<string | null>(null);
-const browseInput = ref<string>('');
 /** 正在读目录（桥接往返 / 慢卷枚举）——给浏览区块一个 loading 态。 */
 const browseLoading = ref(false);
 /** 存储根清单；null = 尚未取到或取失败（此时不显示根列表）。 */
@@ -147,12 +154,8 @@ function isRealPath(p: string): boolean {
   return t.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(t);
 }
 
-/** 切目录浏览——首次打开以当前输入路径为起点加载子目录。 */
+/** 进入目录浏览——以当前输入路径为起点加载子目录（收起走面包屑行的 ⌨ 按钮）。 */
 async function toggleBrowse(): Promise<void> {
-  if (browsing.value) {
-    browsing.value = false;
-    return;
-  }
   browsing.value = true;
   await enterBrowse(inputPath.value.trim());
 }
@@ -170,24 +173,25 @@ async function enterBrowse(dir: string): Promise<void> {
     await showRoots();
     return;
   }
+  // 面包屑依赖 roots 折叠存储前缀（💾 内部存储）——走真实路径时也要拉一次。
+  // 幂等且便宜（单次桥接往返）；未授权时返回空清单，面包屑退化为逐段展开，无害。
+  if (canBrowseRoots.value && roots.value === null) {
+    roots.value = (await props.source.storageRoots?.()) ?? null;
+  }
 
   browsePath.value = target;
-  browseInput.value = target;
   browseLoading.value = true;
   const result: DirListResult | null = await props.source.listDirs(target);
   browseLoading.value = false;
   if (result === null) {
     browseDirs.value = [];
-    browseParent.value = null;
     inRootsView.value = false;
     needsGrant.value = false;
     localError.value = `无法访问目录：${target || '(空)'}`;
     return;
   }
   browsePath.value = result.currentPath;
-  browseInput.value = result.currentPath;
   browseDirs.value = result.dirs;
-  browseParent.value = result.parentPath;
   inRootsView.value = false;
   localError.value = null;
 }
@@ -208,9 +212,7 @@ async function showRoots(): Promise<void> {
     roots.value = null;
     inRootsView.value = false;
     browsePath.value = '';
-    browseInput.value = '';
     browseDirs.value = [];
-    browseParent.value = null;
     needsGrant.value = canGrant.value;
     localError.value = canGrant.value
       ? null
@@ -221,9 +223,7 @@ async function showRoots(): Promise<void> {
   inRootsView.value = true;
   needsGrant.value = false;
   browsePath.value = '';
-  browseInput.value = '';
   browseDirs.value = [];
-  browseParent.value = null;
   localError.value = null;
 }
 
@@ -259,11 +259,6 @@ async function onPickRoot(path: string): Promise<void> {
   await enterBrowse(path);
 }
 
-/** 前往目录浏览器输入框中的路径。 */
-async function onBrowseGo(): Promise<void> {
-  await enterBrowse(browseInput.value);
-}
-
 /** 点击子目录——进入该目录继续浏览。 */
 async function onPickDir(name: string): Promise<void> {
   const base = browsePath.value.replace(/[\\/]+$/, '');
@@ -271,17 +266,57 @@ async function onPickDir(name: string): Promise<void> {
   await enterBrowse(name ? `${base}${sep}${name}` : base);
 }
 
-/** 回到上级目录。 */
-async function onBrowseUp(): Promise<void> {
-  if (browseParent.value) await enterBrowse(browseParent.value);
+/**
+ * 面包屑段（UX 改版）：由 browsePath 切分而来，取代「上级 / 路径输入框 / 前往 / 存储」四件套。
+ *
+ * - 匹配到存储根时，根前缀折叠为**一个**可点段（显示 💾 卷名）——Android 上免看
+ *   `/storage/emulated` 这类无人关心的中段；
+ * - 否则按分隔符逐段展开（Windows 先给 `D:\` 盘符段，Unix 先给 `/` 根段）；
+ * - 末段是当前位置，只读加粗不可点；点其余任意段 = 直接跳回该层（「上级」是其特例）。
+ */
+const crumbs = computed<{ label: string; path: string }[]>(() => {
+  const p = browsePath.value.trim();
+  if (!p || inRootsView.value) return [];
+  const sep = p.includes('\\') ? '\\' : '/';
+  const norm = p.replace(/[\\/]+$/, '');
+  const out: { label: string; path: string }[] = [];
+  let consumed = '';
+  const root = roots.value?.find((r) => {
+    const rp = r.path.replace(/[\\/]+$/, '');
+    return rp !== '' && norm.toLowerCase().startsWith(rp.toLowerCase());
+  });
+  if (root) {
+    consumed = root.path.replace(/[\\/]+$/, '');
+    out.push({ label: root.label, path: consumed });
+  } else if (sep === '\\') {
+    const m = norm.match(/^[a-zA-Z]:/);
+    consumed = m ? m[0] : norm.split('\\')[0];
+    out.push({ label: `${consumed}\\`, path: `${consumed}\\` });
+  } else {
+    out.push({ label: '/', path: '/' });
+    consumed = '';
+  }
+  const rest = norm.slice(consumed.length).split(/[\\/]/).filter(Boolean);
+  let acc = consumed;
+  for (const seg of rest) {
+    acc = `${acc}${acc.endsWith(sep) ? '' : sep}${seg}`;
+    out.push({ label: seg, path: acc });
+  }
+  return out;
+});
+
+/** 从浏览模式回到手动输入——把当前浏览位置填进输入框继续编辑（回车仍等于扫描）。 */
+function collapseToManual(): void {
+  if (browsePath.value.trim()) inputPath.value = browsePath.value;
+  browsing.value = false;
 }
 
-/** 使用浏览中的目录作为主目录 → 退出浏览，填入手动输入框。 */
-function onUseBrowsePath(): void {
-  if (!browsePath.value.trim()) return;
-  inputPath.value = browsePath.value;
-  browsing.value = false;
-  localError.value = null;
+/** 浏览中的单步确认：以当前浏览目录直接扫描并关闭（取代「使用此目录」+「扫描」两步）。 */
+async function scanFromBrowse(): Promise<void> {
+  const target = browsePath.value.trim();
+  if (!target) return;
+  inputPath.value = target;
+  await onConfirm();
 }
 
 /** Escape（桌面键盘等价于 Android 返回键）——关闭对话框。 */
@@ -312,14 +347,16 @@ onUnmounted(() => {
       >
         <h2 class="cd-title">更改目录</h2>
         <p class="cd-hint">
-          输入游戏主目录（可包含多个游戏），或用「浏览」逐层选择目录。
-          <template v-if="canBrowseRoots">
-            选择真实路径目录（如 /storage/emulated/0/…）可启用直读模式，加载更快。
+          <template v-if="browsing">选择包含游戏的目录后点「扫描此目录」；真实路径目录走直读，更快。</template>
+          <template v-else>
+            输入游戏主目录（可包含多个游戏），或点「浏览…」逐层选择。
+            <template v-if="canBrowseRoots">选择真实路径目录（如 /storage/emulated/0/…）可启用直读模式，加载更快。</template>
           </template>
         </p>
 
-        <!-- 手动路径输入 + 目录浏览辅助 -->
-        <div class="cd-path-row">
+        <!-- 手动路径输入（浏览展开时隐藏——路径信息由面包屑唯一呈现，消除三处重复；
+             Android 下彻底隐藏——软键盘输长路径是折磨，浏览是唯一模式） -->
+        <div v-if="!browsing && !isAndroidMaui" class="cd-path-row">
           <input
             ref="inputRef"
             v-model="inputPath"
@@ -333,38 +370,51 @@ onUnmounted(() => {
             type="button"
             class="btn-outline cd-help-btn"
             @click="toggleBrowse"
-          >{{ browsing ? '收起浏览' : '浏览…' }}</button>
+          >浏览…</button>
         </div>
 
         <p v-if="localError" class="cd-error">{{ localError }}</p>
 
-        <!-- 页面内目录浏览（source.listDirs；MAUI 走 listDirectories / storageRoots 桥接） -->
+        <!-- 页面内目录浏览（面包屑导航；MAUI 走 listDirectories / storageRoots 桥接） -->
         <div v-if="browsing" class="cd-browser">
-          <div class="cd-browser-path-row">
+          <!--
+            面包屑（UX 改版）：上级 / 前往 / 存储 三按钮 + 路径行的合体替代。
+            点任意父段跳回该层；点 ⌨ 回手动输入。存储根视图与授权 CTA 不渲染面包屑。
+          -->
+          <nav
+            v-if="crumbs.length"
+            class="cd-crumbs"
+            aria-label="目录层级"
+          >
+            <template v-for="(c, i) in crumbs" :key="c.path">
+              <span
+                v-if="i"
+                class="cd-crumb-sep"
+                aria-hidden="true"
+              >›</span>
+              <button
+                v-if="i < crumbs.length - 1"
+                type="button"
+                class="cd-crumb"
+                :title="c.path"
+                @click="enterBrowse(c.path)"
+              >{{ c.label }}</button>
+              <span
+                v-else
+                class="cd-crumb cd-crumb-current"
+                :title="c.path"
+                aria-current="location"
+              >{{ c.label }}</span>
+            </template>
             <button
+              v-if="!isAndroidMaui"
               type="button"
-              class="btn-outline"
-              :disabled="!browseParent || inRootsView"
-              @click="onBrowseUp"
-            >⬆ 上级</button>
-            <input
-              v-model="browseInput"
-              class="cd-dir-input"
-              type="text"
-              placeholder="输入目录路径后回车"
-              spellcheck="false"
-              @keyup.enter="onBrowseGo"
-            />
-            <button type="button" class="btn-primary" @click="onBrowseGo">前往</button>
-            <!-- issues/15 S2：回到挂载点清单（MAUI；Web 无挂载点概念，不显示） -->
-            <button
-              v-if="canBrowseRoots"
-              type="button"
-              class="btn-outline"
-              title="回到存储位置列表"
-              @click="showRoots"
-            >存储</button>
-          </div>
+              class="cd-crumb-edit"
+              title="手动输入路径"
+              aria-label="手动输入路径"
+              @click="collapseToManual"
+            >⌨</button>
+          </nav>
 
           <div v-if="browseLoading" class="cd-browser-loading">
             <span class="cd-spinner" aria-hidden="true" />
@@ -410,20 +460,26 @@ onUnmounted(() => {
             </div>
           </div>
 
+          <!-- 浏览模式的唯一确认：以当前浏览目录直接扫描（取消也收进这一行） -->
           <div class="cd-browser-footer">
-            <span class="cd-browser-path" :title="browsePath">
-              {{ inRootsView ? '请选择存储位置后进入' : (browsePath || '(空路径)') }}
-            </span>
+            <button
+              type="button"
+              class="btn-outline"
+              @click="close"
+            >取消</button>
             <button
               type="button"
               class="btn-primary"
               :disabled="!browsePath.trim()"
-              @click="onUseBrowsePath"
-            >使用此目录</button>
+              @click="scanFromBrowse"
+            >扫描此目录</button>
           </div>
         </div>
 
-        <div class="cd-actions">
+        <div
+          v-if="!browsing && !isAndroidMaui"
+          class="cd-actions"
+        >
           <button type="button" class="btn-outline cd-btn" @click="close">取消</button>
           <button
             type="button"
@@ -503,10 +559,64 @@ onUnmounted(() => {
   flex-direction: column;
   gap: var(--space-2);
 }
-.cd-browser-path-row {
+/* 面包屑（UX 改版）：可折行解决长路径截断；每段命中区 ≥40px 高，与目录行一致 */
+.cd-crumbs {
   display: flex;
-  gap: var(--space-2);
-  width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 0 var(--space-2);
+}
+.cd-crumb {
+  /* inline-flex + center：span 形态的「当前段」没有 button 的 UA 垂直居中，文字会在
+     40px 命中区里顶上去（真机实测「往上飘」）——统一用 flex 居中修掉。 */
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 var(--space-1);
+  background: transparent;
+  border: none;
+  color: var(--color-indicator);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.cd-crumb:hover {
+  background: var(--state-layer-hover);
+  border-radius: var(--radius-control);
+}
+.cd-crumb-current {
+  color: var(--color-text);
+  font-weight: 600;
+  cursor: default;
+}
+.cd-crumb-current:hover {
+  background: transparent;
+}
+.cd-crumb-sep {
+  color: var(--color-text-muted);
+  padding: 0 2px;
+}
+.cd-crumb-edit {
+  margin-left: auto;
+  min-height: 40px;
+  min-width: 40px;
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: var(--font-size-base);
+  flex-shrink: 0;
+}
+.cd-crumb-edit:hover {
+  color: var(--color-text);
 }
 .cd-browser-dirs {
   background: var(--color-surface);
@@ -613,18 +723,8 @@ onUnmounted(() => {
 .cd-browser-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: var(--space-2);
-}
-.cd-browser-path {
-  flex: 1;
-  min-width: 0;
-  color: var(--color-text-muted);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .cd-actions {
   display: flex;
