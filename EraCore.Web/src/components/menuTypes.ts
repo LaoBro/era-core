@@ -17,6 +17,12 @@ export type PopupMenuItem =
       type: 'item';
       id: string;
       label: string;
+      /**
+       * 右侧弱化副文案（issues/15 S3）——承载「这条路的代价」这类决策信息
+       * （如「直读，更快」/「兼容，无需授权」），让用户在点之前就能分辨。
+       * 省略则不渲染该 span，既有菜单项零影响。
+       */
+      hint?: string;
       /** 内联 SVG 图标名——继承 currentColor 渲染，规避 emoji 在 Android 上按彩色字形显示。 */
       icon?: IconName;
       danger?: boolean;

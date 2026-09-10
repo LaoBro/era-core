@@ -18,13 +18,26 @@
  */
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { useGameStore } from '../stores/game';
-import type { GameLibrarySource, DirListResult, StorageRoot } from '../lib/gameLibrary';
+import {
+  isAndroidMauiEnvironment,
+  type GameLibrarySource,
+  type DirListResult,
+  type StorageRoot,
+} from '../lib/gameLibrary';
+import { checkAllFilesAccess, requestAllFilesAccess } from '../lib/mauiBridge';
 
 const props = defineProps<{
   /** 是否显示。 */
   visible: boolean;
   /** 游戏库数据源（maui 桥接 或 http）。 */
   source: GameLibrarySource;
+  /**
+   * issues/15 S3：打开后是否**直接展开浏览区**。
+   *
+   * ⋮ 菜单项写着「直读，更快」，点进来却停在输入框、还要再点一次「浏览…」——承诺与落点不一致。
+   * 菜单入口传 true 让「点进来 = 看到目录」；Web 入口不传，保持手动输入为主的原行为。
+   */
+  autoBrowse?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -52,16 +65,26 @@ watch(
       browseLoading.value = false;
       inRootsView.value = false;
       roots.value = null;
+      needsGrant.value = false;
+      awaitingGrant.value = false;
       localError.value = null;
       previouslyFocused = document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
       await nextTick();
       inputRef.value?.focus();
+      // issues/15 S3：菜单入口承诺「点到即见目录」——打开即展开浏览区。
+      // enterBrowse 自带起点分派：当前目录是真实路径就从它起，否则列存储根。
+      if (props.autoBrowse) {
+        browsing.value = true;
+        await enterBrowse(inputPath.value.trim());
+      }
     } else if (previouslyFocused && previouslyFocused.isConnected) {
       previouslyFocused.focus();
       previouslyFocused = null;
     }
+    // 关闭即放弃「待授权重试」意图——否则它会在下一次授权状态变化时触发一次不可见的列举
+    if (!v) awaitingGrant.value = false;
   },
 );
 
@@ -96,9 +119,21 @@ const browseLoading = ref(false);
 const roots = ref<StorageRoot[] | null>(null);
 /** 当前是否显示的是「存储根」列表（区别于普通子目录列表）。 */
 const inRootsView = ref(false);
+/**
+ * issues/15 S3：根列表为空（= 未授权直读）——改为展示**内联授权 CTA**。
+ *
+ * 改造前这里只写一句「请先在 ⋮ 菜单中申请所有文件访问权限」——那是死循环：
+ * ⋮ 菜单正被本对话框盖着，用户点不到。
+ */
+const needsGrant = ref(false);
+/** 待授权后重试列举的意图——授权结果经桥接异步回流，故需标记 + watch 兑现。 */
+const awaitingGrant = ref(false);
 
 /** 数据源是否提供挂载点清单——MAUI 有（问 C#），Web 没有（可直接从任意路径起浏览）。 */
 const canBrowseRoots = computed(() => typeof props.source.storageRoots === 'function');
+
+/** 本平台是否存在「所有文件访问」权限这一说——决定根列表为空时给授权 CTA 还是纯错误文案。 */
+const canGrant = computed(() => canBrowseRoots.value && isAndroidMauiEnvironment());
 
 /**
  * 是否为可直接浏览的**真实路径**。
@@ -145,6 +180,7 @@ async function enterBrowse(dir: string): Promise<void> {
     browseDirs.value = [];
     browseParent.value = null;
     inRootsView.value = false;
+    needsGrant.value = false;
     localError.value = `无法访问目录：${target || '(空)'}`;
     return;
   }
@@ -159,8 +195,10 @@ async function enterBrowse(dir: string): Promise<void> {
 /**
  * 读取并展示存储根清单（MAUI：C# 的 `StorageManager` / `DriveInfo`）。
  *
- * 失败（未授权「所有文件访问」时枚举会被系统拒绝）走 {@link localError} 提示授权，
- * 而不是静默空列表——2026-09-11 裁定：入口恒显示，失败时提示授权。
+ * 空清单有两种含义，文案必须分开（issues/15 S3）：
+ * - **Android 未授权**——C# 侧 `CollectStorageRoots` 的门直接返空（scoped storage 会拒绝对
+ *   `/storage/emulated/0` 的直接路径访问），给可点的授权入口；
+ * - 其它失败（该平台无授权概念 / 真读不到）——退化为手动输入的提示。
  */
 async function showRoots(): Promise<void> {
   browseLoading.value = true;
@@ -173,17 +211,48 @@ async function showRoots(): Promise<void> {
     browseInput.value = '';
     browseDirs.value = [];
     browseParent.value = null;
-    localError.value = '无法读取存储位置——若尚未授权，请先在 ⋮ 菜单中「申请所有文件访问权限」。';
+    needsGrant.value = canGrant.value;
+    localError.value = canGrant.value
+      ? null
+      : '无法读取存储位置——请在上方直接输入目录路径。';
     return;
   }
   roots.value = list;
   inRootsView.value = true;
+  needsGrant.value = false;
   browsePath.value = '';
   browseInput.value = '';
   browseDirs.value = [];
   browseParent.value = null;
   localError.value = null;
 }
+
+/** issues/15 S3：内联授权入口——跳系统设置页，返回后复查。 */
+function onGrantClick(): void {
+  awaitingGrant.value = true;
+  document.addEventListener('visibilitychange', onGrantVisibilityRecheck);
+  requestAllFilesAccess();
+}
+
+/** 从系统设置页返回——复查授权（结果经 `watch(game.allFilesAccess)` 异步回流）。 */
+function onGrantVisibilityRecheck(): void {
+  if (document.hidden) return;
+  document.removeEventListener('visibilitychange', onGrantVisibilityRecheck);
+  checkAllFilesAccess();
+}
+
+/**
+ * issues/15 S3：授权结果回流后兑现「待授权」意图——成功则立刻重试列举，
+ * 让「授权 → 看到存储位置」连成一个动作；未授权则保留 CTA（不自作主张重试）。
+ */
+watch(
+  () => game.allFilesAccess,
+  (granted) => {
+    if (!awaitingGrant.value) return;
+    awaitingGrant.value = false;
+    if (granted === true) void showRoots();
+  },
+);
 
 /** 点击存储根——进入该卷浏览。 */
 async function onPickRoot(path: string): Promise<void> {
@@ -222,7 +291,10 @@ function onDocKeydown(e: KeyboardEvent): void {
 
 const inputRef = ref<HTMLInputElement | null>(null);
 onMounted(() => document.addEventListener('keydown', onDocKeydown));
-onUnmounted(() => document.removeEventListener('keydown', onDocKeydown));
+onUnmounted(() => {
+  document.removeEventListener('keydown', onDocKeydown);
+  document.removeEventListener('visibilitychange', onGrantVisibilityRecheck);
+});
 </script>
 
 <template>
@@ -297,6 +369,17 @@ onUnmounted(() => document.removeEventListener('keydown', onDocKeydown));
           <div v-if="browseLoading" class="cd-browser-loading">
             <span class="cd-spinner" aria-hidden="true" />
             <span>正在读取目录…</span>
+          </div>
+
+          <!-- issues/15 S3：未授权直读 → 内联授权入口（不再是「请去被本对话框盖住的 ⋮ 菜单里申请」） -->
+          <div v-else-if="needsGrant" class="cd-grant">
+            <p class="cd-grant-text">需要「所有文件访问」权限才能浏览存储位置。</p>
+            <button type="button" class="btn-primary" @click="onGrantClick">
+              授予所有文件访问
+            </button>
+            <p class="cd-grant-hint">
+              不想授权？关闭本对话框，用菜单里的「改用系统选择器...」——兼容模式，无需授权。
+            </p>
           </div>
 
           <div v-else class="cd-browser-dirs">
@@ -463,6 +546,59 @@ onUnmounted(() => document.removeEventListener('keydown', onDocKeydown));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 存储根条目下的挂载点副标题（issues/15 S2）——两行式，副行更弱 */
+.cd-dir-sub {
+  display: block;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  opacity: 0.75;
+}
+/* issues/15 S2：读取目录中的 loading 态 */
+.cd-browser-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+.cd-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-indicator);
+  border-radius: 50%;
+  animation: cd-spin var(--motion-spin) linear infinite;
+  flex-shrink: 0;
+}
+@keyframes cd-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+/* issues/15 S3：未授权直读时的内联授权入口 */
+.cd-grant {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  text-align: center;
+}
+.cd-grant-text {
+  margin: 0;
+  font-size: var(--font-size-md);
+  color: var(--color-text);
+}
+.cd-grant-hint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
 }
 .cd-dir-arrow {
   color: var(--color-text-muted);

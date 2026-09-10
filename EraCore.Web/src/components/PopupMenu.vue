@@ -135,6 +135,8 @@ onUnmounted(() => {
           </svg>
         </span>
         <span class="popup-item-label">{{ it.label }}</span>
+        <!-- issues/15 S3：右侧弱化副文案（可选）——把「这条路的代价」写在点之前 -->
+        <span v-if="it.hint" class="popup-item-hint">{{ it.hint }}</span>
       </button>
     </template>
     </div>
@@ -215,6 +217,15 @@ onUnmounted(() => {
 }
 .popup-item-label {
   flex: 1;
+}
+/* issues/15 S3：菜单项右侧副文案——弱化、不抢主标签，且不换行 */
+.popup-item-hint {
+  flex-shrink: 0;
+  margin-left: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  opacity: 0.75;
+  white-space: nowrap;
 }
 .popup-separator {
   height: 1px;

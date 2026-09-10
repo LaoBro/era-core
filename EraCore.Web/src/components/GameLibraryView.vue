@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useGameStore, mapLoadGameErrorCode, formatMainGameDirForDisplay } from '../stores/game';
 import { useConnectionStore } from '../stores/connection';
-import type { GameLibrarySource } from '../lib/gameLibrary';
+import { isAndroidMauiEnvironment, type GameLibrarySource } from '../lib/gameLibrary';
 import ChangeDirDialog from './ChangeDirDialog.vue';
 import ConfirmDialog from './ConfirmDialog.vue';
 import GameRow from './GameRow.vue';
@@ -39,8 +39,48 @@ const mainDirDisplay = computed(() =>
   formatMainGameDirForDisplay(game.scanRootDir ?? game.mainGameDir),
 );
 
-/** 是否已设置主目录。 */
-const hasMainDir = computed(() => !!(game.scanRootDir ?? game.mainGameDir));
+/**
+ * 主目录**展示文案**按 `/` 切成片段，供模板用 `<wbr>` 标出**可折行点**。
+ *
+ * 路径没有空格，默认只能靠 `word-break: break-all` 在任意字符处断——加了模式徽章后可用宽度
+ * 变窄，会在词中间断开（`/em` / `uera`）。切成片段后折行只发生在分隔符处，读起来是完整的段。
+ *
+ * 注意取的是 {@link mainDirDisplay}（SAF 模式已折叠成「Android 存储目录」）而非原始路径——
+ * 用原始值会把整条 `content://` URI 铺出来。
+ */
+const mainDirSegments = computed<string[]>(() => {
+  const dir = mainDirDisplay.value;
+  if (!dir || dir === '(未设置)') return [];
+  const parts: string[] = [];
+  let start = 0;
+  for (let i = 0; i < dir.length; i++) {
+    if (dir[i] === '/' && i > start) {
+      parts.push(dir.slice(start, i + 1));
+      start = i + 1;
+    }
+  }
+  parts.push(dir.slice(start));
+  return parts.filter((s) => s.length > 0);
+});
+
+/**
+ * issues/15 S3：是否展示目录模式徽章。
+ *
+ * 仅 Android MAUI——Windows 恒真实路径（徽章是无信息量的噪音），Web 没有「模式」概念。
+ */
+const showModeBadge = computed(() => props.source.kind === 'maui' && isAndroidMauiEnvironment());
+
+/**
+ * 当前主目录所属的轨——**由路径形态派生，不来自任何模式字段**（设计稿 §1）。
+ *
+ * `content://` = 兼容轨（SAF 文档访问）；真实路径 = 直读轨。
+ * 用户需要「知道自己在哪条轨上」，因为这个差异决定了加载速度（issue 15 实测 −42%）。
+ */
+const dirMode = computed<'legacy' | 'saf' | null>(() => {
+  const dir = game.scanRootDir ?? game.mainGameDir;
+  if (!dir) return null;
+  return dir.startsWith('content://') ? 'saf' : 'legacy';
+});
 
 /** 扫描中——展示 loading 占位。 */
 const isScanning = computed(() => game.scanStatus === 'scanning');
@@ -93,6 +133,14 @@ watch(currentError, () => scheduleErrorBannerAutoDismiss(), { immediate: true })
 
 // ---------- 「更改目录」入口（统一走 ChangeDirDialog） ----------
 const dirDialogVisible = ref(false);
+/**
+ * issues/15 S3：本次打开是否**直接展开浏览区**。
+ *
+ * ⋮ 菜单项写着「直读，更快」，点进去却停在输入框、要再点一次「浏览…」才到直读浏览器——
+ * 承诺与落点不一致。菜单入口走 `{ browse: true }`，让「点进来 = 看到目录」。
+ * Web 的入口不带参数，保持原行为（手动输入为主）。
+ */
+const dirDialogAutoBrowse = ref(false);
 
 // issues/13 M5：重扫脚本缓存（路线 2 显式失效）——⋮ 菜单 → 确认 → 删 IR+sidecar，下次启动建库轮。
 const rescanTarget = ref<{ name: string; fullPath: string } | null>(null);
@@ -117,10 +165,11 @@ async function scanDir(dir: string): Promise<void> {
   }
 }
 
-/** 打开共享的「更改目录」对话框（Web 经右上角菜单调用；MAUI 不走此对话框）。 */
-function openChangeDirDialog(): void {
+/** 打开共享的「更改目录」对话框（Web 经右上角菜单调用；MAUI 走 ⋮ 或空态按钮调用）。 */
+function openChangeDirDialog(opts?: { browse?: boolean }): void {
   game.clearMauiError();
   game.clearLoadGameError();
+  dirDialogAutoBrowse.value = opts?.browse === true;
   dirDialogVisible.value = true;
 }
 
@@ -199,7 +248,18 @@ defineExpose({ openChangeDirDialog });
     <div class="path-line">
       <span class="path-prefix">当前目录</span>
       <span class="path-value" :title="mainDirDisplay">
-        {{ hasMainDir ? mainDirDisplay : '未选择目录' }}
+        <template v-if="mainDirSegments.length">
+          <template v-for="(seg, i) in mainDirSegments" :key="i">{{ seg }}<wbr /></template>
+        </template>
+        <template v-else>未选择目录</template>
+      </span>
+      <!-- issues/15 S3：模式徽章——让用户看得见自己走的是哪条轨（直读更快 / 兼容兜底） -->
+      <span
+        v-if="showModeBadge && dirMode"
+        class="mode-badge"
+        :class="dirMode === 'legacy' ? 'mode-legacy' : 'mode-saf'"
+      >
+        {{ dirMode === 'legacy' ? '直读 · 更快' : '兼容 · 可用' }}
       </span>
     </div>
 
@@ -229,11 +289,15 @@ defineExpose({ openChangeDirDialog });
         </template>
         <div class="empty-path" :title="mainDirDisplay">{{ mainDirDisplay }}</div>
         <div class="empty-hint">游戏目录需要包含 csv/ 和 erb/ 两个子目录</div>
-        <button
-          type="button"
-          class="btn-primary btn-lg empty-primary-btn"
-          @click="changeMainDir"
-        >更改主目录</button>
+        <!-- issues/15 S3：平台可注入空态动作——MAUI 给「取权限用直读 / 直接用系统选择器」
+             双按钮（把两条轨的代价差异明说），Web 走兜底单按钮，行为不变 -->
+        <slot name="empty-actions">
+          <button
+            type="button"
+            class="btn-primary btn-lg empty-primary-btn"
+            @click="changeMainDir"
+          >更改主目录</button>
+        </slot>
       </div>
 
       <!-- 游戏列表（文件管理器式整行） -->
@@ -255,7 +319,11 @@ defineExpose({ openChangeDirDialog });
     </div>
 
     <!-- 共享「更改目录」对话框（MAUI 原生 / Web 浏览 + 手动输入） -->
-    <ChangeDirDialog v-model:visible="dirDialogVisible" :source="source" />
+    <ChangeDirDialog
+      v-model:visible="dirDialogVisible"
+      :source="source"
+      :auto-browse="dirDialogAutoBrowse"
+    />
 
     <!-- issues/13 M5：重扫脚本缓存确认——删 IR+sidecar 不可逆（下次启动付一次建库轮 ~30s），需用户确认 -->
     <ConfirmDialog
@@ -358,12 +426,37 @@ defineExpose({ openChangeDirDialog });
 .path-value {
   flex: 1;
   min-width: 0;
-  word-break: break-all;
+  /* 折行点由模板里的 <wbr>（路径分隔符处）提供；break-word 只作兜底——
+     单段过长时仍能断，但不会像 break-all 那样在任意字符处断开 */
+  word-break: normal;
+  overflow-wrap: break-word;
   font-family: var(--font-mono);
   font-size: var(--font-size-base);
   line-height: 22px;
   color: var(--color-text);
   opacity: 0.6;
+}
+
+/* issues/15 S3：目录模式徽章（仅 Android MAUI）——语义色 token + color-mix 做浅底，不写死 hex */
+.mode-badge {
+  flex-shrink: 0;
+  align-self: center;
+  padding: 3px 9px;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.mode-legacy {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 16%, transparent);
+  border-color: color-mix(in srgb, var(--color-success) 40%, transparent);
+}
+.mode-saf {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 40%, transparent);
 }
 
 .glv-body {

@@ -1,42 +1,51 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useGameStore } from '../stores/game';
 import { useUiStore } from '../stores/ui';
 import { mauiGameLibrarySource, isAndroidMauiEnvironment } from '../lib/gameLibrary';
-import { isMauiEnvironment, checkAllFilesAccess, requestAllFilesAccess } from '../lib/mauiBridge';
+import {
+  checkAllFilesAccess,
+  requestAllFilesAccess,
+  pickSafDirectory,
+} from '../lib/mauiBridge';
 import GameLibraryView from './GameLibraryView.vue';
 import PopupMenu, { type PopupMenuItem } from './PopupMenu.vue';
 
 /**
  * MauiGameList — MAUI 游戏选择页（PickerShell）。
  *
- * 只是 GameLibraryView（与 Web 共用一份设计）的薄 wrapper——
- * 平台差异只剩右上角 ⋮ 菜单（更改目录 / 浏览存储目录 / 重新扫描 / 主题 / 所有文件访问）：
+ * 只是 GameLibraryView（与 Web 共用一份设计）的薄 wrapper——平台差异在 ⋮ 菜单与空态动作：
  * - 数据获取（扫描/加载）经 mauiGameLibrarySource（C# 桥接）
- * - 「更改目录」直接弹原生 FolderPicker（Windows）/ SAF（Android），
- *   与 Web（手动输入对话框）的区别即平台能力差异
- * - 「浏览存储目录…」（issues/15 S2，Android）：打开 ChangeDirDialog 的页内浏览器，
- *   逐层选出**真实路径**目录 → 切到 legacy 直读模式（性能收益见 issue 15/17）
+ * - 「更改目录…」Android 走页内真实路径浏览器（**推荐轨：直读**），Windows 走原生 FolderPicker
+ * - 「改用系统选择器…」（Android）SAF 兜底轨，仅当目标目录只能在 SAF 下访问时才需要
+ * - 「所有文件访问权限」（Android，恒显示）直读轨的前置条件，右侧直显当前状态
+ * - issues/15 S3：空态给双按钮，把两条轨的代价（拿权限更快 / 免授权兼容）在首次使用时就说明
+ *
+ * 设计取向（2026-09-11 用户裁定）：**不隐藏任何一条路，而是把代价写进标签**——
+ * 优先级靠措辞与顺序体现，用户自己选；选定后由路径形态决定模式（设计稿 §1）。
  */
 const game = useGameStore();
 const ui = useUiStore();
 
-/** GameLibraryView 实例引用——「浏览存储目录…」经其暴露方法打开页内浏览对话框。 */
+/** GameLibraryView 实例引用——目录入口经其暴露方法打开页内浏览对话框。 */
 const glvRef = ref<InstanceType<typeof GameLibraryView> | null>(null);
 
 /** 顶部 ⋮ 菜单展开状态。 */
 const showMenu = ref(false);
 
-/** issues/15：菜单项可见性——MAUI + SAF 模式（mainGameDir 为 content:// URI）。
- *  legacy 模式落地后 mainGameDir 变真实路径，item 自然消失。 */
-const showAllFilesItem = computed(
-  () => isMauiEnvironment() && (game.mainGameDir?.startsWith('content://') ?? false),
-);
+/** issues/15 S3：Android MAUI——目录模式与授权相关入口只在此平台出现
+ *  （Windows 恒真实路径且无授权概念，加这些项只是噪音）。 */
+const isAndroid = computed(() => isAndroidMauiEnvironment());
 
-/** issues/15 S2：「浏览存储目录…」——仅 Android（Windows 有 FolderPicker，且无 legacy 场景）。
- *  入口恒显示（不 gate 在授权状态上）：未授权时浏览会失败并提示去授权，
- *  而非让用户看不到这条路的存续。 */
-const showBrowseDirItem = computed(() => isAndroidMauiEnvironment());
+/**
+ * issues/15 S3：空态「获取所有文件访问」的待办意图。
+ *
+ * 授权要跳系统设置页、返回后授权状态是**异步回流**的，没法同步串联。故置此标记 +
+ * watch 授权状态：**授权成功才**自动打开目录浏览器，让「授权 → 选目录」连成一个动作
+ * （否则用户点完按钮回来「什么都没发生」，还得再点一次——正是改造前的困惑点）。
+ * 用户没授权就返回则不打开：根列表是空的，开了反而更困惑。
+ */
+const pendingBrowseAfterGrant = ref(false);
 
 /** issues/15：从系统设置页返回 app 后复查授权状态（visibilitychange 触发一次）。 */
 function onVisibilityRecheck(): void {
@@ -46,19 +55,49 @@ function onVisibilityRecheck(): void {
   }
 }
 
-/** issues/15：点击「申请所有文件访问权限」——跳系统设置页，返回时自动复查。 */
+/** issues/15：请求授权——跳系统设置页，返回时自动复查。 */
 function onRequestAllFilesAccess(): void {
   document.addEventListener('visibilitychange', onVisibilityRecheck);
   requestAllFilesAccess();
 }
 
+/** issues/15 S3：空态「获取所有文件访问」——授权成功后自动进入目录浏览。 */
+function onGrantForBrowse(): void {
+  pendingBrowseAfterGrant.value = true;
+  onRequestAllFilesAccess();
+}
+
+/**
+ * issues/15 S3：空态主按钮——已授权就直接选目录（再让用户「获取权限」是废话），
+ * 未授权先拿权限、拿到后自动接着选目录（见 onGrantForBrowse）。
+ */
+function onPrimaryEmptyAction(): void {
+  if (game.allFilesAccess === true) {
+    openBrowseDialog();
+    return;
+  }
+  onGrantForBrowse();
+}
+
+/** 授权状态回流后兑现待办意图（见 pendingBrowseAfterGrant）。 */
+watch(
+  () => game.allFilesAccess,
+  (granted) => {
+    if (!pendingBrowseAfterGrant.value) return;
+    pendingBrowseAfterGrant.value = false;
+    if (granted === true) openBrowseDialog();
+  },
+);
+
 onMounted(() => {
-  // 初始状态查询——菜单项标签据此显示「已授权 / 申请」
-  if (showAllFilesItem.value) checkAllFilesAccess();
+  // issues/15 S3：Android 恒查一次授权状态——菜单项与空态文案都要据此渲染。
+  // 不能再像 S2 那样只在 SAF 模式下查（legacy 模式下的状态会陈旧）。
+  if (isAndroid.value) checkAllFilesAccess();
 });
 
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', onVisibilityRecheck);
+  pendingBrowseAfterGrant.value = false;
 });
 
 /** 目录操作菜单项——扫描中禁用；点击后由组件自动关闭。 */
@@ -67,9 +106,38 @@ const dirMenuItems = computed<PopupMenuItem[]>(() => [
     type: 'item',
     id: 'change-dir',
     label: isScanning.value ? '扫描中…' : '更改目录...',
+    // issues/15 S3：右侧小字把「这条路的代价」写在点之前（Windows 无此差异，不加 hint）
+    ...(isAndroid.value ? { hint: '直读，更快' } : {}),
     disabled: isScanning.value,
     onClick: onChangeMainDir,
   },
+  // issues/15 S3：SAF 兜底轨——目标目录只在 SAF 下可读（Android/data、云盘 provider）时的出口。
+  // 与「更改目录…」并列而非隐藏：两条路的代价已写进右侧文案，用户能自行分辨。
+  ...(isAndroid.value
+    ? [
+        {
+          type: 'item' as const,
+          id: 'pick-saf',
+          label: '改用系统选择器...',
+          hint: '兼容，无需授权',
+          disabled: isScanning.value,
+          onClick: onUseSystemPicker,
+        },
+      ]
+    : []),
+  // issues/15 S3：授权项**恒显示**。S2 时它只在 SAF 模式下出现，于是 legacy 模式下若授权被
+  // 系统收回，就没有重新授权的入口了。右侧直显状态，让它读起来像「一个为了直读的开关」。
+  ...(isAndroid.value
+    ? [
+        {
+          type: 'item' as const,
+          id: 'all-files-access',
+          label: '所有文件访问权限',
+          hint: game.allFilesAccess === true ? '已授权' : '未授权，点此申请',
+          onClick: onRequestAllFilesAccess,
+        },
+      ]
+    : []),
   {
     type: 'item',
     id: 'rescan',
@@ -77,34 +145,6 @@ const dirMenuItems = computed<PopupMenuItem[]>(() => [
     disabled: isScanning.value,
     onClick: onRescan,
   },
-  // issues/15 S2：页内真实路径浏览器——选出真实路径目录即切到 legacy 直读模式。
-  // 与上面的「更改目录」（原生 SAF picker，只产 content:// URI）并列，互不影响。
-  ...(showBrowseDirItem.value
-    ? [
-        {
-          type: 'item' as const,
-          id: 'browse-dir',
-          label: '浏览存储目录...',
-          disabled: isScanning.value,
-          onClick: onBrowseStorageDir,
-        },
-      ]
-    : []),
-  // issues/15：Android「所有文件访问」——legacy 存储模式（issue 15）的授权入口。
-  // 仅 SAF 模式显示；授权后标签同步，legacy accessor 接入时经此开关切换。
-  ...(showAllFilesItem.value
-    ? [
-        {
-          type: 'item' as const,
-          id: 'all-files-access',
-          label:
-            game.allFilesAccess === true
-              ? '所有文件访问：已授权'
-              : '申请所有文件访问权限',
-          onClick: onRequestAllFilesAccess,
-        },
-      ]
-    : []),
   { type: 'separator' },
   {
     type: 'item',
@@ -118,21 +158,32 @@ const dirMenuItems = computed<PopupMenuItem[]>(() => [
 /** 当前是否扫描中——菜单项禁用依据。 */
 const isScanning = computed(() => game.scanStatus === 'scanning');
 
-/** 点击「更改目录」——经 source 直接弹原生选择器（Windows FolderPicker / Android SAF）。 */
+/**
+ * 「更改目录…」——Android 走页内**真实路径**浏览器（推荐轨：直读，能选出真实路径）；
+ * Windows 保持原生 FolderPicker。未授权时对话框内直接给「授予」按钮，不再让用户去 ⋮ 里找。
+ */
 function onChangeMainDir(): void {
   game.clearMauiError();
+  if (isAndroid.value) {
+    openBrowseDialog();
+    return;
+  }
   void mauiGameLibrarySource.pickMainDir();
 }
 
-/**
- * issues/15 S2：打开页内真实路径浏览器（ChangeDirDialog）——
- * 逐层选出一个**真实路径**主目录，从而切到 legacy 直读模式。
- * 授权未给时对话框内会提示去申请（入口恒显示，见 showBrowseDirItem）。
- */
-function onBrowseStorageDir(): void {
+/** issues/15 S3：打开页内浏览器（ChangeDirDialog），并清掉待办意图——避免授权回流后再开一次。
+ *  传 `browse: true` 让对话框**直接展开浏览区**（菜单项承诺「直读，更快」，不该停在输入框）。 */
+function openBrowseDialog(): void {
+  pendingBrowseAfterGrant.value = false;
   game.clearMauiError();
   game.clearLoadGameError();
-  glvRef.value?.openChangeDirDialog();
+  glvRef.value?.openChangeDirDialog({ browse: true });
+}
+
+/** issues/15 S3：「改用系统选择器…」——SAF 兜底轨，只产 content:// URI。 */
+function onUseSystemPicker(): void {
+  game.clearMauiError();
+  pickSafDirectory();
 }
 
 /** 重新扫描——以当前主目录为起点重扫（未选目录时退化为更改目录）。 */
@@ -149,6 +200,38 @@ function onRescan(): void {
 
 <template>
   <GameLibraryView ref="glvRef" :source="mauiGameLibrarySource">
+    <!-- issues/15 S3：Android 首次使用就把两条轨的代价说明白——顺序即优先级，推荐路径在前。
+         这里不隐藏任何一条：用户看过代价后自行选，选定后由路径形态决定模式。 -->
+    <template #empty-actions>
+      <template v-if="isAndroid">
+        <div class="empty-act-group">
+          <button
+            type="button"
+            class="btn-primary btn-lg empty-act-btn"
+            @click="onPrimaryEmptyAction"
+          >{{ game.allFilesAccess === true ? '选择游戏目录' : '获取所有文件访问' }}</button>
+          <span class="empty-act-hint">
+            {{ game.allFilesAccess === true ? '直读模式，加载更快' : '授予后直接读取文件，加载更快' }}
+          </span>
+        </div>
+        <div class="empty-act-group">
+          <button
+            type="button"
+            class="btn-outline empty-act-btn"
+            @click="onUseSystemPicker"
+          >改用系统选择器</button>
+          <span class="empty-act-hint">无需授权，兼容模式</span>
+        </div>
+      </template>
+      <!-- Windows：无「所有文件访问」概念，保留单一原生选择器按钮（与改动前一致） -->
+      <button
+        v-else
+        type="button"
+        class="btn-primary btn-lg empty-act-btn"
+        @click="onChangeMainDir"
+      >更改主目录</button>
+    </template>
+
     <template #appbar-actions>
       <button
         type="button"
@@ -175,6 +258,24 @@ function onRescan(): void {
 </template>
 
 <style scoped>
+/* issues/15 S3：空态动作组——「按钮 + 一行代价说明」成对，组间距由空态容器的 gap 提供 */
+.empty-act-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+}
+.empty-act-btn {
+  min-height: 44px;
+  width: 100%;
+  max-width: 280px;
+}
+.empty-act-hint {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
 /* 48px 圆形图标按钮（原 MauiGameList 样式，保留为插槽内容） */
 .appbar-menu-btn {
   width: 48px;
