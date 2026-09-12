@@ -1453,7 +1453,15 @@ internal sealed class ConstantData
 						continue;
 					}
 					tmpl = new CharacterTemplate(index, this);
+					// eReader.Filename 是 Config.GetFiles 的相对路径 Key（'\' 分隔、可能含子目录，如
+					// `Chara\Chara1 霊夢.csv`）——必须先取末段短名再解析 csvNo，否则会命中目录段 `Chara`、
+					// 取到 `\Chara1 霊夢.csv`，首位非数字 → csvNo 恒 0（_csvNoMap 除 0 外全 miss）。
+					// 末段按 '\' 与 '/' 两种分隔符切：存储契约是 '\'，但本段在 Android 上执行时
+					// Path.GetFileName 不把 '\' 当分隔符（issues/18）。
 					string no = eReader.Filename;
+					int lastSep = no.LastIndexOfAny(['\\', '/']);
+					if (lastSep >= 0)
+						no = no[(lastSep + 1)..];
 					no = no[(no.IndexOf("CHARA", StringComparison.OrdinalIgnoreCase) + 5)..];
 					StringBuilder sb = new();
 					CharStream ss = new(no);

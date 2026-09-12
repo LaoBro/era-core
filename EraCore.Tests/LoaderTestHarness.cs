@@ -124,10 +124,14 @@ internal sealed class LoaderTestHarness : IDisposable
 		return path;
 	}
 
-	/// <summary>写入 CSV 文件。须在 <see cref="InitializeAsync"/> 之前调用（Initialize 内预加载 CSV）。</summary>
+	/// <summary>写入 CSV 文件。须在 <see cref="InitializeAsync"/> 之前调用（Initialize 内预加载 CSV）。
+	/// <paramref name="name"/> 可含子目录（如 <c>Chara/Chara14 アリス.csv</c>——SearchSubdirectory=YES 的游戏布局），父目录自动创建。</summary>
 	public string WriteCsv(string name, string content)
 	{
 		var path = Path.Combine(CsvDir, name);
+		var dir = Path.GetDirectoryName(path);
+		if (!string.IsNullOrEmpty(dir))
+			Directory.CreateDirectory(dir);
 		File.WriteAllText(path, content);
 		return path;
 	}

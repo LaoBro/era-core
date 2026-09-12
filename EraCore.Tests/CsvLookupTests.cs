@@ -1,4 +1,6 @@
+using System.IO;
 using System.Threading.Tasks;
+using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Script.Data;
 using MinorShift.Emuera.Runtime.Utils;
 using Xunit;
@@ -92,6 +94,26 @@ public sealed class CsvLookupTests
 		var t = h.VEvaluator.Constant.GetCharacterTemplateFromCsvNo(0);
 		Assert.NotNull(t);
 		Assert.Equal(50L, t.No);
+	}
+
+	[Fact]
+	public async Task GetCharacterTemplateFromCsvNo_chara_in_subdirectory_hit()
+	{
+		// issues/18：角色 CSV 位于子目录（TK1.29.3 的 csv/Chara/CharaN <名>.csv）时，eReader.Filename 是
+		// Config.GetFiles 的相对路径 Key（`Chara\Chara14 アリス.csv`）——若直接按第一个 "CHARA" 取数字
+		// 会命中目录段 `Chara`，csvNo 恒 0（_csvNoMap 除 0 外全 miss，静默回退伪角色）。须先取末段短名。
+		using var h = new LoaderTestHarness();
+		h.WriteCsv(Path.Combine("Chara", "Chara14 アリス.csv"), "NO,14\nNAME,Alice\n");
+		ConfigData.Current!.GetConfigItem(ConfigCode.SearchSubdirectory).SetValue(true);
+		await h.InitializeAsync();
+
+		var t = h.VEvaluator.Constant.GetCharacterTemplateFromCsvNo(14);
+		Assert.NotNull(t);
+		Assert.Equal(14L, t.No);
+		Assert.Equal(14L, t.csvNo);
+
+		// 反向：不再有任何模板落到 csvNo=0（目录段误匹配的旧症状）
+		Assert.Null(h.VEvaluator.Constant.GetCharacterTemplateFromCsvNo(0));
 	}
 
 	[Fact]
