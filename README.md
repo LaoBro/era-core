@@ -327,7 +327,7 @@ IPA 字体许可见 `src/assets/fonts/IPA_Font_License_Agreement_v1.0.txt`（IPA
 测试分三层：**C# 单元测试**（xUnit）、**Python 端到端**（CLI/HTTP/WebSocket）、**前端测试**（Vitest）。
 
 ```bash
-# C# 单元测试（xUnit，1065 用例）
+# C# 单元测试（xUnit，1068 用例）
 dotnet test EraCore.Tests/EraCore.Tests.csproj
 
 # 同套单测跑在真大小写敏感文件系统上（WSL2 Ubuntu；SDK 装在 ~/.dotnet）
@@ -368,7 +368,7 @@ EraCore.Core/   -- 无头核心库（Library，无 AspNetCore 依赖，MAUI 可�
 EraCore.Server/ -- HTTP 服务器组件（Library，引 AspNetCore）
 EraCore.Maui/   -- MAUI 桌面/移动应用（Windows + Android，原生 WebView 壳）
 EraCore.Web/     -- Vue 3 + TypeScript 浏览器前端（Vite + Pinia + Vitest）
-EraCore.Tests/  -- C# 单元测试（xUnit，1065 用例）
+EraCore.Tests/  -- C# 单元测试（xUnit，1068 用例）
 EraCore.Maui.Tests/ -- MAUI 单元测试（xUnit，15 用例）
 Emuera/                 -- WinForms 残留源码（不再维护，仅作只读参考，不可独立构建）
 eracore_agent/          -- Python eracore_agent CLI 与 HTTP 客户端

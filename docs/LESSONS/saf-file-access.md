@@ -1,6 +1,6 @@
 # Android SAF 文件访问 失败教训
 
-> **TL;DR**：SAF content:// URI 不是文件系统路径——凡是"文件名/相对路径/扩展名/前缀过滤/路径拼接"都走 documentId 语义（SafPath），禁止 `Path.GetFileName*`、`File.Exists`、字符串拼接；目录/文档 ID 提取口径全库统一；缓存/预取/失效与性能（IPC N+1）一起设计；写路径必须走 DirAccessor + 缓冲；**真实路径 accessor 必须镜像 SAF 的通配语义**（大小写不敏感、按条目名）——托管 glob 在 Android 上大小写敏感，「切模式」= 换语义。
+> **TL;DR**：SAF content:// URI 不是文件系统路径——凡是"文件名/相对路径/扩展名/前缀过滤/路径拼接"都走 documentId 语义（SafPath），禁止 `Path.GetFileName*`、`File.Exists`、字符串拼接；目录/文档 ID 提取口径全库统一；缓存/预取/失效与性能（IPC N+1）一起设计；写路径必须走 DirAccessor + 缓冲；**真实路径 accessor 必须镜像 SAF 的通配语义**（大小写不敏感、按条目名）——托管 glob 在 Android 上大小写敏感，「切模式」= 换语义；**改 accessor 语义后必须审计所有直连 `File.*`/`Directory.*` 的调用点**——绕过抽象的那部分不在修复范围内。
 
 ## 教训清单
 
@@ -30,6 +30,7 @@
 | 22 | **ImageNameTable sprite 名解析对 content:// 失效（2026-08-08）** | `Path.GetRelativePath` 对 content:// 无效；改 documentId 前缀比较 | 2026-08-08 |
 | 23 | **枚举输出作字典键必须 OrdinalIgnoreCase——displayName 是磁盘真实大小写（2026-09-09）** | 引擎固定名请求恒大写 `GAMEBASE.CSV`，provider 返回 `GameBase.csv`；懒读被 SAF 大小写不敏感解析掩盖，精确字典 miss | 2026-09-09 |
 | 24 | **真实路径 accessor 必须镜像 SAF 通配语义（2026-09-12）** | 托管 glob 在 Android 大小写敏感，`CHARA*.CSV` 匹配不到 `Chara1 霊夢.csv`；别把 searchPattern 透传给 Directory.* | 2026-09-12 |
+| 25 | **修好 accessor 语义 ≠ 修好所有枚举（2026-09-12）** | 绕过 accessor 的直连 `Directory.GetFiles` 不在上一轮修复范围内；改抽象实现后必须审计直连调用点 | 2026-09-12 |
 
 ---
 
@@ -388,3 +389,25 @@ new FileStream(SavDir + "global.sav", FileMode.Create, FileAccess.Write); // 打
 - **判「枚举到 0 个文件」先分层**：精确路径（OS/FUSE 解析，本机不敏感）vs 托管 glob（大小写敏感）——同一次诊断里两层结论可能相反，对应完全不同的修复（前者不该动，后者才是根因）。
 - 同族的真实路径坑：本地分支的相对路径重建必须归一分隔符（`SafPath.RelToPhysical`），IR/sidecar 的每个重建点都不能漏（本次顺带补上 `ErbLoader.ResolveFirstDirPath` 的 `\` → `/` 归一）。
 - **从「存储契约的相对名」取短名，别用 `Path.GetFileName`**：契约是 `\` 分隔，Windows 上 `Path.GetFileName` 恰好对，**Android/Linux 上 `\` 不是分隔符** → 返回整串（含目录段）。取末段要显式切 `\` 与 `/`（`LastIndexOfAny`）；`SafPath.GetLogicalFileName` 内部也走 `Path.GetFileName`，对相对名同样不安全（只对完整物理路径 / content URI 安全）。实例：issues/18 的 csvNo 解析命中目录段 `Chara` → csvNo 恒 0 → `_csvNoMap` 除 0 外全 miss。
+
+## 25. 修好 accessor 的通配语义 ≠ 修好所有枚举——绕过 accessor 的直连调用点不在修复范围内（2026-09-12）
+
+**场景**：issues/15 legacy（真实路径）落地后，按教训 24 修好 `FileSystemGameDirAccessor` 的 pattern 重载（提交 `9f6b1b8`）。随后逐个调用点排查，发现 `ConfigData.getUpdateKey` 的本地路径分支是直连的：
+
+```csharp
+if (SafPath.IsContentUri(Program.ExeDir))
+    return getSafUpdateKey(option);                                    // accessor + Wildcard，语义正确
+string[] csvFiles = Directory.GetFiles(Program.CsvDir, "*.CSV", option); // ← 根本没走 accessor
+```
+
+**结果**：上一轮修复**覆盖不到它**。legacy 下 `*.CSV` 由托管 glob 大小写敏感匹配，只命中根目录里唯一的全大写扩展名 `CFLAG.CSV`，漏掉 19 个固定 CSV 与 `Chara/` 下 165 个 `.csv` → legacy 与 SAF 算出**不同的 update key**（影响 `ReduceArgumentOnLoad=ONCE` 的参数缩减与 IR 指纹）。不崩、不影响默认配置（默认 `NO`）的玩法，属**跨模式一致性 / 缓存效率**缺陷 → 没有可见症状、CI 也不会红。
+
+**原因**：修 accessor 的**实现**只覆盖「经由 accessor 的调用」。而 `IGameDirAccessor` 的契约（「所有文件 IO 必须通过此接口，禁止直接调用 `File.*`/`Directory.*`」）早就有违反者；这些违反者在两种模式下都「能工作」——Windows 的 glob 不敏感、SAF 走 accessor 分支——只在「**legacy + 大小写敏感 glob**」这一第三种组合下分叉。
+
+**解决**：本地分支改走 `GamePaths.Current.DirAccessor.GetFiles(...)`（保留 `File.GetLastWriteTime` 的 mtime 语义）。同类剩余（`SafCompat.GetFiles/EnumerateFiles` 的本地分支，3 个调用点）另立 issues/21，不扩大本次范围。
+
+**教训**：
+- **改抽象层实现后，必须 grep 该抽象对应原始 API 的直连调用点**（`Directory.GetFiles`/`File.Exists`/`Path.GetFileName`…），逐个确认是否真在抽象内——否则修的是「抽象的效果」，不是「行为」。`grep -rn --include=*.cs 'Directory\.GetFiles' EraCore.Core` 一行就能列全。
+- 违反契约的调用点常常**在两种模式下都「能工作」**（被平台的大小写不敏感掩盖），只在第三种组合下分叉 → 缺陷不报错、不崩、CI 绿，只能靠调用点审计发现，不能靠症状定位。
+- 这类「跨模式一致性」缺陷没有单一可观测症状，测试要拆两轴：**结构守卫**（调用必须落到抽象上——用转发式 spy accessor 记录调用，任意平台改前可红）+ **行为守卫**（大小写敏感 FS 上的真红，WSL）。
+

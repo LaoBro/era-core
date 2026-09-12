@@ -13,7 +13,7 @@
 | [csharp-pitfalls.md](csharp-pitfalls.md) | C# 陷阱：静态字段按声明序初始化、单行 if 插日志必须加大括号 |
 | [maui-android-lifecycle.md](maui-android-lifecycle.md) | MAUI Android 生命周期：MainPage 构造早于 Activity.OnCreate、RegisterForActivityResult 时序、白屏三连 |
 | [maui-android-webview.md](maui-android-webview.md) | MAUI Android WebView/桥接/资源通道：file:// 混 https 子资源不拦截、平台判断按 hostname、favicon 自动请求、JS→C# 通道选型 |
-| [saf-file-access.md](saf-file-access.md) | Android SAF 文件访问：content:// 不是文件路径、docId 提取口径统一、缓存/预取/失效设计、sprite 名解析、真实路径 accessor 须镜像 SAF 通配语义 |
+| [saf-file-access.md](saf-file-access.md) | Android SAF 文件访问：content:// 不是文件路径、docId 提取口径统一、缓存/预取/失效设计、sprite 名解析、真实路径 accessor 须镜像 SAF 通配语义、改 accessor 后须审计直连枚举 |
 | [nativeaot.md](nativeaot.md) | NativeAOT 发布：JSON 反射禁用、RequestDelegateGenerator、ILC 增量缓存、目录隔离补 DefaultItemExcludes |
 | [testing-and-ci.md](testing-and-ci.md) | 构建/测试/CI 环境：增量构建 0 警告假象、文件锁先查环境、行号基线脆弱、残留进程干扰回归、两轴 code-review、Windows 全绿≠跨平台正确（大小写/分隔符需 WSL2 关卡） |
 | [diagnostics.md](diagnostics.md) | 排查方法论：诊断推进揭开下一层、logcat 时间线拆段、中文乱码≠路径损坏、异常可见性 |
