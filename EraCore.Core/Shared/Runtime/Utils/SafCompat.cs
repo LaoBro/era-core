@@ -89,18 +89,15 @@ internal static class SafCompat
         return GamePaths.Current?.DirAccessor?.OpenRead(path);
     }
 
+    /// <summary>
+    /// issue 21：<b>两种路径形态都经 accessor</b>——本地分支若直连
+    /// <see cref="Directory.GetFiles(string, string, SearchOption)"/>，会绕过通配的大小写不敏感语义
+    /// （.NET 在 Unix/Android 由托管代码做 glob，<c>MatchCasing.PlatformDefault</c> = 大小写敏感），
+    /// 与 content 分支（<see cref="Wildcard"/>）在 legacy 下分叉——实例：<c>update key</c>、
+    /// <c>ENUMFILES</c>、<c>GetDatFiles</c> 少列文件。accessor 由 <see cref="GamePaths"/> 按路径形态注入。
+    /// </summary>
     internal static string[] GetFiles(string path, string searchPattern, SearchOption searchOption)
-    {
-        if (!IsContentUri(path)) return Directory.GetFiles(path, searchPattern, searchOption);
-        return GamePaths.Current?.DirAccessor?.GetFiles(path, searchPattern, searchOption) ?? [];
-    }
-
-    internal static string[] EnumerateFiles(string path, string searchPattern, SearchOption searchOption)
-    {
-        if (!IsContentUri(path))
-            return Directory.EnumerateFiles(path, searchPattern, searchOption).ToArray();
-        return GamePaths.Current?.DirAccessor?.GetFiles(path, searchPattern, searchOption) ?? [];
-    }
+        => GamePaths.Current?.DirAccessor?.GetFiles(path, searchPattern, searchOption) ?? [];
 
     internal static byte[]? ReadAllBytes(string path)
     {

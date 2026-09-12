@@ -131,7 +131,7 @@ internal static partial class FunctionMethodCreator
 			string[] files;
 			try
 			{
-				files = SafCompat.EnumerateFiles(dir, pattern, option);
+				files = SafCompat.GetFiles(dir, pattern, option);
 				for (int i = 0; i < files.Length; i++)
 				{
 					files[i] = SafPath.GetRelativePathFromRoot(Program.ExeDir, files[i]);
