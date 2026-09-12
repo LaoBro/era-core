@@ -1,6 +1,6 @@
 # Android SAF 文件访问 失败教训
 
-> **TL;DR**：SAF content:// URI 不是文件系统路径——凡是"文件名/相对路径/扩展名/前缀过滤/路径拼接"都走 documentId 语义（SafPath），禁止 `Path.GetFileName*`、`File.Exists`、字符串拼接；目录/文档 ID 提取口径全库统一；缓存/预取/失效与性能（IPC N+1）一起设计；写路径必须走 DirAccessor + 缓冲；**真实路径 accessor 必须镜像 SAF 的通配语义**（大小写不敏感、按条目名）——托管 glob 在 Android 上大小写敏感，「切模式」= 换语义；**改 accessor 语义后必须审计所有直连 `File.*`/`Directory.*` 的调用点**——绕过抽象的那部分不在修复范围内。
+> **TL;DR**：SAF content:// URI 不是文件系统路径——凡是"文件名/相对路径/扩展名/前缀过滤/路径拼接"都走 documentId 语义（SafPath），禁止 `Path.GetFileName*`、`File.Exists`、字符串拼接；目录/文档 ID 提取口径全库统一；缓存/预取/失效与性能（IPC N+1）一起设计；写路径必须走 DirAccessor + 缓冲；**真实路径 accessor 必须镜像 SAF 的通配语义**（大小写不敏感、按条目名）——托管 glob 在 Android 上大小写敏感，「切模式」= 换语义；**精确名读取同样须两端一致**——「今天能工作」可能只是挂载（FUSE）碰巧不敏感，换挂载即静默全丢；**改 accessor 语义后必须审计所有直连 `File.*`/`Directory.*` 的调用点**——绕过抽象的那部分不在修复范围内。
 
 ## 教训清单
 
@@ -31,6 +31,7 @@
 | 23 | **枚举输出作字典键必须 OrdinalIgnoreCase——displayName 是磁盘真实大小写（2026-09-09）** | 引擎固定名请求恒大写 `GAMEBASE.CSV`，provider 返回 `GameBase.csv`；懒读被 SAF 大小写不敏感解析掩盖，精确字典 miss | 2026-09-09 |
 | 24 | **真实路径 accessor 必须镜像 SAF 通配语义（2026-09-12）** | 托管 glob 在 Android 大小写敏感，`CHARA*.CSV` 匹配不到 `Chara1 霊夢.csv`；别把 searchPattern 透传给 Directory.* | 2026-09-12 |
 | 25 | **修好 accessor 语义 ≠ 修好所有枚举（2026-09-12）** | 绕过 accessor 的直连 `Directory.GetFiles` 不在上一轮修复范围内；改抽象实现后必须审计直连调用点 | 2026-09-12 |
+| 26 | **「今天能工作」可能只是挂载碰巧不敏感（2026-09-12）** | 精确名读取（GAMEBASE.CSV vs 磁盘 Abl.csv）依赖 FUSE 容错；换挂载即静默全丢，且缺失是 early-return、错误在别处显形 | 2026-09-12 |
 
 ---
 
@@ -410,4 +411,22 @@ string[] csvFiles = Directory.GetFiles(Program.CsvDir, "*.CSV", option); // ← 
 - **改抽象层实现后，必须 grep 该抽象对应原始 API 的直连调用点**（`Directory.GetFiles`/`File.Exists`/`Path.GetFileName`…），逐个确认是否真在抽象内——否则修的是「抽象的效果」，不是「行为」。`grep -rn --include=*.cs 'Directory\.GetFiles' EraCore.Core` 一行就能列全。
 - 违反契约的调用点常常**在两种模式下都「能工作」**（被平台的大小写不敏感掩盖），只在第三种组合下分叉 → 缺陷不报错、不崩、CI 绿，只能靠调用点审计发现，不能靠症状定位。
 - 这类「跨模式一致性」缺陷没有单一可观测症状，测试要拆两轴：**结构守卫**（调用必须落到抽象上——用转发式 spy accessor 记录调用，任意平台改前可红）+ **行为守卫**（大小写敏感 FS 上的真红，WSL）。
+
+
+## 26. 精确名读取的容错也是 accessor 契约——「今天能工作」可能只是挂载碰巧不敏感（2026-09-12）
+
+**场景**：issues/19/21 收敛完通配枚举后继续审计精确名读取：引擎对固定名资源恒用硬编码大写（`GAMEBASE.CSV`/`ABL.CSV`/`VariableSize.CSV`…，`loadDataTo` 22 处 + `VariableSize.CSV` + `GAMEBASE.CSV`），而 eraTK 磁盘真名是 `Abl.csv`/`GameBase.csv`——根目录 20 个 CSV 里只有 `CFLAG.CSV` 全大写。真实路径 accessor 的 `FileExists`/`OpenRead` 直接交给 OS 解析，今天能工作只因为 Android 外置主存储的 FUSE 挂载不区分大小写（2026-09-11 真机探针证实：`ls .../csv/ABL.CSV` 解析到 `Abl.csv`）。
+
+**结果**：换到任何大小写敏感挂载（app 私有 `/data`、部分 SD/OTG、桌面 Linux 的 CLI 部署）就**静默全丢**固定名 CSV。更麻烦的是缺失文件走 early-return（`loadDataTo`/`LoadGameBaseCsv`），而 `names[]` 已预分配——症状是「一堆未知标识符 / 角色名变量名全空」而不是「文件打不开」，按错误信息找根因会走错方向。
+
+**解决**：拍板取方案 A（推翻原 issue 倾向的 B）——accessor 精确 miss 时按父目录「OrdinalIgnoreCase 名映射」重试（`ConcurrentDictionary` 惰性缓存 + 写路径失效父目录），一处修完全部消费点。拍板依据（实施前逐点核对得出）：
+- 全部固定名消费点**本就经 accessor**（漏斗唯一）——「B 要动 ~24 个调用点」是在引擎层重复 accessor 的职责；
+- 容错是 **miss 驱动**：精确命中零开销（与改前逐位一致），miss 集中在加载期 ~20 个固定名 CSV，每目录枚举一次后全字典命中；
+- 「掩盖大小写错误」不是新增面——SAF accessor 与 Windows 挂载本就掩盖，掩盖是引擎的既成契约；
+- B 会让 accessor 契约继续分裂（SAF 容错 / legacy 严格），违背 LESSONS #24「两端一致」。
+
+**教训**：
+- **「今天能工作」要问是哪一层在工作**：OS 挂载的容错（FUSE）不是代码的容错。可移植性硬化类缺陷的触发条件是「换挂载」，真机验收与现有环境都覆盖不到——只能靠审计「谁在替谁容错」发现。
+- **修这类缺陷先画漏斗**：先核对消费点是否收敛在抽象内（本例全在 accessor），再决定修在哪层。漏斗唯一时修底层（一处、契约对齐）；调用点分散时才值得修上层。原 issue 因没先核对漏斗而倾向了错的方向，实施前的逐点核对把它纠正了。
+- **缺失 ≠ 报错**：`loadDataTo` 对缺失文件 early-return，错误在别处显形（未知标识符）——「静默降级」类代码路径是这类缺陷的放大器，验收断言要打在数据载入结果上，不是异常上。
 
