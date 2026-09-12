@@ -987,8 +987,11 @@ internal sealed class ConfigData
 		if (SafPath.IsContentUri(Program.ExeDir))
 			return getSafUpdateKey(option);
 
-		string[] erbFiles = Directory.GetFiles(Program.ErbDir, "*.ERB", option);
-		string[] csvFiles = Directory.GetFiles(Program.CsvDir, "*.CSV", option);
+		// issue 19：本地分支也必须经 accessor——直连 Directory.GetFiles 会绕过通配大小写不敏感
+		// （.NET 在 Unix/Android 由托管代码 glob），只命中全大写扩展名，与 SAF 分支算出不同 key。
+		var accessor = GamePaths.Current.DirAccessor;
+		string[] erbFiles = accessor.GetFiles(Program.ErbDir, "*.ERB", option);
+		string[] csvFiles = accessor.GetFiles(Program.CsvDir, "*.CSV", option);
 		long[] writetimes = new long[erbFiles.Length + csvFiles.Length];
 		for (int i = 0; i < erbFiles.Length; i++)
 			if (Path.GetExtension(erbFiles[i]).Equals(".ERB", StringComparison.OrdinalIgnoreCase))
