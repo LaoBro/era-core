@@ -18,12 +18,38 @@ public sealed class FileSystemGameDirAccessor : IGameDirAccessor
     public bool FileExists(string path) => File.Exists(path);
 
     public string[] GetDirectories(string path) => Directory.GetDirectories(path);
+
+    /// <summary>
+    /// 镜像 SAF 语义（<c>SafGameDirAccessor.EnumerateUri</c> 用 <see cref="Wildcard.Matches"/>）——
+    /// 大小写不敏感、按「条目名」匹配。绝不能把 <paramref name="searchPattern"/> 直接透传给
+    /// <c>Directory.GetDirectories(path, pattern, option)</c>：.NET 在 Unix/Android 上由托管代码做
+    /// glob，<c>MatchCasing.PlatformDefault</c> 解析为大小写敏感，会把引擎的固定大写模式（如
+    /// <c>CHARA*.CSV</c>）挡在磁盘真实名（如 <c>Chara1 霊夢.csv</c>）之外，与 Windows/SAF 分叉。
+    /// </summary>
     public string[] GetDirectories(string path, string searchPattern, SearchOption searchOption)
-        => Directory.GetDirectories(path, searchPattern, searchOption);
+        => FilterByPattern(Directory.GetDirectories(path, "*", searchOption), searchPattern);
 
     public string[] GetFiles(string path) => Directory.GetFiles(path);
+
+    /// <inheritdoc cref="GetDirectories(string, string, SearchOption)"/>
     public string[] GetFiles(string path, string searchPattern, SearchOption searchOption)
-        => Directory.GetFiles(path, searchPattern, searchOption);
+        => FilterByPattern(Directory.GetFiles(path, "*", searchOption), searchPattern);
+
+    /// <summary>
+    /// OS 层用 catch-all 枚举（递归交给 <c>Directory.*</c>，保持 <c>FromSearchOption</c> 语义：
+    /// <c>AttributesToSkip=0</c>、目录不存在仍抛 <see cref="DirectoryNotFoundException"/>），
+    /// 托管侧按条目名用大小写不敏感的 <see cref="Wildcard.Matches"/> 过滤。
+    /// </summary>
+    private static string[] FilterByPattern(string[] entries, string searchPattern)
+    {
+        if (searchPattern == "*")
+            return entries; // 全匹配快路径：Preload 全树枚举零额外开销
+        var result = new List<string>(entries.Length);
+        foreach (var entry in entries)
+            if (Wildcard.Matches(Path.GetFileName(entry), searchPattern))
+                result.Add(entry);
+        return result.ToArray();
+    }
 
     public string ReadAllText(string path) => File.ReadAllText(path);
     public byte[]? ReadAllBytes(string path) => File.Exists(path) ? File.ReadAllBytes(path) : null;

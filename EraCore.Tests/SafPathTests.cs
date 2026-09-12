@@ -66,6 +66,17 @@ public class SafPathTests
 	}
 
 	[Fact]
+	public void RelToPhysical_normalizes_storage_separator_to_platform()
+	{
+		// sidecar/IR 存储契约是 '\\'；重建物理路径必须归一到本平台分隔符
+		// （Android '/'、Windows '\\'），否则会拼出 `erb/1#EV\2#NEST` 死路径（issues/15 §0.3）。
+		var sep = System.IO.Path.DirectorySeparatorChar;
+		Assert.Equal($"1#EV{sep}2#NEST", SafPath.RelToPhysical(@"1#EV\2#NEST"));
+		Assert.Equal($"1#EV{sep}2#NEST", SafPath.RelToPhysical("1#EV/2#NEST"));
+		Assert.Equal($"SYSTEM{sep}EVENT{sep}a.ERB", SafPath.RelToPhysical(@"SYSTEM\EVENT/a.ERB"));
+	}
+
+	[Fact]
 	public void Path_GetFileName_on_SAF_URI_is_wrong_baseline()
 	{
 		// 对照：证明旧写法会得到整段 documentId，而不是短名

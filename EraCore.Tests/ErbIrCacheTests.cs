@@ -428,6 +428,8 @@ public class ErbIrCacheTests
 		var previousPaths = GamePaths.Current;
 		GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
 		var config = new ConfigData();
+		// 嵌套 *#* 目录（ev/1#INNER）只有在 SearchSubdirectory 开启时才进入 * 扫描（Config.cs:985 门控）。
+		config.GetConfigItem(ConfigCode.SearchSubdirectory).SetValue(true);
 		using var scope = new RootedScope(GlobalStatic.OpenScope(config), tempRoot, previousPaths);
 		var erbDir = Path.Combine(tempRoot, "erb") + Path.DirectorySeparatorChar;
 		Directory.CreateDirectory(Path.Combine(erbDir, "1#EV"));
@@ -437,6 +439,10 @@ public class ErbIrCacheTests
 		File.WriteAllText(Path.Combine(erbDir, "1#EV", "NEST", "B.ERB"), "@B\nRETURN\n");
 		File.WriteAllText(Path.Combine(erbDir, "TOP.ERB"), "@T\nRETURN\n");
 		File.WriteAllText(Path.Combine(erbDir, "2#EV2", "C.ERB"), "@C\nRETURN\n");
+		// 嵌套 *#* 目录：相对名含分隔符（`ev\1#INNER`）。issues/15 §0.3 的 ResolveFirstDirPath
+		// 漏改回归点——其文件不被任何其它 firstDir 覆盖，故 override 侧重建立分隔符错误会直接漏文件/错序。
+		Directory.CreateDirectory(Path.Combine(erbDir, "ev", "1#INNER"));
+		File.WriteAllText(Path.Combine(erbDir, "ev", "1#INNER", "D.ERB"), "@D\nRETURN\n");
 		var env = new LoaderEnv(
 			Path.Combine(tempRoot, "csv") + Path.DirectorySeparatorChar,
 			erbDir, analysisMode: false, analysisFiles: new List<string>(), debugMode: false)
@@ -447,16 +453,17 @@ public class ErbIrCacheTests
 		{
 			// 建库轮：扫描路径取清单
 			var scanned = ErbLoader.BuildPendingList(env, null, out var scanDirs, out _);
-			Assert.Equal(2, scanDirs.Count);
+			Assert.Equal(3, scanDirs.Count);
 			// 命中轮：同一清单走 override（清 memo 模拟冷缓存）
 			Preload.Clear();
 			var fromIr = ErbLoader.BuildPendingList(env, scanDirs, out var irDirs, out _);
 			// override 与扫描的待载清单逐位一致（含 firstDir 嵌套子目录文件）+ 清单原样透传
 			Assert.Equal(scanned, fromIr);
 			Assert.Equal(scanDirs, irDirs);
-			// 合并序语义保持：firstDir 段（3 文件）整体在前、主枚举文件（TOP.ERB）收尾
-			Assert.Equal(4, fromIr.Count);
-			Assert.Equal(3, fromIr.FindIndex(p => p.Filename == "TOP.ERB"));
+			// 合并序语义保持：firstDir 段（4 文件：1#EV/A、1#EV/NEST/B、ev/1#INNER/D、2#EV2/C）整体在前、
+			// 主枚举文件（TOP.ERB）收尾。若 override 侧分隔符未归一会把 ev/1#INNER/D 落到段尾 → 顺序错。
+			Assert.Equal(5, fromIr.Count);
+			Assert.Equal(4, fromIr.FindIndex(p => p.Filename == "TOP.ERB"));
 		}
 		finally
 		{

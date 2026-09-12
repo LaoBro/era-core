@@ -272,10 +272,12 @@ internal sealed class ErbLoader
 	/// → 目录全路径。content URI 必须经 <see cref="IGameDirAccessor.CombinePath"/>（SAF 实现走
 	/// DocumentsContract.BuildDocumentUriUsingTree 正确编码 documentId——裸拼接 URI 会被 Android
 	/// 解析成目录本身，AssetChannel 同款坑）；本地路径走 Path.Combine。
+	/// 分隔符一律先经 <see cref="SafPath.RelToPhysical"/> 归一到本平台——sidecar/IR 存储契约是 '\'，
+	/// Android 真实路径下 '\' 不是分隔符，原样拼接会得到 `erb/1#EV\2#NEST` 死路径（issues/15 §0.3
+	/// 已修另两处重建点，此处同源补齐）。
 	/// </summary>
 	private static string ResolveFirstDirPath(LoaderEnv env, string relativeName)
-		=> env.DirAccessor.CombinePath(env.ErbDir,
-			SafPath.IsContentUri(env.ErbDir) ? relativeName.Replace('\\', '/') : relativeName);
+		=> env.DirAccessor.CombinePath(env.ErbDir, SafPath.RelToPhysical(relativeName));
 
 	/// <summary>
 	/// issue 09：IR 命中预判定（启动内容 Preload 门控）。不读源内容——文件清单走
