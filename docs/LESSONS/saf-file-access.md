@@ -387,3 +387,4 @@ new FileStream(SavDir + "global.sav", FileMode.Create, FileAccess.Write); // 打
 - **永远不要把 `searchPattern` 透传给 `Directory.GetFiles/GetDirectories`**：其大小写语义随 OS 变（Windows 不敏感 / Unix 敏感），而引擎的模式是 Windows 遗产（全大写）。托管侧用 `Wildcard` 过滤才跨平台可控。注意 `?*.` 等语义也随 MatchType（Win32 vs Simple）漂移，统一到 `Wildcard` 还顺带消除这类分叉。
 - **判「枚举到 0 个文件」先分层**：精确路径（OS/FUSE 解析，本机不敏感）vs 托管 glob（大小写敏感）——同一次诊断里两层结论可能相反，对应完全不同的修复（前者不该动，后者才是根因）。
 - 同族的真实路径坑：本地分支的相对路径重建必须归一分隔符（`SafPath.RelToPhysical`），IR/sidecar 的每个重建点都不能漏（本次顺带补上 `ErbLoader.ResolveFirstDirPath` 的 `\` → `/` 归一）。
+- **从「存储契约的相对名」取短名，别用 `Path.GetFileName`**：契约是 `\` 分隔，Windows 上 `Path.GetFileName` 恰好对，**Android/Linux 上 `\` 不是分隔符** → 返回整串（含目录段）。取末段要显式切 `\` 与 `/`（`LastIndexOfAny`）；`SafPath.GetLogicalFileName` 内部也走 `Path.GetFileName`，对相对名同样不安全（只对完整物理路径 / content URI 安全）。实例：issues/18 的 csvNo 解析命中目录段 `Chara` → csvNo 恒 0 → `_csvNoMap` 除 0 外全 miss。

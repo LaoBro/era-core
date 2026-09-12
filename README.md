@@ -354,7 +354,7 @@ python tests/run_all.py --binary EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe -
 - `SafPath`（相对名 ↔ 物理路径、分隔符）
 - `Wildcard` / `Preload` 树枚举
 
-WSL 下**基线固定 5 个既有失败 + 1 个时序 flaky**（清单与判读口径见 [`docs/LESSONS/testing-and-ci.md`](docs/LESSONS/testing-and-ci.md) #12），只有不在名单里的失败才算回归。
+WSL 下**基线固定 5 个既有失败 + 时序/并发类偶发 flaky**（清单与判读口径见 [`docs/LESSONS/testing-and-ci.md`](docs/LESSONS/testing-and-ci.md) #12）；只有不在名单里、且单跑也不通过的失败才算回归。
 
 `tests/README.md` 是测试的权威文档。
 

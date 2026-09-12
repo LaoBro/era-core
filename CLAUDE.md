@@ -65,7 +65,7 @@ dotnet test EraCore.Tests/EraCore.Tests.csproj
 wsl -d Ubuntu -- bash -lc "cd /mnt/d/<repo> && ~/.dotnet/dotnet test EraCore.Tests/EraCore.Tests.csproj"
 ```
 
-Windows 测不出「文件名大小写 / 通配 pattern / 路径分隔符」类缺陷。WSL 下**基线固定 5 个既有失败 + 1 个时序 flaky**，只有不在名单里的失败才算回归；触发清单与判读口径见 [`docs/LESSONS/testing-and-ci.md`](docs/LESSONS/testing-and-ci.md) #12。
+Windows 测不出「文件名大小写 / 通配 pattern / 路径分隔符」类缺陷。WSL 下**基线固定 5 个既有失败 + 时序/并发类偶发 flaky**，只有不在名单里、且单跑也不通过的失败才算回归；触发清单与判读口径见 [`docs/LESSONS/testing-and-ci.md`](docs/LESSONS/testing-and-ci.md) #12。
 
 ### 全量回归
 
