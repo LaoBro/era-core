@@ -59,7 +59,13 @@ dotnet run --project EraCore.Maui/EraCore.Maui.csproj -f net10.0-windows10.0.190
 
 ```bash
 dotnet test EraCore.Tests/EraCore.Tests.csproj
+
+# 真大小写敏感环境（WSL2 Ubuntu ext4；SDK 装在 ~/.dotnet）——碰访问器/通配/分隔符的改动必跑
+# 把 /mnt/d/<repo> 换成仓库在 WSL 下的路径；命令里不要出现 $（外层 shell 会先展开 $PATH）
+wsl -d Ubuntu -- bash -lc "cd /mnt/d/<repo> && ~/.dotnet/dotnet test EraCore.Tests/EraCore.Tests.csproj"
 ```
+
+Windows 测不出「文件名大小写 / 通配 pattern / 路径分隔符」类缺陷。WSL 下**基线固定 5 个既有失败 + 1 个时序 flaky**，只有不在名单里的失败才算回归；触发清单与判读口径见 [`docs/LESSONS/testing-and-ci.md`](docs/LESSONS/testing-and-ci.md) #12。
 
 ### 全量回归
 
@@ -105,6 +111,7 @@ python -m eracore_agent stop
 - MAUI 只依赖 Core，不引入 Server/Cli 的 ASP.NET Core 依赖。
 - 修改前端结构、组件或状态时，先查看 [`EraCore.Web/README.md`](EraCore.Web/README.md)。
 - NativeAOT 结论以 [`docs/2026.8.4.安卓性能优化2/nativeaot-verify-report.md`](docs/2026.8.4.安卓性能优化2/nativeaot-verify-report.md) 为准，不在本文件重复论证。
+- `IGameDirAccessor` 的两个通配重载**禁止把 `searchPattern` 透传给 `Directory.GetFiles/GetDirectories`**——其大小写语义随 OS 变（Windows 不敏感 / Unix 敏感），必须走托管侧 `Wildcard.Matches` 过滤，保证真实路径与 SAF 语义一致。详见 [`docs/LESSONS/testing-and-ci.md`](docs/LESSONS/testing-and-ci.md) #12 与 [`saf-file-access.md`](docs/LESSONS/saf-file-access.md) #24。
 
 ## 环境陷阱
 

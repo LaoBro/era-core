@@ -1,6 +1,6 @@
 # 构建 / 测试 / CI 环境 失败教训
 
-> **TL;DR**：增量构建"0 警告"是假象（强制重编译才见真警告）；Android 构建失败先查环境（文件锁/安全软件/残留进程）再改代码；行号锚定基线的测试脆弱；残留进程会干扰回归矩阵；code-review 用两轴（Standards + Spec）抓单轴漏掉的实现偏离。
+> **TL;DR**：增量构建"0 警告"是假象（强制重编译才见真警告）；Android 构建失败先查环境（文件锁/安全软件/残留进程）再改代码；行号锚定基线的测试脆弱；残留进程会干扰回归矩阵；code-review 用两轴（Standards + Spec）抓单轴漏掉的实现偏离；**Windows 全绿不等于跨平台正确**——触碰文件名大小写/分隔符/路径语义的改动必须过 WSL2 ext4 关卡，且「只测能加载」的弱断言会漏掉运行期分支。
 
 ## 教训清单
 
@@ -17,6 +17,7 @@
 | 9 | 日志门面改默认阈值要与终端断言同步 | T-027 TerminalSink 默认 Warn，Info 级终端标志测试永远找不到；spawn 设 EMUERA_LOG_TERMINAL=info | 2026-08-10 |
 | 10 | Python print 双重编码在 GBK 控制台乱码 | encode/decode(errors="replace") 把中文变 �；直接 print（WinConsoleIO 写 UTF-16） | 2026-08-10 |
 | 11 | MAUI 前端资产 glob 依赖 load-time 目录存在 | CI 全新 checkout 无 wwwroot → MauiAsset 收集为空 → APK 缺前端 → 整页 ERR_NAME_NOT_RESOLVED；排查以最终 APK 为准 | 2026-08-22 |
+| 12 | Windows 全绿≠跨平台正确 | 大小写/分隔符类缺陷本地无法复现，须过 WSL2 ext4；夹具命名同形 + 「只测能加载」会漏运行期 | 2026-09-12 |
 
 ---
 
@@ -138,3 +139,30 @@
 **教训**：
 1. **Windows 控制台 Python 输出中文：直接 `print(str)`**——WinConsoleIO 绕开代码页；任何 `encode(errors="replace")` 中间层都是把"显示问题"变成"字符损毁"的元凶。
 2. **显示乱码 ≠ 断言失败**：终端显示编码问题不影响 Python 内部 Unicode 比对（诊断学：先确认是显示层还是数据层，别把乱码当测试失败去查代码）。
+
+## 12. Windows 全绿 ≠ 跨平台正确——大小写/分隔符缺陷需要真敏感环境（2026-09-12）
+
+**场景**：issues/15 把 Android 游戏切到「真实路径 + `FileSystemGameDirAccessor`」（legacy）后，eraTK（TK1.29.3）能正常加载，但点「重新開始」报 `CFLAG` 第 1 引数 -1（`SYSTEM\NEWGAME.ERB:283`）。同一份改动在 Windows 上 `dotnet test EraCore.Tests` **1065/1065 全绿**，既有 `CsvLookupTests` 也全过。
+
+**结果**：Windows 与真机结论完全相反。真机 legacy 下角色 CSV 枚举到 0 个（`[ErhLoader] PrepareERDFileNames: count=19`，SAF 为 20）→ 角色模板为空 → `EXISTCSV()` 全 0 → 新游戏一个角色都不加 → `NAME_TO_CHARA("アリス") = -1`。
+
+**原因**（两条独立的「测试盲区」叠加）：
+1. **环境盲区**：缺陷是「托管 glob 在 Unix 上大小写敏感」（`Directory.GetFiles(dir, "CHARA*.CSV")` 匹配不到磁盘真名 `Chara1 霊夢.csv`）。Windows 的文件系统与 .NET 托管 matcher 都大小写不敏感，本地**根本不具备复现条件**。同类盲区还有路径分隔符：`\` 在 Windows 是分隔符、在 Android 不是。
+2. **断言盲区**：既有夹具把 CSV 命名成 `CHARA001.CSV`（与引擎 pattern 大小写**完全吻合**），且只验证「能加载」。而加载期不碰角色模板，模板只在运行期（新游戏）被索引——弱断言让缺陷从两条路径同时溜过。
+
+**解决**：
+- **真敏感环境 = WSL2 Ubuntu**（本机已装；SDK 用户级装在 `~/.dotnet`，无需 root）。测试夹具用 `Path.GetTempPath()` → Linux 的 `/tmp` 是 **ext4，真大小写敏感**；仓库放在 `/mnt/d`（drvfs 默认不敏感）也不影响。
+  ```bash
+  wsl -d Ubuntu -- bash -lc "cd /mnt/d/LaoBro/era-core && ~/.dotnet/dotnet test EraCore.Tests/EraCore.Tests.csproj"
+  ```
+  ⚠️ 命令里**不要出现 `$`**——外层 Git Bash 会先展开 `$PATH`，撞上 `Program Files (x86)` 的括号直接语法错；用绝对路径（`/home/<user>/.dotnet/dotnet`）。
+- **分层守卫**（新增 `FileSystemGameDirAccessorPatternTests`）：跨平台主守卫是「accessor 结果 == `Wildcard` 过滤结果」；大小写用例交 WSL；另加一个 **Windows 本地也能红的哨兵**——`Directory.GetFiles(dir, "*.")` 会返回无扩展名文件，而 `Wildcard.Matches(name, "*.")` 为 false。
+- **守卫自证「改前红」**：`git stash push -- <生产文件>` → 跑守卫 → 期望红 → `git stash pop`（本次 Windows 红 3 例、WSL 红 6 例）。
+
+**教训**：
+1. **`dotnet test` 全绿只证明当前平台正确**。凡触碰「文件名大小写 / 通配 pattern / 路径分隔符 / 相对路径重建」的改动，必须过真大小写敏感环境（WSL2 ext4）——这是 `saf-file-access.md` #12「加载通了不等于可玩」的**测试版**同类教训。
+2. **夹具命名要与生产真实形态同形**（大小写、扩展名、空格/非 ASCII）。`CHARA001.CSV` 这种「顺手写成大写」的夹具会把平台缺陷永久藏住；真机是 `Chara1 霊夢.csv`。
+3. **「只测能加载」是弱断言**：启动/加载成功不代表数据正确，要选一个**真正消费该数据**的运行期入口（新游戏、剧情推进）做验收。
+4. **WSL 下 `EraCore.Tests` 永远不是全绿**：基线固定 5 个既有 Linux 不兼容/枚举顺序失败（`SafPathTests.Filesystem_paths_still_use_Path_semantics`、`AssetPathValidatorTests.Resolve_rejects_backslash_traversal`、`ErbLoaderBoundedSchedulerTests` ×2、`ErbLoaderTests.LoadErbDir_parallel_progress_lines_follow_file_order`）+ 1 个时序 flaky（`ControllerTests.Lease_expiry_releases_agent_and_notifies_waiter`）。判读口径 = 只有**不在基线名单里**的失败才算回归。
+5. **Windows 每目录大小写敏感（`fsutil file setCaseSensitiveInfo`）不可作替代**：需管理员；且 .NET 10 没有按目录探测大小的实现（`PathInternal` 无 `IsCaseSensitive`、框架 DLL 无 `FileCaseSensitiveInfo`）→ 托管 glob 不受该标志影响，它只改 OS 层精确路径解析。
+6. **触发清单**（命中任一即需跑 WSL）：`FileSystemGameDirAccessor` / `SafGameDirAccessor` / `IGameDirAccessor`、`Config.GetFiles` 或任何 `GetFiles(..., searchPattern, ...)`、`SafPath`、`Wildcard` / `Preload` 树枚举。

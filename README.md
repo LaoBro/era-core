@@ -327,8 +327,12 @@ IPA 字体许可见 `src/assets/fonts/IPA_Font_License_Agreement_v1.0.txt`（IPA
 测试分三层：**C# 单元测试**（xUnit）、**Python 端到端**（CLI/HTTP/WebSocket）、**前端测试**（Vitest）。
 
 ```bash
-# C# 单元测试（xUnit，304 用例）
+# C# 单元测试（xUnit，1065 用例）
 dotnet test EraCore.Tests/EraCore.Tests.csproj
+
+# 同套单测跑在真大小写敏感文件系统上（WSL2 Ubuntu；SDK 装在 ~/.dotnet）
+# 把 /mnt/d/<repo> 换成仓库在 WSL 下的路径；注意命令里不要出现 $（外层 shell 会先展开 $PATH）
+wsl -d Ubuntu -- bash -lc "cd /mnt/d/<repo> && ~/.dotnet/dotnet test EraCore.Tests/EraCore.Tests.csproj"
 
 # MAUI 单元测试（11 用例）
 dotnet test EraCore.Maui.Tests/EraCore.Maui.Tests.csproj
@@ -343,6 +347,15 @@ python tests/test_jsonl.py --binary EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.ex
 python tests/run_all.py --binary EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe --game-dir test_game
 ```
 
+**大小写敏感关卡**：Windows 的文件系统与 .NET 托管 glob 都不区分大小写，因此「文件名大小写 / 通配 pattern / 路径分隔符」类缺陷在本地 `dotnet test` 里**不可能复现**（曾出现 Windows 1065/1065 全绿、真机 legacy 一进新游戏就崩）。命中以下任一改动时，必须再跑一次上面的 WSL 那行：
+
+- `FileSystemGameDirAccessor` / `SafGameDirAccessor` / `IGameDirAccessor`
+- `Config.GetFiles` 或任何 `GetFiles(..., searchPattern, ...)` 调用点
+- `SafPath`（相对名 ↔ 物理路径、分隔符）
+- `Wildcard` / `Preload` 树枚举
+
+WSL 下**基线固定 5 个既有失败 + 1 个时序 flaky**（清单与判读口径见 [`docs/LESSONS/testing-and-ci.md`](docs/LESSONS/testing-and-ci.md) #12），只有不在名单里的失败才算回归。
+
 `tests/README.md` 是测试的权威文档。
 
 ---
@@ -355,7 +368,7 @@ EraCore.Core/   -- 无头核心库（Library，无 AspNetCore 依赖，MAUI 可�
 EraCore.Server/ -- HTTP 服务器组件（Library，引 AspNetCore）
 EraCore.Maui/   -- MAUI 桌面/移动应用（Windows + Android，原生 WebView 壳）
 EraCore.Web/     -- Vue 3 + TypeScript 浏览器前端（Vite + Pinia + Vitest）
-EraCore.Tests/  -- C# 单元测试（xUnit，304 用例）
+EraCore.Tests/  -- C# 单元测试（xUnit，1065 用例）
 EraCore.Maui.Tests/ -- MAUI 单元测试（xUnit，15 用例）
 Emuera/                 -- WinForms 残留源码（不再维护，仅作只读参考，不可独立构建）
 eracore_agent/          -- Python eracore_agent CLI 与 HTTP 客户端

@@ -1,6 +1,6 @@
 # Android SAF 文件访问 失败教训
 
-> **TL;DR**：SAF content:// URI 不是文件系统路径——凡是"文件名/相对路径/扩展名/前缀过滤/路径拼接"都走 documentId 语义（SafPath），禁止 `Path.GetFileName*`、`File.Exists`、字符串拼接；目录/文档 ID 提取口径全库统一；缓存/预取/失效与性能（IPC N+1）一起设计；写路径必须走 DirAccessor + 缓冲。
+> **TL;DR**：SAF content:// URI 不是文件系统路径——凡是"文件名/相对路径/扩展名/前缀过滤/路径拼接"都走 documentId 语义（SafPath），禁止 `Path.GetFileName*`、`File.Exists`、字符串拼接；目录/文档 ID 提取口径全库统一；缓存/预取/失效与性能（IPC N+1）一起设计；写路径必须走 DirAccessor + 缓冲；**真实路径 accessor 必须镜像 SAF 的通配语义**（大小写不敏感、按条目名）——托管 glob 在 Android 上大小写敏感，「切模式」= 换语义。
 
 ## 教训清单
 
@@ -29,6 +29,7 @@
 | 21 | 覆盖写不失效父目录 | 只有新建文档才失效；过度失效抵消预取 | 2026-08-04 |
 | 22 | **ImageNameTable sprite 名解析对 content:// 失效（2026-08-08）** | `Path.GetRelativePath` 对 content:// 无效；改 documentId 前缀比较 | 2026-08-08 |
 | 23 | **枚举输出作字典键必须 OrdinalIgnoreCase——displayName 是磁盘真实大小写（2026-09-09）** | 引擎固定名请求恒大写 `GAMEBASE.CSV`，provider 返回 `GameBase.csv`；懒读被 SAF 大小写不敏感解析掩盖，精确字典 miss | 2026-09-09 |
+| 24 | **真实路径 accessor 必须镜像 SAF 通配语义（2026-09-12）** | 托管 glob 在 Android 大小写敏感，`CHARA*.CSV` 匹配不到 `Chara1 霊夢.csv`；别把 searchPattern 透传给 Directory.* | 2026-09-12 |
 
 ---
 
@@ -370,3 +371,19 @@ new FileStream(SavDir + "global.sav", FileMode.Create, FileAccess.Write); // 打
 - **SAF 把"名字不一致"这类错误静默吞掉**：底层解析大小写不敏感意味着错误配置照常工作，只有当新缓存层引入精确匹配时才爆。给 SAF 数据建精确索引前，先问"这个键的书写者有几种"。
 - **引擎硬编码大写 + 磁盘任意大小写**是 ERA 游戏生态的既成事实（Windows 不区分大小写惯出来的），任何平台的缓存/索引键都必须镜像目标文件系统解析语义，而不是镜像写入方的字节。
 - "一半命中一半 miss"的快照 → 按键**来源**分组排查：来自枚举输出的键（真实名）命中，来自引擎字面量的键（约定名）miss——差异即线索。
+
+## 24. 真实路径 accessor 必须镜像 SAF 的通配语义——托管 glob 在 Android 上大小写敏感（2026-09-12）
+
+**场景**：issues/15 落地后，Android 游戏可走「真实路径 + `FileSystemGameDirAccessor`」（legacy；`BridgeHost.ResolveDirAccessor` 按路径形态分流）。eraTK（TK1.29.3）在 legacy 下**能加载**，但点「重新開始」报 `SYSTEM\NEWGAME.ERB:283` `CFLAG` 第 1 引数 -1；同一游戏切回 SAF 完全正常。
+
+**结果**：legacy 下角色 CSV 枚举到 **0 个**（`[ErhLoader] PrepareERDFileNames: count=19`，SAF 为 `20`——唯一缺失项是 CSV 根目录里唯一的全大写扩展名 `CFLAG.CSV`），角色模板表为空 → `EXISTCSV()` 全 0 → 新游戏不加任何角色 → `NAME_TO_CHARA("アリス") = -1`。加载期不碰角色模板，所以只有运行期入口暴露。
+
+**根因**：`FileSystemGameDirAccessor.GetFiles(path, searchPattern, option)` 原实现直接把 pattern 透传给 `Directory.GetFiles`。.NET 在 Unix/Android 上由**托管代码**做 glob（`EnumerationOptions.MatchCasing` 默认 `PlatformDefault` = 大小写敏感），而 SAF accessor 用仓库自研 `Wildcard.Matches`（`Core/Wildcard.cs`）是**大小写不敏感**。引擎的硬编码大写 glob（`Config.GetFiles(csvDir, "CHARA*.CSV")`）对磁盘真名 `csv/Chara/Chara1 霊夢.csv` 因此在 legacy 全部失配。与教训 23 同源（引擎大写约定 vs 磁盘真实大小写），方向相反：23 是缓存字典键，24 是 accessor 的 glob。
+
+**解决**：两个 pattern 重载改为「OS 层 catch-all 枚举（`GetFiles(path, "*", option)`，递归仍交给 `Directory.*`）+ 托管侧 `Wildcard.Matches(Path.GetFileName(entry), pattern)` 过滤」，`"*"` 走快路径保持 `Preload` 全树枚举零额外开销。精确名读取（`File.Exists`/`OpenRead`/`ReadAllText`）**不动**——Android 外置存储 FUSE 层本就不区分大小写，真机探针确认 `ls .../csv/ABL.CSV` 解析到 `Abl.csv`（对照 `NOPE.csv` 报 No such file）。
+
+**教训**：
+- **accessor 的契约必须两端一致**：SAF 与真实路径必须是同一套匹配语义（大小写不敏感、按**条目名**、`*`/`?`）。否则「切模式」等于悄悄换语义——同一份游戏数据在两种模式下结果不同，且症状只在切换后出现。
+- **永远不要把 `searchPattern` 透传给 `Directory.GetFiles/GetDirectories`**：其大小写语义随 OS 变（Windows 不敏感 / Unix 敏感），而引擎的模式是 Windows 遗产（全大写）。托管侧用 `Wildcard` 过滤才跨平台可控。注意 `?*.` 等语义也随 MatchType（Win32 vs Simple）漂移，统一到 `Wildcard` 还顺带消除这类分叉。
+- **判「枚举到 0 个文件」先分层**：精确路径（OS/FUSE 解析，本机不敏感）vs 托管 glob（大小写敏感）——同一次诊断里两层结论可能相反，对应完全不同的修复（前者不该动，后者才是根因）。
+- 同族的真实路径坑：本地分支的相对路径重建必须归一分隔符（`SafPath.RelToPhysical`），IR/sidecar 的每个重建点都不能漏（本次顺带补上 `ErbLoader.ResolveFirstDirPath` 的 `\` → `/` 归一）。
