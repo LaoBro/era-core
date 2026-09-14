@@ -59,9 +59,23 @@ internal sealed partial class VariableData : IDisposable
 	readonly Dictionary<string, VariableLocal> localvarTokenDic = new(Config.StrComper);
 
 	/// <summary>
+	/// erb-loader-parallel：并行未调用清扫（RunUncalledSweepParallel）期间，工作线程解析函数体
+	/// `#DIM STATIC` → AddPrivateVariable → CreatePrivateVariable 并发追加本列表。
+	/// 普通 List 非线程安全，并发追加可损坏内部数组（计数与容量不一致）→ 加载后 RESETDATA/存读档
+	/// 的 foreach 迭代读到撕裂槽位 → NullReferenceException。
+	/// ERH 的 CreateUserDefVariable 走串行 ERH 阶段（先于 ERB 清扫，无时间重叠），无需入锁。
+	/// 长期方案同 privateDimList（IdentifierDictionary._privateDimLock）：生成期收集 per-file
+	/// artifact、合并期统一写入，锁只是过渡。
+	/// </summary>
+	readonly object _staticVarListLock = new();
+
+	/// <summary>
 	/// ユーザー変数のうちStaticかつ非Globalなもの。ERHでのDIM(非GLOBAL) と関数でのDIM (STATIC)の両方。ロードやリセットで初期化が必要。キャラクタ変数は除く。
 	/// </summary>
 	List<UserDefinedVariableToken> userDefinedStaticVarList = [];
+
+	/// <summary>并发回归测试用：锁保护下无丢失追加的计数断言（避免为测试暴露列表本体）。</summary>
+	internal int UserDefinedStaticVarCountForTests => userDefinedStaticVarList.Count;
 	/// <summary>
 	/// ユーザー広域変数のうちグローバル属性持ち。
 	/// </summary>
@@ -488,7 +502,9 @@ internal sealed partial class VariableData : IDisposable
 					default: throw new ExeEE(trerror.AbnormalVarDeclaration.Text);
 				}
 			}
-			userDefinedStaticVarList.Add(ret);
+			// 并行清扫可达的唯一共享列表写点（函数内 #DIM STATIC）；ERH 侧同列表写点串行且无时间重叠
+			lock (_staticVarListLock)
+				userDefinedStaticVarList.Add(ret);
 		}
 		else
 		{
