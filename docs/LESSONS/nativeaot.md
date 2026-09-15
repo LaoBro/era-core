@@ -1,6 +1,6 @@
 # NativeAOT 发布 失败教训
 
-> **TL;DR**：AOT 下 JSON 反射是硬禁用（匿名类型必崩）、库项目 minimal API 必须开请求委托生成器、匿名类型不可序列化、ILC 增量产物可能不更新（改代码后清 bin-aot/obj-aot 全量重建）、输出目录重定向必须补 `DefaultItemExcludes`。
+> **TL;DR**：AOT 下 JSON 反射是硬禁用（匿名类型必崩）、库项目 minimal API 必须开请求委托生成器、匿名类型不可序列化、ILC 增量产物可能不更新（改代码后清 bin-aot/obj-aot 全量重建）、输出目录重定向必须补 `DefaultItemExcludes`、**Android x86 转译环境（Houdini）下并发加载会触发 GC 标记死循环——真机 ARM64 零复现，别把模拟器当验收环境**。
 
 ## 教训清单
 
@@ -13,6 +13,7 @@
 | 5 | 壳层反射 JSON 是 NativeAOT 白屏根因 | 进程存活的白屏 = 托管异常被吞；IL3050 运行时是 JsonSerializerIsReflectionDisabled | 2026-08-08 |
 | 6 | 目录隔离的 CS0579 根治 | 重定向 Base*OutputPath 后必须补 DefaultItemExcludes | 2026-08-08 |
 | 7 | NativeAOT 警告治理分层法 | 代码级修复优先、豁免带证据；DAM 对字典/数组取值 Type 无效；csc 与 ILC 报码不同 | 2026-08-10 |
+| 8 | Android 转译环境下并发加载 GC 死循环 | Houdini 转译特有（真机 ARM64 零复现）；转译检测不能用 `uname`；符号化走 `.dbg` 而非 `.map` | 2026-09-15 |
 
 ---
 
@@ -125,3 +126,56 @@
 2. **csc 与 ILC 警告码可能不同**：同一反射点编译期 IL2075、链接期 IL2065。豁免列表要同时覆盖两个阶段的码，验证要等 ILC 链接过才算闭环（编译过 ≠ 链接过）。
 3. **放行"程序集级汇总码"（IL3053）要谨慎**：只对绑定库固有（Mono.Android）放行；自有代码的 IL3053 意味着还有具体警告没清，放行会掩盖。
 4. **带 converter 多态的序列化入口替换**：显式 context 会丢 options.Converters（教训 4）；`[JsonConverter]` 挂基类让两种入口行为一致，是比"换入口"更根本的解法——**改序列化后必须跑协议级内容断言回归**（run_all.py 的 test_jsonl/test_snapshot），单测全绿不代表 wire 正确。
+
+## 8. Android x86 转译环境（Houdini）下并发加载触发 GC 标记死循环——真机 ARM64 零复现
+
+**场景**：`EraCore.Maui` NativeAOT（`PublishAot=true`、`android-arm64`）在 MuMu 12（x86_64 宿主 + Houdini 转译 arm64-v8a）上冷启动 TK1.29.3 纯净版（2388 个 ERB），**间歇性失败且形态不定**：
+
+| 形态 | 现场 |
+|---|---|
+| Access Violation | `IrBlob.ToArray` 遍历 `List<IrLine>`；NativeAOT 不支持抛 `AccessViolationException` → `FailFast` → `SystemNative_Abort` → **SIGABRT** |
+| Access Violation | `String.InternalSubString`（`Preload` 并行读盘循环体内） |
+| 卡死 | `WKS::gc_heap` 标记阶段死循环：进程存活、单线程 100% 烧 CPU（14,911 ticks vs 次高 143）、无任何崩溃日志 |
+
+**变量归因（逐个排除后收敛）**：
+
+| 变量 | 实验 | 结果 |
+|---|---|---|
+| IR 磁盘缓存 | 关 `IrDiskCacheLoad` | 仍失败 |
+| ERB 并行 genmerge | 关 `ParallelErbLoad` | 崩溃转移到 `Preload` 循环体（3 轮 1 次） |
+| preload 并发度 | `safReadDegree=1 / 2` | 与 ERB 并行同开时仍卡死 |
+| 两条并行都收窄 | ERB off + degree ≤ 2 | 18/18 通过（**实验锚点，不是可发布方案**） |
+| 真机 ARM64 | 默认并行配置 | **10/10 通过，历史零崩零卡** |
+| 文件系统位置 | 游戏从宿主共享挂载 `/mnt/shared` 换到内部存储 `/storage/emulated/0` | **仍卡死，且冻结栈逐帧相同** |
+
+⇒ 唯一剩下的相关变量 = **ARM64 代码跑在 x86 转译层上**。
+
+**取证要点**（Houdini 转储自带 `pc` + build-id，且 `pc` 零抖动）：
+
+```
+#00  WKS::gc_heap::mark_object_simple1   +0x6b8      ← 719 次转储恒定于此
+#01  WKS::gc_heap::drain_mark_queue
+#02  WKS::gc_heap::mark_phase → gc1 → garbage_collect → GarbageCollectGeneration
+#08  GCHeap::Alloc → RhpGcAlloc → RhpNewObject
+#11  EraStreamReader.ReadEnabledLine                  ← 托管：正在读行并分配
+#12  ErbLoader.GenerateErbFileCore
+#14  RunGenerateWorkerAsync_d__57.MoveNext            ← ERB 并行 worker
+```
+
+`debuggerd -b` 同线程原生栈：`art::SignalChain::Handler` + `__restore_rt` **嵌套在 Houdini 帧之间**，栈顶 8 帧**无一落在自有 `.so`** ⇒ 反复「信号 → 处理 → 返回 → 立即再故障」。
+（`WKS` = Workstation GC，即分配线程自己执行的阻塞式 GC。）
+
+**代码审计结论（先审计、再归因）**：两条并行路径均**无应用层共享可写状态**——`Preload` 循环体只写两个 `ConcurrentDictionary`；`FileSystemGameDirAccessor.NameMaps` 的内层普通 `Dictionary` 只在 `GetOrAdd` 工厂内构造、发布后只读；`ResolveExactMiss` 因路径来自磁盘枚举而 `File.Exists` 恒真、直接短路；`SafPath` 纯函数；`EncodingHandler` 的共享静态 `Encoding` 每次 `GetString` 内部新建 decoder（线程安全）；`AgentLog` 全部写入在 `lock` 内；全仓无 `CollectionsMarshal`。⇒ 归因推到运行时层（WKS GC × 翻译态线程挂起），不是自有竞态。
+
+**注意**：触发剂量**不是线程数**——`deg=2`（全局 4 并发，双树 `WhenAll`）通过，而 ERB `window=4`（同为全局 4 并发）必卡死。更像「单位时间内处于翻译态的托管执行量」。
+
+**现状**：截至 2026-09-15 未修（属运行时层，非本仓可改）。可发布的绕行 = 转译环境检测 → 仅在该环境强制 preload 串行 + 关闭 ERB 并行；真机并行不受影响。
+
+**教训**：
+
+1. **真机才是判据，模拟器不是验收环境。** 同一 APK 同一配置：真机 ARM64 10/10 通过且历史零崩溃，x86 转译模拟器必崩必卡。并发/内存类缺陷先在真机定性，别拿模拟器结论当发布门。
+2. **转译检测不能用 `uname`——MuMu 会把它伪造成 `aarch64`。** 可靠判据：`Build.SUPPORTED_ABIS[0] != "arm64-v8a"` 且 `RuntimeInformation.ProcessArchitecture == Arm64`。实测对照：`ro.product.cpu.abi` = `x86_64`（真机 `arm64-v8a`）、`abilist` = `x86_64,arm64-v8a,x86`、`/system/lib64/libhoudini.so` 存在（真机不存在）。`RuntimeInformation.OSArchitecture` 同理不可信（它读 `uname`）。
+3. **符号化优先找 `.dbg`，不要走 `.map`。** `IlcGenerateMapFile` 产出的 `*.map.xml` 是**对象节点尺寸清单、全文件零地址**（实测 87 MB）——**完全无法做 pc 符号化**。真正可用的是 `.gnu_debuglink` 指向的 `EraCore.Maui.so.dbg`（37 万符号，段地址已是最终 vaddr，build-id 与 `.so` 一致）。ILC 的 `.o` 可作备用但需叠加段偏移。
+4. **Houdini 卡死的取证路径与普通崩溃不同。** 转储以 ~30 次/秒刷屏，256 KB logcat 主缓冲 **23 秒即回绕**，业务日志（`preload_policy` / `genmerge`）会被整段挤掉——但**不影响办案**：转储自带 `pc` + `build-id`，`pc` 零抖动即可直接定位到函数级。第一优先是 `logcat -d`（**不清缓冲**）抓转储 + `debuggerd -b` 看原生栈，而不是找业务日志。**要跑多轮取证，先开 logcat 常驻重定向再启动应用，不要事后补。**
+5. **「并发必炸」不等于「我们代码有 race」——先逐点审计共享可写状态。** 把两条并行路径的每个共享点查完（`ConcurrentDictionary` 是否真安全、日志汇聚点是否加锁、有无无边界检查的数组访问、写入字典是否只在工厂内构造），才能把结论推到运行时层；否则容易在自有代码里空转几天。
+6. **「补锁后症状消失」必须核门控可达性。** 真机上曾出现的间歇 NRE 由 `userDefinedStaticVarList` 并发追加撕裂所致（已补 `_staticVarListLock`，`447cf03`），但该锁只在 `RunUncalledSweepParallel` 可达，而 `ShouldRunParallelSweep` 的 Auto 分支是 `configured && !analysisMode && !isAndroid` ⇒ **Android + Auto 下该路径恒不运行，这把锁够不着**；真机上它只在 `sweepGatePolicy=ForceOn` 覆盖时才可能生效。**它与模拟器的 GC 崩溃是两个不同层次的问题，不可混为一谈。**
