@@ -62,7 +62,7 @@ function chooseSweepGatePolicy(value: SweepGatePolicyValue): void {
   game.sweepGatePolicy = value;
 }
 
-/** SAF 读取并发度——模式（默认/手动）本地 UI 态；选手动时才显示数值输入框。 */
+/** 读取并发度——模式（默认/手动）本地 UI 态；选手动时才显示数值输入框。 */
 const safMode = ref<'auto' | 'manual'>(game.safReadDegree === 'auto' ? 'auto' : 'manual');
 /** 手动并发度输入框（自由数值，C# 侧钳制 1–64）。 */
 const safDegreeInput = ref<string>('');
@@ -84,7 +84,7 @@ watch(
 );
 
 /**
- * ADR-0026 诊断旋钮二（SAF content-URI 读取并发度）模式切换——状态始终有清楚反馈：
+ * ADR-0026 诊断旋钮二（读取并发度；2026-09-15 起显式值对本地路径同样生效）模式切换——状态始终有清楚反馈：
  * 拨「默认」立即投递并回 auto；拨「手动」显现输入框（反填当前数值，未设置过则填默认），
  * 输入后点「应用」或回车才提交。C# 规范化（数值钳制 1–64）+ 写 Preferences，本地乐观更新，
  * 处理完推回 config 消息（含规范化后的 safReadDegree 字段）再次同步——最终以 C# 权威状态为准。
@@ -259,8 +259,8 @@ const logCopied = ref(false);
           parsescript_policy 的 policy= 字段为准。
         </p>
         <div class="setting-row">
-          <span class="setting-label">SAF 读取并发度</span>
-          <div class="segmented" role="radiogroup" aria-label="SAF 读取并发度">
+          <span class="setting-label">读取并发度</span>
+          <div class="segmented" role="radiogroup" aria-label="读取并发度">
             <button
               class="segmented-item"
               :class="{ active: safMode === 'auto' }"
@@ -290,10 +290,10 @@ const logCopied = ref(false);
             min="1"
             max="64"
             placeholder="1-64"
-            aria-label="SAF 并发数值"
+            aria-label="并发数值"
             @keydown.enter="applyCustomSafReadDegree"
           />
-          <button class="segmented-item" aria-label="应用 SAF 并发数值" @click="applyCustomSafReadDegree">
+          <button class="segmented-item" aria-label="应用并发数值" @click="applyCustomSafReadDegree">
             应用
           </button>
           <span v-if="safDegreeApplied" class="setting-value saf-applied-hint" aria-live="polite">
@@ -301,11 +301,11 @@ const logCopied = ref(false);
           </span>
         </div>
         <p class="hint-text">
-          诊断旋钮，默认保持 auto；真机复测与读取并发度取证实验用——拨「手动」可输入 1-64
-          任意值二分崩溃阈值。仅影响 Android SAF 目录的游戏文件读取：默认=每树 1 并发（与旧版本
-          完全一致）；数值=每树读取并发度（高并发可能触发已知并发读取卡死/崩溃）。桌面本地目录
-          不受此开关影响。仅内存覆盖，游戏配置无法设置；切换不影响当前局，重新进入游戏后
-          生效，实际并发状态以日志 preload_policy 的 requested=/effective= 字段为准。
+          诊断旋钮，默认保持 auto；并发读取取证实验用——拨「手动」可输入 1-64 任意值二分崩溃
+          阈值。auto 时按路径类型取值：SAF content-URI 目录=每树 1 并发（与旧版本完全一致），
+          本地/桌面文件系统目录=不限并发。填了数值则两种路径都收窄到该并发度（高并发可能触发
+          已知并发读取卡死/崩溃）。仅内存覆盖，游戏配置无法设置；切换不影响当前局，重新进入
+          游戏后生效，实际并发状态以日志 preload_policy 的 requested=/effective= 字段为准。
         </p>
         <div class="setting-row">
           <span class="setting-label">并行生成度上限</span>
@@ -545,7 +545,7 @@ h3 {
   color: var(--color-text);
   font-weight: 600;
 }
-/* 诊断旋钮二：SAF 读取并发度自定义输入（自由数值，C# 侧钳制 1–64） */
+/* 诊断旋钮二：读取并发度自定义输入（自由数值，C# 侧钳制 1–64） */
 .saf-degree-input {
   border: none;
   border-left: 1px solid var(--color-border);

@@ -453,8 +453,9 @@ public partial class MainPage : ContentPage
                 // ADR-0026 诊断旋钮一（并行未调用遍历平台门策略）：同点应用——仅内存覆盖写
                 // OverrideSweepGatePolicy，ErbLoader 加载 ERB 时读并在 parsescript_policy 日志自证
                 BridgeHost.ApplySweepGatePolicy(newConfig);
-                // ADR-0026 诊断旋钮二（SAF content-URI 读取并发度）：同点应用——仅内存覆盖写
+                // ADR-0026 诊断旋钮二（读取并发度）：同点应用——仅内存覆盖写
                 // OverrideSafReadDegree，Preload.Load 时读并在 preload_policy 日志自证
+                // （2026-09-15 起显式值对本地路径同样生效；auto 语义不变）
                 BridgeHost.ApplySafReadDegree(newConfig);
                 // ADR-0026 诊断旋钮三（并行生成度上限，06-K1）：同点应用——仅内存覆盖写
                 // OverrideMaxParallelErbFiles，ErbLoader 加载 ERB 时读并在 LoadPendingParallel 日志自证

@@ -61,11 +61,12 @@ internal sealed class ConfigData
 	public SweepGatePolicy? OverrideSweepGatePolicy { get; set; }
 
 	/// <summary>
-	/// 诊断旋钮（ADR-0026）：SAF content-URI 读取并发度的内存覆盖——null=不覆盖（默认，
-	/// 每树 1 并发，与止血值逐位一致）；显式数值（钳制 1–64）由 app 壳层经 Preferences 写入，
-	/// Preload.Load 读取并经 <c>preload_policy</c> 日志自证，真机崩溃阈值二分取证用。仅绑
-	/// content-URI 读取分支，桌面文件系统路径不受限。无对应 ConfigCode——游戏随包的
-	/// emuera.config 无法设置（loadConfig 对未知键静默跳过）；仅内存覆盖，不落盘。
+	/// 诊断旋钮（ADR-0026）：读取并发度的内存覆盖——null=不覆盖（默认：content-URI 每树 1 并发，
+	/// 与止血值逐位一致；本地/桌面路径 -1 不受限）；显式数值（钳制 1–64）由 app 壳层经
+	/// Preferences 写入，Preload.Load 读取并经 <c>preload_policy</c> 日志自证，取证阈值二分用。
+	/// <b>2026-09-15 起显式值对本地文件系统路径同样生效</b>（原实现该分支只绑 content-URI，
+	/// 本地路径并发度恒 -1 且旋钮在其上无效，而崩溃恰只在本地路径复现）。无对应 ConfigCode——
+	/// 游戏随包的 emuera.config 无法设置（loadConfig 对未知键静默跳过）；仅内存覆盖，不落盘。
 	/// </summary>
 	public int? OverrideSafReadDegree { get; set; }
 

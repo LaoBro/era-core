@@ -8,7 +8,8 @@ namespace MinorShift.Emuera.Runtime.Config;
 /// <list type="bullet">
 /// <item><c>null</c>（=auto，默认）：每树 1 并发——与 7c10328 止血值逐位一致（双树 WhenAll 下总计 ≤2）。</item>
 /// <item>显式数值：每树任意并发度（钳制 <see cref="SafReadDegreeCodec.MinExplicitDegree"/>–<see cref="SafReadDegreeCodec.MaxExplicitDegree"/>）——
-/// 真机崩溃阈值二分取证用（"多少并发才崩"），仅绑 content-URI 读取分支，桌面文件系统路径不受限。</item>
+/// 取证阈值二分用（"多少并发才崩"）。<b>2026-09-15 起对本地/桌面文件系统路径同样生效</b>：
+/// 原先该分支只作用于 content-URI，本地路径并发度恒为 -1（不限并发），旋钮在其上完全无效。</item>
 /// </list>
 /// 由 app 壳层（MAUI 设置页「诊断」分组经 Preferences）写入 <see cref="ConfigData.OverrideSafReadDegree"/>；
 /// 游戏随包分发的 emuera.config 无法设置（无对应 ConfigCode，loadConfig 对未知键静默跳过）。

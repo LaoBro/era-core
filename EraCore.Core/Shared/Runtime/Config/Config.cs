@@ -101,7 +101,7 @@ internal sealed class Config
 	public static bool ParallelParseScript => Current!._data.GetConfigValue<bool>(ConfigCode.ParallelParseScript);
 	/// <summary>ADR-0026 诊断旋钮：并行未调用遍历平台门策略内存覆盖（null=Auto 跟随平台门）。壳层经 Preferences 写入，无 ConfigCode 条目、游戏配置不可设置。</summary>
 	public static SweepGatePolicy? OverrideSweepGatePolicy => Current?._data.OverrideSweepGatePolicy;
-	/// <summary>ADR-0026 诊断旋钮：SAF content-URI 读取并发度内存覆盖（null=auto 每树 1 并发；显式值钳制 1–64）。壳层经 Preferences 写入，无 ConfigCode 条目、游戏配置不可设置；桌面文件系统路径不受限。</summary>
+	/// <summary>ADR-0026 诊断旋钮：读取并发度内存覆盖（null=auto：content-URI 每树 1 并发、本地路径 -1 不受限；显式值钳制 1–64，2026-09-15 起对本地路径同样生效）。壳层经 Preferences 写入，无 ConfigCode 条目、游戏配置不可设置。</summary>
 	public static int? OverrideSafReadDegree => Current?._data.OverrideSafReadDegree;
 	/// <summary>ADR-0026 诊断旋钮（06-K1）：并行生成度上限内存覆盖（null=auto min(核数,8)；显式 4/8/16 取证档与核数解耦，窗口与清扫度同源同拨）。壳层经 Preferences 写入，无 ConfigCode 条目、游戏配置不可设置。</summary>
 	public static int? OverrideMaxParallelErbFiles => Current?._data.OverrideMaxParallelErbFiles;

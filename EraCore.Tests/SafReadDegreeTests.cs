@@ -14,8 +14,9 @@ namespace MinorShift.Emuera.Tests;
 /// <list type="bullet">
 /// <item>Parse/ToConfigString 是 Preferences 值与 preload_policy 日志 requested= 字段的唯一映射点——
 /// "auto"/非法回退 null(auto)；数值钳制 [1,64]（下界防 0/负数，上界防手滑巨值内存爆炸）。</item>
-/// <item>ResolveReadDegree 是读取并发度唯一决策点：auto 与止血值逐位一致（content-URI 每树 1）、
-/// 显式值原样生效（越界钳制）、桌面文件系统路径恒不受限（-1）。</item>
+/// <item>ResolveReadDegree 是读取并发度唯一决策点：auto 与止血值逐位一致（content-URI 每树 1；
+/// 桌面/本地路径 -1 不受限）。显式值越界钳制后原样生效，<b>本地路径同样收窄</b>——
+/// 2026-09-15 取证修正：本地路径原先恒 -1，旋钮在其上完全无效，而崩溃只在本地路径复现。</item>
 /// <item>旋钮无 ConfigCode 条目：游戏随包 emuera.config 写入条目无效、SaveConfig 不落盘——
 /// 并发度只有 app 壳层（MAUI 设置页诊断分组）能拨动。</item>
 /// </list>
@@ -67,7 +68,11 @@ public class SafReadDegreeTests
 		Assert.Null(SafReadDegreeCodec.Parse(SafReadDegreeCodec.ToConfigString(null)));
 	}
 
-	/// <summary>决策点数值域：auto≡1（止血值逐位一致）；显式值越界钳制；桌面路径恒 -1（不受限）。</summary>
+	/// <summary>
+	/// 决策点数值域：auto 语义（content-URI ≡1 止血值逐位一致；本地/桌面仍然 -1 不受限）；
+	/// 显式值越界钳制，<b>且对本地路径同样生效</b>（2026-09-15 取证修正——本地路径此前被
+	/// <c>!isContentUri ? -1</c> 短路吞掉，旋钮在该路径上完全无效）。
+	/// </summary>
 	[Theory]
 	[InlineData(null, true, 1)]
 	[InlineData(1, true, 1)]
@@ -77,8 +82,12 @@ public class SafReadDegreeTests
 	[InlineData(0, true, 1)]
 	[InlineData(100, true, 64)]
 	[InlineData(null, false, -1)]
-	[InlineData(3, false, -1)]
-	[InlineData(64, false, -1)]
+	[InlineData(1, false, 1)]
+	[InlineData(3, false, 3)]
+	[InlineData(8, false, 8)]
+	[InlineData(64, false, 64)]
+	[InlineData(0, false, 1)]
+	[InlineData(100, false, 64)]
 	public void ResolveReadDegree_numeric_domain(int? requested, bool isContentUri, int expected)
 	{
 		Assert.Equal(expected, Preload.ResolveReadDegree(requested, isContentUri));

@@ -69,9 +69,11 @@ static partial class Preload
             // erb-bounded-lifecycle（handoff §5 最小版）：SAF content URI 路径把每树读取限为 1 并发。
             // 实测（MuMu NativeAOT 2026-08-28）：4 线程并发 SAF OpenRead 的 JNI 风暴中，monodroid
             // bridge 在 take_global_ref 处 abort（SIGABRT）——并发 JNI 是实验性 NativeAOT 运行时
-            // bridge GC bug 的触发放大器。双树 WhenAll 下总计 ≤2 并发，桌面文件系统路径不受限。
-            // ADR-0026 诊断旋钮二：壳层内存覆盖可拨任意并发度（钳制 1–64，真机崩溃阈值二分取证
-            // 不重编），auto 保持每树 1 与止血值逐位一致；preload_policy 日志行自证请求值/生效值。
+            // bridge GC bug 的触发放大器。双树 WhenAll 下总计 ≤2 并发。
+            // 桌面/本地文件系统路径 auto 下不受限（-1，用满所有核心）——2026-09-15 取证：本项目的
+            // 崩溃（AV / GC 标记死循环）恰在此路径以 ~1/3 概率复现，故显式旋钮值现已对该路径同样生效。
+            // ADR-0026 诊断旋钮二：壳层内存覆盖可拨任意并发度（钳制 1–64，取证阈值二分不重编），
+            // auto 保持 content-URI 每树 1 与止血值逐位一致；preload_policy 日志行自证请求值/生效值。
             int? requestedDegree = Config.Config.OverrideSafReadDegree;
             var readDegree = ResolveReadDegree(requestedDegree, SafPath.IsContentUri(path));
             var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = readDegree };
@@ -274,13 +276,20 @@ static partial class Preload
 
     /// <summary>
     /// ADR-0026 诊断旋钮二唯一决策点：请求并发度（null=auto）× 是否 content-URI → 每树
-    /// ParallelOptions.MaxDegreeOfParallelism。auto 与 7c10328 止血值逐位一致（content-URI 每树 1）；
-    /// 显式值（真机崩溃阈值二分取证）钳制 1–64 后原样生效；桌面文件系统路径恒 -1（不受限）。
+    /// ParallelOptions.MaxDegreeOfParallelism。auto 与 7c10328 止血值逐位一致（content-URI 每树 1）。
+    /// <para>
+    /// 显式值（取证阈值二分用）钳制 1–64 后原样生效，<b>且对桌面/本地文件系统路径同样生效</b>。
+    /// 2026-09-15 取证修正：原实现把 <c>!isContentUri ? -1</c> 短路在钳制之前，使本地路径并发度
+    /// 恒为 -1（= 不限并发，用满所有核心）且旋钮完全无效——而本项目的崩溃恰恰只在本地路径复现
+    /// （SAF 路径 auto 为 1，天然串行），这条路径因此是唯一不可控的并发源。auto 语义不变：
+    /// 本地路径仍为 -1，显式设值才收窄。
+    /// </para>
     /// 数值域语义由 SafReadDegreeTests 覆盖。
     /// </summary>
     internal static int ResolveReadDegree(int? requested, bool isContentUri)
-        => !isContentUri ? -1
-        : Math.Clamp(requested ?? 1, SafReadDegreeCodec.MinExplicitDegree, SafReadDegreeCodec.MaxExplicitDegree);
+        => requested is { } n
+            ? Math.Clamp(n, SafReadDegreeCodec.MinExplicitDegree, SafReadDegreeCodec.MaxExplicitDegree)
+            : !isContentUri ? -1 : 1;
 
     private static string[] ReadAllLinesViaAccessor(string path, IGameDirAccessor dirAccessor)
     {

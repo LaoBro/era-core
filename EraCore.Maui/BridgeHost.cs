@@ -148,9 +148,10 @@ internal sealed class BridgeHost : IDisposable
     internal const string DiagSweepGatePolicyKey = "app.diag.sweepGatePolicy";
 
     /// <summary>
-    /// Preferences key——SAF content-URI 读取并发度（ADR-0026 诊断旋钮二）。
-    /// 值为 <c>"auto"</c>（每树 1 并发，默认，与止血值逐位一致）或十进制数值字符串
-    /// （每树任意并发度，钳制 1–64，真机崩溃阈值二分取证用）。仅内存覆盖不落盘：写入
+    /// Preferences key——读取并发度（ADR-0026 诊断旋钮二）。
+    /// 值为 <c>"auto"</c>（content-URI 每树 1 并发 = 止血值逐位一致；本地/桌面路径 -1 不受限）
+    /// 或十进制数值字符串（钳制 1–64，取证阈值二分用）。<b>2026-09-15 起显式值对本地路径也生效</b>
+    /// （原先只作用于 content-URI，本地路径恒 -1，旋钮在其上无效）。仅内存覆盖不落盘：写入
     /// <see cref="ConfigData.OverrideSafReadDegree"/>（无 ConfigCode 条目，游戏随包配置无法设置）；
     /// 游戏加载（OnReloadGame → ApplySafReadDegree）时读此 key 应用，Preload 在 preload_policy
     /// 日志以 requested=/effective= 字段自证。
@@ -315,10 +316,11 @@ internal sealed class BridgeHost : IDisposable
     }
 
     /// <summary>
-    /// 游戏加载期应用诊断旋钮「SAF content-URI 读取并发度」（ADR-0026）——MainPage.OnReloadGame 在
+    /// 游戏加载期应用诊断旋钮「读取并发度」（ADR-0026）——MainPage.OnReloadGame 在
     /// <see cref="ApplySweepGatePolicy"/> 之后、会话创建之前调用。仅内存覆盖：写
     /// <see cref="ConfigData.OverrideSafReadDegree"/>（无 ConfigCode 条目，游戏随包配置无法设置，
-    /// SaveConfig 不落盘）。null=auto（每树 1 并发，与止血值逐位等价）；随后会话创建时 Preload
+    /// SaveConfig 不落盘）。null=auto（content-URI 每树 1 并发与止血值逐位等价；本地路径 -1 不受限）；
+    /// 显式值钳制 1–64，2026-09-15 起对本地路径同样生效。随后会话创建时 Preload
     /// 读到并在 preload_policy 日志以 requested=/effective=/files=/ms= 字段自证。
     /// </summary>
     internal static void ApplySafReadDegree(ConfigData configData)
