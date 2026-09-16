@@ -513,6 +513,15 @@ export const useConnectionStore = defineStore('connection', () => {
 
   async function startControlWatch(httpBase: string): Promise<void> {
     stopControlWatch();
+    // 控制通道依赖 AbortController 与 fetch 的 signal 选项（均需 Chrome 66+）。
+    // 旧 WebView（目标机默认 = Chromium 61）上 new AbortController 会抛 ReferenceError；调用点
+    // （socket.onopen 里的 `void startControlWatch(...)`）无人接住 → 每次连接都留一条 unhandled
+    // rejection，且长轮询从未真正跑起来。此处显式跳过并留痕（不静默）：
+    // 该设备上控制权交接 / 旁观者事件不可用，游戏本体（WS + snapshot）不受影响。
+    if (typeof AbortController === 'undefined') {
+      console.warn('[connection] AbortController 不可用（需 Chrome 66+），跳过 /control/wait 长轮询');
+      return;
+    }
     const ac = new AbortController();
     controlAbort = ac;
     while (!ac.signal.aborted) {

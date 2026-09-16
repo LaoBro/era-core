@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed, watch, defineAsyncComponent } from 'vue';
+import { onMounted, onUnmounted, ref, computed, watch } from 'vue';
 import { useUiStore } from './stores/ui';
 import { useGameStore } from './stores/game';
 import { useConnectionStore } from './stores/connection';
@@ -13,9 +13,14 @@ import ConfirmDialog from './components/ConfirmDialog.vue';
 import MauiGameList from './components/MauiGameList.vue';
 import WebGameList from './components/WebGameList.vue';
 import TerminalView from './views/TerminalView.vue';
-
-const DebugView = defineAsyncComponent(() => import('./views/DebugView.vue'));
-const SettingsView = defineAsyncComponent(() => import('./views/SettingsView.vue'));
+// DebugView / SettingsView 必须静态导入（原为 defineAsyncComponent(() => import(...))）。
+// 保留动态 import() 会让 Vite 注入 __vitePreload(..., import.meta.url)；而 build.target=chrome61 时
+// esbuild 会把 import.meta 清空成 {}（"import.meta is not available in the configured target
+// environment and will be empty"），于是预载助手 new URL(dep, undefined) 抛 Invalid URL
+// → 这两个视图在**所有**平台（含 Windows WebView2）都打不开，且构建期不报错。
+// 同时动态 import() 本身要 Chrome 63、import.meta 要 Chrome 64，均在 61 之上。
+import DebugView from './views/DebugView.vue';
+import SettingsView from './views/SettingsView.vue';
 
 const ui = useUiStore();
 const game = useGameStore();

@@ -14,6 +14,30 @@
       body { margin: 0; }
       html, body { height: 100%; }
     </style>
+    <!-- WebView 地板探针（纯 ES5；无 type=module，不经任何构建转换）。
+         前端支持的最小 WebView = Chromium 61（见 vite.config.ts 的 build.target）：
+         目标机开发者选项里默认实现是 61、备选实现是 58（无 ES Module，不支持）。
+         低版本 WebView 不执行 <script type="module">，或首行语法即崩 → 整页黑屏且无提示。
+         这里在能力不足时填入可读文案，把「黑屏」变成「看得见的失败」（已装到设备的旧包也能看到）。
+         判定用特性检测（module 支持 + Proxy），文案里的版本号仅用于报障（从 UA 取）。 -->
+    <script>
+      (function () {
+        if ('noModule' in HTMLScriptElement.prototype && typeof Proxy === 'function') return;
+        var m = /Chrome\/(\d+)/.exec(navigator.userAgent);
+        var ver = m ? m[1] : '未知';
+        document.addEventListener('DOMContentLoaded', function () {
+          var el = document.getElementById('app');
+          if (!el) return;
+          el.innerHTML =
+            '<div style="padding:24px;font:14px/1.6 sans-serif;color:#1F2329">' +
+            '<h1 style="font-size:16px;margin:0 0 8px">WebView 版本过低</h1>' +
+            '<p style="margin:0 0 8px">当前 WebView（Chromium ' + ver +
+            '）无法运行本应用，需要 Chromium 61 或更高版本。</p>' +
+            '<p style="margin:0">可在「开发者选项 → WebView 实现」中切换到更高版本的 WebView。</p>' +
+            '</div>';
+        });
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>
