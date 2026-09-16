@@ -259,9 +259,21 @@ const popupItems = computed<PopupMenuItem[]>(() => [
         </Transition>
 
         <main class="app-main">
-          <DebugView v-if="ui.currentView === 'debug'" />
-          <SettingsView v-else-if="ui.currentView === 'settings'" />
-          <TerminalView v-else />
+          <!-- TerminalView 常驻不卸载——视图切换只切可见性。
+               原先三条 v-if/v-else-if/v-else：进 Debug/Settings 会卸载 TerminalView →
+               TerminalDisplay 一并销毁 → useVirtualScroll 的 scrollTop/isStickyToBottom 与
+               .terminal 滚动容器全部丢失，返回时是新元素、scrollTop 从 0 开始（表现为
+               "自动跳回最上方"）；且重建后 vs.isStickyToBottom 回到初值 true，与
+               ui.isStickyToBottom（InputBar 点击推进守卫读它）失同步。
+               用 visibility 切换而非 v-show/display:none：后者销毁布局盒，scrollTop 与
+               scrollHeight 归零，被覆盖期间到达的新回合会经 watch(itemCount) 把位置写成 0。
+               visibility:hidden 保留布局盒（滚动位置保留、后台贴底跟随照常）且退出命中测试与 Tab 序。 -->
+          <TerminalView :class="{ 'view-hidden': ui.currentView !== 'terminal' }" />
+          <!-- Debug / Settings 改为覆盖层（absolute inset:0）——两者根元素都是
+               width/height:100% + 自带背景与滚动，改绝对定位不改变其内部布局。
+               仍用 v-if：它们没有需要跨切换保留的滚动状态，离开即卸载。 -->
+          <DebugView v-if="ui.currentView === 'debug'" class="view-overlay" />
+          <SettingsView v-else-if="ui.currentView === 'settings'" class="view-overlay" />
         </main>
       </div>
     </Transition>
@@ -296,6 +308,24 @@ const popupItems = computed<PopupMenuItem[]>(() => [
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  /* Debug / Settings 覆盖层（.view-overlay）的定位基准 */
+  position: relative;
+}
+
+/* Debug / Settings 覆盖层——叠在常驻的 TerminalView 之上。
+   终端被覆盖时整棵子树 visibility:hidden（不绘制），故无需与终端内部 z-index
+   （最高为输入栏的 40）竞争，这里的正 z-index 只为确保位于文档序之上。 */
+.view-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+
+/* 被覆盖的终端：保留布局盒（scrollTop/scrollHeight 有效、滚动位置不丢、
+   隐藏期间新回合的贴底跟随照常），同时隐藏绘制并退出命中测试与 Tab 序。
+   禁止改用 display:none（销毁布局盒 → 滚动位置与 scrollHeight 归零）。 */
+.view-hidden {
+  visibility: hidden;
 }
 
 /* 通用图标按钮（spec §3.3）：方形触控目标、无边框、无背景 */
