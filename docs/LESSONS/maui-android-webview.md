@@ -1,6 +1,6 @@
 # MAUI Android WebView / 桥接 / 资源通道 失败教训
 
-> **TL;DR**：Android WebView 的页面 scheme、JS→C# 通道、资源拦截各有隐性约束——file:// 页面里的 https 子资源不进入 `shouldInterceptRequest`（页面必须与资源同 https 虚拟域）；平台判断必须按 hostname 不能只看 protocol；浏览器总会自动请求 `/favicon.ico`；WebView 回调里异常会被静默吞掉必须显式打日志。
+> **TL;DR**：Android WebView 的页面 scheme、JS→C# 通道、资源拦截各有隐性约束——file:// 页面里的 https 子资源不进入 `shouldInterceptRequest`（页面必须与资源同 https 虚拟域）；平台判断必须按 hostname 不能只看 protocol；浏览器总会自动请求 `/favicon.ico`；WebView 回调里异常会被静默吞掉必须显式打日志；**前端地板由 Vite `build.target` 决定，不是 `SupportedOSPlatformVersion`**（默认 target 含 `??` → 旧 WebView 首行 SyntaxError 黑屏；降 target 又会清空 `import.meta` 打断懒加载）。
 
 ## 教训清单
 
@@ -16,6 +16,7 @@
 | 8 | **浏览器自动请求 /favicon.ico（2026-08-08）** | index.html 加 `<link rel="icon" href="data:,">` 阻止 | 2026-08-08 |
 | 9 | **WebView 回调异常被静默吞（2026-08-08）** | shouldInterceptRequest 内必须 try-catch + logcat | 2026-08-08 |
 | 10 | **AssetsPathHandler 绑定只有单参构造（2026-08-08）** | 自定义 IPathHandler 读子目录 + MIME 映射 | 2026-08-08 |
+| 11 | **前端地板由 Vite build.target 决定，不由 SupportedOSPlatformVersion（2026-09-16）** | 默认 target 含 `??` → 旧 WebView 首行 SyntaxError 黑屏；target < es2020 还会清空 `import.meta` 破坏懒加载 | 2026-09-16 |
 
 ---
 
@@ -190,3 +191,28 @@ isAndroidMaui: protocol === 'file:' || (protocol === 'https:' && hostname === 'g
 **解决**：自定义 `IPathHandler`（读 `android_asset/wwwroot/{path}` + `MimeTypeMap`/兜底 MIME 映射），不依赖绑定未暴露的重载。注意 `text/javascript` 是 ES Module 必需的 JS MIME，`MimeTypeMap` 缺失时手动兜底。
 
 **教训**：**用第三方 AndroidX/Java 库前先确认 .NET 绑定的实际 API 面**（构造重载、方法签名），不能按 Java 文档直接写。绑定遗漏重载是常态，编译错误即第一信号。
+
+## 11. 前端地板由 Vite build.target 决定，不是 SupportedOSPlatformVersion（2026-09-16）
+
+**场景**：旧 Android 机（无 Play 商店；开发者选项里两个 WebView 实现：默认 Chromium 61、备选 58）安装最新 AOT 包，.NET 侧全部正常——控制面 server 起来、AssetLoader 正常响应、JS/CSS 资源送达。
+
+**结果**：整页黑屏，无任何 UI。`chromium CONSOLE: "Uncaught SyntaxError: Unexpected token ?", index-*.js (1)` —— 第一行就炸。MAUI 侧 `Navigated` 只报成功，从 .NET 侧完全看不出问题。
+
+**原因**：
+- 前端产物按 Vite 默认 target（Vite 6 = `['es2020','edge88','firefox78','chrome87','safari14']`）编译，主包含 42 处 `??`（含 Vue 3.5 运行时自身的 `e??null` / `t??{}`）→ Chromium 61 连解析都过不去（`??` 要 Chrome 80）。同时项目里还有动态 `import()`（63）与 `import.meta`（64）。
+- `SupportedOSPlatformVersion=21` 只约束 .NET 侧，对 WebView 版本**没有任何约束**。前端实际地板由 `build.target` 决定，而它比 Android 9 的首版 WebView（70+，可经 Play 升级）还高。
+
+**解决**（见 ADR-0029）：
+1. `vite.config.ts` 钉 `build.target: ['chrome61']` + `build.cssTarget: 'chrome61'`。**不要写 `'es2018'`**：es 版本 target 按「该版 ES 全部特性可用」处理，而 Chromium 61 缺 async 迭代(63)/`Promise.finally`(63)/正则 `s`·lookbehind(62)/named group(64)；浏览器 target 才是真实能力集合（实测同一产物 `es2018` 残留 `for await`、`chrome61` 全降级）。
+2. **去掉动态导入**：`App.vue` 两个视图改静态导入。否则 Vite 注入 `__vitePreload(..., import.meta.url)`，而 esbuild 在 target < es2020 时把 `import.meta` 清空成 `{}`（官方 warning：`will be empty`）→ 预载助手 `new URL(dep, undefined)` 抛 `Invalid URL` → 懒加载视图在**所有**平台（含 Windows WebView2）都打不开，且构建期不报错。
+3. `index.html` 加纯 ES5 探针（module 支持 + `Proxy` 特性检测），能力不足时填入可读文案，把黑屏变成看得见的失败（已装机的旧包也能看到）。
+4. `AbortController`（Chrome 66，控制通道 `/control/wait` 在用）加特性守卫跳过——调用点是 `void startControlWatch(...)`，不守卫会每次连接留一条未处理 rejection。
+
+**验证**：本地三份同源受控构建对照——最终产物 `??` / `catch{` / `import.meta` / 动态 `import(` 全为 0；体积净效果 gzip 口径约 −4%（两视图内联本身省字节，语法降级 +0.6% 被抵消）。真机需确认主界面与 Settings/Debug 均可进。
+
+**教训**：
+- **前端地板 = `build.target`，不是 `SupportedOSPlatformVersion`**。任何"支持到 Android X / WebView Y"的说法都要落到 Vite target 上验证；Vite 默认 target 随主版本持续抬高（Vite 8 默认已是 `chrome111`），必须显式钉住，并在升级 Vite 时复核。
+- **黑屏的第一信号是首行 SyntaxError**：WebView 的 `Console` 消息（依赖 `SetWebContentsDebuggingEnabled(true)`）比 MAUI 侧 `Navigated`/`logcat` 更早定位问题；看到 `Unexpected token ?` 先查 `??`/`?.`，不要先怀疑资源通道。
+- **降 target 会连带清空 `import.meta`**（esbuild 明确警告 "will be empty"）：凡用到动态导入 + 相对 base（本项目 `base='./'`）的产物，"只改一行 target"就会静默打断懒加载。降 target 前先全仓 grep 动态 `import(`。
+- **esbuild 对正则 named group / lookbehind / `\p{}` / BigInt 字面量既不降级也不报错**（BigInt 仅 warning）——设了低 target 之后这类语法变成"谁写谁崩"的隐性雷区，需要 lint/构建期扫描兜底。
+- **体积不是主要代价**：同源 A/B 实测，把两视图从懒加载改静态导入本身就是省字节（少 chunk 头部 + 跨模块摇树），真正代价在"能力边界"而非 KB。
