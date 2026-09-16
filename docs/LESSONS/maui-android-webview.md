@@ -1,6 +1,6 @@
 # MAUI Android WebView / 桥接 / 资源通道 失败教训
 
-> **TL;DR**：Android WebView 的页面 scheme、JS→C# 通道、资源拦截各有隐性约束——file:// 页面里的 https 子资源不进入 `shouldInterceptRequest`（页面必须与资源同 https 虚拟域）；平台判断必须按 hostname 不能只看 protocol；浏览器总会自动请求 `/favicon.ico`；WebView 回调里异常会被静默吞掉必须显式打日志；**前端地板由 Vite `build.target` 决定，不是 `SupportedOSPlatformVersion`**（默认 target 含 `??` → 旧 WebView 首行 SyntaxError 黑屏；降 target 又会清空 `import.meta` 打断懒加载）。
+> **TL;DR**：Android WebView 的页面 scheme、JS→C# 通道、资源拦截各有隐性约束——file:// 页面里的 https 子资源不进入 `shouldInterceptRequest`（页面必须与资源同 https 虚拟域）；平台判断必须按 hostname 不能只看 protocol；浏览器总会自动请求 `/favicon.ico`；WebView 回调里异常会被静默吞掉必须显式打日志；**前端地板由 Vite `build.target` 决定，不是 `SupportedOSPlatformVersion`**（默认 target 含 `??` → 旧 WebView 首行 SyntaxError 黑屏；降 target 又会清空 `import.meta` 打断懒加载）；**`build.target` 只钉 JS 语法，CSS/动效缺口靠能力门控 + 双声明的降级层（`legacy-webview`），并由生成器/检查脚门防漂移**。
 
 ## 教训清单
 
@@ -17,6 +17,7 @@
 | 9 | **WebView 回调异常被静默吞（2026-08-08）** | shouldInterceptRequest 内必须 try-catch + logcat | 2026-08-08 |
 | 10 | **AssetsPathHandler 绑定只有单参构造（2026-08-08）** | 自定义 IPathHandler 读子目录 + MIME 映射 | 2026-08-08 |
 | 11 | **前端地板由 Vite build.target 决定，不由 SupportedOSPlatformVersion（2026-09-16）** | 默认 target 含 `??` → 旧 WebView 首行 SyntaxError 黑屏；target < es2020 还会清空 `import.meta` 破坏懒加载 | 2026-09-16 |
+| 12 | **能力降级层——build.target 管不到 CSS/动效缺口（2026-09-17）** | 用能力门控（`html.legacy-webview`）+ 双声明 + gap/动效兜底；生成器与检查脚门防漂移 | 2026-09-17 |
 
 ---
 
@@ -216,3 +217,38 @@ isAndroidMaui: protocol === 'file:' || (protocol === 'https:' && hostname === 'g
 - **降 target 会连带清空 `import.meta`**（esbuild 明确警告 "will be empty"）：凡用到动态导入 + 相对 base（本项目 `base='./'`）的产物，"只改一行 target"就会静默打断懒加载。降 target 前先全仓 grep 动态 `import(`。
 - **esbuild 对正则 named group / lookbehind / `\p{}` / BigInt 字面量既不降级也不报错**（BigInt 仅 warning）——设了低 target 之后这类语法变成"谁写谁崩"的隐性雷区，需要 lint/构建期扫描兜底。
 - **体积不是主要代价**：同源 A/B 实测，把两视图从懒加载改静态导入本身就是省字节（少 chunk 头部 + 跨模块摇树），真正代价在"能力边界"而非 KB。
+
+## 12. 能力降级层——`build.target` 管不到 CSS/动效缺口（2026-09-17）
+
+**场景**：引脚 `build.target: ['chrome61']`（ADR-0029）后黑屏消除、目标旧机（Chromium 61）能进游戏，但随后旧机实测暴露两处**只有旧机才出现的**排版/动效缺陷，新机（WebView2 / 新 Chromium）一切正常——此前长期无人发现。设计详见 `.scratch/legacy-webview/spec.md`。
+
+**结果/现象**（逐类独立复现）：
+- 输入栏进场 `translateY(12px)` 底缘溢出把画面顶起 12px——`overflow: clip`（61 无）被丢弃退 `visible`，溢出传播到「可编程滚动」的 `.app-main`；焦点 scroll-into-view 触发顶起。这正是 `web-css-dom.md #1` 的同类，那次靠 clip 修，旧机上 clip 不存在 → 回归。
+- 多处"挤在一起"：flex `gap` 40 处被静默忽略（flex gap 需 84；grid gap 66 / `grid-gap` 才是 57）、`color-mix()` 20 处整条声明丢弃、`env(safe-area-*)` 4 处整条 `calc()` 丢弃、`100dvh` 2 处丢最小高度。
+- 旧机的另类"焦点环"：点击任何按钮出现默认橙色方框——61 无 `:focus-visible`，设计里靠它抑制 UA 焦点环的规则整条失效，UA 对任何 `:focus`（含点击）画橙框。
+- 抽屉横屏下菜单项与缩放块重叠、游戏行三项纵向堆叠成三行——见下文"真机实测修的三类"。
+
+**原因**：
+- **`build.target`/`cssTarget` 只约束 JS 语法；CSS 特性（属性/函数是否被支持）没有机械的等价改写**，esbuild 对 `color-mix()`/`gap`/`env()`/`100dvh` 一类既不报错也不动。
+- 这类缺口是**静默**的：构建期不报错、新机永远复现不了、症状又容易和"浏览器太老"混为一谈。
+
+**解决**——三条机制（均锚定 `.legacy-webview` 能力门控，新机因不匹配而零影响，源码一律不动）：
+1. **双声明（渐进增强，无需探测）**：对 `env()`/`100dvh`/`color-mix()` 在声明前插一条老引擎可用的同类声明。新引擎后一条胜出 → 新机最终生效值与今天一致；老引擎丢弃后一条 → 落到兜底值。注意 shorthand 整条退场时（如 `border: 1px solid color-mix(...)`）要补完整声明而非仅 `border-color`。
+2. **能力门控（探测 → `<html class="legacy-webview">`）**：只用于双声明解决不了的——flex `gap` 40 处（前插 margin 会叠加到新机）与动效位移。`index.html` 纯 ES5 探针实测 `overflow: clip` + flex `gap`（不能信 `CSS.supports('gap')`，grid 会让它误报 true）→ 挂 class。动效归零只需一个 token：`html.legacy-webview { --fx-rise: 0px; }`。
+3. **gap 用相邻兄弟 margin 模拟**：`html.legacy-webview <容器> > * + * { margin-*: <同值> }`，`row→margin-left / column→margin-top`，wrap 需四向跳过、`gap:0` 跳过。**通用选择器更忠实**——子元素已带 margin 时它本来就与 gap 叠加，通用 `> * + *` 恰好等于新机间距，不必做"精确避开子 margin"的特例。
+
+**真机实测修的三类（都靠能力门控，一次修一类）**：
+- **抽屉横屏 flex-shrink 挤压**：61 无 `min-height:auto`，横屏短视口下无 `min-height` 的 flex 子项被压到 padding 高度、内容溢出盖住下一项（缩放块与 Terminal 重叠）。修：`html.legacy-webview .drawer > * { flex-shrink: 0; }` → 转 `overflow-y:auto` 滚动。
+- **grid `grid-template-columns` 模板列坍缩**：61 上模板列被丢弃 → `grid-auto-flow:row` 把图标/名称/箭头堆叠成三行。修：门控下把这些容器换 flexbox（`display:flex` 在 61 稳定）。
+- **指针焦点环**：门控 + 既有 `.pointer-interaction`（pointerdown 加、键盘导航去）抑制 `:focus`，键盘焦点保留。
+
+**防漂移（护栏）**：
+- `scripts/gen-legacy-gap.mjs` 扫源码 flex `gap` 按方向生成 gap 兜底段（`check:legacy:gap`）；改 gap 后重跑。
+- `scripts/check-legacy-syntax.mjs` 扫产物 JS，命中 esbuild 既不解又不报的语法（`(?<` 命名组/后顾、`\p{}`、dotAll 的 `new RegExp(…,"s")`、BigInt）→ exit 1，MSBuild 里 `BuildVueFrontend` 后门住双路径；不能插进 `npm run build` 脚本链（vite 的 base/outDir 参数在行尾，中间插命令会丢）。
+- `scripts/check-css-floor.mjs` 源码级列超地板 CSS 处数（warning）。
+
+**教训**：
+- **能力降级跟 UA 版本号无关，要"能力实测 + 门控"**：中间代（支持 ESM 但缺现代特性）同样受益，也不会因 UA 伪装失效；UA 只用于诊断文本。
+- **`build.target` 管不到 CSS**：排"只有旧机才有的排版问题"，先确认是不是「某 CSS 特性在新版才有、旧机静默忽略」，用 `归零 token / 双声明 / 门控 margin` 三件套处理，别改源码里能工作在新机上的声明。
+- **这类工作的前提是"新机像素级零变化"**：规则全部锚定 `html.legacy-webview`（新机不匹配），保证「兼容旧机」不动「新机设计」，否则越修越脏。
+- **机制只能靠真机目视验证**：happy-dom 模拟不了"声明被丢弃/属性被忽略"，每批改完在旧机看一轮、一轮只动一类。
