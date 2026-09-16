@@ -50,4 +50,10 @@ html.legacy-webview .game-row-btn { display: flex; align-items: center; width: 1
 html.legacy-webview .game-row-icon,
 html.legacy-webview .game-row-arrow { flex: 0 0 48px; justify-content: center; }
 html.legacy-webview .game-row-main { flex: 1 1 auto; min-width: 0; }
-html.legacy-webview .game-row-menu-btn { flex: 0 0 auto; }
+
+/* ---------- ID4 · 指针焦点环抑制（Chromium 61 无 :focus-visible） ----------
+   新机靠 :focus-visible 区分键盘/指针焦点，点击不显示环；61 不支持 :focus-visible，
+   UA 对任何 :focus（含鼠标/触摸点击）画默认橙色焦点框 → 每点一个按钮都有橙框。
+   沿用 main.ts 的 .pointer-interaction（pointerdown 加、键盘导航去）：指针模式下
+   抑制 :focus outline、键盘模式保留，符合 DESIGN.md「控件不做指针聚焦高亮」。 */
+html.legacy-webview.pointer-interaction :focus { outline: none; }

@@ -32,17 +32,6 @@ const emit = defineEmits<{
 /** 相对时间（徽章内联展示，响应式跟随 prop）。 */
 const relTime = computed(() => formatRelTime(props.irCacheBuiltUtc));
 
-/** ⋮ 菜单项——路线 2 显式失效的唯一入口（issues/13 裁定：仅库卡片菜单）。 */
-const menuItems: PopupMenuItem[] = [
-  {
-    type: 'item',
-    id: 'rescan-ir-cache',
-    label: '重扫脚本缓存',
-    danger: true,
-    onClick: onRescanItemClick,
-  },
-];
-
 /** 字节数 → 人类可读 MB 文案（保留一位小数，≥100MB 取整；无数据返回空）。 */
 function formatIrMb(bytes?: number): string {
   const b = typeof bytes === 'number' && bytes > 0 ? bytes : 0;
@@ -73,16 +62,45 @@ function formatRelTime(builtUtc?: string | null): string {
   return `${m[1]}-${m[2]}-${m[3]}`;
 }
 
-// issues/13 M5：卡片 ⋮ 菜单（仅 irCached 时渲染）——「重扫脚本缓存」入口（路线 2 显式失效）
+// 缓存删除入口（仅 irCached 时可用）——长按（触屏）/ 右键（桌面）在指针处弹出。
+// 不做成醒目的三点按钮：删除是本该谨慎的操作，从显眼按钮降级为手势菜单，
+// 减少误触（确认仍走父级 ConfirmDialog）。
 const menuOpen = ref(false);
+const menuAnchor = ref<{ x: number; y: number } | null>(null);
+const menuItems: PopupMenuItem[] = [
+  {
+    type: 'item',
+    id: 'delete-ir-cache',
+    label: '删除缓存',
+    danger: true,
+    onClick: onRescanItemClick,
+  },
+];
 function onRescanItemClick(): void {
   menuOpen.value = false;
   emit('rescan');
 }
+
+/** 长按（Android WebView 在触屏长按时派发 contextmenu）/ 右键（桌面）→ 指针处弹出菜单。 */
+function openContextMenu(e: MouseEvent): void {
+  // 先压住原生菜单（桌面右键菜单 / 移动端长按选择菜单）
+  e.preventDefault();
+  if (!props.irCached) return;
+  const MENU_W = 208, MENU_H = 96; // 单条菜单近似尺寸，用于夹在视口内
+  menuAnchor.value = {
+    x: Math.max(8, Math.min(e.clientX, window.innerWidth - MENU_W - 8)),
+    y: Math.max(8, Math.min(e.clientY, window.innerHeight - MENU_H - 8)),
+  };
+  menuOpen.value = true;
+}
 </script>
 
 <template>
-  <li class="game-row" :class="{ 'last-played': lastPlayed }">
+  <li
+    class="game-row"
+    :class="{ 'last-played': lastPlayed }"
+    @contextmenu="openContextMenu"
+  >
     <button type="button" class="game-row-btn" @click="$emit('click')">
       <span class="game-row-icon" aria-hidden="true">
         <svg viewBox="0 0 24 24" role="img">
@@ -104,22 +122,11 @@ function onRescanItemClick(): void {
         </svg>
       </span>
     </button>
-    <button
-      v-if="irCached"
-      type="button"
-      class="game-row-menu-btn"
-      aria-label="更多操作"
-      @click.stop="menuOpen = true"
-    >
-      <svg viewBox="0 0 24 24" role="img" aria-hidden="true">
-        <circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" />
-      </svg>
-    </button>
     <Transition name="popup">
       <PopupMenu
         v-if="menuOpen"
-        class="game-row-menu"
         :items="menuItems"
+        :anchor="menuAnchor"
         @close="menuOpen = false"
       />
     </Transition>
@@ -135,45 +142,6 @@ function onRescanItemClick(): void {
   align-items: center;
   border-radius: var(--radius-control);
   transition: background-color var(--motion-mid) ease;
-}
-/* issues/13 M5：卡片 ⋮ 按钮（仅 irCached 渲染）——「重扫脚本缓存」入口 */
-.game-row-menu-btn {
-  width: 40px;
-  height: 48px;
-  margin-right: 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  color: var(--color-text);
-  border: none;
-  border-radius: 9999px;
-  cursor: pointer;
-  transition: background-color var(--motion-fast);
-}
-.game-row-menu-btn:hover {
-  background: var(--state-layer-hover);
-}
-.game-row-menu-btn:active {
-  background: var(--state-layer-active);
-}
-.game-row-menu-btn:focus-visible {
-  background: var(--state-layer-focus);
-  outline: 2px solid var(--color-focus);
-  outline-offset: -2px;
-}
-.game-row-menu-btn svg {
-  width: 22px;
-  height: 22px;
-  fill: currentColor;
-  stroke: none;
-}
-.game-row-menu {
-  position: absolute;
-  right: 8px;
-  top: calc(100% - 6px);
-  z-index: 30;
-  min-width: 176px;
 }
 .game-row.last-played {
   background: transparent;

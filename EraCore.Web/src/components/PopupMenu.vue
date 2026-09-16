@@ -12,13 +12,27 @@ export type { IconName, PopupMenuItem };
 </script>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { computed, ref, onMounted, onUnmounted } from 'vue';
 
-defineProps<{ items: PopupMenuItem[] }>();
+const props = withDefaults(
+  defineProps<{
+    items: PopupMenuItem[];
+    /** 可选锚点：传入后在指针处定位（右侧菜单用），否则固定右上角。 */
+    anchor?: { x: number; y: number } | null;
+  }>(),
+  { anchor: null },
+);
 
 const emit = defineEmits<{
   (e: 'close'): void;
 }>();
+
+/** 锚定定位时覆盖 `.popup-menu` 的默认 fixed 右上角坐标。 */
+const menuStyle = computed(() =>
+  props.anchor
+    ? { top: `${props.anchor.y}px`, left: `${props.anchor.x}px`, right: 'auto' as const }
+    : null,
+);
 
 const rootEl = ref<HTMLElement | null>(null);
 
@@ -61,7 +75,7 @@ onUnmounted(() => {
 
 <template>
   <div class="popup-root" role="presentation">
-    <div ref="rootEl" class="popup-menu" role="menu">
+    <div ref="rootEl" class="popup-menu" role="menu" :style="menuStyle">
     <template v-for="(it, i) in items" :key="i">
       <div v-if="it.type === 'separator'" class="popup-separator" role="separator" />
 
