@@ -13,25 +13,86 @@
 html.legacy-webview { --fx-rise: 0px; }
 
 /* ---------- ID3 · flex gap 兜底（旧机 gap 不可用 → 相邻兄弟 margin 模拟） ----------
-   选择器与值照抄源码声明（值以源码为准，含 10px 这类字面量）；原 gap 声明不改 →
-   新机零变化，旧机落到 margin。row（默认）→ margin-left；column → margin-top。
-   首批 10 条：DrawerMenu 3 / SettingsView 2 / GameLibraryView 5。 */
+   由 scripts/gen-legacy-gap.mjs 从源码自动生成（严禁手改）：扫源码里 flex 容器的
+   `gap:` 声明，row（默认）→ margin-left / column → margin-top，值照抄源码。
+   每次新增/改 gap 后重跑 `npm run check:legacy:gap`。wrap 与 gap:0 跳过。 */
+/* <generated legacy-gap:begin> DO NOT EDIT */
+/* App.vue */
+html.legacy-webview .game-shell-controls > * + * { margin-left: var(--space-1); }
 
-/* DrawerMenu.vue */
+/* components\ChangeDirDialog.vue */
+html.legacy-webview .cd-actions > * + * { margin-left: var(--space-2); }
+html.legacy-webview .cd-browser > * + * { margin-top: var(--space-2); }
+html.legacy-webview .cd-browser-footer > * + * { margin-left: var(--space-2); }
+html.legacy-webview .cd-browser-loading > * + * { margin-left: var(--space-2); }
+html.legacy-webview .cd-dialog > * + * { margin-top: var(--space-3); }
+html.legacy-webview .cd-grant > * + * { margin-top: var(--space-2); }
+html.legacy-webview .cd-path-row > * + * { margin-left: var(--space-2); }
+
+/* components\ConfirmDialog.vue */
+html.legacy-webview .confirm-actions > * + * { margin-left: var(--space-2); }
+html.legacy-webview .confirm-dialog > * + * { margin-top: var(--space-2); }
+
+/* components\DrawerMenu.vue */
 html.legacy-webview .drawer-item > * + * { margin-left: var(--space-3); }
 html.legacy-webview .drawer-zoom > * + * { margin-top: var(--space-2); }
 html.legacy-webview .drawer-zoom-actions > * + * { margin-left: var(--space-2); }
 
-/* SettingsView.vue */
-html.legacy-webview .settings-content > * + * { margin-top: var(--space-5); }
-html.legacy-webview .setting-row > * + * { margin-left: var(--space-3); }
-
-/* GameLibraryView.vue */
+/* components\GameLibraryView.vue */
 html.legacy-webview .appbar-actions > * + * { margin-left: var(--space-1); }
-html.legacy-webview .path-line > * + * { margin-left: 10px; }
-html.legacy-webview .scanning > * + * { margin-left: var(--space-2); }
 html.legacy-webview .empty-state > * + * { margin-top: var(--space-2); }
 html.legacy-webview .game-list > * + * { margin-top: var(--space-1); }
+html.legacy-webview .path-line > * + * { margin-left: 10px; }
+html.legacy-webview .scanning > * + * { margin-left: var(--space-2); }
+
+/* components\GameRow.vue */
+html.legacy-webview .game-row-main > * + * { margin-left: 6px; }
+
+/* components\InputBar.vue */
+html.legacy-webview .input-bar > * + * { margin-top: var(--space-1); }
+html.legacy-webview .input-row > * + * { margin-left: var(--space-2); }
+html.legacy-webview .key-prompt > * + * { margin-left: var(--space-3); }
+html.legacy-webview .state-running,
+html.legacy-webview .state-quit,
+html.legacy-webview .state-error,
+html.legacy-webview .state-idle,
+html.legacy-webview .state-unknown,
+html.legacy-webview .unknown-input-type > * + * { margin-left: var(--space-2); }
+html.legacy-webview .tinput-notice > * + * { margin-left: var(--space-2); }
+
+/* components\MauiGameList.vue */
+html.legacy-webview .empty-act-group > * + * { margin-top: var(--space-1); }
+
+/* components\PopupMenu.vue */
+html.legacy-webview .popup-item > * + * { margin-left: var(--space-3); }
+html.legacy-webview .popup-menu > * + * { margin-top: 2px; }
+html.legacy-webview .popup-zoom > * + * { margin-top: var(--space-2); }
+html.legacy-webview .popup-zoom-actions > * + * { margin-left: var(--space-2); }
+
+/* components\SpectatorBanner.vue */
+html.legacy-webview .spectator-banner > * + * { margin-left: var(--space-3); }
+html.legacy-webview .spectator-copy > * + * { margin-top: 2px; }
+
+/* components\StatusBanner.vue */
+html.legacy-webview .status-banner > * + * { margin-left: var(--space-2); }
+
+/* components\TerminalDisplay.vue */
+html.legacy-webview .terminal-empty > * + * { margin-top: var(--space-2); }
+
+/* components\TinputCountdown.vue */
+html.legacy-webview .tinput-countdown > * + * { margin-left: var(--space-2); }
+
+/* views\DebugView.vue */
+html.legacy-webview .debug-view > * + * { margin-left: 1px; }
+html.legacy-webview .input-row > * + * { margin-left: var(--space-1); }
+
+/* views\SettingsView.vue */
+html.legacy-webview .setting-row > * + * { margin-left: var(--space-3); }
+html.legacy-webview .settings-content > * + * { margin-top: var(--space-5); }
+
+/* views\TerminalView.vue */
+html.legacy-webview .overlay-status > * + * { margin-top: var(--space-1); }
+/* <generated legacy-gap:end> */
 
 /* ---------- ID3b · 横屏（短视口）flex 列防挤压 ----------
    Chromium 61 无 min-height:auto：抽屉内容在横屏高度不够时会把它高度内的
