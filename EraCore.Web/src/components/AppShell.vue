@@ -30,6 +30,8 @@ withDefaults(defineProps<{ scrollable?: boolean }>(), { scrollable: false });
 }
 .app-shell.scrollable {
   height: auto;
+  /* 双声明：dvh 不可用（旧 WebView）时落到 vh */
+  min-height: 100vh;
   min-height: 100dvh;
   overflow: visible;
 }

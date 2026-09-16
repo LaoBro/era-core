@@ -552,12 +552,16 @@ watch(() => game.inputInFlight, (inFlight) => {
   transition: background var(--motion-fast), text-decoration-color var(--motion-fast);
 }
 .term-btn:hover:not(:disabled) {
+  /* 双声明：旧 WebView 无 color-mix → 落到满强度 */
+  background: var(--term-btn-hover-bg);
   background: color-mix(in srgb, var(--term-btn-hover-bg) 60%, transparent);
   text-decoration: underline;
   text-underline-offset: 2px;
+  text-decoration-color: var(--term-btn-hover-line);
   text-decoration-color: color-mix(in srgb, var(--term-btn-hover-line) 70%, transparent);
 }
 .term-btn:active:not(:disabled) {
+  background: var(--term-btn-active);
   background: color-mix(in srgb, var(--term-btn-active) 25%, transparent);
 }
 .term-btn:disabled {

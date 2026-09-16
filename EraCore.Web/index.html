@@ -38,6 +38,80 @@
         });
       })();
     </script>
+    <!-- 能力降级探针（纯 ES5；无 type=module，不经任何构建转换）。
+         判定 flex gap / overflow:clip 是否可用（杜绝 CSS.supports('gap') 的 grid 误判，
+         flex gap 需 Chrome 84，overflow:clip 需 Chrome 90）。任一不足 → 给 <html> 挂
+         .legacy-webview，由 legacy-webview.css 做降级。诊断数据走 console，旧机
+         logcat / DevTools 可见，作为后续迭代的"证据源"。版本号仅用于诊断文本。 -->
+    <script>
+      (function () {
+        function supports(prop, value) {
+          try {
+            return typeof CSS !== 'undefined' && typeof CSS.supports === 'function' &&
+              CSS.supports(prop, value);
+          } catch (e) { return false; }
+        }
+
+        // flex gap 须实测：CSS.supports('gap','1px') 在支持 grid gap 的老引擎上会误报 true。
+        function flexGapSupported() {
+          try {
+            var probe = document.createElement('div');
+            probe.style.cssText = 'position:absolute;left:-9999px;display:flex;gap:2px;';
+            var a = document.createElement('div');
+            var b = document.createElement('div');
+            a.style.cssText = 'width:4px;height:4px;';
+            b.style.cssText = 'width:4px;height:4px;';
+            probe.appendChild(a);
+            probe.appendChild(b);
+            document.documentElement.appendChild(probe);
+            var ok = b.getBoundingClientRect().left - a.getBoundingClientRect().right === 2;
+            document.documentElement.removeChild(probe);
+            return ok;
+          } catch (e) { return false; }
+        }
+
+        var supportsClip = supports('overflow', 'clip');
+        var flexGap = flexGapSupported();
+        var isLegacy = !supportsClip || !flexGap;
+        var root = document.documentElement;
+        if (isLegacy) root.classList.add('legacy-webview');
+
+        // 诊断输出（console，旧机 logcat 可见）
+        try {
+          var um = /Chrome\/(\d+)/.exec(navigator.userAgent);
+          console.log('[legacy-webview] ' + JSON.stringify({
+            chrome: um ? um[1] : 'unknown',
+            'overflow:clip': supportsClip,
+            env: supports('padding-bottom', 'env(safe-area-inset-bottom)'),
+            'color-mix': supports('color', 'color-mix(in srgb, red 50%, blue)'),
+            dvh: supports('min-height', '100dvh'),
+            'flex-gap': flexGap,
+            cls: root.className
+          }));
+        } catch (e) {}
+      })();
+    </script>
+    <!-- 失败可见化：脚本加载/解析失败或 #app 未挂载时的兜底提示。
+         与上方的"WebView 版本过低"面板分开，避免把代码错误误判成浏览器太老。 -->
+    <script>
+      (function () {
+        function show(text) {
+          var el = document.getElementById('app');
+          if (el && el.children.length === 0) {
+            el.style.padding = '24px';
+            el.style.font = '14px/1.6 sans-serif';
+            el.style.color = '#1F2329';
+            el.textContent = text;
+          }
+        }
+        window.addEventListener('error', function (e) {
+          show('[脚本加载/解析失败] ' + (e && e.message ? e.message : '未知错误'));
+        });
+        window.setTimeout(function () {
+          show('[脚本未加载] 应用未在 5 秒内启动，请检查构建产物与网络。');
+        }, 5000);
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

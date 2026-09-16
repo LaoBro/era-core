@@ -31,7 +31,11 @@ function onTakeOver(): void {
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-control);
+  /* 双声明：旧 WebView 无 color-mix → 落到纯底色 + 满强度边框
+     （shorthand border 整条退场，这里补完整声明而非仅 border-color） */
+  background: var(--color-bg);
   background: color-mix(in srgb, var(--color-warning) 14%, var(--color-surface));
+  border: 1px solid var(--color-warning);
   border: 1px solid color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
   color: var(--color-warning);
 }

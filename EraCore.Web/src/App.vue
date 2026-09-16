@@ -361,6 +361,8 @@ const popupItems = computed<PopupMenuItem[]>(() => [
 /* 全屏游戏页：两个常驻无边框图标（spec §6.1）——透明度一致、固定位置、≥48px 点击区 */
 .game-shell-controls {
   position: fixed;
+  /* 双声明：env 不可用（旧 WebView）时落到固定 top */
+  top: var(--space-2);
   top: calc(var(--space-2) + env(safe-area-inset-top));
   right: var(--space-2);
   display: flex;
@@ -384,6 +386,8 @@ const popupItems = computed<PopupMenuItem[]>(() => [
 /* 游戏静默状态提示（MAUI）——顶部半透明窄条，pointer-events:none */
 .status-hint {
   position: fixed;
+  /* 双声明：env 不可用（旧 WebView）时落到固定 top */
+  top: var(--space-3);
   top: calc(var(--space-3) + env(safe-area-inset-top));
   left: 50%;
   transform: translateX(-50%);
@@ -392,6 +396,8 @@ const popupItems = computed<PopupMenuItem[]>(() => [
   border-radius: var(--radius-control);
   font-size: var(--font-size-sm);
   color: var(--color-text);
+  /* 双声明：color-mix 不可用（旧 WebView）时落到纯底色 */
+  background: var(--color-bg);
   background: color-mix(in srgb, var(--color-surface) 80%, transparent);
   border: none;
   pointer-events: none;

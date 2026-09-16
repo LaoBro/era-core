@@ -566,6 +566,8 @@ h3 {
   font-weight: 600;
 }
 .segmented-item.danger.active {
+  /* 双声明：旧 WebView 无 color-mix → 落到纯底色 */
+  background: var(--color-bg);
   background: color-mix(in srgb, var(--color-error) 22%, var(--color-surface));
   color: var(--color-error);
 }

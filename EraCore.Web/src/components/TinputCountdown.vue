@@ -42,6 +42,8 @@ const tinputCountdownText = computed<string | null>(() => {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-1) var(--space-2);
+  /* 双声明：旧 WebView 无 color-mix → 落到纯底色 */
+  background: var(--color-bg);
   background: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface));
   border-radius: var(--radius-control);
   border: none;

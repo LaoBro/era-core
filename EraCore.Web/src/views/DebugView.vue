@@ -145,6 +145,8 @@ h3 {
   margin: 0;
   padding: var(--space-2) var(--space-3);
   color: var(--color-error);
+  /* 双声明：旧 WebView 无 color-mix → 落到纯底色 */
+  background: var(--color-bg);
   background: color-mix(in srgb, var(--color-error) 14%, var(--color-surface));
   border-top: none;
   font-size: var(--font-size-sm);

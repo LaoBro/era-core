@@ -296,6 +296,8 @@ const submitLabel = computed<string>(() => {
 .input-bar {
   flex-shrink: 0;
   padding: var(--space-1) var(--space-3);
+  /* 双声明：env 不可用（旧 WebView）时落到固定 padding */
+  padding-bottom: var(--space-1);
   padding-bottom: calc(var(--space-1) + env(safe-area-inset-bottom));
   background: var(--color-surface);
   border-top: none;
@@ -313,6 +315,8 @@ const submitLabel = computed<string>(() => {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-1) var(--space-2);
+  /* 双声明：旧 WebView 无 color-mix → 落到纯底色 */
+  background: var(--color-bg);
   background: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface));
   color: var(--color-warning);
   border-radius: var(--radius-control);

@@ -3,6 +3,7 @@ import { createPinia } from 'pinia';
 import App from './App.vue';
 import './styles/theme.css';
 import './styles/fonts.css';
+import './styles/legacy-webview.css';
 
 /**
  * 焦点模态追踪（DESIGN.md：输入框与控件不做指针聚焦高亮，但保留键盘焦点可达性）。

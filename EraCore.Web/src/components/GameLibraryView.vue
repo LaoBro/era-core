@@ -341,6 +341,8 @@ defineExpose({ openChangeDirDialog });
 <style scoped>
 .game-library-view {
   width: 100%;
+  /* 双声明：dvh 不可用（旧 WebView）时落到 vh */
+  min-height: 100vh;
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
@@ -450,12 +452,17 @@ defineExpose({ openChangeDirDialog });
 }
 .mode-legacy {
   color: var(--color-success);
+  /* 双声明：旧 WebView 无 color-mix → 落到纯底色 + 满强度边框 */
+  background: var(--color-bg);
   background: color-mix(in srgb, var(--color-success) 16%, transparent);
+  border-color: var(--color-success);
   border-color: color-mix(in srgb, var(--color-success) 40%, transparent);
 }
 .mode-saf {
   color: var(--color-warning);
+  background: var(--color-bg);
   background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  border-color: var(--color-warning);
   border-color: color-mix(in srgb, var(--color-warning) 40%, transparent);
 }
 

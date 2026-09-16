@@ -52,17 +52,24 @@ const emit = defineEmits<{
   transition: background var(--motion-fast), border-color var(--motion-fast);
 }
 .status-banner.error {
+  /* 双声明：旧 WebView 无 color-mix → 落到纯底色 + 满强度边框，保留可辨识的状态色 */
+  background: var(--color-bg);
   background: color-mix(in srgb, var(--color-error) 14%, var(--color-surface));
+  border-color: var(--color-error);
   border-color: color-mix(in srgb, var(--color-error) 45%, var(--color-border));
   color: var(--color-error);
 }
 .status-banner.warning {
+  background: var(--color-bg);
   background: color-mix(in srgb, var(--color-warning) 14%, var(--color-surface));
+  border-color: var(--color-warning);
   border-color: color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
   color: var(--color-warning);
 }
 .status-banner.success {
+  background: var(--color-bg);
   background: color-mix(in srgb, var(--color-success) 14%, var(--color-surface));
+  border-color: var(--color-success);
   border-color: color-mix(in srgb, var(--color-success) 45%, var(--color-border));
   color: var(--color-success);
 }

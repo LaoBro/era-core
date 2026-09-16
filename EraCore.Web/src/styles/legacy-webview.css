@@ -1,0 +1,53 @@
+/* 能力降级层（.legacy-webview）——仅对旧 WebView 生效。
+   由 index.html 的 ES5 探针挂 class（flex gap 或 overflow:clip 不可用）。
+   所有规则都锚定在 html.legacy-webview 选择器下：新机（Windows WebView2 /
+   新 Android Chromium）根本不匹配，设计与动画一字不动。
+
+   本文件 = ID2（动效归零）+ ID3（gap 兜底）+ 未来的 color-mix 等。
+   原声明一律不改，避免污染新机。 */
+
+/* ---------- ID2 · 动效降级 ----------
+   --fx-rise 是全系统"上浮/下沉"位移的唯一来源（12px）。归零后，对话框、
+   弹窗、抽屉逐项、输入栏的所有位移动画自然退化为纯淡入/缩放。
+   不修改 theme.css 的 @keyframes、不修改任何组件动画声明。 */
+html.legacy-webview { --fx-rise: 0px; }
+
+/* ---------- ID3 · flex gap 兜底（旧机 gap 不可用 → 相邻兄弟 margin 模拟） ----------
+   选择器与值照抄源码声明（值以源码为准，含 10px 这类字面量）；原 gap 声明不改 →
+   新机零变化，旧机落到 margin。row（默认）→ margin-left；column → margin-top。
+   首批 10 条：DrawerMenu 3 / SettingsView 2 / GameLibraryView 5。 */
+
+/* DrawerMenu.vue */
+html.legacy-webview .drawer-item > * + * { margin-left: var(--space-3); }
+html.legacy-webview .drawer-zoom > * + * { margin-top: var(--space-2); }
+html.legacy-webview .drawer-zoom-actions > * + * { margin-left: var(--space-2); }
+
+/* SettingsView.vue */
+html.legacy-webview .settings-content > * + * { margin-top: var(--space-5); }
+html.legacy-webview .setting-row > * + * { margin-left: var(--space-3); }
+
+/* GameLibraryView.vue */
+html.legacy-webview .appbar-actions > * + * { margin-left: var(--space-1); }
+html.legacy-webview .path-line > * + * { margin-left: 10px; }
+html.legacy-webview .scanning > * + * { margin-left: var(--space-2); }
+html.legacy-webview .empty-state > * + * { margin-top: var(--space-2); }
+html.legacy-webview .game-list > * + * { margin-top: var(--space-1); }
+
+/* ---------- ID3b · 横屏（短视口）flex 列防挤压 ----------
+   Chromium 61 无 min-height:auto：抽屉内容在横屏高度不够时会把它高度内的
+   无 min-height 子项（.drawer-zoom）压到 padding 高度，而按钮照常绘制 →
+   溢出覆盖下一个菜单项（实测：缩放块与 ">_ Terminal" 重叠）。
+   禁止子项收缩 → 抽屉走 overflow-y:auto 滚动，不互相碾压。
+   新引擎 min-height:auto 天然防压，此规则经 .legacy-webview 门控不影响新机。 */
+html.legacy-webview .drawer > * { flex-shrink: 0; }
+
+/* ---------- ID3c · 游戏行 grid → flex（Chromium 61 模板列坍缩为单列） ----------
+   实测 GameRow 的 grid-template-columns 在 61 上被丢弃 → grid-auto-flow:row 把
+   图标/名称/箭头三个 span 各自换行堆叠（整行占三行）。换成 61 已稳定的 flexbox
+   表达同一横向布局；新机保留 grid（本规则不命中）文案像素级一致。 */
+html.legacy-webview .game-row { display: flex; align-items: center; }
+html.legacy-webview .game-row-btn { display: flex; align-items: center; width: 100%; }
+html.legacy-webview .game-row-icon,
+html.legacy-webview .game-row-arrow { flex: 0 0 48px; justify-content: center; }
+html.legacy-webview .game-row-main { flex: 1 1 auto; min-width: 0; }
+html.legacy-webview .game-row-menu-btn { flex: 0 0 auto; }

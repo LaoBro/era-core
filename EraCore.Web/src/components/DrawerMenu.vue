@@ -218,6 +218,8 @@ onUnmounted(() => {
   box-shadow: var(--elevation-menu);
   border-radius: var(--radius-surface) 0 0 var(--radius-surface);
   padding: var(--space-2);
+  /* 双声明：env 不可用（旧 WebView）时落到固定 padding */
+  padding-bottom: var(--space-2);
   padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
