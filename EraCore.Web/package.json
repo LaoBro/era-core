@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check:legacy:gap": "node scripts/gen-legacy-gap.mjs"
+    "check:legacy:gap": "node scripts/gen-legacy-gap.mjs",
+    "check:legacy": "node scripts/check-legacy-syntax.mjs",
+    "check:css:floor": "node scripts/check-css-floor.mjs"
   },
   "dependencies": {
     "pinia": "^2.2.6",

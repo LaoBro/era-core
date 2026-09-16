@@ -25,6 +25,7 @@
     <VueSrcInputs Include="$(VueSrcDir)\package-lock.json" />
     <VueSrcInputs Include="$(VueSrcDir)\vite.config.ts" />
     <VueSrcInputs Include="$(VueSrcDir)\tsconfig.json" />
+    <VueSrcInputs Include="$(VueSrcDir)\scripts\**\*" />
   </ItemGroup>
 
   <!-- BuildVueFrontend: 增量跑 npm run build（src 比 dist 新才触发）
@@ -48,6 +49,14 @@
           WorkingDirectory="$(VueSrcDir)"
           EnvironmentVariables="VITE_BASE=$(ViteBase)"
           ConsoleToMSBuild="true" />
+
+    <!-- JS 地板护栏（ID6）：build 后门住「超出 chrome61 的 JS 语法」——这类语法
+         esbuild 既不降级也不报错，落到旧 WebView 首行 SyntaxError → 黑屏。
+         只作独立 Exec，禁止插进 npm run build 脚本链：vite 的 base 与 outDir
+         参数拼在命令行末尾，中间插命令会让 vite 丢参数。-->
+    <Exec Condition="'$(NpmExitCode)' == '0'"
+          Command="node scripts/check-legacy-syntax.mjs --dir=$(VueOutDir)"
+          WorkingDirectory="$(VueSrcDir)" />
 
   </Target>
 
