@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 EraCore 发布脚本——包办 CLI / MAUI(Windows、Android) 及 NativeAOT 变体的发布，
 统一把最终可分发产物（exe/apk，而非 dll）收集到仓库根 artifacts/ 下，完成后打印路径。
@@ -17,13 +17,16 @@ EraCore 发布脚本——包办 CLI / MAUI(Windows、Android) 及 NativeAOT 变
 
 参数：
   -Rid arm64|x64|all   Android RID 短名（默认 arm64；实际传 android-arm64/android-x64，Rid=all 时两者都发布）
-  -SkipFrontend        跳过 MAUI 发布前的前端确定性重建（不推荐，可能打包旧前端）
-  -Clean               发布前清空对应 artifacts 子目录
+  -Rebuild            全量重建兜底：清 artifacts 输出 + AOT 清 obj-aot/bin-aot + 强制前端重建
+  -SkipFrontend       强制跳过前端重建（即使源码有更新也不重建）
+  -Clean              发布前清空对应 artifacts 子目录（-Rebuild 已包含此行为）
   -MsvcLib <path>      cli-aot 手动指定 MSVC LIB（分号分隔三段），不传则自动探测
 
-前端策略：所有 MAUI 目标发布前默认确定性重建前端（npm run build → dist-maui →
-拷贝 EraCore.Maui/wwwroot），规避 APK/Windows 产物带旧前端的滞后问题
-（见 docs/LESSONS/web-fonts.md、docs/LESSONS/testing-and-ci.md）。
+前端策略（MAUI 目标）：默认快路径——仅当前端源码比 wwwroot 产物新（或 -Rebuild）时
+才 npm build + 清空并重拷 wwwroot；源码未变化时直接复用现有 wwwroot，避免每次都重建。
+清空 wwwroot 只发生在重建路径（load-time glob：MauiAsset 在项目加载时评估，必须预先
+置好 wwwroot，见 docs/LESSONS/testing-and-ci.md #11）。产物异常（启动闪退 / 前端不生效）
+时用 -Rebuild 强制全量重建。
 #>
 [CmdletBinding()]
 param(
@@ -33,7 +36,8 @@ param(
   [string]$Rid = 'arm64',
   [string]$MsvcLib = '',
   [switch]$SkipFrontend,
-  [switch]$Clean
+  [switch]$Clean,
+  [switch]$Rebuild
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,8 +63,9 @@ function Show-Usage {
 
 选项：
   -Rid arm64|x64|all   Android RID 短名（默认 arm64；实际传 android-arm64/android-x64，Rid=all 时两者都发布）
-  -SkipFrontend        跳过 MAUI 发布前的前端确定性重建（不推荐）
-  -Clean               发布前清空对应 artifacts 子目录
+  -Rebuild            全量重建兜底：清 artifacts 输出 + AOT 清 obj-aot/bin-aot + 强制前端重建（产物异常时用）
+  -SkipFrontend       强制跳过前端重建（即使源码有更新也不重建）
+  -Clean              仅清空对应 artifacts 子目录（-Rebuild 已包含此行为）
   -MsvcLib <path>      cli-aot 手动指定 MSVC LIB（分号分隔三段），不传则自动探测
 '@
 }
@@ -76,7 +81,7 @@ function Invoke-Dotnet {
 
 function Reset-Dir {
   param([string]$Path)
-  if ($Clean -and (Test-Path $Path)) {
+  if (($Clean -or $Rebuild) -and (Test-Path $Path)) {
     Remove-Item $Path -Recurse -Force
   }
   New-Item -ItemType Directory -Force -Path $Path | Out-Null
@@ -101,14 +106,41 @@ function Show-Artifact {
   Write-Host "       ($size)" -ForegroundColor DarkGray
 }
 
-# ============ 前端确定性重建（MAUI 目标共用，整个调用只跑一次） ============
+# ============ 前端构建（MAUI 目标共用，整个调用只跑一次） ============
+# 策略：默认快路径——仅当前端源码比 wwwroot 产物新（或 -Rebuild）时才 npm build +
+# 清空并重拷 wwwroot；源码未变化时直接复用现有 wwwroot。清空 wwwroot 只发生在这里
+# （load-time glob：MauiAsset 在项目加载时评估，必须先于 dotnet publish 预置好
+# wwwroot，见 docs/LESSONS/testing-and-ci.md #11）。
+
+function Test-FrontendStale {
+  # true = 前端源码比 wwwroot 产物新（或产物缺失），需要重建
+  $web = Join-Path $RepoRoot 'EraCore.Web'
+  $wwwroot = Join-Path $RepoRoot 'EraCore.Maui\wwwroot'
+  $prod = Join-Path $wwwroot 'index.html'
+  if (-not (Test-Path $prod)) { return $true }
+  $srcNewest = Get-ChildItem (Join-Path $web 'src') -Recurse -File -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  if (-not $srcNewest) { return $false }
+  return $srcNewest.LastWriteTime -gt (Get-Item $prod).LastWriteTime
+}
 
 function Invoke-FrontendBuild {
   if ($script:FrontendBuilt) { return }
-  Write-Host "`n== 前端确定性重建（npm build → dist-maui → wwwroot）==" -ForegroundColor Cyan
   $web = Join-Path $RepoRoot 'EraCore.Web'
   $dist = Join-Path $web 'dist-maui'
   $wwwroot = Join-Path $RepoRoot 'EraCore.Maui\wwwroot'
+
+  $reason = ''
+  if ($Rebuild) { $reason = '强制全量重建（-Rebuild）' }
+  elseif (-not $SkipFrontend -and (Test-FrontendStale)) { $reason = '前端源码比产物新，自动重建' }
+
+  if (-not $reason) {
+    $script:FrontendState = if ($SkipFrontend) { '跳过（-SkipFrontend）' } else { '复用现有 wwwroot（源码未变化）' }
+    Write-Host "  前端：$($script:FrontendState)" -ForegroundColor DarkGray
+    return
+  }
+
+  Write-Host "`n== 前端重建（$reason）==" -ForegroundColor Cyan
   Push-Location $web
   try {
     npm run build -- --base=./ --outDir=dist-maui
@@ -119,7 +151,25 @@ function Invoke-FrontendBuild {
   Get-ChildItem $wwwroot -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
   Copy-Item (Join-Path $dist '*') $wwwroot -Recurse -Force
   $script:FrontendBuilt = $true
+  $script:FrontendState = '已重建并拷贝至 wwwroot'
   Write-Host "  前端已重建并拷贝至 wwwroot" -ForegroundColor Green
+}
+
+# ============ AOT 中间产物（增量/清理 + 提示） ============
+# Android NativeAOT 的 _AddStaticResources 增量 flag 不认运行时形态切换——换形态复用
+# obj-aot 可能漏生成 NativeAotRuntimeProvider.java → dex 缺类 → 启动即闪退。默认保留
+# 增量（快）；-Rebuild 时清 obj-aot/bin-aot 强制全量（见 docs/LESSONS/nativeaot.md #9）。
+
+function Assert-AotState {
+  param([string]$Note)
+  if ($Rebuild) {
+    foreach ($d in @((Join-Path $RepoRoot 'EraCore.Maui\obj-aot'), (Join-Path $RepoRoot 'EraCore.Maui\bin-aot'))) {
+      if (Test-Path $d) { Remove-Item $d -Recurse -Force }
+    }
+    Write-Host "  AOT 中间产物已清理（-Rebuild）" -ForegroundColor DarkGray
+  } else {
+    Write-Host "  AOT 中间产物：增量（未清 obj-aot）$Note" -ForegroundColor DarkGray
+  }
 }
 
 # ============ CLI 目标 ============
@@ -162,7 +212,7 @@ function Publish-CliAot {
 
 function Publish-MauiWin {
   Write-Host "`n=== MAUI Windows 普通发布 ===" -ForegroundColor Cyan
-  if (-not $SkipFrontend) { Invoke-FrontendBuild }
+  Invoke-FrontendBuild
   $out = Join-Path $Artifacts 'maui-win'
   Reset-Dir $out
   Invoke-Dotnet @(
@@ -175,7 +225,8 @@ function Publish-MauiWin {
 
 function Publish-MauiWinAot {
   Write-Host "`n=== MAUI Windows NativeAOT（首次尝试，可能失败）===" -ForegroundColor Cyan
-  if (-not $SkipFrontend) { Invoke-FrontendBuild }
+  Invoke-FrontendBuild
+  Assert-AotState -Note '——如遇构建异常，加 -Rebuild 全量重建'
   $out = Join-Path $Artifacts 'maui-win-aot\win-x64'
   Reset-Dir $out
   Invoke-Dotnet @(
@@ -192,7 +243,7 @@ function Publish-MauiWinAot {
 function Publish-MauiAndroid {
   param([string]$RidValue)
   Write-Host "`n=== MAUI Android 普通 Release（RID=android-$RidValue）===" -ForegroundColor Cyan
-  if (-not $SkipFrontend) { Invoke-FrontendBuild }
+  Invoke-FrontendBuild
   $out = Join-Path $Artifacts ("maui-android\{0}" -f $RidValue)
   Reset-Dir $out
   Invoke-Dotnet @(
@@ -206,7 +257,8 @@ function Publish-MauiAndroid {
 function Publish-MauiAndroidAot {
   param([string]$RidValue)
   Write-Host "`n=== MAUI Android NativeAOT（RID=android-$RidValue）===" -ForegroundColor Cyan
-  if (-not $SkipFrontend) { Invoke-FrontendBuild }
+  Invoke-FrontendBuild
+  Assert-AotState -Note '——如遇启动即闪退（dex 缺 NativeAotRuntimeProvider），加 -Rebuild 全量重建'
   $out = Join-Path $Artifacts ("maui-android-aot\{0}" -f $RidValue)
   Reset-Dir $out
   Invoke-Dotnet @(

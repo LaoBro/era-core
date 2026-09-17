@@ -129,8 +129,9 @@ agent
 ### 发布（推荐：`scripts/publish.ps1`）
 
 所有可分发产物统一收集到仓库根 `artifacts/`，完成后脚本打印最终产物路径（exe/apk，非 dll）。
-MAUI 目标发布前自动确定性重建前端（`npm run build` → dist-maui → 拷贝 wwwroot），规避旧前端滞后问题
-（见 `docs/LESSONS/testing-and-ci.md` #11）。
+MAUI 目标默认**快路径**：仅当前端源码比 `EraCore.Maui/wwwroot` 产物新（或传 `-Rebuild`）时才
+重建前端（`npm run build` → dist-maui → 清空并重拷 wwwroot），源码未变化时直接复用现有
+wwwroot，避免每次发布都重建（见 `docs/LESSONS/testing-and-ci.md` #11）。
 
 ```powershell
 .\scripts\publish.ps1                    # 显示用法
@@ -146,8 +147,11 @@ MAUI 目标发布前自动确定性重建前端（`npm run build` → dist-maui 
 
 常用选项：
 - `-Rid arm64|x64|all`：Android RID 短名（默认 arm64，实际传 `android-arm64`/`android-x64`）
-- `-SkipFrontend`：跳过 MAUI 发布前的前端确定性重建（不推荐，可能打包旧前端）
-- `-Clean`：发布前清空对应 artifacts 子目录
+- `-Rebuild`：**全量重建兜底**——清 artifacts 输出 + AOT 目标清 `obj-aot`/`bin-aot` + 强制前端重建。
+  产物异常时用（如 Android NativeAOT 启动即闪退 = dex 缺 `NativeAotRuntimeProvider`，见
+  `docs/LESSONS/nativeaot.md` #9；或前端改动未进 APK）
+- `-SkipFrontend`：强制跳过前端重建（即使源码有更新也不重建；默认仅在源码未变化时复用 wwwroot）
+- `-Clean`：发布前清空对应 artifacts 子目录（`-Rebuild` 已包含此行为）
 - `-MsvcLib <path>`：`cli-aot` 手动指定 MSVC LIB（分号分隔三段），不传则自动探测
 
 Android 目标需 Android SDK + JDK 17+（`JAVA_HOME`）；`cli-aot` 需 VS「使用 C++ 的桌面开发」工作负载（脚本自动探测 MSVC）。
