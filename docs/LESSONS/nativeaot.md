@@ -1,6 +1,6 @@
 # NativeAOT 发布 失败教训
 
-> **TL;DR**：AOT 下 JSON 反射是硬禁用（匿名类型必崩）、库项目 minimal API 必须开请求委托生成器、匿名类型不可序列化、ILC 增量产物可能不更新（改代码后清 bin-aot/obj-aot 全量重建）、输出目录重定向必须补 `DefaultItemExcludes`、**Android x86 转译环境（Houdini）下并发加载会触发 GC 标记死循环——真机 ARM64 零复现，别把模拟器当验收环境**。
+> **TL;DR**：AOT 下 JSON 反射是硬禁用（匿名类型必崩）、库项目 minimal API 必须开请求委托生成器、匿名类型不可序列化、ILC 增量产物可能不更新（改代码后清 bin-aot/obj-aot 全量重建）、输出目录重定向必须补 `DefaultItemExcludes`、**Android x86 转译环境（Houdini）下并发加载会触发 GC 标记死循环——真机 ARM64 零复现，别把模拟器当验收环境**、**Android 启动即闪退先查 `NativeAotRuntimeProvider` 是否进了 dex——`_AddStaticResources` 的增量 flag 在运行时形态切换后会跳过生成，清 obj-aot 全量重建**。
 
 ## 教训清单
 
@@ -14,6 +14,7 @@
 | 6 | 目录隔离的 CS0579 根治 | 重定向 Base*OutputPath 后必须补 DefaultItemExcludes | 2026-08-08 |
 | 7 | NativeAOT 警告治理分层法 | 代码级修复优先、豁免带证据；DAM 对字典/数组取值 Type 无效；csc 与 ILC 报码不同 | 2026-08-10 |
 | 8 | Android 转译环境下并发加载 GC 死循环 | Houdini 转译特有（真机 ARM64 零复现）；转译检测不能用 `uname`；符号化走 `.dbg` 而非 `.map` | 2026-09-15 |
+| 9 | 启动即闪退 = dex 缺 NativeAotRuntimeProvider | `_AddStaticResources` 增量 flag 跳过生成；manifest 声明了类但 dex 没有；清 obj-aot 重建 | 2026-09-17 |
 
 ---
 
@@ -179,3 +180,28 @@
 4. **Houdini 卡死的取证路径与普通崩溃不同。** 转储以 ~30 次/秒刷屏，256 KB logcat 主缓冲 **23 秒即回绕**，业务日志（`preload_policy` / `genmerge`）会被整段挤掉——但**不影响办案**：转储自带 `pc` + `build-id`，`pc` 零抖动即可直接定位到函数级。第一优先是 `logcat -d`（**不清缓冲**）抓转储 + `debuggerd -b` 看原生栈，而不是找业务日志。**要跑多轮取证，先开 logcat 常驻重定向再启动应用，不要事后补。**
 5. **「并发必炸」不等于「我们代码有 race」——先逐点审计共享可写状态。** 把两条并行路径的每个共享点查完（`ConcurrentDictionary` 是否真安全、日志汇聚点是否加锁、有无无边界检查的数组访问、写入字典是否只在工厂内构造），才能把结论推到运行时层；否则容易在自有代码里空转几天。
 6. **「补锁后症状消失」必须核门控可达性。** 真机上曾出现的间歇 NRE 由 `userDefinedStaticVarList` 并发追加撕裂所致（已补 `_staticVarListLock`，`447cf03`），但该锁只在 `RunUncalledSweepParallel` 可达，而 `ShouldRunParallelSweep` 的 Auto 分支是 `configured && !analysisMode && !isAndroid` ⇒ **Android + Auto 下该路径恒不运行，这把锁够不着**；真机上它只在 `sweepGatePolicy=ForceOn` 覆盖时才可能生效。**它与模拟器的 GC 崩溃是两个不同层次的问题，不可混为一谈。**
+
+## 9. Android NativeAOT 启动即闪退 = dex 缺 `NativeAotRuntimeProvider`——增量 flag 不认运行时形态切换
+
+**场景**：`EraCore.Maui` Android NativeAOT APK 装到真机，一打开立刻退回桌面（启动即崩）。此前刚改过前端（目录选择器卷切换），第一反应容易怀疑前端改动——但**崩溃与前端无关**。
+
+**取证**（先排除前端，再抓崩溃栈）：
+1. 确认 APK 确实带最新前端：从 APK 解出 `assets/wwwroot/static/index-*.js`，搜本次改动的标记字符串（中文文案）命中 → 前端产物没问题；`check-legacy-syntax.mjs`（chrome61 语法护栏）也通过。
+2. `adb logcat -d *:E` 抓到崩溃栈：
+   ```
+   FATAL EXCEPTION: main
+   java.lang.RuntimeException: Unable to get provider net.dot.jni.nativeaot.NativeAotRuntimeProvider:
+     java.lang.ClassNotFoundException: Didn't find class "net.dot.jni.nativeaot.NativeAotRuntimeProvider"
+   ```
+   进程死在 `ActivityThread.installContentProviders`（`handleBindApplication` 阶段）——**Activity 还没创建、WebView/JS 一行都没跑**。这是打包层问题，不是运行时/前端问题。
+3. 核对 dex：把坏 APK 的 `classes.dex`/`classes2.dex` 读出来按 ASCII 搜 `NativeAotRuntimeProvider` → **两个都没有**；对照已知可用的实验工程 APK，其 `classes2.dex` 里**有**这个类。
+
+**原因**：这个 Java 类由 workload 的 `_AddStaticResources` target 生成（`Xamarin.Android.Common.targets`，`CopyResource ResourceName="NativeAotRuntimeProvider.java"`，条件 `_AndroidRuntime == 'NativeAOT'`）。但该 target 是**增量的**——`Outputs="$(_AndroidStaticResourcesFlag)"`（即 `obj-aot/.../static.flag`），flag 比输入新就整个跳过。取证时间线：`obj-aot` 里同目录的 `JavaInteropRuntime.java`/`NativeAotEnvironmentVars.java` 是 9/4 生成的，唯独 `NativeAotRuntimeProvider.java` 从未存在，而 `static.flag` 9/4 已被 touch——9/17 的 NativeAOT 构建判定 up-to-date 直接跳过 → **manifest 声明了 provider，dex 却永远缺这个类**。根源是 9/4 那次 `_AddStaticResources` 跑的时候运行时形态不是 NativeAOT（没生成此文件），flag 却照样被 touch；**增量 flag 不认运行时形态（Mono / CoreCLR / NativeAOT）切换**。
+
+**修复**：删 `EraCore.Maui/obj-aot` + `bin-aot` 全量重建 → 新 APK `classes2.dex` 含该类 → 装机启动正常（`NativeAotRuntimeProvider()` → `JavaInteropRuntime.init()` → WebView 配置 → bridge 注册 → 加载前端，全链路通）。
+
+**教训**：
+1. **Android「启动即闪退」先读崩溃栈再定方向**：栈是 `Unable to get provider ... ClassNotFoundException` = dex 缺类，进程死在 ContentProvider 安装阶段，WebView/JS 没跑——别先怀疑前端或业务代码。反之「进程存活的白屏」才是托管异常被吞（教训 5）。两者判据相反，别混。
+2. **取证第一步查 dex 内容**：从 APK 读出 `classes*.dex` 按 ASCII 搜缺失类名（类名是 ASCII，PowerShell `[Text.Encoding]::ASCII.GetString` 后 `.Contains()` 即可），并对照一个已知可用的 APK。比猜快得多。
+3. **切换 Android 运行时形态（尤其 `PublishAot` 开/关）必须清 `obj-aot`（乃至 `obj`）全量重建**：`_AddStaticResources` 的 `static.flag` 对 Mono/CoreCLR/NativeAOT 共用，一种形态构建后 touch 了 flag，换形态再构建会被增量判定跳过 → manifest 声明的类没进 dex。这与教训 3（ILC 增量缓存）同源：**增量缓存陷阱不只在 ILC 原生产物，也在 Java 源文件生成**——凡是「改构建形态但复用中间目录」，先怀疑陈旧增量状态。
+4. 白屏分析文档（`maui-nativeaot-whitescreen-analysis-2026.8.8.md` §2.2）早已写明「前置条件：构建前清理旧 obj-aot/ 残留」，但没固化进发布脚本，本次正是漏清踩中——**已知前置条件要变成脚本默认行为，不能靠人记**（可让 `Publish-MauiAndroidAot` 默认清 `obj-aot`，或 `-Clean` 连带清它）。

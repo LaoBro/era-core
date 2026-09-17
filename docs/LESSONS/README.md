@@ -14,8 +14,8 @@
 | [maui-android-lifecycle.md](maui-android-lifecycle.md) | MAUI Android 生命周期：MainPage 构造早于 Activity.OnCreate、RegisterForActivityResult 时序、白屏三连 |
 | [maui-android-webview.md](maui-android-webview.md) | MAUI Android WebView/桥接/资源通道：file:// 混 https 子资源不拦截、平台判断按 hostname、favicon 自动请求、JS→C# 通道选型、前端地板由 Vite build.target 决定（旧 WebView 首行 SyntaxError 黑屏） |
 | [saf-file-access.md](saf-file-access.md) | Android SAF 文件访问：content:// 不是文件路径、docId 提取口径统一、缓存/预取/失效设计、sprite 名解析、真实路径 accessor 须镜像 SAF 通配语义、精确名读取亦然（挂载容错≠代码容错）、改 accessor 后须审计直连枚举 |
-| [nativeaot.md](nativeaot.md) | NativeAOT 发布：JSON 反射禁用、RequestDelegateGenerator、ILC 增量缓存、目录隔离补 DefaultItemExcludes、Android 转译环境（Houdini）并发加载 GC 死循环（真机 ARM64 零复现） |
-| [testing-and-ci.md](testing-and-ci.md) | 构建/测试/CI 环境：增量构建 0 警告假象、文件锁先查环境、行号基线脆弱、残留进程干扰回归、两轴 code-review、Windows 全绿≠跨平台正确（大小写/分隔符需 WSL2 关卡） |
+| [nativeaot.md](nativeaot.md) | NativeAOT 发布：JSON 反射禁用、RequestDelegateGenerator、ILC 增量缓存、目录隔离补 DefaultItemExcludes、Android 转译环境（Houdini）并发加载 GC 死循环（真机 ARM64 零复现）、启动即闪退 = dex 缺 NativeAotRuntimeProvider（增量 flag 不认运行时形态切换，清 obj-aot 重建） |
+| [testing-and-ci.md](testing-and-ci.md) | 构建/测试/CI 环境：增量构建 0 警告假象、文件锁先查环境、行号基线脆弱、残留进程干扰回归、两轴 code-review、Windows 全绿≠跨平台正确（大小写/分隔符需 WSL2 关卡）、含中文 .ps1 必须 UTF-8 with BOM（PS 5.1 按 GBK 读） |
 | [diagnostics.md](diagnostics.md) | 排查方法论：诊断推进揭开下一层、logcat 时间线拆段、中文乱码≠路径损坏、异常可见性 |
 | [web-fonts.md](web-fonts.md) | Web 跨平台字体：MS Gothic 符号区宽度非均匀、回退链缺口、Unifont 按实测宽度选字、CFF→TTF 漏 scale、Vite 内联、dist-maui/SkipVueBuild、WebView 缓存 |
 | [web-css-dom.md](web-css-dom.md) | Web CSS/DOM 行为：overflow hidden 仍可程序滚动、focus() 滚所有可滚祖先、transform 动画溢出撑 scrollHeight、截断用 clip 不用 hidden、fixed 不动=祖先被滚、视图切换（v-if）丢滚动位置须"不卸载 + visibility"保住 |

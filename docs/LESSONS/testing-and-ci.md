@@ -1,6 +1,6 @@
 # 构建 / 测试 / CI 环境 失败教训
 
-> **TL;DR**：增量构建"0 警告"是假象（强制重编译才见真警告）；Android 构建失败先查环境（文件锁/安全软件/残留进程）再改代码；行号锚定基线的测试脆弱；残留进程会干扰回归矩阵；code-review 用两轴（Standards + Spec）抓单轴漏掉的实现偏离；**Windows 全绿不等于跨平台正确**——触碰文件名大小写/分隔符/路径语义的改动必须过 WSL2 ext4 关卡，且「只测能加载」的弱断言会漏掉运行期分支。
+> **TL;DR**：增量构建"0 警告"是假象（强制重编译才见真警告）；Android 构建失败先查环境（文件锁/安全软件/残留进程）再改代码；行号锚定基线的测试脆弱；残留进程会干扰回归矩阵；code-review 用两轴（Standards + Spec）抓单轴漏掉的实现偏离；**Windows 全绿不等于跨平台正确**——触碰文件名大小写/分隔符/路径语义的改动必须过 WSL2 ext4 关卡，且「只测能加载」的弱断言会漏掉运行期分支；**含中文的 .ps1 必须 UTF-8 with BOM**（Windows PowerShell 5.1 按 GBK 读无 BOM 文件 → ParserError）。
 
 ## 教训清单
 
@@ -18,6 +18,7 @@
 | 10 | Python print 双重编码在 GBK 控制台乱码 | encode/decode(errors="replace") 把中文变 �；直接 print（WinConsoleIO 写 UTF-16） | 2026-08-10 |
 | 11 | MAUI 前端资产 glob 依赖 load-time 目录存在 | CI 全新 checkout 无 wwwroot → MauiAsset 收集为空 → APK 缺前端 → 整页 ERR_NAME_NOT_RESOLVED；排查以最终 APK 为准 | 2026-08-22 |
 | 12 | Windows 全绿≠跨平台正确 | 大小写/分隔符类缺陷本地无法复现，须过 WSL2 ext4；夹具命名同形 + 「只测能加载」会漏运行期 | 2026-09-12 |
+| 13 | publish.ps1 在 Windows PowerShell 5.1 解析失败 | UTF-8 无 BOM 中文注释被按 GBK 读 → ParserError；加 BOM 或直跑内部命令 | 2026-09-17 |
 
 ---
 
@@ -166,3 +167,17 @@
 4. **WSL 下 `EraCore.Tests` 永远不是全绿**：基线固定 5 个既有 Linux 不兼容/枚举顺序失败（`SafPathTests.Filesystem_paths_still_use_Path_semantics`、`AssetPathValidatorTests.Resolve_rejects_backslash_traversal`、`ErbLoaderBoundedSchedulerTests` ×2、`ErbLoaderTests.LoadErbDir_parallel_progress_lines_follow_file_order`）+ **时序/并发类偶发 flaky**（全量跑时超时，单跑稳定通过；已观察到 `ControllerTests.Lease_expiry_releases_agent_and_notifies_waiter` 与 `SessionWaitForTurnTests.Steal_racing_a_queued_turn_leaves_that_turn_for_acquire_drain`）。判读口径 = 只有**不在基线名单里**、且**单跑也不通过**的失败才算回归。
 5. **Windows 每目录大小写敏感（`fsutil file setCaseSensitiveInfo`）不可作替代**：需管理员；且 .NET 10 没有按目录探测大小的实现（`PathInternal` 无 `IsCaseSensitive`、框架 DLL 无 `FileCaseSensitiveInfo`）→ 托管 glob 不受该标志影响，它只改 OS 层精确路径解析。
 6. **触发清单**（命中任一即需跑 WSL）：`FileSystemGameDirAccessor` / `SafGameDirAccessor` / `IGameDirAccessor`、`Config.GetFiles` 或任何 `GetFiles(..., searchPattern, ...)`、`SafPath`、`Wildcard` / `Preload` 树枚举。
+
+## 13. publish.ps1 在 Windows PowerShell 5.1 下解析失败——UTF-8 无 BOM 中文注释被按 GBK 读
+
+**场景**：跑 `powershell -ExecutionPolicy Bypass -File scripts\publish.ps1 maui-android-aot` 重建 APK，脚本还没执行任何逻辑就报一串 ParserError（`Unexpected token`、`The string is missing the terminator`），报错里的中文全是乱码（`鏈湪`、`锛堢┖锛?`）。
+
+**原因**：`publish.ps1` 是 **UTF-8 无 BOM**（首三字节 `60 35 13`，非 `EF BB BF`）。Windows PowerShell 5.1（`powershell.exe`，Windows 内置）读无 BOM 脚本一律按系统 ANSI（中文系统 = GBK）解码，中文注释/字符串被拆成非法 token → 整个脚本解析失败。PowerShell 7+（`pwsh`）默认 UTF-8，不受影响。
+
+**解决**：
+- 临时绕行：不跑脚本，直接执行它内部封装的 `dotnet publish` 命令（本次即如此）。
+- 根治（二选一）：给脚本加 UTF-8 BOM；或约定用 `pwsh` 运行。仓库里其它含中文的 `.ps1` 同理——**新增/编辑带中文的 PowerShell 脚本时，保存为 UTF-8 with BOM**。
+
+**教训**：
+1. **ParserError + 报错文本乱码 = 编码问题，不是语法问题**：别去修"语法"，先查文件编码（`ReadAllBytes` 看首三字节是否 `EF BB BF`）。
+2. Windows PowerShell 5.1 与 PowerShell 7 对无 BOM 文件的默认编码不同（GBK vs UTF-8）——同一脚本"在 pwsh 里能跑、在 powershell 里炸"就是这个差异；仓库脚本要按最保守的 5.1 兼容（带 BOM）。
