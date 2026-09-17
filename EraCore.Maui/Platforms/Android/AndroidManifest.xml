@@ -15,6 +15,16 @@
 	</application>
 	<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 	<uses-permission android:name="android.permission.INTERNET" />
+	<!-- issues/15 修复（安卓8 legacy 存储）：API≤28 无 MANAGE_EXTERNAL_STORAGE 概念，
+	     访问 /storage/emulated/0 需以运行时方式授予 READ/WRITE_EXTERNAL_STORAGE。
+	     maxSdkVersion 限制保证 API 30+ 仍走 MANAGE_EXTERNAL_STORAGE 单一路径，避免重复弹权。
+	     READ 覆盖到 32（API 33+ 用 READ_MEDIA_* / MANAGE 全量覆盖，故不含 33+）。 -->
+	<uses-permission
+		android:name="android.permission.READ_EXTERNAL_STORAGE"
+		android:maxSdkVersion="32" />
+	<uses-permission
+		android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+		android:maxSdkVersion="28" />
 	<!-- ADR-0019: 曾以 SAF 完全替代存储权限。
 	     issues/15 取证：重新声明 MANAGE_EXTERNAL_STORAGE（「所有文件访问」特殊权限）——
 	     声明本身不获权，授权走系统设置页 / appops（adb shell appops set ... allow）。

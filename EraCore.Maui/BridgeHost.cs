@@ -1153,14 +1153,48 @@ internal sealed class BridgeHost : IDisposable
     /// （2026-09-11 裁定：入口恒显示，失败时提示授权，而非隐藏入口）。
     /// </para>
     /// </summary>
-    private void HandleGetStorageRoots()
+    private async void HandleGetStorageRoots()
     {
+        // issues/15 修复（安卓8 legacy 存储）：进浏览前若 API≤28 且 READ 未授权，先弹运行时权限
+        // 请求。授权后 CollectStorageRoots 的根才能点进列出子目录；拒绝/超时则返空根清单，
+        // 前端据此显示授权 CTA（needsGrant），与既有 MANAGE 未授权分支同一套降级语义。
+        await EnsureStorageReadAsync();
+
         var roots = CollectStorageRoots();
         var msg = JsonSerializer.Serialize(
             new StorageRootsMessage("storageRoots", roots),
             MauiJsonContext.Default.StorageRootsMessage);
         _dispatcher.Dispatch(() => _jsBridge.PostMessage(msg));
         Console.WriteLine($"[bridge] HandleGetStorageRoots: {roots.Count} roots [{string.Join(", ", roots.Select(r => r.Path))}]");
+    }
+
+    /// <summary>
+    /// 确保 legacy 存储的只读权限就绪：API 30+ 已由 <see cref="HasAllFilesAccess"/> 覆盖（MANAGE），
+    /// API≤28 无权限概念时若 READ 未授予则发起运行时权限请求并等待用户裁决。
+    /// 任何异常都不抛出——权限拿不到时由上层（根清单为空 → 前端 CTA）自然降级。
+    /// </summary>
+    private async Task EnsureStorageReadAsync()
+    {
+#if ANDROID
+        if (OperatingSystem.IsAndroidVersionAtLeast(30) || HasAllFilesAccess())
+            return;
+        var perm = Services.ExternalStoragePermission.Instance;
+        if (perm is null)
+            return;
+        try
+        {
+            // ActivityResultLauncher.Launch 必须在宿主 Activity 的主线程；DispatchAsync 把
+            // 整个请求 + 等待整体搬到 UI 线程（权限弹窗期间 UI 阻塞等待，用户正在此弹窗上抉择）。
+            await _dispatcher.DispatchAsync(() =>
+                perm.RequestAccessAsync(Services.ExternalStoragePermission.LegacyPermissions));
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[bridge] HandleGetStorageRoots: runtime permission request failed: {ex.Message}");
+        }
+#else
+        return;
+#endif
     }
 
     /// <summary>
@@ -1343,9 +1377,12 @@ internal sealed class BridgeHost : IDisposable
     private static bool HasAllFilesAccess()
     {
 #if ANDROID
-        if (!OperatingSystem.IsAndroidVersionAtLeast(30))
-            return true;
-        return Android.OS.Environment.IsExternalStorageManager;
+        if (OperatingSystem.IsAndroidVersionAtLeast(30))
+            return Android.OS.Environment.IsExternalStorageManager;
+        // issues/15 修复（安卓8 legacy 存储）：API≤28 无 MANAGE 概念，改读 READ_EXTERNAL_STORAGE
+        // 的运行时授予状态。缺权时 CollectStorageRoots 即便能列出根，点进去 Directory.GetDirectories
+        // 也会被系统静默过滤成空（不抛异常）——正是「看到盘符、无子目录」的根因，这里如实上报。
+        return Services.ExternalStoragePermission.Instance?.HasReadAccess() == true;
 #else
         // Windows MAUI 不检查 Android 权限——默认视为已授权
         return true;
@@ -1780,7 +1817,25 @@ internal sealed class BridgeHost : IDisposable
             }
             Android.Util.Log.Warn("EmueraMaui",
                 "[bridge] HandleRequestPermission: all dedicated actions failed → app details fallback");
+            return;
         }
+
+        // issues/15 修复（安卓8 legacy 存储）：API≤28 无 MANAGE 概念，旧实现降级打开「应用详情页」，
+        // 但那里根本没有 READ_EXTERNAL_STORAGE 权限项（此前 Manifest 也未声明）→ 用户想授也授不了。
+        // 改为直接弹运行时权限请求；授权状态经前端 watch(game.allFilesAccess)（checkPermission →
+        // HasAllFilesAccess）异步回流复查。
+        if (Services.ExternalStoragePermission.Instance is { } legacyPerm &&
+            !legacyPerm.HasReadAccess())
+        {
+            Android.Util.Log.Info("EmueraMaui",
+                "[bridge] HandleRequestPermission: API<30 → runtime permission request");
+            _dispatcher.Dispatch(() =>
+            {
+                _ = legacyPerm.RequestAccessAsync(Services.ExternalStoragePermission.LegacyPermissions);
+            });
+            return;
+        }
+        // 已授权 / 权限服务不可用——尽力用应用详情页兜底（至少不报错）。
         try
         {
             var fallback = new Android.Content.Intent(
