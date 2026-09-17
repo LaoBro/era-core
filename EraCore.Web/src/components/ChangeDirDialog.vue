@@ -269,17 +269,24 @@ async function onPickDir(name: string): Promise<void> {
 /**
  * 面包屑段（UX 改版）：由 browsePath 切分而来，取代「上级 / 路径输入框 / 前往 / 存储」四件套。
  *
+ * - 有存储根清单时，最前面补一个**卷选择段**（「此电脑」/「存储」）——点它回存储根列表
+ *   换卷。旧设备 / 平板 / 模拟器常有多卷（内部存储 + SD 卡、C: + D:），没有它进了第一个
+ *   卷就再也切不出去（「存储」按钮被收编时漏掉的入口，在此补回）；
  * - 匹配到存储根时，根前缀折叠为**一个**可点段（显示 💾 卷名）——Android 上免看
  *   `/storage/emulated` 这类无人关心的中段；
  * - 否则按分隔符逐段展开（Windows 先给 `D:\` 盘符段，Unix 先给 `/` 根段）；
  * - 末段是当前位置，只读加粗不可点；点其余任意段 = 直接跳回该层（「上级」是其特例）。
  */
-const crumbs = computed<{ label: string; path: string }[]>(() => {
+const crumbs = computed<{ label: string; path: string; isRoots?: boolean }[]>(() => {
   const p = browsePath.value.trim();
   if (!p || inRootsView.value) return [];
   const sep = p.includes('\\') ? '\\' : '/';
   const norm = p.replace(/[\\/]+$/, '');
-  const out: { label: string; path: string }[] = [];
+  const out: { label: string; path: string; isRoots?: boolean }[] = [];
+  // 卷选择段只在真有卷清单时出现——Web/HTTP 的 storageRoots 恒返 null，不该有换卷入口。
+  if (roots.value && roots.value.length > 0) {
+    out.push({ label: isAndroidMaui.value ? '存储' : '此电脑', path: '', isRoots: true });
+  }
   let consumed = '';
   const root = roots.value?.find((r) => {
     const rp = r.path.replace(/[\\/]+$/, '');
@@ -396,8 +403,8 @@ onUnmounted(() => {
                 v-if="i < crumbs.length - 1"
                 type="button"
                 class="cd-crumb"
-                :title="c.path"
-                @click="enterBrowse(c.path)"
+                :title="c.isRoots ? '返回存储位置选择' : c.path"
+                @click="c.isRoots ? showRoots() : enterBrowse(c.path)"
               >{{ c.label }}</button>
               <span
                 v-else
