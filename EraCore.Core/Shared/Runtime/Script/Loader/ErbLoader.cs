@@ -146,9 +146,14 @@ internal sealed class ErbLoader
 		}
 		finally
 		{
-			_blobReadTicks += Stopwatch.GetTimestamp() - t0;
+			long t1 = Stopwatch.GetTimestamp();
+			_blobReadTicks += t1 - t0;
 			_blobReadBytes += entry.BlobLength;
 			_blobReadCount++;
+			// issue 07 P1a：段内 blob 读（签名预算触发的那些）单独记一笔——blob 总量减去它才是「段外预读」
+			// （ReparseFunctionFromIr 在进入 MaterializeFunction 之前读的那一次），对账 main_wall 时不能重复扣。
+			if (_materializeDiag is { } md && ParserProbe.Scope != ParserProbeScope.None)
+				md.BlobInSegTicks += t1 - t0;
 		}
 	}
 
@@ -1878,6 +1883,48 @@ internal sealed class ErbLoader
 	}
 
 	/// <summary>
+	/// issue 07 P1a：物化（<see cref="MaterializeFunction"/>）四段分账。
+	/// <para>
+	/// 与 <see cref="ParseScriptDiag"/> 的区别：后者只在 <see cref="ParseFunctionWithCatch"/> 里计数，
+	/// 而 lazy 模式走 <see cref="MaterializeLabel"/>（:1917）→ 本方法，故命中轮的 steps 桶恒为空——
+	/// 这就是 issue 07 的 P1 一直拿不到数据的原因。本桶无条件发射（每次加载一行），
+	/// 覆盖命中轮（blob 后背）与建库轮（源后背）两条路径（两者都经 MaterializeFunction）。
+	/// </para>
+	/// </summary>
+	private sealed class MaterializeDiag
+	{
+		/// <summary>① 行流读取（<c>src.ReadEnabledLine</c>：blob 侧含 CharStream 构造 + SkipWhiteSpace）。</summary>
+		internal long ReadTicks;
+		/// <summary>② 建树（ParseLine / ParseLabelLine / ParseSharpLine；其中含词法，词法单列于 ParserProbe）。</summary>
+		internal long TreeTicks;
+		/// <summary>③ 签名重算（parseLabel + resizeLocalVars；仅 needSignature 桩）。</summary>
+		internal long LabelTicks;
+		/// <summary>④ 三步（setArgument / nestCheck / setJumpTo 合计 + 各自分列）。</summary>
+		internal long ThreeTicks, SetArgTicks, NestTicks, JumpTicks;
+		/// <summary>
+		/// 签名预算（<see cref="ComputeSignature"/>，被段④ setArgument 内的 arg 转换触发，墙钟已含在 ThreeTicks 内）。
+		/// <b>R1（签名序列化）的定价口径 = SigTicks + LabelTicks</b>——两者合起来才是「命中轮特有的签名重算」总量。
+		/// </summary>
+		internal long SigTicks, SigCalls;
+		/// <summary>段内发生的 blob 读（签名预算那部分）——用于把 blob 总量拆成「段外预读」与「段内」。</summary>
+		internal long BlobInSegTicks;
+		/// <summary>计数：实际物化标签数 / 走签名重算的标签数。</summary>
+		internal long Labels, SignatureLabels;
+		/// <summary>计数：行流总数（含 @/$/# 与体行）/ 各类行数。</summary>
+		internal long Lines, LabelLines, DollarLines, SharpLines;
+		/// <summary>
+		/// 各段**分配字节数**（`GC.GetTotalAllocatedBytes(precise: false)` 增量，与 <see cref="GcSnapshot"/> 同 API）。
+		/// 为什么与墙钟并列：物化成本里分配/GC 主导（`dAllocMB=177`/轮），所以「序列化将来能不能赢」不仅看墙钟，
+		/// 还要看反序列化路径能不能把这几百 MB 的分配换掉。Read/Tree/Label/Three 之和 ≤ 段内实际总量，
+		/// 差额 = 循环簿记与未归属（`[` 预处理行、跳过行等）。
+		/// </summary>
+		internal long ReadAlloc, TreeAlloc, LabelAlloc, ThreeAlloc, SigAlloc;
+	}
+
+	/// <summary>当前物化分账桶（仅 ParseScript 主循环期间非 null；运行期物化不采集）。</summary>
+	private MaterializeDiag? _materializeDiag;
+
+	/// <summary>
 	/// 事前処理したファイルをさらに解析し実行可能な状態にする
 	/// </summary>
 	private void ParseScript()
@@ -1894,9 +1941,16 @@ internal sealed class ErbLoader
 		// erb-loader-parallel 05：DisplayReport 开启时采集三组诊断（层宽直方图 / 三步分段 / 主循环 vs 未调用遍切分）
 		ParseScriptDiag? diag = Config.Config.DisplayReport ? new ParseScriptDiag() : null;
 		_parseDiag = diag;
+		// issue 07 P1a/P1b：物化分账（无条件采集与发射——lazy 命中轮不走 ParseFunctionWithCatch，
+		// 现有 parsescript_diag 的 steps 桶恒空，故这条线独立于 DisplayReport）。
+		MaterializeDiag matDiag = new();
+		_materializeDiag = matDiag;
+		ParserProbe.Activate();
 		long mainTicks = 0, callFormTicks = 0, uncalledTicks = 0;
 		SortedDictionary<int, int>? depthHist = null;
-		Stopwatch? mainSw = diag != null ? Stopwatch.StartNew() : null;
+		// issue 07 P1a：主循环墙钟改为无条件测量——materialize_diag 的 main_wall_ms 对账需要它，
+		// 不再只在 DisplayReport 下才有值（唯一 Stopwatch 分配，量级可忽略）。
+		Stopwatch? mainSw = Stopwatch.StartNew();
 		while (true)
 		{
 			labelDepth++;
@@ -1924,6 +1978,10 @@ internal sealed class ErbLoader
 		mainSw?.Stop();
 		mainTicks = mainSw?.ElapsedTicks ?? 0;
 		labelDepth = -1;
+		// 关窗（累计值保留）后立即发射：作用域严格 = 主循环物化波，不含随后的未调用遍历 / 警告回放。
+		ParserProbe.Deactivate();
+		_materializeDiag = null;
+		EmitMaterializeDiag(matDiag, mainTicks);
 		if (diag != null)
 		{
 			// 层宽直方图（d-1 = 未调用标签数）：D4 判据②（p90 层宽 vs 目标并行度）取数源
@@ -2141,6 +2199,56 @@ internal sealed class ErbLoader
 		}
 		_activeArgLoader = null; // b2-irdiskcache：主循环结束卸载 arg 解析物化源（stale 亦无害，下次重设）
 
+	}
+
+	/// <summary>
+	/// issue 07 P1a/P1b：发射物化四段分账（单行，无条件——不依赖 DisplayReport / Agent Log）。
+	/// <para>
+	/// 口径：<c>read_ms + tree_ms + parseLabel_ms + three_ms = total_ms</c>（四段墙钟互斥）。
+	/// 归属子桶：<c>lexTree ⊆ tree</c>、<c>lexThree ⊆ three</c>、<c>varThree ⊆ three</c>、
+	/// <c>sig_ms ⊆ three</c>（签名预算是被 setArgument 触发的嵌套区）、<c>lexSig ⊆ sig</c>、<c>varSig ⊆ sig</c>、
+	/// <c>parseLabel_ms</c> 是段③ 内的签名重算。
+	/// </para>
+	/// <para>
+	/// <b>R1（签名序列化）定价口径 = sigTotal_ms = parseLabel_ms + sig_ms</b>；
+	/// <b>R2（07-M 词法中间态）口径 = lexTree_ms / total_ms</b>（只有段② 内的词法能被「跳词法」省掉）；
+	/// <b>R5 收缩范围口径 = three_ms 内 lexThree + varThree vs 余量</b>（余量 = ArgBuilder 分发 + ExpressionParser 建树 + 杂项）。
+	/// 分配列（<c>allocMB</c>）与墙钟并列：物化成本里分配/GC 主导，判断「反序列化能否赢」要看它能否替掉这些分配。
+	/// 对账：<c>loop_overhead_ms = main_wall − total − 段外 blob 读</c>（循环簿记 / 降级占位 / GC / 循环外物化）。
+	/// </para>
+	/// </summary>
+	private void EmitMaterializeDiag(MaterializeDiag d, long mainTicks)
+	{
+		static double Ms(long ticks) => ticks * 1000.0 / Stopwatch.Frequency;
+		static double MB(long bytes) => bytes / 1048576.0;
+		static long Lex(ParserProbeScope s) => ParserProbe.LexTicks[(int)s];
+		static long LexC(ParserProbeScope s) => ParserProbe.LexCalls[(int)s];
+		static long Var(ParserProbeScope s) => ParserProbe.VarTicks[(int)s];
+		static long VarC(ParserProbeScope s) => ParserProbe.VarCalls[(int)s];
+		long blobMs = (_blobReadTicks * 1000) / Stopwatch.Frequency;
+		long blobInSegMs = (d.BlobInSegTicks * 1000) / Stopwatch.Frequency;
+		long insideTicks = d.ReadTicks + d.TreeTicks + d.LabelTicks + d.ThreeTicks;
+		EmueraLog.Info("ErbLoader",
+			$"materialize_diag labels={d.Labels} sigLabels={d.SignatureLabels}" +
+			$" lines={d.Lines} labelLines={d.LabelLines} dollarLines={d.DollarLines} sharpLines={d.SharpLines}" +
+			$" total_ms={Ms(insideTicks):F0} read_ms={Ms(d.ReadTicks):F0} tree_ms={Ms(d.TreeTicks):F0}" +
+			$" parseLabel_ms={Ms(d.LabelTicks):F0} three_ms={Ms(d.ThreeTicks):F0}" +
+			$" setarg_ms={Ms(d.SetArgTicks):F0} nest_ms={Ms(d.NestTicks):F0} jump_ms={Ms(d.JumpTicks):F0}" +
+			$" sig_ms={Ms(d.SigTicks):F0} sigCalls={d.SigCalls} sigTotal_ms={Ms(d.LabelTicks + d.SigTicks):F0}" +
+			$" lexTree_ms={Ms(Lex(ParserProbeScope.Tree)):F0}/{LexC(ParserProbeScope.Tree)}" +
+			$" lexThree_ms={Ms(Lex(ParserProbeScope.Three)):F0}/{LexC(ParserProbeScope.Three)}" +
+			$" lexSig_ms={Ms(Lex(ParserProbeScope.Signature)):F0}/{LexC(ParserProbeScope.Signature)}" +
+			$" lexLabel_ms={Ms(Lex(ParserProbeScope.Label)):F0}/{LexC(ParserProbeScope.Label)}" +
+			$" lexNone_ms={Ms(Lex(ParserProbeScope.None)):F0}/{LexC(ParserProbeScope.None)}" +
+			$" varTree_ms={Ms(Var(ParserProbeScope.Tree)):F0}/{VarC(ParserProbeScope.Tree)}" +
+			$" varThree_ms={Ms(Var(ParserProbeScope.Three)):F0}/{VarC(ParserProbeScope.Three)}" +
+			$" varSig_ms={Ms(Var(ParserProbeScope.Signature)):F0}/{VarC(ParserProbeScope.Signature)}" +
+			$" varLabel_ms={Ms(Var(ParserProbeScope.Label)):F0}/{VarC(ParserProbeScope.Label)}" +
+			$" varNone_ms={Ms(Var(ParserProbeScope.None)):F0}/{VarC(ParserProbeScope.None)}" +
+			$" allocMB read={MB(d.ReadAlloc):F1} tree={MB(d.TreeAlloc):F1} label={MB(d.LabelAlloc):F1}" +
+			$" three={MB(d.ThreeAlloc):F1} sigInThree={MB(d.SigAlloc):F1}" +
+			$" blob_ms={blobMs} blobInSeg_ms={blobInSegMs} blobReads={_blobReadCount} blobBytes={_blobReadBytes}" +
+			$" main_wall_ms={Ms(mainTicks):F0} loop_overhead_ms={Ms(mainTicks - insideTicks) - (blobMs - blobInSegMs):F0}");
 	}
 
 
@@ -2403,9 +2511,37 @@ internal sealed class ErbLoader
 		LogicalLine tail = null!;
 		// [ 预处理评估：源路径重演 [SKIPSTART][SKIPEND] 等保「故意不平衡」块不被误解析；blob 源无 [ 行则 no-op。
 		var ppstate = new PPState(env, idDic);
-		CharStream? line;
-		while ((line = src.ReadEnabledLine(ppstate.Disabled)) != null)
+		MaterializeDiag? mdiag = _materializeDiag;
+		// issue 07 P1b：词法归属切换（mdiag == null 时完全不碰静态字段——运行期物化路径零侵入）。
+		ParserProbeScope EnterScope(ParserProbeScope sc)
 		{
+			if (mdiag == null)
+				return ParserProbeScope.None;
+			ParserProbeScope prev = ParserProbe.Scope;
+			ParserProbe.Scope = sc;
+			return prev;
+		}
+		void ExitScope(ParserProbeScope prev)
+		{
+			if (mdiag != null)
+				ParserProbe.Scope = prev;
+		}
+		// issue 07 P1a′：段内分配账读取（与 GcSnapshot 同 API；mdiag == null 时零调用）。
+		long A() => mdiag != null ? GC.GetTotalAllocatedBytes(precise: false) : 0L;
+		CharStream? line;
+		while (true)
+		{
+			long aRead = A();
+			long tRead = mdiag != null ? Stopwatch.GetTimestamp() : 0L;
+			line = src.ReadEnabledLine(ppstate.Disabled);
+			if (line == null)
+				break;
+			if (mdiag != null)
+			{
+				mdiag.ReadTicks += Stopwatch.GetTimestamp() - tRead;
+				mdiag.ReadAlloc += A() - aRead;
+				mdiag.Lines++;
+			}
 			CharStream st = line;
 			var position = new ScriptPosition(src.Filename, src.LineNo);
 			// [ 预处理指令（与主加载同款，先于 @/$ 判定）
@@ -2430,7 +2566,18 @@ internal sealed class ErbLoader
 				if (label == null)
 				{
 					// 解析 @ 行仅用于匹配标签名；body 直接解析进桩（见上方说明）。
-					if (LogicalLineParser.ParseLabelLine(st, position, output, null) is FunctionLabelLine lbl
+					long aTree = A();
+					long tTree = mdiag != null ? Stopwatch.GetTimestamp() : 0L;
+					ParserProbeScope ps = EnterScope(ParserProbeScope.Tree);
+					LogicalLine? atLine = LogicalLineParser.ParseLabelLine(st, position, output, null);
+					ExitScope(ps);
+					if (mdiag != null)
+					{
+						mdiag.TreeTicks += Stopwatch.GetTimestamp() - tTree;
+						mdiag.TreeAlloc += A() - aTree;
+						mdiag.LabelLines++;
+					}
+					if (atLine is FunctionLabelLine lbl
 						&& nameEq.Equals(lbl.LabelName, stub.LabelName))
 					{
 						label = stub;
@@ -2451,7 +2598,18 @@ internal sealed class ErbLoader
 				continue; // 尚未到达目标函数
 			if (st.Current == '$')
 			{
-				if (LogicalLineParser.ParseLabelLine(st, position, output, null) is GotoLabelLine g)
+				long aTree = A();
+				long tTree = mdiag != null ? Stopwatch.GetTimestamp() : 0L;
+				ParserProbeScope ps = EnterScope(ParserProbeScope.Tree);
+				LogicalLine? dollarLine = LogicalLineParser.ParseLabelLine(st, position, output, null);
+				ExitScope(ps);
+				if (mdiag != null)
+				{
+					mdiag.TreeTicks += Stopwatch.GetTimestamp() - tTree;
+					mdiag.TreeAlloc += A() - aTree;
+					mdiag.DollarLines++;
+				}
+				if (dollarLine is GotoLabelLine g)
 				{
 					g.ParentLabelLine = label;
 					// 惰性下桩跳过 $ 标签、加载期不注册，物化必须补注册（否则 GOTO SetJumpTo 经 GetLabelDollar 解析失败）。
@@ -2467,12 +2625,32 @@ internal sealed class ErbLoader
 				// IR 命中桩：签名留空（或未经 EnsureCalleeSignature 预计算），须重跑 ParseSharpLine 重建（私有变量/IsMethod/LocalLength/…）。
 				if (needSignature)
 				{
+					long aTree = A();
+					long tTree = mdiag != null ? Stopwatch.GetTimestamp() : 0L;
+					ParserProbeScope ps = EnterScope(ParserProbeScope.Tree);
 					List<string> a = [], b = [];
 					LogicalLineParser.ParseSharpLine(stub, st, position, a, b);
+					ExitScope(ps);
+					if (mdiag != null)
+					{
+						mdiag.TreeTicks += Stopwatch.GetTimestamp() - tTree;
+						mdiag.TreeAlloc += A() - aTree;
+					}
 				}
+				if (mdiag != null)
+					mdiag.SharpLines++;
 				continue;
 			}
+			long aBody = A();
+			long tBody = mdiag != null ? Stopwatch.GetTimestamp() : 0L;
+			ParserProbeScope psBody = EnterScope(ParserProbeScope.Tree);
 			var parsed = LogicalLineParser.ParseLine(st, position, output, label);
+			ExitScope(psBody);
+			if (mdiag != null)
+			{
+				mdiag.TreeTicks += Stopwatch.GetTimestamp() - tBody;
+				mdiag.TreeAlloc += A() - aBody;
+			}
 			if (parsed == null)
 				continue;
 			if (parsed is InvalidLine)
@@ -2499,6 +2677,8 @@ internal sealed class ErbLoader
 		}
 		if (label == null)
 			return null;
+		if (mdiag != null)
+			mdiag.Labels++;
 		tail.NextLine = new NullLine();
 		// B1 桩不重跑 parseLabel（生成期 setLabelsArg 已解析 Arg/Def）；IR 桩在这里补 Arg/Def + 扩 ARG/ARGS 槽。
 		// setScanLine(label) 提供 scan-line 上下文（对齐 eager setLabelsArg），供三步/parseLabel 内私有变量解析。
@@ -2509,7 +2689,11 @@ internal sealed class ErbLoader
 		{
 			if (needSignature)
 			{
+				long aLabel = A();
+				long tLabel = mdiag != null ? Stopwatch.GetTimestamp() : 0L;
+				ParserProbeScope psLabel = EnterScope(ParserProbeScope.Label);
 				parseLabel(label);
+				ExitScope(psLabel);
 				// 对齐 SortLabels 的 resizeLocalVars：IR 桩 gen 期按 ArgLength=0 建槽（SortLabels 对非事件把槽建为 0），
 				// 物化后按实际值扩容，否则运行期 ARGx 绑定到 size-0 槽。
 				if (!label.IsEvent)
@@ -2519,10 +2703,38 @@ internal sealed class ErbLoader
 					if (label.ArgsLength > 0)
 						idDic.resizeLocalVars("ARGS", label.LabelName, label.ArgsLength);
 				}
+				if (mdiag != null)
+				{
+					mdiag.LabelTicks += Stopwatch.GetTimestamp() - tLabel;
+					mdiag.LabelAlloc += A() - aLabel;
+					mdiag.SignatureLabels++;
+				}
 			}
-			setArgument(label);
-			nestCheck(label);
-			setJumpTo(label);
+			if (mdiag == null)
+			{
+				setArgument(label);
+				nestCheck(label);
+				setJumpTo(label);
+			}
+			else
+			{
+				// issue 07 P1a 段④：三步合计 + 三子项分列（对齐既有 parsescript_diag steps 口径）。
+				long aThree = A();
+				long tSetArg = Stopwatch.GetTimestamp();
+				ParserProbeScope psThree = EnterScope(ParserProbeScope.Three);
+				setArgument(label);
+				long tNest = Stopwatch.GetTimestamp();
+				nestCheck(label);
+				long tJump = Stopwatch.GetTimestamp();
+				setJumpTo(label);
+				long tEnd = Stopwatch.GetTimestamp();
+				ExitScope(psThree);
+				mdiag.SetArgTicks += tNest - tSetArg;
+				mdiag.NestTicks += tJump - tNest;
+				mdiag.JumpTicks += tEnd - tJump;
+				mdiag.ThreeTicks += tEnd - tSetArg;
+				mdiag.ThreeAlloc += A() - aThree;
+			}
 		}
 		finally
 		{
@@ -2538,6 +2750,33 @@ internal sealed class ErbLoader
 	/// 避免「物化 A → A.setJumpTo → CALL B → 物化 B → …」的无界递归栈溢出。幂等（Arg != null 即已就位）。
 	/// </summary>
 	private void ComputeSignature(FunctionLabelLine stub)
+	{
+		// issue 07 P1a：签名预算分账（R1 定价用）。运行期 / 未开窗 → 零开销直通，路径逐位不变。
+		MaterializeDiag? md = _materializeDiag;
+		if (md == null)
+		{
+			ComputeSignatureCore(stub);
+			return;
+		}
+		long t0 = Stopwatch.GetTimestamp();
+		long a0 = GC.GetTotalAllocatedBytes(precise: false);
+		ParserProbeScope prevScope = ParserProbe.Scope;
+		ParserProbe.Scope = ParserProbeScope.Signature;
+		try
+		{
+			ComputeSignatureCore(stub);
+		}
+		finally
+		{
+			ParserProbe.Scope = prevScope;
+			md.SigTicks += Stopwatch.GetTimestamp() - t0;
+			md.SigAlloc += GC.GetTotalAllocatedBytes(precise: false) - a0;
+			md.SigCalls++;
+		}
+	}
+
+	/// <summary>签名预算本体（原 <c>ComputeSignature</c> 实体，未改动一行——包装只为计时）。</summary>
+	private void ComputeSignatureCore(FunctionLabelLine stub)
 	{
 		if (stub.Arg != null || !stub.IsStub)
 			return;

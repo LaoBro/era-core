@@ -5,6 +5,7 @@ using MinorShift.Emuera.Runtime.Utils;
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -822,6 +823,18 @@ internal static partial class LexicalAnalyzer
 	/// <returns></returns>
 	[MethodImpl(MethodImplOptions.AggressiveOptimization)]
 	public static WordCollection Analyse(CharStream st, LexEndWith endWith, LexAnalyzeFlag flag)
+	{
+		// issue 07 P1b：词法段分账（ParserProbe）。非采集期开销 = 一次静态 bool 读。
+		if (!ParserProbe.Active)
+			return AnalyseCore(st, endWith, flag);
+		long t0 = Stopwatch.GetTimestamp();
+		WordCollection ret = AnalyseCore(st, endWith, flag);
+		ParserProbe.AddLex(Stopwatch.GetTimestamp() - t0);
+		return ret;
+	}
+
+	[MethodImpl(MethodImplOptions.AggressiveOptimization)]
+	private static WordCollection AnalyseCore(CharStream st, LexEndWith endWith, LexAnalyzeFlag flag)
 	{
 		var ret = new WordCollection();
 		int nestBracketS = 0;

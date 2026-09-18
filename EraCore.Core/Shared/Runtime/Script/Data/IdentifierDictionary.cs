@@ -12,6 +12,7 @@ using MinorShift.Emuera.Runtime.Script.Statements.Variable;
 using MinorShift.Emuera.Runtime.Utils;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.RegularExpressions;
 using treer = MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.Error;
@@ -500,7 +501,21 @@ internal partial class IdentifierDictionary
 		return null!;
 	}
 
+	/// <summary>
+	/// issue 07 P1a′：变量解析分账（R5 格式难点的定价口径）。运行期 / 未开窗 → 零开销直通，路径逐位不变。
+	/// </summary>
 	public VariableToken GetVariableToken(string key, string? subKey, bool allowPrivate)
+	{
+		if (!ParserProbe.Active)
+			return GetVariableTokenCore(key, subKey, allowPrivate);
+		long t0 = Stopwatch.GetTimestamp();
+		VariableToken ret = GetVariableTokenCore(key, subKey, allowPrivate);
+		ParserProbe.AddVar(Stopwatch.GetTimestamp() - t0);
+		return ret;
+	}
+
+	/// <summary>变量解析本体（原 <c>GetVariableToken</c> 实体，未改动一行——包装只为计时）。</summary>
+	private VariableToken GetVariableTokenCore(string key, string? subKey, bool allowPrivate)
 	{
 		VariableToken? ret;
 		//if (Config.Config.IgnoreCase)
