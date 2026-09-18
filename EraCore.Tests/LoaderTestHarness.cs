@@ -48,14 +48,24 @@ internal sealed class LoaderTestHarness : IDisposable
 
 	private IDisposable? _scope;
 	private bool _disposed;
+	private readonly bool _ownsTempRoot;
 
-	public LoaderTestHarness()
+	/// <param name="gameDir">
+	/// 可选：直接对**真实游戏目录**装配（csv/erb 用该目录下同名子目录），用于 issue 22 的真实语料普查。
+	/// 传 null（既有全部调用点）= 原来的行为：临时目录 + 自建空 csv/erb + Dispose 时删除。
+	/// 传真实目录时**不创建也不删除**任何东西（只读使用）。
+	/// </param>
+	public LoaderTestHarness(string? gameDir = null)
 	{
-		TempRoot = Path.Combine(Path.GetTempPath(), "emuera-loader-test-" + Guid.NewGuid().ToString("N"));
+		_ownsTempRoot = gameDir == null;
+		TempRoot = gameDir ?? Path.Combine(Path.GetTempPath(), "emuera-loader-test-" + Guid.NewGuid().ToString("N"));
 		CsvDir = Path.Combine(TempRoot, "csv") + Path.DirectorySeparatorChar;
 		ErbDir = Path.Combine(TempRoot, "erb") + Path.DirectorySeparatorChar;
-		Directory.CreateDirectory(CsvDir);
-		Directory.CreateDirectory(ErbDir);
+		if (_ownsTempRoot)
+		{
+			Directory.CreateDirectory(CsvDir);
+			Directory.CreateDirectory(ErbDir);
+		}
 
 		// GamePaths.Resolve 使 Program.CsvDir/ErbDir 指向临时目录。
 		// 注意：Program 的静态构造器（首次触达 Program.* 时运行）会 GamePaths.Resolve(null, new FileSystemGameDirAccessor()) 重置为默认，
@@ -164,6 +174,8 @@ internal sealed class LoaderTestHarness : IDisposable
 		if (_disposed) return;
 		_disposed = true;
 		_scope?.Dispose();
+		if (!_ownsTempRoot)
+			return; // 真实游戏目录：只读使用，绝不删除
 		try { if (Directory.Exists(TempRoot)) Directory.Delete(TempRoot, recursive: true); }
 		catch { /* 测试临时目录清理失败不致测试失败 */ }
 	}
