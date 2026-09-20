@@ -998,12 +998,33 @@ internal sealed class BridgeHost : IDisposable
     private void HandleCheckPermission()
     {
         bool granted = HasAllFilesAccess();
+        SendPermissionStatus(granted);
+        Console.WriteLine($"[bridge] HandleCheckPermission: granted={granted}");
+        AgentLog.Instance.Write($"[bridge] HandleCheckPermission: granted={granted}");
+    }
+
+    /// <summary>
+    /// issues/15：把「所有文件访问」的权威状态推给前端——<see cref="HandleCheckPermission"/>
+    /// （前端主动查）与运行时权限请求结束时（见 <see cref="HandleRequestPermission"/>）共用。
+    /// <para>
+    /// **为何请求结束后也必须推一次**：API≤29 的运行时权限对话框是系统 overlay，宿主 Activity
+    /// 只走 <c>onPause</c> 而不 <c>onStop</c>——WebView 的 <c>document.hidden</c> 不变，
+    /// <c>visibilitychange</c> 不触发，前端就**没有机会**调 <c>checkPermission</c>。
+    /// 而「授权后自动重扫以升级到快速轨」正挂在那次复查上，于是现象是：Android 8 上授权成功
+    /// 却仍停在兼容模式，必须手动重扫。请求返回是**唯一可靠**的时机——C# 明确知道它何时结束，
+    /// 不该指望平台相关的可见性信号。
+    /// </para>
+    /// <para>
+    /// 值由调用方传入（两处都取自 <see cref="HasAllFilesAccess"/>），保证「前端看到的授权状态」
+    /// 与「C# 判定快速/兼容轨用的闸门」永远同源，不会出现两边分裂。
+    /// </para>
+    /// </summary>
+    private void SendPermissionStatus(bool granted)
+    {
         var msg = JsonSerializer.Serialize(
             new PermissionStatusMessage("permissionStatus", granted),
             MauiJsonContext.Default.PermissionStatusMessage);
         _dispatcher.Dispatch(() => _jsBridge.PostMessage(msg));
-        Console.WriteLine($"[bridge] HandleCheckPermission: granted={granted}");
-        AgentLog.Instance.Write($"[bridge] HandleCheckPermission: granted={granted}");
     }
 
     /// <summary>
@@ -1157,6 +1178,20 @@ internal sealed class BridgeHost : IDisposable
         Console.WriteLine($"[bridge] {line}");
         AgentLog.Instance.Write($"[bridge] {line}");
         Android.Util.Log.Info("EmueraMaui", line);
+    }
+
+    /// <summary>
+    /// issues/15 后续：告知前端「授权请求已被系统阻断」——用户选过「拒绝，不再询问」
+    /// （或 ROM 同类机制）后，<c>launcher.Launch</c> 不再弹出任何窗口、立即以 denied 返回，
+    /// 用户点「所有文件访问权限」会「什么都没发生」。只给信号不给文案（C# 不持有 UI 文案，
+    /// 与 <see cref="PostModeDowngraded"/> 同构）。
+    /// </summary>
+    private void PostPermissionBlocked()
+    {
+        var msgJson = JsonSerializer.Serialize(
+            new PermissionBlockedMessage("permissionBlocked"),
+            MauiJsonContext.Default.PermissionBlockedMessage);
+        _dispatcher.Dispatch(() => _jsBridge.PostMessage(msgJson));
     }
 #endif
 
@@ -1571,9 +1606,31 @@ internal sealed class BridgeHost : IDisposable
         {
             Android.Util.Log.Info("EmueraMaui",
                 "[bridge] HandleRequestPermission: API<30 → runtime permission request");
-            _dispatcher.Dispatch(() =>
+            _dispatcher.Dispatch(async () =>
             {
-                _ = legacyPerm.RequestAccessAsync(Services.ExternalStoragePermission.LegacyPermissions);
+                try
+                {
+                    var granted = await legacyPerm.RequestAccessAsync(
+                        Services.ExternalStoragePermission.LegacyPermissions);
+                    Android.Util.Log.Info("EmueraMaui",
+                        $"[bridge] HandleRequestPermission: runtime result granted={granted}");
+                    // 主动上报权威状态——前端不能只靠 visibilitychange：
+                    // 运行时权限对话框不触发它（见 SendPermissionStatus），
+                    // 「授权后自动重扫以升级到快速轨」会因此落空。
+                    // 无论授权与否都推，前端状态与 C# 闸门始终一致。
+                    SendPermissionStatus(HasAllFilesAccess());
+                    // 授权成功 → 静默（上面已同步状态，前端自动复查、菜单 hint 自更新）；
+                    // 普通拒绝 → 同样静默（用户知道自己拒了，且下次点击仍会正常弹窗，再提示就是唠叨）。
+                    // 只有**系统不再弹窗**时必须说一声——否则用户点完「什么都没发生」，
+                    // 只会以为功能坏了（其他 ROM 的「拒绝，不再询问」会走到这里）。
+                    if (!granted && legacyPerm.IsPermanentlyDenied)
+                        PostPermissionBlocked();
+                }
+                catch (Exception ex)
+                {
+                    Android.Util.Log.Error("EmueraMaui",
+                        $"[bridge] HandleRequestPermission: runtime request failed: {ex.Message}");
+                }
             });
             return;
         }

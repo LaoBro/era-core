@@ -116,6 +116,8 @@ function parseBridgeController(raw: unknown): { kind: 'agent' | 'user'; leaseExp
  * - `{"type":"gameExited"}`——exitGame 处理完成，清状态 + 自动重新 scanGames
  * - `{"type":"modeDowngraded","reason":...}`——issues/15（方案 B）：「所有文件访问」被收回，
  *   主目录已自动退回兼容轨，写 info 提示条告知（非错误）
+ * - `{"type":"permissionBlocked"}`——issues/15 后续：授权请求被系统阻断（用户选过「拒绝，不再询问」，
+ *   此后 Launch 不再弹窗），写 info 提示条告知去哪手动开启。普通拒绝不发此消息
  * - `{"type":"gameThreadStatus","alive":true/false}`——前端静默监控的线程存活探测回复，
  *   写入 gameStatusHint（'running'/'stopped'），App.vue 据此显示半透明状态提示
  *
@@ -304,6 +306,25 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
       reason === 'all-files-access-revoked'
         ? '「所有文件访问」权限已失效，已退回兼容模式，加载会慢一些。重新授权后重新扫描即可回到快速模式。'
         : '读取方式已退回兼容模式，加载会慢一些。',
+    );
+    return;
+  }
+
+  // issues/15 后续：授权请求被系统**阻断**——用户选过「拒绝，不再询问」（或 ROM 同类机制）后，
+  // 运行时请求不再弹窗、立即 denied，点菜单项会「什么都没发生」。必须告诉用户去哪手动开，
+  // 否则只会以为功能坏了。普通拒绝**不发**此消息（用户知道自己拒了，下次点击仍会弹窗），
+  // 故这里无分支——收到即是阻断态。
+  if (type === 'permissionBlocked') {
+    console.log('[useAppInit] permissionBlocked');
+    // 路径按**权限分类**入口写：「应用权限」（先选权限、再选 app）是 Android 8~10 的形态，
+    // 与 Android 11+ 的「应用 → 权限」（按 app 分类）恰好相反。而这条提示只可能在 API≤29
+    // 出现（30+ 走 MANAGE 设置页，不存在「不再询问」）——故对**所有**会看到它的设备，
+    // 「应用权限」才是对的入口。真机取证 2026-09-21（Android 8）：
+    // 设置 → 应用和通知 → 应用权限 → 存储 → 打开本应用开关。
+    // 文案只保留「应用权限」「存储」两个词：都出自 Android 框架，各 ROM 改名最少；
+    // 不写容器名「应用和通知」（定制 ROM 差异大，多写一层反而增加对不上的风险）。
+    game.setModeNotice(
+      '系统已不再弹出授权窗口。请到系统设置的「应用权限 → 存储」中打开本应用的开关，之后重新扫描即可回到快速模式。',
     );
     return;
   }

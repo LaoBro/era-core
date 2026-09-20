@@ -136,11 +136,12 @@ function scheduleErrorBannerAutoDismiss(): void {
 }
 watch(currentError, () => scheduleErrorBannerAutoDismiss(), { immediate: true });
 
-// ---------- issues/15（方案 B）：模式降级告知 ----------
+// ---------- issues/15（方案 B）：读取方式告知 ----------
 /**
- * 「所有文件访问」被系统收回时，主目录会自动退回落地的 SAF URI（快速模式 → 兼容模式）。
- * 用户什么都没做却变慢了，必须明说一句——用 info 条（不是错误：游戏照样能玩），
- * 与错误条同策略 5 秒自动消失，避免长期占位。
+ * 两类「读取方式变了而用户可能不知情」的告知（store 的 `modeNotice`），共用这一条 info 提示条：
+ * - **权限被系统收回**：主目录自动退回落地的 SAF URI（快速模式 → 兼容模式），用户什么都没做却变慢了；
+ * - **授权请求被系统阻断**：点菜单项不再弹窗、什么都没发生，需告诉用户去哪手动开启。
+ * 用 info 条（不是错误：游戏照样能玩），与错误条同策略 5 秒自动消失，避免长期占位。
  */
 let modeNoticeTimer: ReturnType<typeof setTimeout> | null = null;
 

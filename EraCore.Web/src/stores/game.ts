@@ -367,10 +367,15 @@ export const useGameStore = defineStore('game', () => {
    */
   const mauiError = ref<string | null>(null);
   /**
-   * issues/15（方案 B）：模式降级提示——C# 推 `modeDowngraded` 时写入。
+   * issues/15（方案 B）：**读取方式**的告知提示——C# 两条消息共用这一条 info 提示条：
    *
-   * 触发场景：「所有文件访问」被系统收回，真实路径读不动，主目录已自动退回落地的 SAF URI
-   * （快速模式 → 兼容模式）。用户自己没做任何操作却变慢了，必须说一声，否则就是"莫名变慢"。
+   * - `modeDowngraded`：「所有文件访问」被系统收回，真实路径读不动，主目录已自动退回落地的
+   *   SAF URI（快速模式 → 兼容模式）。用户自己没做任何操作却变慢了，必须说一声，否则"莫名变慢"；
+   * - `permissionBlocked`：授权请求被系统**阻断**（用户选过「拒绝，不再询问」，此后 Launch
+   *   不再弹窗），点菜单项后"什么都没发生"，必须告诉用户去哪手动开启。
+   *
+   * 两者同属一类——**读取方式/权限状态变了而用户可能毫不知情**，展示形态也完全一致，
+   * 故共用此 ref，不另开通道。
    *
    * 与 `mauiError` 区别：这不是错误（游戏照样能玩），只是**告知**，故用 info 提示条而非错误条。
    * null 表示无提示。
@@ -1310,7 +1315,7 @@ export const useGameStore = defineStore('game', () => {
     mauiError.value = null;
   }
 
-  /** issues/15（方案 B）：写入模式降级提示——`modeDowngraded` 消息触发。 */
+  /** issues/15（方案 B）：写入读取方式提示——`modeDowngraded` / `permissionBlocked` 消息触发。 */
   function setModeNotice(text: string): void {
     modeNotice.value = text;
   }

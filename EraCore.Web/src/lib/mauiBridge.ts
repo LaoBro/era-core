@@ -193,6 +193,8 @@ export function sendBridgeUrl(action: string, data?: string): boolean {
  * - `{"type":"safDirectoryPicked",...}`——Android SAF 目录选择结果（ADR-0019）
  * - `{"type":"modeDowngraded","reason":...}`——issues/15（方案 B）：真实路径轨失效，
  *   主目录已自动退回兼容轨（原因码由前端翻成文案）
+ * - `{"type":"permissionBlocked"}`——issues/15 后续：授权请求被系统阻断（用户选过「拒绝，不再询问」，
+ *   此后 Launch 不再弹窗），前端给一条「去系统设置手动开启」的 info 提示。普通拒绝不发
  * - `{"type":"gameExited"}`——exitGame 完成，清状态 + 自动 rescan
  *
  * 与 `registerTurnHandler` 分流——turn 经 `__onTurn` 推 `applyTurn` 协议消费链路，

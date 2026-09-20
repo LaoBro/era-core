@@ -92,6 +92,20 @@ internal sealed record PermissionStatusMessage(string Type, bool Granted);
 /// </summary>
 internal sealed record ModeDowngradedMessage(string Type, string Reason);
 
+/// <summary>
+/// {"type":"permissionBlocked"}
+/// <para>
+/// issues/15 后续：授权请求被系统**阻断**——用户选过「拒绝，不再询问」（或 ROM 同类机制）后，
+/// 运行时权限请求不再弹出任何窗口、立即以 denied 返回。用户点「所有文件访问权限」会
+/// 「什么都没发生」，不说一声就成了「功能坏了」。
+/// </para>
+/// <para>
+/// <b>无字段</b>：只在阻断态发出，类型名本身即语义。普通拒绝不发——用户知道自己拒了，
+/// 且下次点击仍会正常弹窗，此时再提示就是唠叨。仅 API≤29 会出现（30+ 走 MANAGE 设置页）。
+/// </para>
+/// </summary>
+internal sealed record PermissionBlockedMessage(string Type);
+
 /// <summary>{"type":"gameThreadStatus","alive":...}</summary>
 internal sealed record GameThreadStatusMessage(string Type, bool Alive);
 
@@ -179,6 +193,7 @@ internal sealed record HeadlessStateResponse(string? State, string? GameDir);
 [JsonSerializable(typeof(GameExitedMessage))]
 [JsonSerializable(typeof(PermissionStatusMessage))]
 [JsonSerializable(typeof(ModeDowngradedMessage))]
+[JsonSerializable(typeof(PermissionBlockedMessage))]
 [JsonSerializable(typeof(GameThreadStatusMessage))]
 [JsonSerializable(typeof(AgentLogMessage))]
 [JsonSerializable(typeof(LayoutMessage))]
