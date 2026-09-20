@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 
 namespace MinorShift.Emuera.Runtime.Utils;
@@ -71,6 +72,42 @@ internal static class SafPath
 	public static string GetLogicalFileNameWithoutExtension(string path)
 	{
 		return Path.GetFileNameWithoutExtension(GetLogicalFileName(path));
+	}
+
+	/// <summary>
+	/// issues/15：content URI 的**可读路径**——形如 <c>内部存储 / games / eratoho</c>，供游戏选择页展示。
+	/// <para>
+	/// SAF 的 <c>content://</c> URI 是 provider 内部句柄，直接铺给用户没有意义；但把它折叠成一个常量
+	/// （曾经的「Android 存储目录」）会让用户换任何目录都看到同一句话——目录名信息全丢。而 documentId
+	/// 本来就带人类可读的相对路径（<c>primary:games/eratoho</c>），本方法把它还原出来。
+	/// </para>
+	/// <para>
+	/// 卷名映射：<c>primary</c> → <c>内部存储</c>；其余卷（SD / OTG 的卷 UUID）保留原标识——
+	/// 卷描述要经 Android StorageManager 取，纯 Core 层拿不到，不在此猜中文名。
+	/// 非 content URI 原样返回（真实文件路径本身就是可读的）。
+	/// 解析不出 documentId（未知 provider）时返回 null——调用方回退到折叠文案。
+	/// </para>
+	/// </summary>
+	public static string? TryGetDisplayPath(string? path)
+	{
+		if (string.IsNullOrEmpty(path)) return null;
+		if (!IsContentUri(path)) return path;
+
+		var docId = TryGetDocumentId(path);
+		if (string.IsNullOrEmpty(docId)) return null;
+
+		// documentId 形态：<volumeId>:<相对路径>。无冒号的自定义 provider 只有相对路径。
+		var colon = docId.IndexOf(':');
+		var volume = colon > 0 ? docId[..colon] : string.Empty;
+		var relative = colon >= 0 ? docId[(colon + 1)..] : docId;
+
+		var parts = new List<string>();
+		if (volume.Length > 0)
+			parts.Add(volume.Equals("primary", StringComparison.OrdinalIgnoreCase) ? "内部存储" : volume);
+		foreach (var segment in relative.Split('/', StringSplitOptions.RemoveEmptyEntries))
+			parts.Add(segment);
+
+		return parts.Count > 0 ? string.Join(" / ", parts) : null;
 	}
 
 	/// <summary>

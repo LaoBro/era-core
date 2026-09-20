@@ -18,6 +18,7 @@ import { useUiStore } from '../ui';
  * - setMainGameDir：更新 ref + 持久化 localStorage
  * - setLastPlayedGame：更新 ref + 持久化 localStorage
  * - setScannedGames：写入 scannedGames + scanRootDir + scanStatus='idle' + 同步 mainGameDir
+ * - scanRootDirDisplay：SAF content URI 的可读主目录（与 rootDir 成对校验，错配即失效）
  * - beginExitGame：成功 / 二次进入保护
  * - completeExitGame：清 gameDir + displayState + serverState='Idle' + exitStatus='idle'，
  *   不清 lastPlayedGame（列表高亮仍需）
@@ -92,8 +93,8 @@ describe('readLastPlayedGameFromStorage 纯函数', () => {
   });
 });
 
-describe('formatMainGameDirForDisplay 纯函数', () => {
-  it('隐藏 Android SAF content URI，避免把 provider URL 展示给用户', () => {
+describe('formatMainGameDirForDisplay 纯函数（SAF 兜底文案）', () => {
+  it('没有可读名可依时折叠成常量，避免把 provider URL 展示给用户', () => {
     expect(formatMainGameDirForDisplay(
       'content://com.android.externalstorage.documents/tree/primary%3Aemuera',
     )).toBe('Android 存储目录');
@@ -106,6 +107,67 @@ describe('formatMainGameDirForDisplay 纯函数', () => {
   it('空路径显示未设置', () => {
     expect(formatMainGameDirForDisplay(null)).toBe('(未设置)');
     expect(formatMainGameDirForDisplay('   ')).toBe('(未设置)');
+  });
+});
+
+/**
+ * issues/15：SAF content URI 的可读主目录（C# `SafPath.TryGetDisplayPath` → ``displayPath``）。
+ *
+ * 展示名与它对应的 rootDir 成对存——`mauiGameLibrarySource.scan` 会立刻改写 scanRootDir，
+ * 而回执要等 C# 扫完才到；只存展示串会让这段窗口出现「旧目录的名字 + 新目录的模式徽章」。
+ */
+describe('scanRootDirDisplay——可读主目录', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.stubGlobal('localStorage', makeLocalStorage());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const SAF_DIR =
+    'content://com.android.externalstorage.documents/tree/primary%3Agames%2Feratoho';
+  const SAF_DISPLAY = '内部存储 / games / eratoho';
+
+  it('回执带回 displayPath 时生效——SAF 目录名不再折叠成常量', () => {
+    const game = useGameStore();
+    game.setScannedGames([], SAF_DIR, true, SAF_DISPLAY);
+
+    expect(game.scanRootDirDisplay).toBe(SAF_DISPLAY);
+  });
+
+  it('无 displayPath（Windows / Web / 旧 C# 消息）→ null，渲染方回退折叠文案', () => {
+    const game = useGameStore();
+    game.setScannedGames([], 'D:/emuera', true);
+
+    expect(game.scanRootDirDisplay).toBeNull();
+  });
+
+  it('主目录已换、回执未到 → 立刻失效，不拿旧目录的名字配新目录', () => {
+    const game = useGameStore();
+    game.setScannedGames([], SAF_DIR, true, SAF_DISPLAY);
+
+    // mauiGameLibrarySource.scan 收到新目录时会同步改写 scanRootDir
+    game.scanRootDir =
+      'content://com.android.externalstorage.documents/tree/primary%3Aother';
+
+    expect(game.scanRootDirDisplay).toBeNull();
+  });
+
+  it('同一路径重扫 → 仍生效（路径校验按值比较，不按引用）', () => {
+    const game = useGameStore();
+    game.setScannedGames([], SAF_DIR, true, SAF_DISPLAY);
+    game.setScannedGames([], SAF_DIR, true, SAF_DISPLAY);
+
+    expect(game.scanRootDirDisplay).toBe(SAF_DISPLAY);
+  });
+
+  it('rootDir 为 null 时不留存展示名', () => {
+    const game = useGameStore();
+    game.setScannedGames([], null, null, SAF_DISPLAY);
+
+    expect(game.scanRootDirDisplay).toBeNull();
   });
 });
 

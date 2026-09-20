@@ -112,7 +112,8 @@ function parseBridgeController(raw: unknown): { kind: 'agent' | 'user'; leaseExp
  * - `{"type":"folderPicked","path":"..."}`——用户选中目录（Windows FolderPicker），
  *   game-library spec ID9 后语义改为「更改主目录」——保存为 mainGameDir + 重新 scanGames
  * - `{"type":"folderPicked","error":"..."}`——文件选择器失败，写 `mauiError` 让 UI 展示
- * - `{"type":"gamesScanned","games":[{name,fullPath}],"rootDir":...}`——scanGames 回复，写入 store
+ * - `{"type":"gamesScanned","games":[{name,fullPath}],"rootDir":...,"displayPath":...}`——scanGames 回复，写入 store
+ *   （`displayPath` 是 rootDir 的可读形态，issues/15：SAF content URI → 「内部存储 / games / eratoho」）
  * - `{"type":"gameExited"}`——exitGame 处理完成，清状态 + 自动重新 scanGames
  * - `{"type":"gameThreadStatus","alive":true/false}`——前端静默监控的线程存活探测回复，
  *   写入 gameStatusHint（'running'/'stopped'），App.vue 据此显示半透明状态提示
@@ -232,10 +233,13 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
     const rootDir = typeof m.rootDir === 'string' ? m.rootDir : null;
     // game-library spec ID13：主目录是否存在（C# HandleScanGames 通过 IGameDirAccessor 检查）
     const rootDirExists = typeof m.rootDirExists === 'boolean' ? m.rootDirExists : null;
+    // issues/15：rootDir 的可读形态（SAF content URI → 「内部存储 / games / eratoho」）。
+    // 仅供渲染——模式判定仍用 rootDir 原文。
+    const displayPath = typeof m.displayPath === 'string' ? m.displayPath : null;
     console.log(
       `[useAppInit] gamesScanned: ${games.length} games, rootDir=${rootDir}, rootDirExists=${rootDirExists}`,
     );
-    game.setScannedGames(games, rootDir, rootDirExists);
+    game.setScannedGames(games, rootDir, rootDirExists, displayPath);
     return;
   }
 

@@ -34,9 +34,11 @@ const conn = useConnectionStore();
 /** 原生选择器可用（MAUI）——「更改目录」分派：MAUI 直接原生选择器，Web 打开手动输入对话框。 */
 const isNative = computed(() => props.source.supportsNativePicker);
 
-/** 主目录展示文案——优先 scanRootDir（最近扫描的目录），fallback mainGameDir。 */
+/** 主目录展示文案——优先扫库回执带回的可读路径（SAF 的 content URI 解成「内部存储 / …」），
+ *  没有时回退格式化的 scanRootDir（最近扫描的目录）、再退 mainGameDir。 */
 const mainDirDisplay = computed(() =>
-  formatMainGameDirForDisplay(game.scanRootDir ?? game.mainGameDir),
+  game.scanRootDirDisplay
+  ?? formatMainGameDirForDisplay(game.scanRootDir ?? game.mainGameDir),
 );
 
 /**
@@ -45,8 +47,8 @@ const mainDirDisplay = computed(() =>
  * 路径没有空格，默认只能靠 `word-break: break-all` 在任意字符处断——加了模式徽章后可用宽度
  * 变窄，会在词中间断开（`/em` / `uera`）。切成片段后折行只发生在分隔符处，读起来是完整的段。
  *
- * 注意取的是 {@link mainDirDisplay}（SAF 模式已折叠成「Android 存储目录」）而非原始路径——
- * 用原始值会把整条 `content://` URI 铺出来。
+ * 注意取的是 {@link mainDirDisplay}（SAF 的 content URI 已解成「内部存储 / games / eratoho」，
+ * 只有解析不出 documentId 时才退回折叠常量）而非原始路径——用原始值会把整条 `content://` URI 铺出来。
  */
 const mainDirSegments = computed<string[]>(() => {
   const dir = mainDirDisplay.value;
@@ -75,6 +77,9 @@ const showModeBadge = computed(() => props.source.kind === 'maui' && isAndroidMa
  *
  * `content://` = 兼容轨（SAF 文档访问）；真实路径 = 直读轨。
  * 用户需要「知道自己在哪条轨上」，因为这个差异决定了加载速度（issue 15 实测 −42%）。
+ *
+ * **必须读原始路径**：`game.scanRootDirDisplay` 是给渲染用的可读名（如「内部存储 / games」），
+ * 不含 `content://` 前缀——拿它判模式会把 SAF 轨误判成快速轨。
  */
 const dirMode = computed<'legacy' | 'saf' | null>(() => {
   const dir = game.scanRootDir ?? game.mainGameDir;
@@ -136,7 +141,7 @@ const dirDialogVisible = ref(false);
 /**
  * issues/15 S3：本次打开是否**直接展开浏览区**。
  *
- * ⋮ 菜单项写着「直读，更快」，点进去却停在输入框、要再点一次「浏览…」才到直读浏览器——
+ * ⋮ 菜单项承诺走快速模式，点进去却停在输入框、要再点一次「浏览…」才到直读浏览器——
  * 承诺与落点不一致。菜单入口走 `{ browse: true }`，让「点进来 = 看到目录」。
  * Web 的入口不带参数，保持原行为（手动输入为主）。
  */
@@ -253,13 +258,15 @@ defineExpose({ openChangeDirDialog });
         </template>
         <template v-else>未选择目录</template>
       </span>
-      <!-- issues/15 S3：模式徽章——让用户看得见自己走的是哪条轨（直读更快 / 兼容兜底） -->
+      <!-- issues/15 S3：模式徽章——让用户看得见自己走的是哪条轨（快速 / 兼容）。
+           文案只报状态；「更快」这类代价说明留给入口处（菜单 / 空态 / 对话框），
+           避免同一屏出现「状态 + 卖点」混合体。 -->
       <span
         v-if="showModeBadge && dirMode"
         class="mode-badge"
         :class="dirMode === 'legacy' ? 'mode-legacy' : 'mode-saf'"
       >
-        {{ dirMode === 'legacy' ? '直读 · 更快' : '兼容 · 可用' }}
+        {{ dirMode === 'legacy' ? '快速模式' : '兼容模式' }}
       </span>
     </div>
 
@@ -439,31 +446,25 @@ defineExpose({ openChangeDirDialog });
   opacity: 0.6;
 }
 
-/* issues/15 S3：目录模式徽章（仅 Android MAUI）——语义色 token + color-mix 做浅底，不写死 hex */
+/* issues/15 S3：目录模式提示（仅 Android MAUI）。
+   与同页 GameRow 的 IR 徽章同构——弱化色文字、无容器，提示仅辅助（不喧宾夺主）：
+   曾经是「满饱和度文字 + 16% 填充 + 40% 描边」，在同一屏里是唯一带边框的彩色块，读起来像告警。
+   去掉填充后不再需要 color-mix 与旧 WebView 兜底双声明。
+   align-self: baseline 对齐 mono 路径的文字基线；font-weight 500 对齐设计系统 label 字重。 */
 .mode-badge {
   flex-shrink: 0;
-  align-self: center;
-  padding: 3px 9px;
-  border-radius: 9999px;
-  border: 1px solid transparent;
+  align-self: baseline;
   font-size: var(--font-size-sm);
+  font-weight: 500;
   line-height: 1.4;
   white-space: nowrap;
+  opacity: 0.85;
 }
 .mode-legacy {
   color: var(--color-success);
-  /* 双声明：旧 WebView 无 color-mix → 落到纯底色 + 满强度边框 */
-  background: var(--color-bg);
-  background: color-mix(in srgb, var(--color-success) 16%, transparent);
-  border-color: var(--color-success);
-  border-color: color-mix(in srgb, var(--color-success) 40%, transparent);
 }
 .mode-saf {
   color: var(--color-warning);
-  background: var(--color-bg);
-  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
-  border-color: var(--color-warning);
-  border-color: color-mix(in srgb, var(--color-warning) 40%, transparent);
 }
 
 .glv-body {

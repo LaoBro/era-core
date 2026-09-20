@@ -791,8 +791,12 @@ internal sealed class BridgeHost : IDisposable
         bool rootDirExists = GameScanner.RootDirectoryExists(rootDir, dirAccessor);
         var games = GameScanner.Scan(rootDir, dirAccessor);
         var gamesPayload = BuildGamePayloadWithIrInfo(games);
+        // issues/15：顺带把 rootDir 的可读形态推给前端（SAF content URI → 「内部存储 / games / eratoho」）。
+        // 没有它，路径行与空态只能把一切 content:// 折叠成「Android 存储目录」常量，
+        // 用户换任何目录看到的都是同一句话。判定模式仍由前端用 rootDir 原文做。
         var msgJson = JsonSerializer.Serialize(
-            new GamesScannedMessage("gamesScanned", gamesPayload, rootDir, rootDirExists),
+            new GamesScannedMessage("gamesScanned", gamesPayload, rootDir, rootDirExists,
+                SafPath.TryGetDisplayPath(rootDir)),
             MauiJsonContext.Default.GamesScannedMessage);
         _dispatcher.Dispatch(() => _jsBridge.PostMessage(msgJson));
         Console.WriteLine($"[bridge] ScanAndPushGames: {gamesPayload.Count} games, rootDir={rootDir}");
@@ -893,7 +897,8 @@ internal sealed class BridgeHost : IDisposable
         var games = GameScanner.Scan(rootDir, dirAccessor);
         var gamesPayload = BuildGamePayloadWithIrInfo(games);
         var msgJson = JsonSerializer.Serialize(
-            new GamesScannedMessage("gamesScanned", gamesPayload, rootDir, rootDirExists),
+            new GamesScannedMessage("gamesScanned", gamesPayload, rootDir, rootDirExists,
+                SafPath.TryGetDisplayPath(rootDir)),
             MauiJsonContext.Default.GamesScannedMessage);
         _dispatcher.Dispatch(() => _jsBridge.PostMessage(msgJson));
         // A0 补充（code-review 修复）：Vue 启动必发 scanGames——此处同步推 config，

@@ -295,6 +295,28 @@ export const useGameStore = defineStore('game', () => {
   /** 最近一次 scanGames 的 rootDir——列表页底部展示「主目录: <path>」用。 */
   const scanRootDir = ref<string | null>(null);
   /**
+   * issues/15：扫库回执带回的**可读主目录**（SAF content URI → 「内部存储 / games / eratoho」）。
+   *
+   * 与 rootDir **成对**存，不单独存展示串：`mauiGameLibrarySource.scan` 会立刻改写 scanRootDir，
+   * 而回执要等 C# 扫完才到——只存展示串的话，这段窗口里会拿旧目录的名字去配新目录的模式徽章。
+   * 成对存 + 下面的 computed 做路径校验，错配时自然失效、退回折叠文案。
+   */
+  const scanRootDirDisplayEntry = ref<{ rootDir: string; displayPath: string } | null>(null);
+  /**
+   * 主目录的展示态可读路径——**仅在它与当前主目录同一路径**时有效，否则 null
+   * （渲染方回退 `formatMainGameDirForDisplay`）。Windows / Web 恒为 null：
+   * 真实路径本身就是可读的，不需要另给展示名。
+   *
+   * 注意：此值**只供渲染**。「快速 / 兼容」模式判定必须继续用 `scanRootDir` 原文的
+   * `content://` 前缀——展示名不含协议信息，拿它判模式会把 SAF 轨误判成快速轨。
+   */
+  const scanRootDirDisplay = computed<string | null>(() => {
+    const entry = scanRootDirDisplayEntry.value;
+    const current = scanRootDir.value ?? mainGameDir.value;
+    if (!entry || !current) return null;
+    return entry.rootDir === current ? entry.displayPath : null;
+  });
+  /**
    * issues/15：Android「所有文件访问」（MANAGE_EXTERNAL_STORAGE）授权状态——
    * null = 未知（未查询过）。由 permissionStatus 消息（checkPermission 回复）写入，
    * MauiGameList 菜单项据此渲染「已授权 / 申请」。
@@ -1050,11 +1072,22 @@ export const useGameStore = defineStore('game', () => {
    *
    * @param games C# GameScanner.Scan 返回的游戏列表
    * @param rootDir 扫描时使用的主目录路径（C# 回复中携带）
+   * @param rootDirExists 主目录是否存在（C# 经 IGameDirAccessor 检查；可选）
+   * @param displayPath issues/15：rootDir 的可读形态（SAF content URI → 「内部存储 / games / eratoho」）。
+   *   C# `SafPath.TryGetDisplayPath` 给出；省略 / 为 null 时渲染方回退折叠文案。
+   *   **仅用于展示**——模式判定仍用 rootDir 原文（见 {@link scanRootDirDisplay}）。
    */
-  function setScannedGames(games: GameEntry[], rootDir: string | null, rootDirExists?: boolean | null): void {
+  function setScannedGames(
+    games: GameEntry[],
+    rootDir: string | null,
+    rootDirExists?: boolean | null,
+    displayPath?: string | null,
+  ): void {
     scannedGames.value = games;
     scanRootDir.value = rootDir;
     scanRootDirExists.value = rootDirExists ?? null;
+    scanRootDirDisplayEntry.value =
+      rootDir && displayPath ? { rootDir, displayPath } : null;
     scanStatus.value = 'idle';
     // 同步 mainGameDir——C# 端 HandleScanGames 收到非空 rootDir 时已写 Preferences，
     // Vue 端此处同步 localStorage 让首启动 UI 立即正确
@@ -1607,6 +1640,8 @@ export const useGameStore = defineStore('game', () => {
     lastPlayedGame,
     scannedGames,
     scanRootDir,
+    // issues/15：主目录的展示态可读路径（SAF content URI 解出的「内部存储 / …」）——仅供渲染
+    scanRootDirDisplay,
     // issues/15：Android「所有文件访问」授权状态
     allFilesAccess,
     setAllFilesAccess,

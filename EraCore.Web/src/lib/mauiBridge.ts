@@ -188,7 +188,8 @@ export function sendBridgeUrl(action: string, data?: string): boolean {
  * Vue 端 handler 收到的是已解析的 JS 对象——按 `type` 字段分发：
  * - `{"type":"folderPicked","path":...}`——文件选择器成功，调 `setMainGameDir(path)` + `scanGames(path)`（spec ID9 修订）
  * - `{"type":"folderPicked","error":...}`——文件选择器失败，展示错误
- * - `{"type":"gamesScanned",...}`——scanGames 回复，写入 store 渲染列表
+ * - `{"type":"gamesScanned","games":[...],"rootDir":...,"displayPath":...}`——scanGames 回复，写入 store 渲染列表
+ *   （`displayPath` 为 rootDir 的可读形态，issues/15；C# 端由 `SafPath.TryGetDisplayPath` 给出）
  * - `{"type":"safDirectoryPicked",...}`——Android SAF 目录选择结果（ADR-0019）
  * - `{"type":"gameExited"}`——exitGame 完成，清状态 + 自动 rescan
  *

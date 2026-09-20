@@ -18,6 +18,14 @@ public class SafPathTests
 	const string OutsideCsv =
 		"content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FTK1.29.3%2FCSV%2FGAMEBASE.CSV";
 
+	// issues/15：SAF 树的**可读路径**样本——documentId 里带人类可读相对路径（<volumeId>:<rel>）
+	const string TreeRootGames =
+		"content://com.android.externalstorage.documents/tree/primary%3Agames%2Feratoho";
+	const string TreeRootVolumeOnly =
+		"content://com.android.externalstorage.documents/tree/primary%3A";
+	const string TreeRootRemovable =
+		"content://com.android.externalstorage.documents/tree/1AEF-3B2C%3Agames";
+
 	[Fact]
 	public void GetLogicalFileName_SAF_returns_short_name_not_documentId()
 	{
@@ -54,6 +62,51 @@ public class SafPathTests
 		Assert.True(SafPath.IsUnderRoot(ErbRoot, DvarErd));
 		Assert.True(SafPath.IsUnderRoot(ErbRoot, NestedErb));
 		Assert.False(SafPath.IsUnderRoot(ErbRoot, OutsideCsv));
+	}
+
+	/// <summary>
+	/// issues/15：把 SAF 树解成用户看得懂的目录名——折叠成常量会让换任何目录都显示同一句话。
+	/// </summary>
+	[Fact]
+	public void TryGetDisplayPath_SAF_tree_yields_readable_path_not_provider_uri()
+	{
+		Assert.Equal("内部存储 / games / eratoho", SafPath.TryGetDisplayPath(TreeRootGames));
+	}
+
+	[Fact]
+	public void TryGetDisplayPath_SAF_document_keeps_nested_segments()
+	{
+		Assert.Equal("内部存储 / emuera / TK1.29.3 / ERB", SafPath.TryGetDisplayPath(ErbRoot));
+	}
+
+	[Fact]
+	public void TryGetDisplayPath_volume_root_is_storage_name_only()
+	{
+		// 用户在系统选择器里直接选了「内部存储」根
+		Assert.Equal("内部存储", SafPath.TryGetDisplayPath(TreeRootVolumeOnly));
+	}
+
+	[Fact]
+	public void TryGetDisplayPath_non_primary_volume_keeps_volume_id()
+	{
+		// SD / OTG 的卷描述要经 Android StorageManager 取，Core 层不猜中文名
+		Assert.Equal("1AEF-3B2C / games", SafPath.TryGetDisplayPath(TreeRootRemovable));
+	}
+
+	[Fact]
+	public void TryGetDisplayPath_filesystem_path_passes_through()
+	{
+		// 真实路径本身就是可读的——前端因此两条轨走同一条渲染路径
+		Assert.Equal(@"D:\games\emuera", SafPath.TryGetDisplayPath(@"D:\games\emuera"));
+	}
+
+	[Fact]
+	public void TryGetDisplayPath_returns_null_when_unresolvable()
+	{
+		// null 是「解析不出」的信号，前端据此回退 formatMainGameDirForDisplay 的折叠文案
+		Assert.Null(SafPath.TryGetDisplayPath(null));
+		Assert.Null(SafPath.TryGetDisplayPath(""));
+		Assert.Null(SafPath.TryGetDisplayPath("content://unknown.provider/no-tree-or-document"));
 	}
 
 	[Fact]

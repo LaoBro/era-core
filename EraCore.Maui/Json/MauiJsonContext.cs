@@ -58,12 +58,24 @@ internal sealed record GameInfoDto(
     long IrCacheBytes,
     string? IrCacheBuiltUtc);
 
-/// <summary>{"type":"gamesScanned","games":[...],"rootDir":...,"rootDirExists":...}</summary>
+/// <summary>
+/// {"type":"gamesScanned","games":[...],"rootDir":...,"rootDirExists":...,"displayPath":...}
+/// <para>
+/// issues/15：DisplayPath 是 RootDir 的**可读形态**——SAF 的 content URI 解成
+/// 「内部存储 / games / eratoho」，让用户看得出自己选的是哪个目录（纯路径由 Core 的
+/// <c>SafPath.TryGetDisplayPath</c> 给出，前端不重复实现）。真实文件路径恒等于 RootDir。
+/// </para>
+/// <para>
+/// 前端渲染用它，判定「快速 / 兼容」模式**仍必须用 RootDir 原文的 content:// 前缀**——
+/// 展示名不含协议信息，拿它判模式会把 SAF 轨误判成快速轨。
+/// </para>
+/// </summary>
 internal sealed record GamesScannedMessage(
     string Type,
     List<GameInfoDto> Games,
     string? RootDir,
-    bool RootDirExists);
+    bool RootDirExists,
+    string? DisplayPath);
 
 /// <summary>{"type":"directoriesListed","currentPath":...,"parentPath":...,"subDirectories":[...]}</summary>
 internal sealed record DirectoriesListedMessage(

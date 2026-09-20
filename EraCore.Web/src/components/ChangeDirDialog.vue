@@ -34,7 +34,7 @@ const props = defineProps<{
   /**
    * issues/15 S3：打开后是否**直接展开浏览区**。
    *
-   * ⋮ 菜单项写着「直读，更快」，点进来却停在输入框、还要再点一次「浏览…」——承诺与落点不一致。
+   * ⋮ 菜单项承诺走快速模式，点进来却停在输入框、还要再点一次「浏览…」——承诺与落点不一致。
    * 菜单入口传 true 让「点进来 = 看到目录」；Web 入口不传，保持手动输入为主的原行为。
    */
   autoBrowse?: boolean;
@@ -354,10 +354,10 @@ onUnmounted(() => {
       >
         <h2 class="cd-title">更改目录</h2>
         <p class="cd-hint">
-          <template v-if="browsing">选择包含游戏的目录后点「扫描此目录」；真实路径目录走直读，更快。</template>
+          <template v-if="browsing">选择包含游戏的目录后点「扫描此目录」；真实路径目录走快速模式，加载更快。</template>
           <template v-else>
             输入游戏主目录（可包含多个游戏），或点「浏览…」逐层选择。
-            <template v-if="canBrowseRoots">选择真实路径目录（如 /storage/emulated/0/…）可启用直读模式，加载更快。</template>
+            <template v-if="canBrowseRoots">选择真实路径目录（如 /storage/emulated/0/…）可启用快速模式，加载更快。</template>
           </template>
         </p>
 

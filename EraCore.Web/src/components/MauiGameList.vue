@@ -106,8 +106,10 @@ const dirMenuItems = computed<PopupMenuItem[]>(() => [
     type: 'item',
     id: 'change-dir',
     label: isScanning.value ? '扫描中…' : '更改目录...',
-    // issues/15 S3：右侧小字把「这条路的代价」写在点之前（Windows 无此差异，不加 hint）
-    ...(isAndroid.value ? { hint: '直读，更快' } : {}),
+    // issues/15 S3：右侧小字把「这条路的代价」写在点之前（Windows 无此差异，不加 hint）。
+    // 只写模式名不带「需授权」——紧邻的「所有文件访问权限」项已在报授权状态，重复会与之打架；
+    // 兜底轨则必须说明自己为什么存在（无需授权）。
+    ...(isAndroid.value ? { hint: '快速模式' } : {}),
     disabled: isScanning.value,
     onClick: onChangeMainDir,
   },
@@ -119,7 +121,7 @@ const dirMenuItems = computed<PopupMenuItem[]>(() => [
           type: 'item' as const,
           id: 'pick-saf',
           label: '改用系统选择器...',
-          hint: '兼容，无需授权',
+          hint: '兼容模式，无需授权',
           disabled: isScanning.value,
           onClick: onUseSystemPicker,
         },
@@ -180,7 +182,7 @@ function onChangeMainDir(): void {
 }
 
 /** issues/15 S3：打开页内浏览器（ChangeDirDialog），并清掉待办意图——避免授权回流后再开一次。
- *  传 `browse: true` 让对话框**直接展开浏览区**（菜单项承诺「直读，更快」，不该停在输入框）。 */
+ *  传 `browse: true` 让对话框**直接展开浏览区**（菜单项承诺走快速模式，不该停在输入框）。 */
 function openBrowseDialog(): void {
   pendingBrowseAfterGrant.value = false;
   game.clearMauiError();
@@ -219,7 +221,7 @@ function onRescan(): void {
             @click="onPrimaryEmptyAction"
           >{{ game.allFilesAccess === true ? '选择游戏目录' : '获取所有文件访问' }}</button>
           <span class="empty-act-hint">
-            {{ game.allFilesAccess === true ? '直读模式，加载更快' : '授予后直接读取文件，加载更快' }}
+            {{ game.allFilesAccess === true ? '快速模式，加载更快' : '授权后进入快速模式，加载更快' }}
           </span>
         </div>
         <div class="empty-act-group">
@@ -228,7 +230,7 @@ function onRescan(): void {
             class="btn-outline empty-act-btn"
             @click="onUseSystemPicker"
           >改用系统选择器</button>
-          <span class="empty-act-hint">无需授权，兼容模式</span>
+          <span class="empty-act-hint">兼容模式，无需授权</span>
         </div>
       </template>
       <!-- Windows：无「所有文件访问」概念，保留单一原生选择器按钮（与改动前一致） -->
