@@ -109,6 +109,100 @@ public class SafPathTests
 		Assert.Null(SafPath.TryGetDisplayPath("content://unknown.provider/no-tree-or-document"));
 	}
 
+	// ── issues/15（方案 B）：content URI → 真实路径反推的三段纯逻辑 ──────────────
+	// Android 层的 SafLocalPathResolver 只负责「拿卷根 + 探针」，判定规则全在这里，
+	// 于是可以在桌面测试项目里锁住（反推本身要真机，但决策规则不必等真机）。
+
+	[Fact]
+	public void TrySplitDocumentId_separates_volume_and_relative_path()
+	{
+		Assert.True(SafPath.TrySplitDocumentId("primary:games/eratoho", out var volume, out var rel));
+		Assert.Equal("primary", volume);
+		Assert.Equal("games/eratoho", rel);
+
+		Assert.True(SafPath.TrySplitDocumentId("1AEF-3B2C:games", out var removable, out var relRemovable));
+		Assert.Equal("1AEF-3B2C", removable);
+		Assert.Equal("games", relRemovable);
+	}
+
+	[Fact]
+	public void TrySplitDocumentId_volume_root_yields_empty_relative_path()
+	{
+		// 用户直接选了卷根——相对路径为空是合法结果，不是失败
+		Assert.True(SafPath.TrySplitDocumentId("primary:", out var volume, out var rel));
+		Assert.Equal("primary", volume);
+		Assert.Equal("", rel);
+	}
+
+	[Fact]
+	public void TrySplitDocumentId_only_first_colon_separates()
+	{
+		Assert.True(SafPath.TrySplitDocumentId("primary:games/a:b", out var volume, out var rel));
+		Assert.Equal("primary", volume);
+		Assert.Equal("games/a:b", rel);
+	}
+
+	[Fact]
+	public void TrySplitDocumentId_without_colon_keeps_relative_only()
+	{
+		// 无冒号的自定义 provider：可解析但卷标识为空，调用方据此放弃反推
+		Assert.True(SafPath.TrySplitDocumentId("games/eratoho", out var volume, out var rel));
+		Assert.Equal("", volume);
+		Assert.Equal("games/eratoho", rel);
+	}
+
+	[Fact]
+	public void TrySplitDocumentId_rejects_malformed()
+	{
+		Assert.False(SafPath.TrySplitDocumentId(null, out _, out _));
+		Assert.False(SafPath.TrySplitDocumentId("", out _, out _));
+		Assert.False(SafPath.TrySplitDocumentId(":x", out _, out _));
+	}
+
+	[Fact]
+	public void IsDirectAccessBlocked_covers_android_data_and_obb_only()
+	{
+		// Android 11+ 即使有 MANAGE_EXTERNAL_STORAGE 也禁止直接路径读这两个区
+		Assert.True(SafPath.IsDirectAccessBlocked("Android/data"));
+		Assert.True(SafPath.IsDirectAccessBlocked("Android/data/com.foo/files"));
+		Assert.True(SafPath.IsDirectAccessBlocked("android/DATA/com.foo"));
+		Assert.True(SafPath.IsDirectAccessBlocked("Android/obb/com.foo"));
+
+		// 只匹配顶层前缀——同名嵌套目录不在禁区
+		Assert.False(SafPath.IsDirectAccessBlocked("games/Android/data"));
+		Assert.False(SafPath.IsDirectAccessBlocked("Android/media/com.foo"));
+		Assert.False(SafPath.IsDirectAccessBlocked("Android"));
+		Assert.False(SafPath.IsDirectAccessBlocked(""));
+	}
+
+	[Fact]
+	public void TryCombineVolumeRoot_joins_root_and_relative()
+	{
+		Assert.True(SafPath.TryCombineVolumeRoot("/storage/emulated/0", "games/eratoho", out var path));
+		Assert.Equal("/storage/emulated/0/games/eratoho", path);
+
+		Assert.True(SafPath.TryCombineVolumeRoot("/storage/1AEF-3B2C/", "games", out var removable));
+		Assert.Equal("/storage/1AEF-3B2C/games", removable);
+	}
+
+	[Fact]
+	public void TryCombineVolumeRoot_empty_relative_returns_root()
+	{
+		Assert.True(SafPath.TryCombineVolumeRoot("/storage/emulated/0/", "", out var path));
+		Assert.Equal("/storage/emulated/0", path);
+	}
+
+	[Fact]
+	public void TryCombineVolumeRoot_rejects_traversal_and_bad_input()
+	{
+		// 宁可退回 SAF 慢一点，也不产出一个可疑路径去指错目录
+		Assert.False(SafPath.TryCombineVolumeRoot(null, "games", out _));
+		Assert.False(SafPath.TryCombineVolumeRoot("", "games", out _));
+		Assert.False(SafPath.TryCombineVolumeRoot("/storage/emulated/0", "../etc", out _));
+		Assert.False(SafPath.TryCombineVolumeRoot("/storage/emulated/0", "games/../..", out _));
+		Assert.False(SafPath.TryCombineVolumeRoot("/storage/emulated/0", "games//x", out _));
+	}
+
 	[Fact]
 	public void Filesystem_paths_still_use_Path_semantics()
 	{

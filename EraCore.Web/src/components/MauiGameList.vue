@@ -16,19 +16,19 @@ import PopupMenu, { type PopupMenuItem } from './PopupMenu.vue';
  *
  * 只是 GameLibraryView（与 Web 共用一份设计）的薄 wrapper——平台差异在 ⋮ 菜单与空态动作：
  * - 数据获取（扫描/加载）经 mauiGameLibrarySource（C# 桥接）
- * - 「更改目录…」Android 走页内真实路径浏览器（**推荐轨：直读**），Windows 走原生 FolderPicker
- * - 「改用系统选择器…」（Android）SAF 兜底轨，仅当目标目录只能在 SAF 下访问时才需要
- * - 「所有文件访问权限」（Android，恒显示）直读轨的前置条件，右侧直显当前状态
- * - issues/15 S3：空态给双按钮，把两条轨的代价（拿权限更快 / 免授权兼容）在首次使用时就说明
+ * - 「更改目录…」Android 走**系统选择器**（唯一入口），Windows 走原生 FolderPicker
+ * - 「所有文件访问权限」（Android，恒显示）快速轨的开关，右侧直显状态；授权后自动重扫以升级
+ * - 空态只讲「选目录」一件事；授权退居为可选的加速入口
  *
- * 设计取向（2026-09-11 用户裁定）：**不隐藏任何一条路，而是把代价写进标签**——
- * 优先级靠措辞与顺序体现，用户自己选；选定后由路径形态决定模式（设计稿 §1）。
+ * 设计取向（issues/15 方案 B，2026-09-20）：**入口只有一个，轨由判定决定**。
+ * 系统选择器按平台契约只产出 content://，但 C# 侧会尝试把它反推成真实路径
+ * （externalstorage provider 的 documentId 带相对路径 + 卷挂载点）；
+ * 全过走快速轨、任一不过留在 SAF 兼容轨。于是用户不必在选之前做技术选择——
+ * 这与 2026-09-11 的「把两条路的代价写进标签、让用户自己选」是取向反转：
+ * 那条裁定是**页内浏览器的替代品**，而页内浏览器本身已被系统选择器取代。
  */
 const game = useGameStore();
 const ui = useUiStore();
-
-/** GameLibraryView 实例引用——目录入口经其暴露方法打开页内浏览对话框。 */
-const glvRef = ref<InstanceType<typeof GameLibraryView> | null>(null);
 
 /** 顶部 ⋮ 菜单展开状态。 */
 const showMenu = ref(false);
@@ -38,14 +38,11 @@ const showMenu = ref(false);
 const isAndroid = computed(() => isAndroidMauiEnvironment());
 
 /**
- * issues/15 S3：空态「获取所有文件访问」的待办意图。
- *
- * 授权要跳系统设置页、返回后授权状态是**异步回流**的，没法同步串联。故置此标记 +
- * watch 授权状态：**授权成功才**自动打开目录浏览器，让「授权 → 选目录」连成一个动作
- * （否则用户点完按钮回来「什么都没发生」，还得再点一次——正是改造前的困惑点）。
- * 用户没授权就返回则不打开：根列表是空的，开了反而更困惑。
+ * issues/15（方案 B）：Android 只有**一个**目录入口——系统选择器（`pickSafDirectory`）。
+ * 它按平台契约只产出 content://，能不能落到真实路径（快速轨）由 C# 侧判定：
+ * 全过就用真实路径，任一不过就留在 SAF（兼容轨）。故前端不再有「两条轨两个按钮」的分工，
+ * 也不需要「先授权才能选目录」——授权只影响选完之后走哪条轨，不影响能不能选。
  */
-const pendingBrowseAfterGrant = ref(false);
 
 /** issues/15：从系统设置页返回 app 后复查授权状态（visibilitychange 触发一次）。 */
 function onVisibilityRecheck(): void {
@@ -61,31 +58,45 @@ function onRequestAllFilesAccess(): void {
   requestAllFilesAccess();
 }
 
-/** issues/15 S3：空态「获取所有文件访问」——授权成功后自动进入目录浏览。 */
-function onGrantForBrowse(): void {
-  pendingBrowseAfterGrant.value = true;
+/**
+ * issues/15（方案 B）：授权回流后**重扫一次**的待办意图。
+ *
+ * 授权要跳系统设置页、结果异步回流，没法同步串联。而权限正是快速轨的闸门——
+ * 授权后必须重扫，C# 的归一化才有机会把 content:// 升级成真实路径（快速模式）。
+ * 不重扫的话用户会停在兼容轨，还得手动「重新扫描游戏」，等于白授权。
+ */
+const pendingRescanAfterGrant = ref(false);
+
+/** issues/15（方案 B）：去授权——完成后自动重扫以升级到快速轨。 */
+function onGrantForFastMode(): void {
+  pendingRescanAfterGrant.value = true;
   onRequestAllFilesAccess();
 }
 
-/**
- * issues/15 S3：空态主按钮——已授权就直接选目录（再让用户「获取权限」是废话），
- * 未授权先拿权限、拿到后自动接着选目录（见 onGrantForBrowse）。
- */
-function onPrimaryEmptyAction(): void {
-  if (game.allFilesAccess === true) {
-    openBrowseDialog();
-    return;
-  }
-  onGrantForBrowse();
+/** issues/15（方案 B）：空态主按钮——直接弹系统选择器（不需要任何权限）。
+ *
+ *  先置 `scanning`：选完之后 C# 会直接扫库并推 gamesScanned，前端没有第二个可挂加载态的时机。
+ *  取消 / 失败由 useAppInit 收回（否则会永远停在「正在扫描…」）。 */
+function onPickDirectory(): void {
+  game.clearMauiError();
+  game.clearLoadGameError();
+  game.scanStatus = 'scanning';
+  pickSafDirectory();
 }
 
-/** 授权状态回流后兑现待办意图（见 pendingBrowseAfterGrant）。 */
+/** issues/15（方案 B）：以当前主目录重扫——授权回流后触发，让 C# 归一化升级到快速轨。 */
+function rescanCurrentDir(): void {
+  const dir = game.scanRootDir ?? game.mainGameDir;
+  if (dir) void mauiGameLibrarySource.scan(dir);
+}
+
+/** 授权状态回流后兑现待办意图（见 pendingRescanAfterGrant）。 */
 watch(
   () => game.allFilesAccess,
   (granted) => {
-    if (!pendingBrowseAfterGrant.value) return;
-    pendingBrowseAfterGrant.value = false;
-    if (granted === true) openBrowseDialog();
+    if (!pendingRescanAfterGrant.value) return;
+    pendingRescanAfterGrant.value = false;
+    if (granted === true) rescanCurrentDir();
   },
 );
 
@@ -97,7 +108,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', onVisibilityRecheck);
-  pendingBrowseAfterGrant.value = false;
+  pendingRescanAfterGrant.value = false;
 });
 
 /** 目录操作菜单项——扫描中禁用；点击后由组件自动关闭。 */
@@ -106,37 +117,22 @@ const dirMenuItems = computed<PopupMenuItem[]>(() => [
     type: 'item',
     id: 'change-dir',
     label: isScanning.value ? '扫描中…' : '更改目录...',
-    // issues/15 S3：右侧小字把「这条路的代价」写在点之前（Windows 无此差异，不加 hint）。
-    // 只写模式名不带「需授权」——紧邻的「所有文件访问权限」项已在报授权状态，重复会与之打架；
-    // 兜底轨则必须说明自己为什么存在（无需授权）。
-    ...(isAndroid.value ? { hint: '快速模式' } : {}),
+    // issues/15（方案 B）：Android 只有这一条路（系统选择器），且**不再承诺模式**——
+    // 快速/兼容由选完后的判定决定，写「快速模式」会出现承诺与落点不一致。
+    ...(isAndroid.value ? { hint: '系统选择器' } : {}),
     disabled: isScanning.value,
     onClick: onChangeMainDir,
   },
-  // issues/15 S3：SAF 兜底轨——目标目录只在 SAF 下可读（Android/data、云盘 provider）时的出口。
-  // 与「更改目录…」并列而非隐藏：两条路的代价已写进右侧文案，用户能自行分辨。
-  ...(isAndroid.value
-    ? [
-        {
-          type: 'item' as const,
-          id: 'pick-saf',
-          label: '改用系统选择器...',
-          hint: '兼容模式，无需授权',
-          disabled: isScanning.value,
-          onClick: onUseSystemPicker,
-        },
-      ]
-    : []),
-  // issues/15 S3：授权项**恒显示**。S2 时它只在 SAF 模式下出现，于是 legacy 模式下若授权被
-  // 系统收回，就没有重新授权的入口了。右侧直显状态，让它读起来像「一个为了直读的开关」。
+  // issues/15（方案 B）：授权项**恒显示**，措辞与模式挂钩——它现在读作「快速模式的开关」。
+  // 授权后会自动重扫以升级到快速轨（见 pendingRescanAfterGrant），不是只改个状态。
   ...(isAndroid.value
     ? [
         {
           type: 'item' as const,
           id: 'all-files-access',
           label: '所有文件访问权限',
-          hint: game.allFilesAccess === true ? '已授权' : '未授权，点此申请',
-          onClick: onRequestAllFilesAccess,
+          hint: game.allFilesAccess === true ? '已授权，快速模式' : '未授权，仅兼容模式',
+          onClick: onGrantForFastMode,
         },
       ]
     : []),
@@ -169,31 +165,16 @@ const dirMenuItems = computed<PopupMenuItem[]>(() => [
 const isScanning = computed(() => game.scanStatus === 'scanning');
 
 /**
- * 「更改目录…」——Android 走页内**真实路径**浏览器（推荐轨：直读，能选出真实路径）；
- * Windows 保持原生 FolderPicker。未授权时对话框内直接给「授予」按钮，不再让用户去 ⋮ 里找。
+ * 「更改目录…」——Android 走**系统选择器**（issues/15 方案 B 起唯一入口），
+ * Windows 保持原生 FolderPicker。两者都是系统原生 UI，语义对齐。
  */
 function onChangeMainDir(): void {
   game.clearMauiError();
   if (isAndroid.value) {
-    openBrowseDialog();
+    onPickDirectory();
     return;
   }
   void mauiGameLibrarySource.pickMainDir();
-}
-
-/** issues/15 S3：打开页内浏览器（ChangeDirDialog），并清掉待办意图——避免授权回流后再开一次。
- *  传 `browse: true` 让对话框**直接展开浏览区**（菜单项承诺走快速模式，不该停在输入框）。 */
-function openBrowseDialog(): void {
-  pendingBrowseAfterGrant.value = false;
-  game.clearMauiError();
-  game.clearLoadGameError();
-  glvRef.value?.openChangeDirDialog({ browse: true });
-}
-
-/** issues/15 S3：「改用系统选择器…」——SAF 兜底轨，只产 content:// URI。 */
-function onUseSystemPicker(): void {
-  game.clearMauiError();
-  pickSafDirectory();
 }
 
 /** 重新扫描——以当前主目录为起点重扫（未选目录时退化为更改目录）。 */
@@ -209,28 +190,29 @@ function onRescan(): void {
 </script>
 
 <template>
-  <GameLibraryView ref="glvRef" :source="mauiGameLibrarySource">
-    <!-- issues/15 S3：Android 首次使用就把两条轨的代价说明白——顺序即优先级，推荐路径在前。
-         这里不隐藏任何一条：用户看过代价后自行选，选定后由路径形态决定模式。 -->
+  <GameLibraryView :source="mauiGameLibrarySource">
+    <!-- issues/15（方案 B）：Android 的空态只讲一件事——选目录。走哪条轨是选完之后自动判定的，
+         不该让用户在选之前做技术选择；授权退居为「可选加速」。 -->
     <template #empty-actions>
       <template v-if="isAndroid">
         <div class="empty-act-group">
           <button
             type="button"
             class="btn-primary btn-lg empty-act-btn"
-            @click="onPrimaryEmptyAction"
-          >{{ game.allFilesAccess === true ? '选择游戏目录' : '获取所有文件访问' }}</button>
+            @click="onPickDirectory"
+          >选择游戏目录</button>
           <span class="empty-act-hint">
-            {{ game.allFilesAccess === true ? '快速模式，加载更快' : '授权后进入快速模式，加载更快' }}
+            {{ game.allFilesAccess === true ? '选完自动用快速模式' : '未授权，选完用兼容模式' }}
           </span>
         </div>
-        <div class="empty-act-group">
+        <!-- 已授权就不必再出现授权入口——那会读成「还得再做一步」 -->
+        <div v-if="game.allFilesAccess !== true" class="empty-act-group">
           <button
             type="button"
             class="btn-outline empty-act-btn"
-            @click="onUseSystemPicker"
-          >改用系统选择器</button>
-          <span class="empty-act-hint">兼容模式，无需授权</span>
+            @click="onGrantForFastMode"
+          >获取所有文件访问</button>
+          <span class="empty-act-hint">可选，授权后可用快速模式（不影响选目录）</span>
         </div>
       </template>
       <!-- Windows：无「所有文件访问」概念，保留单一原生选择器按钮（与改动前一致） -->

@@ -252,6 +252,15 @@ internal sealed class BridgeHost : IDisposable
     /// </summary>
     private string? _mainGameDir;
 
+#if ANDROID
+    /// <summary>
+    /// issues/15（方案 B）：「所有文件访问」权限失效导致降级到兼容轨的提示是否已发过。
+    /// 前端可能仍持有旧的真实路径并反复投递 scanGames，逐次提示会变成骚扰；
+    /// 权限恢复时复位（见 <see cref="NormalizeMainDirForDirectAccess"/>）。
+    /// </summary>
+    private bool _directAccessRevokedNotified;
+#endif
+
     /// <summary>
     /// 构造桥接宿主——不启动游戏循环（spec ID7 延迟启动）。
     /// <para>
@@ -730,46 +739,75 @@ internal sealed class BridgeHost : IDisposable
             }
 
             Console.WriteLine($"[bridge] HandlePickSafDirectory: picked={result}");
-            // 更新主目录 + 持久化
-            _mainGameDir = result;
-            SaveMainGameDir(result);
 
-            // 方案 B / B1：写权限 + 探针（logcat 验收；缺写时提示重选）
-            var hasWrite = dirAccessor.HasWriteAccess();
-            var writeProbeOk = false;
-            var writeProbeDetail = "";
+            // issues/15（方案 B）：系统选择器是 Android 的唯一目录入口，但它只产出 content://。
+            // 此处判定该目录能否落到**真实路径**（快速轨）——externalstorage provider 的 documentId
+            // 带相对路径 + 卷挂载点可问系统，两者一拼就是真实路径。任一条件不过就留在 SAF（兼容轨）。
+            // 判定规则收在 SafLocalPathResolver / SafPath（纯函数可单测），本处只做取舍。
+            var effectivePath = result;
+            var stayingOnSaf = true;
 #if ANDROID
-            if (dirAccessor is SafGameDirAccessor saf)
+            var hasAllFilesAccess = HasAllFilesAccess();
+            var resolved = SafLocalPathResolver.TryResolve(result, out var localPath, out var resolveReason);
+            if (hasAllFilesAccess && resolved)
             {
-                writeProbeOk = saf.TryWriteProbe(out writeProbeDetail);
+                effectivePath = localPath;
+                LogResolve($"{localPath} <- {result} (picked → 快速轨)");
             }
-#endif
-            Console.WriteLine(
-                $"[bridge] HandlePickSafDirectory: hasWrite={hasWrite}, writeProbeOk={writeProbeOk}, detail={writeProbeDetail}");
-#if ANDROID
-            Android.Util.Log.Info("EmueraMaui",
-                $"safDirectoryPicked hasWrite={hasWrite} writeProbeOk={writeProbeOk} detail={writeProbeDetail}");
-#endif
-            if (!hasWrite || !writeProbeOk)
+            else
             {
-                var needRepick = JsonSerializer.Serialize(
-                    new SafDirectoryPickedRepick(
-                        Type: "safDirectoryPicked",
-                        Path: result,
-                        HasWrite: hasWrite,
-                        WriteProbeOk: writeProbeOk,
-                        WriteProbeDetail: writeProbeDetail,
-                        Error: hasWrite
-                            ? $"Write probe failed: {writeProbeDetail}"
-                            : "No write permission on selected folder. Please re-select the game directory and allow access.",
-                        NeedRepickForWrite: true),
-                    MauiJsonContext.Default.SafDirectoryPickedRepick);
-                _dispatcher.Dispatch(() => _jsBridge.PostMessage(needRepick));
-                // 仍继续扫描——读权限可能足够浏览；存档会再失败并提示
+                LogResolve(hasAllFilesAccess
+                    ? $"kept-uri={result} reason={resolveReason} (picked → 兼容轨)"
+                    : $"kept-uri={result} reason=no-all-files-access probe={resolved} (picked → 兼容轨)");
+            }
+            stayingOnSaf = effectivePath == result;
+#endif
+
+            // 更新主目录 + 持久化（存**生效路径**——前端按路径形态自动落到正确的模式与 accessor）
+            _mainGameDir = effectivePath;
+            SaveMainGameDir(effectivePath);
+
+            // 方案 B / B1：写权限 + 探针（logcat 验收；缺写时提示重选）。
+            // **只在留在 SAF 轨时才有意义**——走真实路径时 SAF 的写授权不影响读写，
+            // 拿它去提示「请重新选择目录」是误报。
+            if (stayingOnSaf)
+            {
+                var hasWrite = dirAccessor.HasWriteAccess();
+                var writeProbeOk = false;
+                var writeProbeDetail = "";
+#if ANDROID
+                if (dirAccessor is SafGameDirAccessor saf)
+                {
+                    writeProbeOk = saf.TryWriteProbe(out writeProbeDetail);
+                }
+#endif
+                Console.WriteLine(
+                    $"[bridge] HandlePickSafDirectory: hasWrite={hasWrite}, writeProbeOk={writeProbeOk}, detail={writeProbeDetail}");
+#if ANDROID
+                Android.Util.Log.Info("EmueraMaui",
+                    $"safDirectoryPicked hasWrite={hasWrite} writeProbeOk={writeProbeOk} detail={writeProbeDetail}");
+#endif
+                if (!hasWrite || !writeProbeOk)
+                {
+                    var needRepick = JsonSerializer.Serialize(
+                        new SafDirectoryPickedRepick(
+                            Type: "safDirectoryPicked",
+                            Path: effectivePath,
+                            HasWrite: hasWrite,
+                            WriteProbeOk: writeProbeOk,
+                            WriteProbeDetail: writeProbeDetail,
+                            Error: hasWrite
+                                ? $"Write probe failed: {writeProbeDetail}"
+                                : "No write permission on selected folder. Please re-select the game directory and allow access.",
+                            NeedRepickForWrite: true),
+                        MauiJsonContext.Default.SafDirectoryPickedRepick);
+                    _dispatcher.Dispatch(() => _jsBridge.PostMessage(needRepick));
+                    // 仍继续扫描——读权限可能足够浏览；存档会再失败并提示
+                }
             }
 
             // 直接扫描并推送 gamesScanned——避免 JS→C# 走不可靠的 bridge
-            ScanAndPushGames(result);
+            ScanAndPushGames(effectivePath);
         }
         catch (Exception ex)
         {
@@ -784,9 +822,15 @@ internal sealed class BridgeHost : IDisposable
     /// <summary>
     /// ADR-0019：直接扫描 rootDir 并推送 gamesScanned 到 Vue。
     /// 绕过 JS→C# scanGames 消息链（bridge 不可靠）。
+    /// <para>
+    /// issues/15（方案 B）：扫描前先过 <see cref="NormalizeMainDirForDirectAccess"/>——
+    /// 选完目录后的首次扫描与「重新扫描」都走这里，归一化在此一处即可覆盖两条路。
+    /// </para>
     /// </summary>
     private void ScanAndPushGames(string? rootDir)
     {
+        rootDir = NormalizeMainDirForDirectAccess(rootDir);
+
         var dirAccessor = ResolveDirAccessor(rootDir);
         bool rootDirExists = GameScanner.RootDirectoryExists(rootDir, dirAccessor);
         var games = GameScanner.Scan(rootDir, dirAccessor);
@@ -879,6 +923,10 @@ internal sealed class BridgeHost : IDisposable
             SaveMainGameDir(rootDir!);
             Console.WriteLine($"[bridge] mainGameDir updated to: {rootDir}");
         }
+
+        // issues/15（方案 B）：归一化到当前权限下可用且最快的形态——content:// 与真实路径双向自愈。
+        // 前端可能持有旧路径（localStorage 里的真实路径，或权限已变），此处是兜底的最后一道。
+        rootDir = NormalizeMainDirForDirectAccess(rootDir);
 
         Console.WriteLine($"[bridge] HandleScanGames: rootDir={rootDir}");
         // issues/13 M6：Vue 握手——首条 scanGames 证明前端已挂载且注册了 __onMessage。
@@ -1004,6 +1052,11 @@ internal sealed class BridgeHost : IDisposable
     /// <summary>
     /// issues/15 S2：枚举本机可浏览的真实路径根。主存储排最前，其余按路径序稳定排列。
     /// 任何平台异常都吞掉并返回已收集部分——根清单不该让前端挂住（前端另有超时兜底）。
+    /// <para>
+    /// 卷枚举本身走 <see cref="Services.AndroidStorageVolumes"/>（与方案 B 的真实路径反推共用
+    /// 同一份枚举，避免低版本兜底裁剪逻辑两处各写一份而漂移）；本方法只加"未授权就没有可浏览根"
+    /// 这条 UI 语义。
+    /// </para>
     /// </summary>
     private static List<StorageRootDto> CollectStorageRoots()
     {
@@ -1016,32 +1069,11 @@ internal sealed class BridgeHost : IDisposable
             return roots;
         try
         {
-            var context = Android.App.Application.Context;
-            // StorageVolume.Directory（卷根，非 app 私有子目录）是 API 30+——低版本没有「卷根」
-            // 概念（scoped storage 之前），直接走下面的 app 私有目录裁剪兜底。
-            // 单一 30 守卫同时覆盖块内的 StorageVolumes(24+)/IsPrimary(24+)/IsRemovable(24+)。
-            if (OperatingSystem.IsAndroidVersionAtLeast(30))
+            foreach (var volume in Services.AndroidStorageVolumes.Enumerate())
             {
-                var storageManager = context.GetSystemService(Android.Content.Context.StorageService)
-                    as Android.OS.Storage.StorageManager;
-                if (storageManager is not null)
-                {
-                    foreach (var volume in storageManager.StorageVolumes)
-                    {
-                        string? path = volume.Directory?.AbsolutePath;
-                        if (string.IsNullOrEmpty(path))
-                            continue;
-                        roots.Add(new StorageRootDto(
-                            path!,
-                            volume.IsPrimary ? "内部存储" : "可移动存储",
-                            volume.IsPrimary,
-                            volume.IsRemovable));
-                    }
-                }
+                roots.Add(new StorageRootDto(
+                    volume.Path, volume.Label, volume.Primary, volume.Removable));
             }
-
-            if (roots.Count == 0)
-                roots.AddRange(DeriveRootsFromAppExternalDirs(context.GetExternalFilesDirs(null)));
         }
         catch (Exception ex)
         {
@@ -1075,31 +1107,6 @@ internal sealed class BridgeHost : IDisposable
             .ThenBy(r => r.Path, StringComparer.Ordinal)
             .ToList();
     }
-
-#if ANDROID
-    /// <summary>
-    /// 兜底：从 <c>GetExternalFilesDirs</c> 的 app 私有目录裁出卷根。
-    /// 形如 <c>/storage/emulated/0/Android/data/&lt;pkg&gt;/files</c> →
-    /// <c>/storage/emulated/0</c>；裁不出（形态意外）的条目直接丢弃，绝不把 app 私有目录当根给出。
-    /// </summary>
-    private static IEnumerable<StorageRootDto> DeriveRootsFromAppExternalDirs(Java.IO.File[]? dirs)
-    {
-        if (dirs is null)
-            yield break;
-        const string marker = "/Android/";
-        for (int i = 0; i < dirs.Length; i++)
-        {
-            string? full = dirs[i]?.AbsolutePath;
-            if (string.IsNullOrEmpty(full))
-                continue;
-            int cut = full!.IndexOf(marker, StringComparison.Ordinal);
-            if (cut <= 0)
-                continue;
-            string root = full.Substring(0, cut);
-            yield return new StorageRootDto(root, i == 0 ? "内部存储" : "可移动存储", i == 0, i != 0);
-        }
-    }
-#endif
 
     /// <summary>
     /// 处理 Vue 端 exitGame 消息（game-library spec ID3 / ID10）——
@@ -1192,6 +1199,91 @@ internal sealed class BridgeHost : IDisposable
         return true;
 #endif
     }
+
+    /// <summary>
+    /// issues/15（方案 B）：把主目录归一到当前权限下**实际可用且最快**的形态——双向自愈。
+    /// <list type="bullet">
+    ///   <item><c>content://</c> + 已授权 + 反推成功 → 换成真实路径（升到快速轨，静默）</item>
+    ///   <item>真实路径 + 未授权 + 有落地 SAF URI → 退回 URI（降到兼容轨，并提示一次）</item>
+    ///   <item>其余情况原样返回</item>
+    /// </list>
+    /// <para>
+    /// <b>为何落在扫描入口，而不是只在选目录时判一次</b>：「所有文件访问」要跳系统设置页授予，
+    /// 结果异步回流——现实顺序必然是「先选目录（只能在兼容轨）→ 再想加速 → 去授权」。
+    /// 若只在选目录时判，授权后就必须重新选一次目录才能升级，是个死胡同。
+    /// 归一化放在扫描入口，则授权后的任一次扫描（启动、退出游戏、手动重扫）都会自动升级；
+    /// 权限被收回时同理自动降级。同一个函数、同一个位置，没有额外机制。
+    /// </para>
+    /// </summary>
+    private string? NormalizeMainDirForDirectAccess(string? rootDir)
+    {
+#if ANDROID
+        if (string.IsNullOrEmpty(rootDir)) return rootDir;
+
+        var hasAllFilesAccess = HasAllFilesAccess();
+        // 权限恢复后允许下一次失效再提示（见 _directAccessRevokedNotified）
+        if (hasAllFilesAccess) _directAccessRevokedNotified = false;
+
+        if (SafPath.IsContentUri(rootDir))
+        {
+            if (!hasAllFilesAccess) return rootDir;
+            if (!SafLocalPathResolver.TryResolve(rootDir, out var localPath, out var reason))
+            {
+                LogResolve($"upgrade-skipped reason={reason}");
+                return rootDir;
+            }
+            LogResolve($"{localPath} <- {rootDir} (upgrade → 快速轨)");
+            _mainGameDir = localPath;
+            SaveMainGameDir(localPath);
+            return localPath;
+        }
+
+        if (hasAllFilesAccess) return rootDir;
+
+        // 真实路径 + 无授权：读不动。有落地 URI 就退回兼容轨；没有就保持原样（读取失败会自现）。
+        var treeUri = SafGameDirAccessor.Instance?.CurrentTreeUri;
+        if (string.IsNullOrEmpty(treeUri)) return rootDir;
+
+        LogResolve($"kept-uri={treeUri} reason=all-files-access-revoked (downgrade → 兼容轨)");
+        _mainGameDir = treeUri;
+        SaveMainGameDir(treeUri!);
+        if (!_directAccessRevokedNotified)
+        {
+            _directAccessRevokedNotified = true;
+            PostModeDowngraded();
+        }
+        return treeUri;
+#else
+        return rootDir;
+#endif
+    }
+
+    /// <summary>
+    /// issues/15（方案 B）：告知前端主目录因权限失效被降级到兼容轨。
+    /// 用户什么都没做却变慢了——不说一声就成了「莫名变慢」。只给原因码，文案由前端出
+    /// （与 load-game 错误码同构，C# 不持有 UI 文案）。
+    /// </summary>
+    private void PostModeDowngraded()
+    {
+        var msgJson = JsonSerializer.Serialize(
+            new ModeDowngradedMessage("modeDowngraded", "all-files-access-revoked"),
+            MauiJsonContext.Default.ModeDowngradedMessage);
+        _dispatcher.Dispatch(() => _jsBridge.PostMessage(msgJson));
+    }
+
+#if ANDROID
+    /// <summary>
+    /// issues/15（方案 B）：反推判定的一行诊断——真机统计命中率用。
+    /// logcat 恒输出（不必先开设置页的日志开关），因为验收的第一步就是看这一行。
+    /// </summary>
+    private static void LogResolve(string detail)
+    {
+        var line = $"{SafLocalPathResolver.LogTag} {detail}";
+        Console.WriteLine($"[bridge] {line}");
+        AgentLog.Instance.Write($"[bridge] {line}");
+        Android.Util.Log.Info("EmueraMaui", line);
+    }
+#endif
 
     /// <summary>
     /// 前端探测游戏线程存活状态——<c>{"type":"getGameThreadStatus"}</c> 查询回复。

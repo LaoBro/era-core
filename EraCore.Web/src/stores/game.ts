@@ -367,6 +367,16 @@ export const useGameStore = defineStore('game', () => {
    */
   const mauiError = ref<string | null>(null);
   /**
+   * issues/15（方案 B）：模式降级提示——C# 推 `modeDowngraded` 时写入。
+   *
+   * 触发场景：「所有文件访问」被系统收回，真实路径读不动，主目录已自动退回落地的 SAF URI
+   * （快速模式 → 兼容模式）。用户自己没做任何操作却变慢了，必须说一声，否则就是"莫名变慢"。
+   *
+   * 与 `mauiError` 区别：这不是错误（游戏照样能玩），只是**告知**，故用 info 提示条而非错误条。
+   * null 表示无提示。
+   */
+  const modeNotice = ref<string | null>(null);
+  /**
    * 游戏静默状态提示（MAUI）——前端静默监控的结果：
    * - 'running'：游戏线程存活但长时间无输出（慢计算 / 真死循环），半透明「游戏运行中」提示
    * - 'stopped'：游戏线程已死而前端未收到退出/错误帧（后台线程假死兜底），提示「游戏已停止」
@@ -1300,6 +1310,16 @@ export const useGameStore = defineStore('game', () => {
     mauiError.value = null;
   }
 
+  /** issues/15（方案 B）：写入模式降级提示——`modeDowngraded` 消息触发。 */
+  function setModeNotice(text: string): void {
+    modeNotice.value = text;
+  }
+
+  /** issues/15（方案 B）：清空模式降级提示——定时器到期或用户关闭时调用。 */
+  function clearModeNotice(): void {
+    modeNotice.value = null;
+  }
+
   /** issues/15：写入「所有文件访问」授权状态——permissionStatus 消息（checkPermission 回复）触发。 */
   function setAllFilesAccess(granted: boolean): void {
     allFilesAccess.value = granted;
@@ -1628,6 +1648,10 @@ export const useGameStore = defineStore('game', () => {
     mauiError,
     setGameDir,
     clearMauiError,
+    // issues/15（方案 B）：模式降级告知（权限被收回 → 退回兼容轨），非错误，用 info 提示条
+    modeNotice,
+    setModeNotice,
+    clearModeNotice,
     // 游戏静默状态提示（MAUI）——前端静默监控
     gameStatusHint,
     lastActivityAt,

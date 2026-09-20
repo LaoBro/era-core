@@ -191,6 +191,8 @@ export function sendBridgeUrl(action: string, data?: string): boolean {
  * - `{"type":"gamesScanned","games":[...],"rootDir":...,"displayPath":...}`——scanGames 回复，写入 store 渲染列表
  *   （`displayPath` 为 rootDir 的可读形态，issues/15；C# 端由 `SafPath.TryGetDisplayPath` 给出）
  * - `{"type":"safDirectoryPicked",...}`——Android SAF 目录选择结果（ADR-0019）
+ * - `{"type":"modeDowngraded","reason":...}`——issues/15（方案 B）：真实路径轨失效，
+ *   主目录已自动退回兼容轨（原因码由前端翻成文案）
  * - `{"type":"gameExited"}`——exitGame 完成，清状态 + 自动 rescan
  *
  * 与 `registerTurnHandler` 分流——turn 经 `__onTurn` 推 `applyTurn` 协议消费链路，

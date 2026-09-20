@@ -115,6 +115,8 @@ function parseBridgeController(raw: unknown): { kind: 'agent' | 'user'; leaseExp
  * - `{"type":"gamesScanned","games":[{name,fullPath}],"rootDir":...,"displayPath":...}`——scanGames 回复，写入 store
  *   （`displayPath` 是 rootDir 的可读形态，issues/15：SAF content URI → 「内部存储 / games / eratoho」）
  * - `{"type":"gameExited"}`——exitGame 处理完成，清状态 + 自动重新 scanGames
+ * - `{"type":"modeDowngraded","reason":...}`——issues/15（方案 B）：「所有文件访问」被收回，
+ *   主目录已自动退回兼容轨，写 info 提示条告知（非错误）
  * - `{"type":"gameThreadStatus","alive":true/false}`——前端静默监控的线程存活探测回复，
  *   写入 gameStatusHint（'running'/'stopped'），App.vue 据此显示半透明状态提示
  * - `{"type":"directoriesListed",...}` / `{"type":"storageRoots",...}`——issues/15 S2 的
@@ -278,11 +280,15 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
   if (type === 'safDirectoryPicked') {
     if (m.cancelled === true) {
       console.log('[useAppInit] safDirectoryPicked: user cancelled');
+      // issues/15（方案 B）：系统选择器是唯一入口，前端在弹它之前就置了 scanning
+      // （选完由 C# 直接扫库推 gamesScanned，没有第二个可挂加载态的时机）——取消必须收回。
+      game.scanStatus = 'idle';
       return;
     }
     if (typeof m.error === 'string') {
       console.error('[useAppInit] safDirectoryPicked error:', m.error);
       game.mauiError = `选择目录失败：${m.error}`;
+      game.scanStatus = 'idle';
       return;
     }
     const path = m.path;
@@ -294,6 +300,19 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
     game.setMainGameDir(path);
     game.scanStatus = 'scanning';
     scanGamesBridge(path);
+    return;
+  }
+
+  // issues/15（方案 B）：「所有文件访问」被系统收回 → 主目录已自动退回落地的 SAF URI（兼容轨）。
+  // 用户自己没做任何操作却变慢了，必须明说一句。C# 只给原因码，文案在此出（与 load-game 错误码同构）。
+  if (type === 'modeDowngraded') {
+    const reason = typeof m.reason === 'string' ? m.reason : '';
+    console.log('[useAppInit] modeDowngraded:', reason);
+    game.setModeNotice(
+      reason === 'all-files-access-revoked'
+        ? '「所有文件访问」权限已失效，已退回兼容模式，加载会慢一些。重新授权后重新扫描即可回到快速模式。'
+        : '读取方式已退回兼容模式，加载会慢一些。',
+    );
     return;
   }
 

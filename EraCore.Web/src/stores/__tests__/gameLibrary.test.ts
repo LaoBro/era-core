@@ -489,3 +489,44 @@ describe('useGameStore game-library 状态与动作', () => {
     });
   });
 });
+
+/**
+ * issues/15（方案 B）：模式降级告知——「所有文件访问」被系统收回后主目录自动退回兼容轨。
+ *
+ * 与 mauiError 是**两条独立通道**：降级不是错误（游戏照样能玩），只是告知；
+ * 混进错误条会让用户以为坏了，还会被错误条的 5 秒定时器与关闭逻辑搅在一起。
+ */
+describe('modeNotice——模式降级告知', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.stubGlobal('localStorage', makeLocalStorage());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('初始为 null', () => {
+    expect(useGameStore().modeNotice).toBeNull();
+  });
+
+  it('写入后可在 store 读到，清空后回 null', () => {
+    const game = useGameStore();
+
+    game.setModeNotice('「所有文件访问」权限已失效，已退回兼容模式，加载会慢一些。');
+    expect(game.modeNotice).toContain('已退回兼容模式');
+
+    game.clearModeNotice();
+    expect(game.modeNotice).toBeNull();
+  });
+
+  it('与 mauiError 互不影响——降级不该被当成错误', () => {
+    const game = useGameStore();
+
+    game.setModeNotice('已退回兼容模式');
+    expect(game.mauiError).toBeNull();
+
+    game.mauiError = '选择目录失败';
+    expect(game.modeNotice).toBe('已退回兼容模式');
+  });
+});

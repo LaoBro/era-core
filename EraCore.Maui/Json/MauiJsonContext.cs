@@ -109,6 +109,15 @@ internal sealed record GameExitedMessage(string Type);
 /// <summary>{"type":"permissionStatus","granted":...}</summary>
 internal sealed record PermissionStatusMessage(string Type, bool Granted);
 
+/// <summary>
+/// {"type":"modeDowngraded","reason":"all-files-access-revoked"}
+/// <para>
+/// issues/15（方案 B）：真实路径轨失效——「所有文件访问」被系统收回，主目录已自动退回落地的
+/// SAF URI（兼容轨）。用户什么都没做却变慢了，必须说一声；只给原因码，文案由前端出。
+/// </para>
+/// </summary>
+internal sealed record ModeDowngradedMessage(string Type, string Reason);
+
 /// <summary>{"type":"gameThreadStatus","alive":...}</summary>
 internal sealed record GameThreadStatusMessage(string Type, bool Alive);
 
@@ -198,6 +207,7 @@ internal sealed record HeadlessStateResponse(string? State, string? GameDir);
 [JsonSerializable(typeof(StorageRootsMessage))]
 [JsonSerializable(typeof(GameExitedMessage))]
 [JsonSerializable(typeof(PermissionStatusMessage))]
+[JsonSerializable(typeof(ModeDowngradedMessage))]
 [JsonSerializable(typeof(GameThreadStatusMessage))]
 [JsonSerializable(typeof(AgentLogMessage))]
 [JsonSerializable(typeof(LayoutMessage))]

@@ -136,6 +136,33 @@ function scheduleErrorBannerAutoDismiss(): void {
 }
 watch(currentError, () => scheduleErrorBannerAutoDismiss(), { immediate: true });
 
+// ---------- issues/15（方案 B）：模式降级告知 ----------
+/**
+ * 「所有文件访问」被系统收回时，主目录会自动退回落地的 SAF URI（快速模式 → 兼容模式）。
+ * 用户什么都没做却变慢了，必须明说一句——用 info 条（不是错误：游戏照样能玩），
+ * 与错误条同策略 5 秒自动消失，避免长期占位。
+ */
+let modeNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function dismissModeNotice(): void {
+  game.clearModeNotice();
+  if (modeNoticeTimer) {
+    clearTimeout(modeNoticeTimer);
+    modeNoticeTimer = null;
+  }
+}
+
+function scheduleModeNoticeAutoDismiss(): void {
+  if (modeNoticeTimer) {
+    clearTimeout(modeNoticeTimer);
+    modeNoticeTimer = null;
+  }
+  if (game.modeNotice) {
+    modeNoticeTimer = setTimeout(dismissModeNotice, 5000);
+  }
+}
+watch(() => game.modeNotice, () => scheduleModeNoticeAutoDismiss(), { immediate: true });
+
 // ---------- 「更改目录」入口（统一走 ChangeDirDialog） ----------
 const dirDialogVisible = ref(false);
 /**
@@ -226,6 +253,7 @@ onUnmounted(() => {
   window.removeEventListener('scroll', onWindowScroll);
   if (heroIntroTimer) clearTimeout(heroIntroTimer);
   if (errorBannerTimer) clearTimeout(errorBannerTimer);
+  if (modeNoticeTimer) clearTimeout(modeNoticeTimer);
 });
 
 /** 暴露给外层 wrapper（如 MauiGameList ⋮ 菜单）打开共享「更改目录」对话框。 */
@@ -271,10 +299,16 @@ defineExpose({ openChangeDirDialog });
     </div>
 
     <div class="glv-body">
-      <!-- 错误条（顶部可关闭提示条，5s 自动消失） -->
-      <div v-if="currentError" class="error-slot">
+      <!-- 提示条区：错误条 + 模式降级告知（都是顶部可关闭，5s 自动消失） -->
+      <div v-if="currentError" class="banner-slot">
         <StatusBanner kind="error" closable @close="onDismissError">
           {{ currentError }}
+        </StatusBanner>
+      </div>
+      <!-- issues/15（方案 B）：模式降级告知——info 语义，不是错误（游戏照样能玩） -->
+      <div v-if="game.modeNotice" class="banner-slot">
+        <StatusBanner kind="info" closable @close="dismissModeNotice">
+          {{ game.modeNotice }}
         </StatusBanner>
       </div>
 
@@ -475,7 +509,7 @@ defineExpose({ openChangeDirDialog });
   padding: 0 0 var(--space-5);
   padding-bottom: env(safe-area-inset-bottom);
 }
-.error-slot {
+.banner-slot {
   padding-bottom: var(--space-2);
 }
 .scanning {

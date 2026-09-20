@@ -26,6 +26,13 @@ internal sealed class SafGameDirAccessor : IGameDirAccessor
     /// <summary>ADR-0019：MainActivity 创建的全局实例，供 OnReloadGame 在 SAF 路径时使用。</summary>
     internal static SafGameDirAccessor? Instance { get; private set; }
 
+    /// <summary>
+    /// issues/15（方案 B）：当前持久化的树 URI——「所有文件访问」权限被收回时，
+    /// 主目录可据此从真实路径退回落地的 SAF 轨；没有再选一次目录的必要。
+    /// 未选过目录时为 null。
+    /// </summary>
+    internal string? CurrentTreeUri => _treeUri;
+
     private const string PrefKey = "saf_tree_uri";
     private const string DeferredWriteLimitPrefKey = "saf_deferred_write_limit_bytes";
     private const string WriteProbeFilePrefix = "_emuera_write_probe_";

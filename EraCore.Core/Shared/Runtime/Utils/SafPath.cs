@@ -111,6 +111,91 @@ internal static class SafPath
 	}
 
 	/// <summary>
+	/// issues/15（方案 B）：把 documentId 拆成<b>卷标识 + 相对路径</b>。
+	/// <para>
+	/// externalstorage provider 的契约形态是 <c>&lt;volumeId&gt;:&lt;相对路径&gt;</c>
+	/// （<c>primary:games/eratoho</c>、<c>1AEF-3B2C:games</c>）；无冒号的自定义 provider
+	/// 只有相对路径，此时卷标识为空串。冒号在首位（<c>:x</c>）视为形态意外，返回 false。
+	/// </para>
+	/// <para>
+	/// 相对路径为空是<b>合法</b>结果——表示用户直接选了卷根。
+	/// </para>
+	/// </summary>
+	public static bool TrySplitDocumentId(string? documentId, out string volumeId, out string relativePath)
+	{
+		volumeId = string.Empty;
+		relativePath = string.Empty;
+		if (string.IsNullOrEmpty(documentId)) return false;
+
+		var colon = documentId.IndexOf(':');
+		if (colon < 0)
+		{
+			relativePath = documentId.Trim('/');
+			return true;
+		}
+		if (colon == 0) return false;
+
+		volumeId = documentId[..colon].Trim();
+		relativePath = documentId[(colon + 1)..].Trim('/');
+		return volumeId.Length > 0;
+	}
+
+	/// <summary>
+	/// issues/15（方案 B）：相对路径是否落在 Android 的<b>直读禁区</b>。
+	/// <para>
+	/// Android 11+ 即使持有 <c>MANAGE_EXTERNAL_STORAGE</c> 也禁止用直接路径读
+	/// <c>Android/data</c> 与 <c>Android/obb</c>（scoped storage 硬拦）。落在这两个区的目录
+	/// 必须留在 SAF 轨——反推出的"真实路径"是必然打不开的死路径，与其在加载期报错，
+	/// 不如在选择期就判定为不可直读。
+	/// </para>
+	/// <para>
+	/// 只匹配<b>顶层</b>前缀：<c>games/Android/data</c> 这种同名嵌套目录不在禁区内。
+	/// </para>
+	/// </summary>
+	public static bool IsDirectAccessBlocked(string? relativePath)
+	{
+		if (string.IsNullOrEmpty(relativePath)) return false;
+
+		var normalized = relativePath.Replace('\\', '/').Trim('/');
+		return normalized.Equals("Android/data", StringComparison.OrdinalIgnoreCase)
+			|| normalized.StartsWith("Android/data/", StringComparison.OrdinalIgnoreCase)
+			|| normalized.Equals("Android/obb", StringComparison.OrdinalIgnoreCase)
+			|| normalized.StartsWith("Android/obb/", StringComparison.OrdinalIgnoreCase);
+	}
+
+	/// <summary>
+	/// issues/15（方案 B）：卷根 + 相对路径 → 真实路径；相对路径为空即卷根本身。
+	/// <para>
+	/// 卷根为空、或相对路径含 <c>..</c> 等穿越段时返回 false——不产出可疑路径，
+	/// 调用方据此退回 SAF 轨（宁可慢，不可指错目录）。
+	/// </para>
+	/// </summary>
+	public static bool TryCombineVolumeRoot(string? volumeRoot, string? relativePath, out string path)
+	{
+		path = string.Empty;
+		if (string.IsNullOrEmpty(volumeRoot)) return false;
+
+		var root = volumeRoot.TrimEnd('/', '\\');
+		if (root.Length == 0) return false;
+
+		var relative = (relativePath ?? string.Empty).Replace('\\', '/').Trim('/');
+		if (relative.Length == 0)
+		{
+			path = root;
+			return true;
+		}
+
+		foreach (var segment in relative.Split('/'))
+		{
+			if (segment.Length == 0 || segment == "." || segment == "..")
+				return false;
+		}
+
+		path = root + "/" + relative;
+		return true;
+	}
+
+	/// <summary>
 	/// fullPath 是否位于 rootDir 之下（含与 root 同 document 的文件）。
 	/// content URI 用 Unescape 后的 documentId 前缀比较，避免 <c>%2F</c> 导致 raw 字符串前缀匹配失效。
 	/// </summary>
