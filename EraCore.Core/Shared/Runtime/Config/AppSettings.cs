@@ -275,11 +275,9 @@ internal sealed class AppSettings
     {
         get
         {
-#if ANDROID
-            return "android";
-#else
-            return "desktop";
-#endif
+            // 运行时判定（net10 提供）——不能依赖 #if ANDROID：该宏只在 Maui 工程定义，
+            // Core 在 Android 构建里恒编译成 desktop，取证日志的 platform= 会误导。
+            return OperatingSystem.IsAndroid() ? "android" : "desktop";
         }
     }
 
