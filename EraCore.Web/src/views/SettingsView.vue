@@ -1,14 +1,22 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue';
+import { ref, watch, computed, onMounted, onUnmounted } from 'vue';
 import { useGameStore } from '../stores/game';
 import { useUiStore } from '../stores/ui';
 import { useConnectionStore } from '../stores/connection';
-import { isMauiEnvironment, setAgentLogEnabled, setDimLockPolicy, setDisplayReportOverride, setMaxParallelErbFiles, setPerfOverride, setSafReadDegree, setSweepGatePolicy, settingsReset, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
+import { isMauiEnvironment, setAgentLogEnabled, setDimLockPolicy, setDisplayReportOverride, setMaxParallelErbFiles, setPerfOverride, setSafReadDegree, setSweepGatePolicy, settingsReset, setSettingsOpen, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
 import type { DimLockPolicyValue, DisplayReportOverride, MaxParallelErbFilesValue, PerfOverrideKey, SafReadDegreeValue, SweepGatePolicyValue } from '../lib/mauiBridge';
 
 const game = useGameStore();
 const ui = useUiStore();
 const conn = useConnectionStore();
+
+// ADR-0030：MAUI 下通知 C# 设置页覆盖层的开关状态——列表页上安卓返回键据此「先关设置页」而非退出 app。
+onMounted(() => {
+  if (isMauiEnvironment()) setSettingsOpen(true);
+});
+onUnmounted(() => {
+  if (isMauiEnvironment()) setSettingsOpen(false);
+});
 
 /**
  * ADR-0030：HTTP 模式 /settings 端点 base（与 useAppInit 的 HTTP 分支同源）。

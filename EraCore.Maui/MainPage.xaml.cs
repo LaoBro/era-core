@@ -523,15 +523,18 @@ public partial class MainPage : ContentPage
     /// <returns><c>true</c> 表示已处理返回键，阻止默认行为。</returns>
     protected override bool OnBackButtonPressed()
     {
-        if (_host is { IsGameRunning: true })
+        // ADR-0030：游戏运行中（既有）或设置页覆盖层打开（列表页/游戏页都算）→ 转发给 Vue，
+        // 由 Vue 按层级处理（设置页→先关设置；否则弹退出确认）。其余（纯列表页无覆盖层）
+        // 保持 spec ID10：不拦截，走系统默认（最小化/退出）。
+        if (_host != null && (_host.IsGameRunning || _host.IsSettingsOpen))
         {
-            Console.WriteLine("[maui] OnBackButtonPressed: game running, forwarding to Vue");
-            // 投递 backButtonPressed 给 Vue——Vue 端弹出退出确认对话框
+            Console.WriteLine("[maui] OnBackButtonPressed: forwarding to Vue (game running or settings open)");
+            // 投递 backButtonPressed 给 Vue——Vue 端按层级处理
             var msg = System.Text.Json.JsonSerializer.Serialize(
                 new BackButtonPressedMessage("backButtonPressed"),
                 MauiJsonContext.Default.BackButtonPressedMessage);
             _jsBridge.PostMessage(msg);
-            return true; // 已处理，阻止系统默认返回行为
+            return true; // 已处理，阻止系统默认行为
         }
         Console.WriteLine("[maui] OnBackButtonPressed: no game running, default behavior");
         return base.OnBackButtonPressed();

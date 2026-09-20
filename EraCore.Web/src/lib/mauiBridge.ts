@@ -622,6 +622,15 @@ export function settingsReset(): void {
 }
 
 /**
+ * ADR-0030：通知 C# 设置页覆盖层的开关状态——`settingsVisibility` 消息 →
+ * BridgeHost.HandleSettingsVisibility。C# 侧据此决定安卓返回键是否转发给 Vue
+ * （列表页上设置页打开时，返回键应先关设置页而不是退出 app）。
+ */
+export function setSettingsOpen(open: boolean): void {
+  postInput(JSON.stringify({ type: 'settingsVisibility', open }));
+}
+
+/**
  * A0 补充（真机无 adb）：请求 C# 读取 agent.log 内容推给 Vue（设置页日志查看器）。
  *
  * C# `BridgeHost.HandleGetAgentLog` 收到后调 `AgentLog.ReadAllText()`（内部先 flush，

@@ -332,6 +332,14 @@ internal sealed class BridgeHost : IDisposable
     public bool IsGameRunning => _started && !_disposed;
 
     /// <summary>
+    /// ADR-0030：Vue 设置页覆盖层是否打开（经 <c>settingsVisibility</c> 消息同步）。
+    /// MainPage 据此决定安卓返回键是否转发给 Vue——列表页上设置页打开时，
+    /// 返回键应先关设置页（Vue 处理）而不是走系统默认退出 app。
+    /// </summary>
+    public bool IsSettingsOpen => _settingsOpen;
+    private bool _settingsOpen;
+
+    /// <summary>
     /// 从 Preferences 加载 mainGameDir——无值时按平台回退（spec ID5）。
     /// <para>
     /// 平台默认：
@@ -556,6 +564,12 @@ internal sealed class BridgeHost : IDisposable
                 if (type == "settingsReset")
                 {
                     HandleSettingsReset();
+                    return;
+                }
+                // ADR-0030：Vue 设置页覆盖层开关状态——MainPage 据此决定安卓返回键转发
+                if (type == "settingsVisibility")
+                {
+                    HandleSettingsVisibility(doc.RootElement);
                     return;
                 }
                 // A0 补充：app 内日志查看器——读取 agent.log 内容推给 Vue（真机无 adb 场景）
@@ -1411,6 +1425,21 @@ internal sealed class BridgeHost : IDisposable
         _appSettings.Reset();
         Console.WriteLine("[bridge] settings reset to defaults");
         PushConfigMessage();
+    }
+
+    /// <summary>
+    /// ADR-0030：接收 <c>{"type":"settingsVisibility","open":true/false}</c>——Vue 设置页覆盖层
+    /// 挂载/卸载时投递，仅记内存标志（不持久化）。MainPage.OnBackButtonPressed 据此在列表页
+    /// 上也转发安卓返回键给 Vue（先关设置页，而非直接退出 app）。
+    /// </summary>
+    private void HandleSettingsVisibility(JsonElement root)
+    {
+        if (root.TryGetProperty("open", out var el)
+            && (el.ValueKind == JsonValueKind.True || el.ValueKind == JsonValueKind.False))
+        {
+            _settingsOpen = el.GetBoolean();
+            Console.WriteLine($"[bridge] settingsVisibility open={_settingsOpen}");
+        }
     }
 
     /// <summary>
