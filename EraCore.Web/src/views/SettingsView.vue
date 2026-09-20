@@ -227,9 +227,15 @@ const logCopied = ref(false);
 <template>
   <section class="settings-view">
     <div class="settings-content">
-      <!-- ADR-0030：设置页现在是全局覆盖层（游戏选择页/游戏页都可打开）——提供显式返回 -->
+      <!-- ADR-0030：设置页是全局覆盖层。MAUI 用安卓返回键关闭（App.vue backButtonPressed 已处理）；
+           Web 模式无系统返回键，保留按钮。 -->
       <div class="settings-header">
-        <button type="button" class="btn-outline btn-sm" @click="closeSettings">← 返回</button>
+        <button
+          v-if="!isMauiEnvironment()"
+          type="button"
+          class="btn-outline btn-sm"
+          @click="closeSettings"
+        >← 返回</button>
         <span class="settings-header-title">设置</span>
       </div>
       <div class="section">

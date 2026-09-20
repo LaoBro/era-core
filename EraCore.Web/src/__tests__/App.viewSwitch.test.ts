@@ -85,4 +85,21 @@ describe('App: 视图切换不卸载 TerminalView（滚动位置不丢）', () =
     expect(body).toContain('visibility: hidden');
     expect(body).not.toContain('display: none');
   });
+
+  it('ADR-0030：从列表页打开设置后游戏被加载（gameDir null→有值）自动关设置页', async () => {
+    const game = useGameStore();
+    const ui = useUiStore();
+    const wrapper = mount(App);
+
+    // 列表页（无游戏）打开设置
+    ui.switchView('settings');
+    await nextTick();
+    expect(wrapper.find('.settings-view').exists()).toBe(true);
+
+    // agent/CLI 加载游戏 → 自动关设置页回到游戏画面
+    game.setGameDir('/storage/emulated/0/emuera/TK1.29.3纯净版');
+    await nextTick();
+    expect(ui.currentView).toBe('terminal');
+    expect(wrapper.find('.settings-view').exists()).toBe(false);
+  });
 });

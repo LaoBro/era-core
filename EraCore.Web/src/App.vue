@@ -54,6 +54,20 @@ watch(() => ui.theme, (t) => {
   document.documentElement.dataset.theme = t;
 });
 
+/**
+ * ADR-0030：从游戏选择页打开设置时，游戏被加载（gameDir null→有值，含 agent 经 CLI 加载）
+ * → 自动关设置页回到游戏画面。`!prev` 守卫：已进游戏再从游戏页开设置、随后热切换新游戏
+ * （gameDir 有值→有值）不触发，避免打断正在看的设置。
+ */
+watch(
+  () => game.gameDir,
+  (dir, prev) => {
+    if (!prev && dir && ui.currentView === 'settings') {
+      ui.switchView('terminal');
+    }
+  },
+);
+
 const isMaui = isMauiEnvironment();
 
 /**
