@@ -220,6 +220,79 @@ internal sealed class GameServerProtocol
     }
 
     /// <summary>
+    /// GET /settings —— 全局设置全量（ADR-0030，13 canonical 键）。无认证，与 /config 同级
+    /// （localhost；Web 前端在 HTTP 模式无 token，必须无认证才能读写设置）。
+    /// </summary>
+    public HttpResult GetSettings()
+    {
+        return Json(SettingsPayload(_config.AppSettings));
+    }
+
+    /// <summary>
+    /// PUT /settings —— 批量设置全局设置（body 为 <c>{"key":"value",...}</c>）。非法 JSON → 400；
+    /// 任一键/值非法 → 400 <c>INVALID_SETTING</c>（原子：前序合法写入不回收，保持简单，调用方重试整个 body）。
+    /// agentLogEnabled 即时应用（Set 内）；displayReportOverride 即时应用到当前 ConfigData
+    /// （与 MAUI 运行时切换一致）；perf/诊断旋钮下次 load-game 生效（ApplyTo）。
+    /// </summary>
+    public HttpResult PutSettings(string? bodyText)
+    {
+        JsonObject? body;
+        try
+        {
+            body = string.IsNullOrWhiteSpace(bodyText) ? null : JsonNode.Parse(bodyText) as JsonObject;
+        }
+        catch (JsonException)
+        {
+            body = null;
+        }
+        if (body == null)
+            return Json(new JsonObject { ["error"] = "Invalid JSON, expected {\"key\":\"value\",...}" }, 400);
+
+        var appSettings = _config.AppSettings;
+        foreach (var kv in body)
+        {
+            // 值必须是 JSON 字符串（数字/布尔/对象/数组一律 400——设置值是词表字符串）
+            if (kv.Value is not JsonValue jsonValue
+                || jsonValue.GetValueKind() != JsonValueKind.String
+                || !appSettings.Set(kv.Key, jsonValue.GetValue<string>()))
+            {
+                return Json(new JsonObject
+                {
+                    ["error"] = new JsonObject
+                    {
+                        ["code"] = "INVALID_SETTING",
+                        ["message"] = $"invalid key or value: {kv.Key}",
+                    },
+                }, 400);
+            }
+        }
+
+        // displayReportOverride 即时应用到当前 ConfigData（与 MAUI HandleSetDisplayReportOverride 同位语义；
+        // auto 置空覆盖标志，游戏自身值不动——真实生效在下次 load-game 的 ApplyTo）。
+        var dr = appSettings.Get(AppSettings.DisplayReportOverrideKey);
+        _config.Current.OverrideDisplayReport = dr switch { "off" => false, "on" => true, _ => null };
+        if (_config.Current.OverrideDisplayReport.HasValue)
+            _config.Current.GetItem(ConfigCode.DisplayReport).SetValue(_config.Current.OverrideDisplayReport.Value);
+
+        return Json(SettingsPayload(appSettings));
+    }
+
+    /// <summary>DELETE /settings —— 恢复默认（ADR-0030，reset 语义 = 出厂默认，与 MAUI 清 Preferences 等价）。</summary>
+    public HttpResult ResetSettings()
+    {
+        _config.AppSettings.Reset();
+        return Json(SettingsPayload(_config.AppSettings));
+    }
+
+    private static JsonObject SettingsPayload(AppSettings appSettings)
+    {
+        var payload = new JsonObject();
+        foreach (var kv in appSettings.GetAll())
+            payload[kv.Key] = kv.Value;
+        return payload;
+    }
+
+    /// <summary>
     /// GET /snapshot —— 全量显示状态快照（迁移自原 HandleGetSnapshotAsync，见其注释）。
     /// </summary>
     public HttpResult GetSnapshot()

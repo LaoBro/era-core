@@ -149,9 +149,9 @@ describe('initAppState (T-025 D9 rev)', () => {
 
     await initAppState();
 
-    // 不调 connect，不调 loadGame（fetch 调两次 = GET /state + GET /config，无 POST /load-game）
+    // 不调 connect，不调 loadGame（fetch 调三次 = GET /state + GET /config + GET /settings（ADR-0030），无 POST /load-game）
     expect(connectSpy).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     // gameDir 保留——选择器预填
     expect(game.gameDir).toBe('D:/old/game');
     expect(game.maxLog).toBe(5000);

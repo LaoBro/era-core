@@ -59,6 +59,8 @@ public partial class MainPage : ContentPage
     private BridgeHost? _host;
     private ConfigData _configData;
     private ITerminalSetup _terminalSetup;
+    /// <summary>全局设置服务（ADR-0030）——Preferences 后端，注入控制 server 与 BridgeHost。</summary>
+    private readonly AppSettings _appSettings;
     private bool _urlSet;
     /// <summary>issues/13 M6：Vue 是否已握手（收到首条 scanGames = 前端已挂载且消息处理器就位）。</summary>
     private bool _vueReady;
@@ -80,10 +82,12 @@ public partial class MainPage : ContentPage
         _jsBridge = JsBridgeFactory.Create();
         _configData = configData;
         _terminalSetup = terminalSetup;
+        // ADR-0030：全局设置服务单例（Preferences 后端）——控制 server 与 BridgeHost 共用同一实例
+        _appSettings = new AppSettings(new PreferencesAppSettingsStore());
         // issues/13 M6：app 级托管控制 server 提前到启动期——必须在 RecreateHost 之前，
         // 因为 BridgeHost 建会话时直接复用它（不再自行 new HttpListenerHost）。
         // 起不来就抛——静默降级会让 agent 连不上却无任何痕迹，比启动期硬失败更难查。
-        var controlServer = MauiControlServer.EnsureStarted(configData, terminalSetup);
+        var controlServer = MauiControlServer.EnsureStarted(configData, terminalSetup, _appSettings);
         // 注册控制面回调——此时 this 已可用（字段已赋值），实现见两个方法。
         controlServer.ScanGameDirSink = ScanGamesForControlServer;
         controlServer.LoadGameSink = RequestAutoLoadGame;
@@ -193,7 +197,7 @@ public partial class MainPage : ContentPage
     private void RecreateHost()
     {
         _host?.Dispose();
-        _host = new BridgeHost(Dispatcher, _configData, _terminalSetup, _jsBridge, OnReloadGame, OnGameExited, OnVueReady);
+        _host = new BridgeHost(Dispatcher, _configData, _terminalSetup, _jsBridge, _appSettings, OnReloadGame, OnGameExited, OnVueReady);
     }
 
     /// <summary>
@@ -447,22 +451,9 @@ public partial class MainPage : ContentPage
                     dirAccessor,
                     // 三态偏好（auto/off/on）→ bool?（null/false/true）
                     BridgeHost.ParseDisplayReportOverride(ReadDisplayReportOverridePreference()));
-                // 性能（启动加载）覆盖：Initialize 后、会话创建前压值——盖过三源合并结果，
-                // 随后会话创建时 ErbLoader 加载 ERB 读到的即覆盖后的开关值
-                BridgeHost.ApplyPerformanceOverrides(newConfig);
-                // ADR-0026 诊断旋钮一（并行未调用遍历平台门策略）：同点应用——仅内存覆盖写
-                // OverrideSweepGatePolicy，ErbLoader 加载 ERB 时读并在 parsescript_policy 日志自证
-                BridgeHost.ApplySweepGatePolicy(newConfig);
-                // ADR-0026 诊断旋钮二（读取并发度）：同点应用——仅内存覆盖写
-                // OverrideSafReadDegree，Preload.Load 时读并在 preload_policy 日志自证
-                // （2026-09-15 起显式值对本地路径同样生效；auto 语义不变）
-                BridgeHost.ApplySafReadDegree(newConfig);
-                // ADR-0026 诊断旋钮三（并行生成度上限，06-K1）：同点应用——仅内存覆盖写
-                // OverrideMaxParallelErbFiles，ErbLoader 加载 ERB 时读并在 LoadPendingParallel 日志自证
-                BridgeHost.ApplyMaxParallelErbFiles(newConfig);
-                // ADR-0026 诊断旋钮四（privateDimList 锁策略，06-K2）：同点应用——仅内存覆盖写
-                // OverrideDimLockPolicy，IdentifierDictionary 构造时读并在 parsescript_policy 日志自证
-                BridgeHost.ApplyDimLockPolicy(newConfig);
+                // ADR-0030：全局设置应用（perf 覆盖/诊断旋钮/displayReport/agentLog）——Initialize 后、
+                // 会话创建前压值；旧 BridgeHost.Apply* 已上收共享 AppSettings.ApplyTo，行为逐位一致。
+                _appSettings.ApplyTo(newConfig);
                 var hasWrite = dirAccessor.HasWriteAccess();
                 Console.WriteLine($"[maui] OnReloadGame init completed: ExeDir={paths.ExeDir}, hasWrite={hasWrite}");
 #if ANDROID

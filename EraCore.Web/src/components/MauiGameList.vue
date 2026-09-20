@@ -153,6 +153,14 @@ const dirMenuItems = computed<PopupMenuItem[]>(() => [
     label: ui.theme === 'dark' ? '亮色主题' : '暗色主题',
     onClick: () => ui.toggleTheme(),
   },
+  // ADR-0030：游戏选择页设置入口——全局设置（不进游戏也能改，崩溃恢复主通道）
+  {
+    type: 'item',
+    id: 'settings',
+    icon: 'settings',
+    label: '设置',
+    onClick: () => ui.switchView('settings'),
+  },
 ]);
 
 /** 当前是否扫描中——菜单项禁用依据。 */

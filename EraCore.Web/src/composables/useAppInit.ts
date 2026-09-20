@@ -77,6 +77,9 @@ export async function initAppState(): Promise<void> {
   // 读取 emuera.config 值（MaxLog 等）。失败不阻塞——保持 fallback。
   await game.fetchConfig(httpBase);
 
+  // ADR-0030：HTTP 模式拉全局设置权威值（/settings，13 canonical 键）。失败不阻塞——保持 fallback。
+  await game.fetchSettings(httpBase);
+
   // server 未启动——不自动连
   if (serverState === null) return;
 
@@ -168,37 +171,8 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
   }
 
   if (type === 'config') {
-    if (typeof m.maxLog === 'number') game.maxLog = m.maxLog;
-    // A0：文件日志开关的 C# 权威状态——设置页据此渲染开关初始值
-    if (typeof m.agentLogEnabled === 'boolean') game.agentLogEnabled = m.agentLogEnabled;
-    // 启动日志覆盖三态的 C# 权威状态——设置页据此渲染分段控件初始值
-    if (m.displayReportOverride === 'auto' || m.displayReportOverride === 'off' || m.displayReportOverride === 'on') {
-      game.displayReportOverride = m.displayReportOverride;
-    }
-    // 性能（启动加载）覆盖三态的 C# 权威状态——设置页据此渲染分段控件初始值
-    for (const perfKey of ['lazyFunctionLoad', 'irDiskCacheLoad', 'irFirstDirList', 'irFileListCache', 'srcContentCache', 'parallelErbLoad', 'parallelParseScript'] as const) {
-      const value = m[perfKey];
-      if (value === 'auto' || value === 'off' || value === 'on') {
-        game.perfOverrides[perfKey] = value;
-      }
-    }
-    // ADR-0026 诊断旋钮一（平台门策略）的 C# 权威状态——设置页「诊断」分段控件据此渲染初始值
-    if (m.sweepGatePolicy === 'auto' || m.sweepGatePolicy === 'forceon' || m.sweepGatePolicy === 'forceoff') {
-      game.sweepGatePolicy = m.sweepGatePolicy;
-    }
-    // ADR-0026 诊断旋钮二（SAF 读取并发度）的 C# 权威状态（"auto" 或钳制后的数值字符串）
-    // ——设置页「诊断」输入框据此渲染
-    if (m.safReadDegree === 'auto' || (typeof m.safReadDegree === 'string' && /^\d+$/.test(m.safReadDegree))) {
-      game.safReadDegree = m.safReadDegree;
-    }
-    // ADR-0026 诊断旋钮三（并行生成度上限，06-K1）的 C# 权威状态——设置页「诊断」分段控件据此渲染初始值
-    if (m.maxParallelErbFiles === 'auto' || m.maxParallelErbFiles === '4' || m.maxParallelErbFiles === '8' || m.maxParallelErbFiles === '16') {
-      game.maxParallelErbFiles = m.maxParallelErbFiles;
-    }
-    // ADR-0026 诊断旋钮四（privateDimList 锁策略，06-K2）的 C# 权威状态——设置页「诊断」分段控件据此渲染初始值
-    if (m.dimLockPolicy === 'auto' || m.dimLockPolicy === 'nolock') {
-      game.dimLockPolicy = m.dimLockPolicy;
-    }
+    // ADR-0030：字段应用统一收敛到 store.applySettingsUpdate（与 HTTP /settings 响应共用同一份校验）。
+    game.applySettingsUpdate(m as Record<string, unknown>);
     return;
   }
 

@@ -200,12 +200,38 @@ class EmueraClient:
             "truncated": start > 0,
         }
 
-    def request(self, method: str, path: str, body: Optional[Dict[str, Any]] = None, timeout: float = 35.0):
+    def get_settings(self, timeout: float = 10.0) -> Dict[str, Any]:
+        """GET /settings —— 全局设置全量（ADR-0030，13 canonical 键）。"""
+        status, payload, _ = self.request("GET", "/settings", timeout=timeout)
+        if status != 200:
+            raise EmueraHttpError(status, payload)
+        return payload
+
+    def put_settings(self, updates: Dict[str, str]) -> Dict[str, Any]:
+        """PUT /settings {key: value} —— 批量设置。非法键/值 → EmueraHttpError(400 INVALID_SETTING)。
+
+        注意：/settings 是 app 级配置端点，不消费身份 token——必须禁掉 request 的 body token 注入，
+        否则 token 字段会混进设置体被 400 拒收（token 仍经 X-Control-Token 头发送，server 无认证故忽略）。
+        """
+        status, payload, _ = self.request("PUT", "/settings", updates, inject_token=False)
+        if status != 200:
+            raise EmueraHttpError(status, payload)
+        return payload
+
+    def reset_settings(self) -> Dict[str, Any]:
+        """DELETE /settings —— 恢复默认（ADR-0030，reset 语义 = 出厂默认）。"""
+        status, payload, _ = self.request("DELETE", "/settings")
+        if status != 200:
+            raise EmueraHttpError(status, payload)
+        return payload
+
+    def request(self, method: str, path: str, body: Optional[Dict[str, Any]] = None,
+                timeout: float = 35.0, inject_token: bool = True):
         headers = {"Accept": "application/json"}
         data = None
         if body is not None:
             payload = dict(body)
-            if self.token and "token" not in payload:
+            if inject_token and self.token and "token" not in payload:
                 payload["token"] = self.token
             data = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"

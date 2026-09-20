@@ -10,18 +10,26 @@ namespace MinorShift.Emuera.Server;
 internal sealed class GameConfigService
 {
     private ConfigData _configData;
-    private readonly bool? _displayReportOverride;
+    private readonly AppSettings _appSettings;
 
-    public GameConfigService(ConfigData configData, bool? displayReportOverride = null)
+    /// <param name="appSettings">全局设置服务（ADR-0030）——<c>null</c> 时用空内存 store（测试/占位路径）。</param>
+    public GameConfigService(ConfigData configData, bool? displayReportOverride = null, AppSettings? appSettings = null)
     {
         _configData = configData ?? throw new ArgumentNullException(nameof(configData));
-        _displayReportOverride = displayReportOverride;
+        _appSettings = appSettings ?? new AppSettings();
+        // --loading-report/--no-loading-report 兼容（ADR-0030）：启动参数作 displayReportOverride 种子——
+        // 仅当 store 未显式设置时写入，--setting displayReportOverride 优先。
+        if (displayReportOverride is { } v && _appSettings.Get(AppSettings.DisplayReportOverrideKey) == "auto")
+            _appSettings.Set(AppSettings.DisplayReportOverrideKey, v ? "on" : "off");
     }
 
     /// <summary>
     /// 当前 ConfigData。issue 05 起可变——/load-game 重载游戏目录时整体重建并替换。
     /// </summary>
     public ConfigData Current => _configData;
+
+    /// <summary>全局设置服务（ADR-0030）——/settings 端点与 Reload 应用点共用。</summary>
+    public AppSettings AppSettings => _appSettings;
 
     public T GetValue<T>(ConfigCode code) => _configData.GetConfigValue<T>(code);
 
@@ -62,12 +70,12 @@ internal sealed class GameConfigService
     public ConfigData Reload(string exeDir)
     {
         var newConfig = new ConfigData();
-        // --loading-report / --no-loading-report：在 LoadConfigCore 三源合并前置位，让拦截生效
-        //（配置在 LoadConfig(exeDir) 内读取，须先设标志再读）。
-        newConfig.OverrideDisplayReport = _displayReportOverride;
         newConfig.LoadConfig(exeDir);
         ConfigData.SetCurrent(newConfig);
         _configData = newConfig;
+        // ADR-0030：加载后应用全局设置（perf 覆盖/诊断旋钮/displayReportOverride/agentLog）——
+        // 压过三源合并结果；旧 --loading-report 路径已折叠进 store 种子，由 ApplyTo 统一生效。
+        _appSettings.ApplyTo(newConfig);
         return newConfig;
     }
 }

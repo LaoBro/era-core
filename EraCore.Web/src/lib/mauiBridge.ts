@@ -614,6 +614,14 @@ export function setDimLockPolicy(value: DimLockPolicyValue): void {
 }
 
 /**
+ * ADR-0030：恢复默认——请求 C# 清 Preferences（`settingsReset` 消息 → BridgeHost.HandleSettingsReset）。
+ * 全部全局设置回出厂默认（auto/出厂值），下次进游戏生效。无直接回复，UI 由 config 消息回流同步。
+ */
+export function settingsReset(): void {
+  postInput(JSON.stringify({ type: 'settingsReset' }));
+}
+
+/**
  * A0 补充（真机无 adb）：请求 C# 读取 agent.log 内容推给 Vue（设置页日志查看器）。
  *
  * C# `BridgeHost.HandleGetAgentLog` 收到后调 `AgentLog.ReadAllText()`（内部先 flush，

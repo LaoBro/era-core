@@ -40,7 +40,7 @@ internal sealed class MauiControlServer
     private readonly string? _discoveryPath;
     private string? _mainGameDir;
 
-    private MauiControlServer(ConfigData configData, ITerminalSetup terminalSetup)
+    private MauiControlServer(ConfigData configData, ITerminalSetup terminalSetup, AppSettings appSettings)
     {
         Token = Guid.NewGuid().ToString("N");
         // 注入的是"转发委托"——真正实现由 MainPage 在构造完成后注册到 ScanGameDirSink / LoadGameSink。
@@ -52,7 +52,8 @@ internal sealed class MauiControlServer
             configData,
             displayReportOverride: configData.OverrideDisplayReport,
             scanGameDirHandler: rootDir => ScanGameDirSink?.Invoke(rootDir),
-            loadGameHandler: (gameDir, identity) => LoadGameSink?.Invoke(gameDir, identity));
+            loadGameHandler: (gameDir, identity) => LoadGameSink?.Invoke(gameDir, identity),
+            appSettings: appSettings);
         _discoveryPath = DiscoveryFilePath();
         WriteDiscoveryRecord(null);
         Console.WriteLine($"[maui] control server on port {Host.Port} (no session yet)");
@@ -86,7 +87,7 @@ internal sealed class MauiControlServer
     /// 幂等启动——首次调用创建单例，后续调用忽略（app 级单一实例）。
     /// 调用点：<see cref="MainPage"/> 构造（DI 已备好 ConfigData / ITerminalSetup）。
     /// </summary>
-    public static MauiControlServer EnsureStarted(ConfigData configData, ITerminalSetup terminalSetup)
+    public static MauiControlServer EnsureStarted(ConfigData configData, ITerminalSetup terminalSetup, AppSettings appSettings)
     {
         var existing = _instance;
         if (existing != null)
@@ -98,7 +99,7 @@ internal sealed class MauiControlServer
                 return current;
             try
             {
-                current = new MauiControlServer(configData, terminalSetup);
+                current = new MauiControlServer(configData, terminalSetup, appSettings);
             }
             catch (Exception ex)
             {

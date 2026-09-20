@@ -178,232 +178,6 @@ internal sealed class BridgeHost : IDisposable
     /// </summary>
     internal const string DiagDimLockPolicyKey = "app.diag.dimLockPolicy";
 
-    /// <summary>
-    /// setPerfOverride 消息的 wire key（Vue 端 camelCase）→（Preferences key，引擎 ConfigCode）映射——
-    /// HandleSetPerfOverride 校验 key 合法性、PushConfigMessage/ApplyPerformanceOverrides 遍历用。
-    /// </summary>
-    private static readonly IReadOnlyDictionary<string, (string PrefKey, ConfigCode Code)> PerfOverrideItems =
-        new Dictionary<string, (string, ConfigCode)>
-        {
-            ["lazyFunctionLoad"] = (PerfLazyFunctionLoadKey, ConfigCode.LazyFunctionLoad),
-            ["irDiskCacheLoad"] = (PerfIrDiskCacheLoadKey, ConfigCode.IrDiskCacheLoad),
-            ["irFirstDirList"] = (PerfIrFirstDirListKey, ConfigCode.IrFirstDirList),
-            ["irFileListCache"] = (PerfIrFileListCacheKey, ConfigCode.IrFileListCache),
-            ["srcContentCache"] = (PerfSrcContentCacheKey, ConfigCode.SrcContentCache),
-            ["parallelErbLoad"] = (PerfParallelErbLoadKey, ConfigCode.ParallelErbLoad),
-            ["parallelParseScript"] = (PerfParallelParseScriptKey, ConfigCode.ParallelParseScript),
-        };
-
-    /// <summary>读单个性能覆盖三态值（Preferences 不可用时回退 auto=跟随游戏）。</summary>
-    private static string ReadPerfOverride(string prefKey)
-    {
-        try
-        {
-            return Preferences.Get(prefKey, "auto");
-        }
-        catch
-        {
-            return "auto";
-        }
-    }
-
-    /// <summary>
-    /// 游戏加载期应用性能覆盖——MainPage.OnReloadGame 在 Initialize（三源合并 + post-load 完毕）
-    /// 之后、会话创建之前调用。非 auto 的项经 GetItem(...).SetValue 压过一切来源
-    /// （与 OverrideDisplayReport 在 LoadConfigCore 尾部压 DisplayReport 同位语义，仅内存不落盘）；
-    /// ErbLoader 在随后会话创建时的 ERB 加载中读到即覆盖后的值。auto/缺省项不动游戏自身配置。
-    /// </summary>
-    internal static void ApplyPerformanceOverrides(ConfigData configData)
-    {
-        // 失败可见切片（handoff-nativeaot-parallel-erb §6.2 第 4 条）：四项全覆盖日志记录
-        // requested（Preferences 三态）/ effective（引擎实际值）/ fixed（游戏 csv/_fixed.config
-        // 锁定状态，Fixed=true 时 SetValue 静默丢弃写入，ConfigItem.cs）——不能只凭三态设置值
-        // 推断引擎行为。字符串拼接，NativeAOT 下无反射序列化。
-        var platform = PlatformTag;
-        foreach (var item in PerfOverrideItems.Values)
-        {
-            var requested = ReadPerfOverride(item.PrefKey);
-            try
-            {
-                var configItem = configData.GetItem(item.Code);
-                if (requested != "auto")
-                    configItem.SetValue(requested == "on");
-                LogPerfOverride(
-                    $"perf override {item.Code}: platform={platform} requested={requested} " +
-                    $"effective={(configItem.GetValue<bool>() ? "on" : "off")} fixed={configItem.Fixed}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[bridge] ApplyPerformanceOverrides({item.Code}): {ex.Message}");
-#if ANDROID
-                Android.Util.Log.Warn("EmueraMaui", $"ApplyPerformanceOverrides({item.Code}): {ex.Message}");
-#endif
-            }
-        }
-    }
-
-    private static void LogPerfOverride(string message)
-    {
-        Console.WriteLine($"[bridge] {message}");
-#if ANDROID
-        Android.Util.Log.Info("EmueraMaui", message);
-#endif
-    }
-
-    /// <summary>Apply* 覆盖日志的平台标注（android/desktop）——三处 Apply* 共用，消除 #if ANDROID 常量块的复制。</summary>
-    private static string PlatformTag
-    {
-        get
-        {
-#if ANDROID
-            return "android";
-#else
-            return "desktop";
-#endif
-        }
-    }
-
-    /// <summary>
-    /// 读诊断旋钮「平台门策略」的 Preferences 值并经 codec 规范化（null/空/未知值/Preferences
-    /// 不可用一律回退 <see cref="SweepGatePolicy.Auto"/>=跟随平台门）——词表唯一映射点在
-    /// <see cref="SweepGatePolicyCodec"/>，此处不做二次校验。
-    /// </summary>
-    internal static SweepGatePolicy ReadSweepGatePolicyPreference()
-    {
-        try
-        {
-            return SweepGatePolicyCodec.Parse(Preferences.Get(DiagSweepGatePolicyKey, "auto"));
-        }
-        catch
-        {
-            return SweepGatePolicy.Auto;
-        }
-    }
-
-    /// <summary>
-    /// 游戏加载期应用诊断旋钮「并行未调用遍历平台门策略」（ADR-0026）——MainPage.OnReloadGame 在
-    /// <see cref="ApplyPerformanceOverrides"/> 之后、会话创建之前调用。仅内存覆盖：写
-    /// <see cref="ConfigData.OverrideSweepGatePolicy"/>（无 ConfigCode 条目，游戏随包配置无法设置，
-    /// SaveConfig 不落盘）。Auto 置 null（跟随平台门，与无旋钮逐位等价）；随后会话创建时 ErbLoader
-    /// 读到并在 parsescript_policy 日志以 policy= 字段自证。
-    /// </summary>
-    internal static void ApplySweepGatePolicy(ConfigData configData)
-    {
-        var platform = PlatformTag;
-        var requested = ReadSweepGatePolicyPreference();
-        configData.OverrideSweepGatePolicy = requested == SweepGatePolicy.Auto ? null : requested;
-        LogPerfOverride(
-            $"sweep gate policy override: platform={platform} " +
-            $"requested={SweepGatePolicyCodec.ToConfigString(requested)} " +
-            $"effective={SweepGatePolicyCodec.ToConfigString(requested)}");
-    }
-
-    /// <summary>
-    /// 读诊断旋钮「SAF 读取并发度」的 Preferences 值并经 codec 规范化（null/空/未知值/Preferences
-    /// 不可用一律回退 null=auto 每树 1 并发；显式数值钳制 1–64）——词表唯一映射点在
-    /// <see cref="SafReadDegreeCodec"/>，此处不做二次校验。
-    /// </summary>
-    internal static int? ReadSafReadDegreePreference()
-    {
-        try
-        {
-            return SafReadDegreeCodec.Parse(Preferences.Get(DiagSafReadDegreeKey, "auto"));
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// 游戏加载期应用诊断旋钮「读取并发度」（ADR-0026）——MainPage.OnReloadGame 在
-    /// <see cref="ApplySweepGatePolicy"/> 之后、会话创建之前调用。仅内存覆盖：写
-    /// <see cref="ConfigData.OverrideSafReadDegree"/>（无 ConfigCode 条目，游戏随包配置无法设置，
-    /// SaveConfig 不落盘）。null=auto（content-URI 每树 1 并发与止血值逐位等价；本地路径 -1 不受限）；
-    /// 显式值钳制 1–64，2026-09-15 起对本地路径同样生效。随后会话创建时 Preload
-    /// 读到并在 preload_policy 日志以 requested=/effective=/files=/ms= 字段自证。
-    /// </summary>
-    internal static void ApplySafReadDegree(ConfigData configData)
-    {
-        var platform = PlatformTag;
-        var requested = ReadSafReadDegreePreference();
-        configData.OverrideSafReadDegree = requested;
-        LogPerfOverride(
-            $"saf read degree override: platform={platform} " +
-            $"requested={SafReadDegreeCodec.ToConfigString(requested)} " +
-            $"effective={SafReadDegreeCodec.ToConfigString(requested)}");
-    }
-
-    /// <summary>
-    /// 读诊断旋钮「并行生成度上限」的 Preferences 值并经 codec 规范化（null/空/词表外值/Preferences
-    /// 不可用一律回退 null=auto min(核数,8)）——词表唯一映射点在
-    /// <see cref="MaxParallelErbFilesCodec"/>，此处不做二次校验。
-    /// </summary>
-    internal static int? ReadMaxParallelErbFilesPreference()
-    {
-        try
-        {
-            return MaxParallelErbFilesCodec.Parse(Preferences.Get(DiagMaxParallelErbFilesKey, "auto"));
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// 游戏加载期应用诊断旋钮「并行生成度上限」（ADR-0026，06-K1）——MainPage.OnReloadGame 在
-    /// <see cref="ApplySafReadDegree"/> 之后、会话创建之前调用。仅内存覆盖：写
-    /// <see cref="ConfigData.OverrideMaxParallelErbFiles"/>（无 ConfigCode 条目，游戏随包配置无法设置，
-    /// SaveConfig 不落盘）。null=auto（min(核数,8)，与现状逐位等价）；随后会话创建时 ErbLoader
-    /// 读到并在 LoadPendingParallel/parsescript_policy 日志以 knob=/sweep_deg= 字段自证。
-    /// </summary>
-    internal static void ApplyMaxParallelErbFiles(ConfigData configData)
-    {
-        var platform = PlatformTag;
-        var requested = ReadMaxParallelErbFilesPreference();
-        configData.OverrideMaxParallelErbFiles = requested;
-        LogPerfOverride(
-            $"max parallel erb files override: platform={platform} " +
-            $"requested={MaxParallelErbFilesCodec.ToConfigString(requested)} " +
-            $"effective={MaxParallelErbFilesCodec.ToConfigString(requested)}");
-    }
-
-    /// <summary>
-    /// 读诊断旋钮「privateDimList 锁策略」的 Preferences 值并经 codec 规范化（null/空/未知值/
-    /// Preferences 不可用一律回退 <see cref="DimLockPolicy.Auto"/>=恒加锁）——词表唯一映射点在
-    /// <see cref="DimLockPolicyCodec"/>，此处不做二次校验。
-    /// </summary>
-    internal static DimLockPolicy ReadDimLockPolicyPreference()
-    {
-        try
-        {
-            return DimLockPolicyCodec.Parse(Preferences.Get(DiagDimLockPolicyKey, "auto"));
-        }
-        catch
-        {
-            return DimLockPolicy.Auto;
-        }
-    }
-
-    /// <summary>
-    /// 游戏加载期应用诊断旋钮「privateDimList 锁策略」（ADR-0026，06-K2）——MainPage.OnReloadGame 在
-    /// <see cref="ApplyMaxParallelErbFiles"/> 之后、会话创建之前调用。仅内存覆盖：写
-    /// <see cref="ConfigData.OverrideDimLockPolicy"/>（无 ConfigCode 条目，游戏随包配置无法设置，
-    /// SaveConfig 不落盘）。Auto 置 null（恒加锁，与止血逐位等价）；NoLock=纯取证档（关锁可致状态损坏）；
-    /// 随后会话创建时 IdentifierDictionary 构造时读到，parsescript_policy 日志以 dimlock= 字段自证。
-    /// </summary>
-    internal static void ApplyDimLockPolicy(ConfigData configData)
-    {
-        var platform = PlatformTag;
-        var requested = ReadDimLockPolicyPreference();
-        configData.OverrideDimLockPolicy = requested == DimLockPolicy.Auto ? null : requested;
-        LogPerfOverride(
-            $"dim lock policy override: platform={platform} " +
-            $"requested={DimLockPolicyCodec.ToConfigString(requested)} " +
-            $"effective={DimLockPolicyCodec.ToConfigString(requested)}");
-    }
-
     /// <summary>三态字符串 ↔ <see cref="ConfigData.OverrideDisplayReport"/> 的映射（纯函数，单测覆盖）。</summary>
     internal static bool? ParseDisplayReportOverride(string? value) => value switch
     {
@@ -427,6 +201,8 @@ internal sealed class BridgeHost : IDisposable
     private readonly ConfigData _configData;
     private readonly ITerminalSetup _terminalSetup;
     private readonly IJsBridge _jsBridge;
+    /// <summary>全局设置服务（ADR-0030）——Handle* 委托写 store + 即时应用，PushConfigMessage 读权威值。</summary>
+    private readonly AppSettings _appSettings;
 #if ANDROID
     // mem-leak-fix：缓存 OnInputFromJs 委托实例——构造时赋给 AndroidJsBridge.FallbackInputHandler，
     // Dispose 时用同一实例做 ReferenceEquals 比较（方法组每次转委托新建实例，直接 ReferenceEquals
@@ -499,6 +275,7 @@ internal sealed class BridgeHost : IDisposable
     /// <param name="configData">已加载的 <see cref="ConfigData"/> 单例（<c>MauiProgram</c> 初始化时加载）。</param>
     /// <param name="terminalSetup">已启用 ANSI 的 <see cref="ITerminalSetup"/> 单例。</param>
     /// <param name="jsBridge">平台 <see cref="IJsBridge"/> 实现（Windows / Android）。</param>
+    /// <param name="appSettings">全局设置服务（ADR-0030）——Handle* 委托写 store + 即时应用。</param>
     /// <param name="onReloadGame">issue 09 hot-swap reload 回调——传游戏目录绝对路径让 MainPage 重建 BridgeHost。</param>
     /// <param name="onGameExited">game-library spec ID10 退出游戏回调——BridgeHost 处理 <c>exitGame</c>
     /// 后调此回调让 MainPage 重建 BridgeHost（新 host 不启动游戏循环，等 Vue 触发 scanGames）。</param>
@@ -509,6 +286,7 @@ internal sealed class BridgeHost : IDisposable
         ConfigData configData,
         ITerminalSetup terminalSetup,
         IJsBridge jsBridge,
+        AppSettings appSettings,
         Action<string>? onReloadGame = null,
         Action? onGameExited = null,
         Action? onVueReady = null)
@@ -517,6 +295,7 @@ internal sealed class BridgeHost : IDisposable
         _configData = configData ?? throw new ArgumentNullException(nameof(configData));
         _terminalSetup = terminalSetup ?? throw new ArgumentNullException(nameof(terminalSetup));
         _jsBridge = jsBridge ?? throw new ArgumentNullException(nameof(jsBridge));
+        _appSettings = appSettings ?? throw new ArgumentNullException(nameof(appSettings));
         _onReloadGame = onReloadGame;
         _onGameExited = onGameExited;
         _onVueReady = onVueReady;
@@ -771,6 +550,12 @@ internal sealed class BridgeHost : IDisposable
                 if (type == "setDimLockPolicy")
                 {
                     HandleSetDimLockPolicy(doc.RootElement);
+                    return;
+                }
+                // ADR-0030：全局设置恢复默认——清 Preferences，下次进游戏回出厂配置
+                if (type == "settingsReset")
+                {
+                    HandleSettingsReset();
                     return;
                 }
                 // A0 补充：app 内日志查看器——读取 agent.log 内容推给 Vue（真机无 adb 场景）
@@ -1431,15 +1216,12 @@ internal sealed class BridgeHost : IDisposable
             return;
         }
         var enabled = el.GetBoolean();
-        try
+        // ADR-0030：委托 AppSettings.Set——写 Preferences + 即时切换 AgentLog.Enabled
+        if (!_appSettings.Set(AppSettings.AgentLogEnabledKey, enabled ? "true" : "false"))
         {
-            Preferences.Set(AgentLogEnabledKey, enabled);
+            Console.WriteLine("[bridge] HandleSetAgentLogEnabled: invalid value");
+            return;
         }
-        catch
-        {
-            // Preferences 不可用——运行时切换仍生效，仅持久化失败（下次启动回默认）
-        }
-        AgentLog.Instance.Enabled = enabled;
         Console.WriteLine($"[bridge] agentLogEnabled set to {enabled}");
         // 推回 config 消息同步 UI——设置页开关显示与 C# 权威状态一致
         PushConfigMessage();
@@ -1461,18 +1243,11 @@ internal sealed class BridgeHost : IDisposable
         if (root.TryGetProperty("value", out var el) && el.ValueKind == JsonValueKind.String)
         {
             var value = el.GetString();
-            if (value is not ("auto" or "off" or "on"))
+            // ADR-0030：委托 AppSettings.Set——词表校验 + 写 Preferences
+            if (!_appSettings.Set(AppSettings.DisplayReportOverrideKey, value))
             {
                 Console.WriteLine($"[bridge] HandleSetDisplayReportOverride: invalid value '{value}'");
                 return;
-            }
-            try
-            {
-                Preferences.Set(DisplayReportOverrideKey, value);
-            }
-            catch
-            {
-                // Preferences 不可用——运行时切换仍生效，仅持久化失败（下次启动回默认）
             }
             _configData.OverrideDisplayReport = ParseDisplayReportOverride(value);
             if (_configData.OverrideDisplayReport.HasValue)
@@ -1505,23 +1280,12 @@ internal sealed class BridgeHost : IDisposable
         }
         var key = keyEl.GetString();
         var value = valueEl.GetString();
-        if (key == null || !PerfOverrideItems.TryGetValue(key, out var item))
+        // ADR-0030：wire key 即 AppSettings canonical 键（PerfOverrideItems 的 wire 名与 canonical 一致），
+        // 词表校验/规范化/写 Preferences 由 AppSettings.Set 承担
+        if (key == null || !_appSettings.Set(key, value))
         {
-            Console.WriteLine($"[bridge] HandleSetPerfOverride: unknown key '{key}'");
+            Console.WriteLine($"[bridge] HandleSetPerfOverride: unknown key or invalid value '{key}'='{value}'");
             return;
-        }
-        if (value is not ("auto" or "off" or "on"))
-        {
-            Console.WriteLine($"[bridge] HandleSetPerfOverride: invalid value '{value}' for '{key}'");
-            return;
-        }
-        try
-        {
-            Preferences.Set(item.PrefKey, value);
-        }
-        catch
-        {
-            // Preferences 不可用——仅持久化失败（下次启动回默认跟随游戏）
         }
         Console.WriteLine($"[bridge] perf override {key} set to {value}");
         PushConfigMessage();
@@ -1541,18 +1305,11 @@ internal sealed class BridgeHost : IDisposable
         if (root.TryGetProperty("value", out var el) && el.ValueKind == JsonValueKind.String)
         {
             var value = el.GetString();
-            if (value is not ("auto" or "forceon" or "forceoff"))
+            // ADR-0030：委托 AppSettings.Set——词表校验 + 写 Preferences
+            if (!_appSettings.Set(AppSettings.SweepGatePolicyKey, value))
             {
                 Console.WriteLine($"[bridge] HandleSetSweepGatePolicy: invalid value '{value}'");
                 return;
-            }
-            try
-            {
-                Preferences.Set(DiagSweepGatePolicyKey, value);
-            }
-            catch
-            {
-                // Preferences 不可用——仅持久化失败（下次启动回默认跟随平台门）
             }
             Console.WriteLine($"[bridge] sweep gate policy set to {value}");
             PushConfigMessage();
@@ -1575,22 +1332,13 @@ internal sealed class BridgeHost : IDisposable
         if (root.TryGetProperty("value", out var el) && el.ValueKind == JsonValueKind.String)
         {
             var value = el.GetString();
-            var parsed = SafReadDegreeCodec.Parse(value);
-            if (parsed == null && value != "auto")
+            // ADR-0030：委托 AppSettings.Set——词表校验 + 数值钳制 1–64 规范化 + 写 Preferences
+            if (!_appSettings.Set(AppSettings.SafReadDegreeKey, value))
             {
                 Console.WriteLine($"[bridge] HandleSetSafReadDegree: invalid value '{value}'");
                 return;
             }
-            var canonical = SafReadDegreeCodec.ToConfigString(parsed);
-            try
-            {
-                Preferences.Set(DiagSafReadDegreeKey, canonical);
-            }
-            catch
-            {
-                // Preferences 不可用——仅持久化失败（下次启动回默认每树 1 并发）
-            }
-            Console.WriteLine($"[bridge] saf read degree set to {canonical}");
+            Console.WriteLine($"[bridge] saf read degree set to {_appSettings.Get(AppSettings.SafReadDegreeKey)}");
             PushConfigMessage();
             return;
         }
@@ -1611,22 +1359,13 @@ internal sealed class BridgeHost : IDisposable
         if (root.TryGetProperty("value", out var el) && el.ValueKind == JsonValueKind.String)
         {
             var value = el.GetString();
-            var parsed = MaxParallelErbFilesCodec.Parse(value);
-            if (parsed == null && value != "auto")
+            // ADR-0030：委托 AppSettings.Set——词表校验 + 写 Preferences
+            if (!_appSettings.Set(AppSettings.MaxParallelErbFilesKey, value))
             {
                 Console.WriteLine($"[bridge] HandleSetMaxParallelErbFiles: invalid value '{value}'");
                 return;
             }
-            var canonical = MaxParallelErbFilesCodec.ToConfigString(parsed);
-            try
-            {
-                Preferences.Set(DiagMaxParallelErbFilesKey, canonical);
-            }
-            catch
-            {
-                // Preferences 不可用——仅持久化失败（下次启动回默认 min(核数,8)）
-            }
-            Console.WriteLine($"[bridge] max parallel erb files set to {canonical}");
+            Console.WriteLine($"[bridge] max parallel erb files set to {value}");
             PushConfigMessage();
             return;
         }
@@ -1649,27 +1388,29 @@ internal sealed class BridgeHost : IDisposable
         if (root.TryGetProperty("value", out var el) && el.ValueKind == JsonValueKind.String)
         {
             var value = el.GetString();
-            // 词表唯一映射点：非法值 Parse 回退 Auto——仅当值既非 "auto" 又解析不出 nolock 时判非法
-            var parsed = DimLockPolicyCodec.Parse(value);
-            if (parsed != DimLockPolicy.NoLock && value != "auto")
+            // ADR-0030：委托 AppSettings.Set——词表校验 + 写 Preferences
+            if (!_appSettings.Set(AppSettings.DimLockPolicyKey, value))
             {
                 Console.WriteLine($"[bridge] HandleSetDimLockPolicy: invalid value '{value}'");
                 return;
             }
-            var canonical = DimLockPolicyCodec.ToConfigString(parsed);
-            try
-            {
-                Preferences.Set(DiagDimLockPolicyKey, canonical);
-            }
-            catch
-            {
-                // Preferences 不可用——仅持久化失败（下次启动回默认恒加锁）
-            }
-            Console.WriteLine($"[bridge] dim lock policy set to {canonical}");
+            Console.WriteLine($"[bridge] dim lock policy set to {value}");
             PushConfigMessage();
             return;
         }
         Console.WriteLine("[bridge] HandleSetDimLockPolicy: missing or non-string 'value' field");
+    }
+
+    /// <summary>
+    /// ADR-0030：恢复默认——<c>{"type":"settingsReset"}</c>；清 Preferences（经
+    /// <see cref="AppSettings.Reset"/>），perf/诊断旋钮下次进游戏回出厂配置。
+    /// 完成后推回 <c>config</c> 消息同步 UI。
+    /// </summary>
+    private void HandleSettingsReset()
+    {
+        _appSettings.Reset();
+        Console.WriteLine("[bridge] settings reset to defaults");
+        PushConfigMessage();
     }
 
     /// <summary>
@@ -1993,20 +1734,20 @@ internal sealed class BridgeHost : IDisposable
     private void PushConfigMessage()
     {
         var maxLog = _configData.GetConfigValue<int>(ConfigCode.MaxLog);
-        var displayReportOverride = DisplayReportOverrideToString(_configData.OverrideDisplayReport);
         var msg = JsonSerializer.Serialize(
-            new ConfigMessage("config", maxLog, AgentLog.Instance.Enabled, displayReportOverride,
-                ReadPerfOverride(PerfLazyFunctionLoadKey),
-                ReadPerfOverride(PerfIrDiskCacheLoadKey),
-                ReadPerfOverride(PerfIrFirstDirListKey),
-                ReadPerfOverride(PerfIrFileListCacheKey),
-                ReadPerfOverride(PerfSrcContentCacheKey),
-                ReadPerfOverride(PerfParallelErbLoadKey),
-                ReadPerfOverride(PerfParallelParseScriptKey),
-                SweepGatePolicyCodec.ToConfigString(ReadSweepGatePolicyPreference()),
-                SafReadDegreeCodec.ToConfigString(ReadSafReadDegreePreference()),
-                MaxParallelErbFilesCodec.ToConfigString(ReadMaxParallelErbFilesPreference()),
-                DimLockPolicyCodec.ToConfigString(ReadDimLockPolicyPreference())),
+            new ConfigMessage("config", maxLog, AgentLog.Instance.Enabled,
+                _appSettings.Get(AppSettings.DisplayReportOverrideKey),
+                _appSettings.Get(AppSettings.LazyFunctionLoadKey),
+                _appSettings.Get(AppSettings.IrDiskCacheLoadKey),
+                _appSettings.Get(AppSettings.IrFirstDirListKey),
+                _appSettings.Get(AppSettings.IrFileListCacheKey),
+                _appSettings.Get(AppSettings.SrcContentCacheKey),
+                _appSettings.Get(AppSettings.ParallelErbLoadKey),
+                _appSettings.Get(AppSettings.ParallelParseScriptKey),
+                _appSettings.Get(AppSettings.SweepGatePolicyKey),
+                _appSettings.Get(AppSettings.SafReadDegreeKey),
+                _appSettings.Get(AppSettings.MaxParallelErbFilesKey),
+                _appSettings.Get(AppSettings.DimLockPolicyKey)),
             MauiJsonContext.Default.ConfigMessage);
         _dispatcher.Dispatch(() => _jsBridge.PostMessage(msg));
     }

@@ -1482,6 +1482,80 @@ export const useGameStore = defineStore('game', () => {
     }
   }
 
+  /**
+   * 全局设置（ADR-0030）——统一应用权威载荷（GET/PUT/DELETE /settings 响应或 MAUI config 消息）。
+   * 字段校验与 useAppInit 的 config 消息分支逐位一致；agentLogEnabled 兼容 bool（MAUI config）
+   * 与 "true"/"false" 字符串（HTTP /settings）两种形态。
+   */
+  function applySettingsUpdate(payload: Record<string, unknown>): void {
+    if (typeof payload.maxLog === 'number') maxLog.value = payload.maxLog;
+    if (typeof payload.agentLogEnabled === 'boolean') {
+      agentLogEnabled.value = payload.agentLogEnabled;
+    } else if (payload.agentLogEnabled === 'true' || payload.agentLogEnabled === 'false') {
+      agentLogEnabled.value = payload.agentLogEnabled === 'true';
+    }
+    if (payload.displayReportOverride === 'auto' || payload.displayReportOverride === 'off' || payload.displayReportOverride === 'on') {
+      displayReportOverride.value = payload.displayReportOverride;
+    }
+    for (const perfKey of ['lazyFunctionLoad', 'irDiskCacheLoad', 'irFirstDirList', 'irFileListCache', 'srcContentCache', 'parallelErbLoad', 'parallelParseScript'] as const) {
+      const value = payload[perfKey];
+      if (value === 'auto' || value === 'off' || value === 'on') {
+        perfOverrides.value[perfKey] = value;
+      }
+    }
+    if (payload.sweepGatePolicy === 'auto' || payload.sweepGatePolicy === 'forceon' || payload.sweepGatePolicy === 'forceoff') {
+      sweepGatePolicy.value = payload.sweepGatePolicy;
+    }
+    if (payload.safReadDegree === 'auto' || (typeof payload.safReadDegree === 'string' && /^\d+$/.test(payload.safReadDegree))) {
+      safReadDegree.value = payload.safReadDegree;
+    }
+    if (payload.maxParallelErbFiles === 'auto' || payload.maxParallelErbFiles === '4' || payload.maxParallelErbFiles === '8' || payload.maxParallelErbFiles === '16') {
+      maxParallelErbFiles.value = payload.maxParallelErbFiles;
+    }
+    if (payload.dimLockPolicy === 'auto' || payload.dimLockPolicy === 'nolock') {
+      dimLockPolicy.value = payload.dimLockPolicy;
+    }
+  }
+
+  /** HTTP 模式（ADR-0030）：GET /settings 拉全局设置权威值。失败静默（保持 fallback）。 */
+  async function fetchSettings(httpBase: string): Promise<void> {
+    try {
+      const resp = await fetch(`${httpBase}/settings`);
+      if (resp.status !== 200) return;
+      applySettingsUpdate((await resp.json()) as Record<string, unknown>);
+    } catch {
+      // 网络错误——保持 fallback 值
+    }
+  }
+
+  /** HTTP 模式（ADR-0030）：PUT /settings 单键。成功以服务端响应同步权威状态；失败返回 false。 */
+  async function updateSettingsHttp(httpBase: string, key: string, value: string): Promise<boolean> {
+    try {
+      const resp = await fetch(`${httpBase}/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [key]: value }),
+      });
+      if (resp.status !== 200) return false;
+      applySettingsUpdate((await resp.json()) as Record<string, unknown>);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** HTTP 模式（ADR-0030）：DELETE /settings 恢复默认。成功以服务端响应同步权威状态；失败返回 false。 */
+  async function resetSettingsHttp(httpBase: string): Promise<boolean> {
+    try {
+      const resp = await fetch(`${httpBase}/settings`, { method: 'DELETE' });
+      if (resp.status !== 200) return false;
+      applySettingsUpdate((await resp.json()) as Record<string, unknown>);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   return {
     lastTurnJson,
     turnHistory,
@@ -1571,6 +1645,10 @@ export const useGameStore = defineStore('game', () => {
     agentLogContent,
     agentLogTruncated,
     fetchConfig,
+    applySettingsUpdate,
+    fetchSettings,
+    updateSettingsHttp,
+    resetSettingsHttp,
     setGameLayout,
     // 缩放比例
     scale,

@@ -102,6 +102,11 @@ watch(() => game.backButtonPressedTick, () => {
     onExitCancel();
     return;
   }
+  // ADR-0030：设置页（游戏选择页或游戏页打开）——返回键先关设置
+  if (ui.currentView === 'settings') {
+    ui.switchView('terminal');
+    return;
+  }
   if (isExiting.value) return;
   if (game.serverState === 'Idle' && !game.gameDir) return;
   showExitConfirm.value = true;
@@ -269,14 +274,16 @@ const popupItems = computed<PopupMenuItem[]>(() => [
                scrollHeight 归零，被覆盖期间到达的新回合会经 watch(itemCount) 把位置写成 0。
                visibility:hidden 保留布局盒（滚动位置保留、后台贴底跟随照常）且退出命中测试与 Tab 序。 -->
           <TerminalView :class="{ 'view-hidden': ui.currentView !== 'terminal' }" />
-          <!-- Debug / Settings 改为覆盖层（absolute inset:0）——两者根元素都是
-               width/height:100% + 自带背景与滚动，改绝对定位不改变其内部布局。
-               仍用 v-if：它们没有需要跨切换保留的滚动状态，离开即卸载。 -->
+          <!-- Debug 改为覆盖层（absolute inset:0）——根元素 width/height:100% + 自带背景与滚动，
+               改绝对定位不改变其内部布局。仍用 v-if：没有需要跨切换保留的滚动状态，离开即卸载。 -->
           <DebugView v-if="ui.currentView === 'debug'" class="view-overlay" />
-          <SettingsView v-else-if="ui.currentView === 'settings'" class="view-overlay" />
         </main>
       </div>
     </Transition>
+
+    <!-- ADR-0030：设置全局覆盖层——游戏选择页（列表）与游戏页都可打开（⋮ 菜单「设置」）。
+         固定在 AppShell 顶层（fixed inset:0），盖在当前页面之上；关闭经返回头或 Android 返回键。 -->
+    <SettingsView v-if="ui.currentView === 'settings'" class="settings-overlay" />
 
     <!-- 退出确认（Android 风格 Alert Dialog，spec §6.1）——挂载于 AppShell #dialogs -->
     <template #dialogs>
@@ -319,6 +326,15 @@ const popupItems = computed<PopupMenuItem[]>(() => [
   position: absolute;
   inset: 0;
   z-index: 2;
+}
+
+/* ADR-0030：设置全局覆盖层（fixed inset:0，盖在列表页/游戏页之上）。
+   z-index 100：高于游戏页悬浮控件（.game-shell-controls z-50），低于抽屉菜单（899/900）。 */
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--color-bg);
 }
 
 /* 被覆盖的终端：保留布局盒（scrollTop/scrollHeight 有效、滚动位置不丢、

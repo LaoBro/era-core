@@ -144,7 +144,7 @@ def _display_report_flags(value: str) -> list[str]:
 
 
 def _start_eracore_server(binary_path: str, game_dir: str | None, port: int,
-                          display_report: str = "off") -> subprocess.Popen:
+                          display_report: str = "off", settings: list[str] | None = None) -> subprocess.Popen:
     """Launch Emuera.Headless.Cli --server in the background."""
     if binary_path.lower().endswith(".dll"):
         cmd = ["dotnet", "exec", binary_path]
@@ -156,6 +156,9 @@ def _start_eracore_server(binary_path: str, game_dir: str | None, port: int,
     # 加载报告覆盖：见 spec「启动日志覆盖」。仅对 agent 自己拉起的 server 生效；
     # 复用已运行 server 时以该 server 自己的启动参数为准。
     cmd.extend(_display_report_flags(display_report))
+    # ADR-0030：--setting key=value 种子（可重复）——仅新拉起的 server 生效（headless 内存 store）。
+    for setting in settings or []:
+        cmd.extend(["--setting", setting])
 
     kwargs = {
         "stdout": subprocess.DEVNULL,
@@ -275,7 +278,7 @@ def cmd_start(args) -> int:
             if not os.path.isdir(game_dir):
                 _die(f"游戏目录不存在: {game_dir}")
             token = secrets.token_urlsafe(24)
-            proc = _start_eracore_server(binary, game_dir, port, args.display_report)
+            proc = _start_eracore_server(binary, game_dir, port, args.display_report, args.setting)
             if proc.poll() is not None:
                 _die("Emuera server 启动后立即退出")
             pid = proc.pid
@@ -571,6 +574,37 @@ def cmd_watch(_args) -> int:
     return watch_session(client)
 
 
+def cmd_settings(args) -> int:
+    """settings 子命令（ADR-0030）——list / get <key> / set <key> <value> / reset，走 /settings 端点。
+
+    生效语义：perf 覆盖/诊断旋钮下次 load-game 生效（ApplyTo）；displayReportOverride / agentLogEnabled 即时。
+    """
+    client, _record = _require_server()
+    if args.settings_command == "list":
+        _emit(client.get_settings())
+        return 0
+    if args.settings_command == "get":
+        try:
+            settings = client.get_settings()
+        except EmueraHttpError as exc:
+            _fail_http(exc)
+        if args.key not in settings:
+            _die(f"未知设置键: {args.key}（settings list 查看全部 13 键）")
+        _emit({"key": args.key, "value": settings[args.key]})
+        return 0
+    if args.settings_command == "set":
+        try:
+            result = client.put_settings({args.key: args.value})
+        except EmueraHttpError as exc:
+            _fail_http(exc)
+        _emit({"key": args.key, "value": result.get(args.key)})
+        return 0
+    if args.settings_command == "reset":
+        _emit(client.reset_settings())
+        return 0
+    _die(f"未知 settings 子命令: {args.settings_command}")
+
+
 def _add_view_window_args(parser) -> None:
     """四个紧凑视图命令共用的截断参数：页语义默认 + 绝对行数逃生口。"""
     parser.add_argument("--pages", type=int, default=3,
@@ -591,6 +625,11 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--display-report", choices=["auto", "off", "on"], default="off",
                        help="加载报告覆盖（仅对本次新拉起的 server 生效）：off=强制关（默认，隐藏启动读取日志）；"
                             "on=强制开（逐文件报告 + 游戏目录 time.log 阶段计时）；auto=跟随游戏配置")
+    start.add_argument("--setting", action="append", default=[], metavar="KEY=VALUE",
+                       help="全局设置种子（ADR-0030，仅对本次新拉起的 server 生效，可重复）："
+                            "displayReportOverride/agentLogEnabled/sweepGatePolicy/safReadDegree/"
+                            "maxParallelErbFiles/dimLockPolicy/lazyFunctionLoad/irDiskCacheLoad/"
+                            "irFirstDirList/irFileListCache/srcContentCache/parallelErbLoad/parallelParseScript")
     start.set_defaults(func=cmd_start)
 
     acquire = sub.add_parser("acquire", help="获取控制权并返回状态确认（默认低噪紧凑视图）")
@@ -631,6 +670,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     watch = sub.add_parser("watch", help="只读旁观终端输出")
     watch.set_defaults(func=cmd_watch)
+
+    # ADR-0030：全局设置读写——list / get / set / reset，走 /settings 端点
+    settings = sub.add_parser("settings", help="全局设置（ADR-0030）：list / get <key> / set <key> <value> / reset")
+    settings_sub = settings.add_subparsers(dest="settings_command", required=True)
+
+    settings_list = settings_sub.add_parser("list", help="列出全部 13 个设置键当前值")
+    settings_list.set_defaults(func=cmd_settings)
+
+    settings_get = settings_sub.add_parser("get", help="读取单个设置键")
+    settings_get.add_argument("key")
+    settings_get.set_defaults(func=cmd_settings)
+
+    settings_set = settings_sub.add_parser("set", help="设置单个键（perf/诊断旋钮下次 load-game 生效；displayReport/agentLog 即时）")
+    settings_set.add_argument("key")
+    settings_set.add_argument("value")
+    settings_set.set_defaults(func=cmd_settings)
+
+    settings_reset = settings_sub.add_parser("reset", help="恢复默认（清 headless 内存 store，回出厂 auto）")
+    settings_reset.set_defaults(func=cmd_settings)
 
     # issues/13 M6：MAUI 控制面命令组——面向「app 已启动但还没加载游戏」的场景
     maui = sub.add_parser("maui", help="驱动 MAUI app 的控制面（未加载游戏时也可用）")

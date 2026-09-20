@@ -59,11 +59,11 @@ describe('App: 视图切换不卸载 TerminalView（滚动位置不丢）', () =
     expect(wrapper.find('.terminal-view').classes()).toContain('view-hidden');
     expect(wrapper.find('.terminal-view').element).toBe(terminalNode);
 
-    // → settings：同上（Debug 卸载，终端不受影响）
+    // → settings：ADR-0030 起 Settings 是全局覆盖层（settings-overlay，盖在列表页/游戏页之上）
     ui.switchView('settings');
     await nextTick();
     expect(wrapper.find('.debug-view').exists()).toBe(false);
-    expect(wrapper.find('.settings-view').classes()).toContain('view-overlay');
+    expect(wrapper.find('.settings-view').classes()).toContain('settings-overlay');
     expect(wrapper.find('.terminal-view').element).toBe(terminalNode);
     expect(wrapper.find('.terminal-view').classes()).toContain('view-hidden');
 

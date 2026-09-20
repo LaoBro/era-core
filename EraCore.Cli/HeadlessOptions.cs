@@ -1,5 +1,6 @@
 using MinorShift.Emuera.GameView;
 using System;
+using System.Collections.Generic;
 using System.CommandLine;
 using System.CommandLine.Parsing;
 
@@ -17,8 +18,10 @@ internal sealed class HeadlessOptions
     public bool OpenBrowser { get; }
     /// <summary>用户是否显式传了 --port——open-browser 便捷模式下未显式指定时自动挑空闲端口。</summary>
     public bool PortExplicit { get; }
+    /// <summary>ADR-0030：--setting key=value 列表（仅 --server 模式生效；headless 内存 store 种子，不持久化）。</summary>
+    public IReadOnlyList<string> Settings { get; }
 
-    private HeadlessOptions(string? exeDir, string protocol, bool server, int port, string termWidthHint, bool noLoadingReport, bool loadingReport, bool openBrowser, bool portExplicit)
+    private HeadlessOptions(string? exeDir, string protocol, bool server, int port, string termWidthHint, bool noLoadingReport, bool loadingReport, bool openBrowser, bool portExplicit, IReadOnlyList<string> settings)
     {
         ExeDir = exeDir;
         Protocol = protocol;
@@ -29,6 +32,7 @@ internal sealed class HeadlessOptions
         LoadingReport = loadingReport;
         OpenBrowser = openBrowser;
         PortExplicit = portExplicit;
+        Settings = settings;
     }
 
     /// <summary>DisplayReport 三态覆盖：null=随游戏配置；false=--no-loading-report 强制关；true=--loading-report 强制开。</summary>
@@ -86,6 +90,14 @@ internal sealed class HeadlessOptions
         Description = "server 启动后自动打开默认浏览器（配合 --server 使用；未显式 --port 时自动挑空闲端口）"
     };
 
+    internal static readonly Option<string[]> SettingOption = new("--setting")
+    {
+        Description = "全局设置（ADR-0030）：key=value，可重复，仅 --server 模式生效（进程内存种子，不持久化）。" +
+                      "键：displayReportOverride/agentLogEnabled/sweepGatePolicy/safReadDegree/maxParallelErbFiles/" +
+                      "dimLockPolicy/lazyFunctionLoad/irDiskCacheLoad/irFirstDirList/irFileListCache/srcContentCache/" +
+                      "parallelErbLoad/parallelParseScript；值域：auto/off/on、auto/forceon/forceoff、auto/1-64、auto/4/8/16、auto/nolock、true/false"
+    };
+
     public static HeadlessOptions? Parse(string[] args)
     {
         var rootCommand = new RootCommand("EraCore - Emuera 无头模式运行器");
@@ -97,6 +109,7 @@ internal sealed class HeadlessOptions
         rootCommand.Options.Add(NoLoadingReportOption);
         rootCommand.Options.Add(LoadingReportOption);
         rootCommand.Options.Add(OpenBrowserOption);
+        rootCommand.Options.Add(SettingOption);
 
         var result = rootCommand.Parse(args);
 
@@ -126,6 +139,7 @@ internal sealed class HeadlessOptions
         var noLoadingReport = result.GetValue(NoLoadingReportOption);
         var loadingReport = result.GetValue(LoadingReportOption);
         var openBrowser = result.GetValue(OpenBrowserOption);
+        var settings = result.GetValue(SettingOption) ?? Array.Empty<string>();
 
         // 互斥：强制开/关同时给出时无意义，直接报错退出（对齐解析错误的既有处理）。
         if (noLoadingReport && loadingReport)
@@ -142,7 +156,14 @@ internal sealed class HeadlessOptions
             return null;
         }
 
-        return new HeadlessOptions(exeDir, protocol, server, port, termWidthHint, noLoadingReport, loadingReport, openBrowser, portExplicit);
+        // --setting 仅 server 模式生效（CLI 交互模式不走 GameConfigService.Reload，设置无从应用）。
+        if (!server && settings.Length > 0)
+        {
+            EmueraLog.Warn("options", "--setting 仅 --server 模式生效，CLI 模式下已忽略");
+            settings = Array.Empty<string>();
+        }
+
+        return new HeadlessOptions(exeDir, protocol, server, port, termWidthHint, noLoadingReport, loadingReport, openBrowser, portExplicit, settings);
     }
 
     private static bool ArgsContainPort(string[] args)

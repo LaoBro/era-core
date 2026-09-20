@@ -1,12 +1,34 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { ref, watch, computed } from 'vue';
 import { useGameStore } from '../stores/game';
 import { useUiStore } from '../stores/ui';
-import { setAgentLogEnabled, setDimLockPolicy, setDisplayReportOverride, setMaxParallelErbFiles, setPerfOverride, setSafReadDegree, setSweepGatePolicy, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
+import { useConnectionStore } from '../stores/connection';
+import { isMauiEnvironment, setAgentLogEnabled, setDimLockPolicy, setDisplayReportOverride, setMaxParallelErbFiles, setPerfOverride, setSafReadDegree, setSweepGatePolicy, settingsReset, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
 import type { DimLockPolicyValue, DisplayReportOverride, MaxParallelErbFilesValue, PerfOverrideKey, SafReadDegreeValue, SweepGatePolicyValue } from '../lib/mauiBridge';
 
 const game = useGameStore();
 const ui = useUiStore();
+const conn = useConnectionStore();
+
+/**
+ * ADR-0030：HTTP 模式 /settings 端点 base（与 useAppInit 的 HTTP 分支同源）。
+ * MAUI 模式走 bridge 消息；Web/HTTP 模式走 GET/PUT/DELETE /settings（headless 内存 store）。
+ */
+const httpBase = computed(() => conn.deriveHttpBase(conn.serverUrl));
+
+/** 关闭设置页——切回 terminal 视图（游戏页显示终端；列表页关闭覆盖层回到游戏选择页）。 */
+function closeSettings(): void {
+  ui.switchView('terminal');
+}
+
+/** ADR-0030：恢复默认——MAUI 走 bridge settingsReset；HTTP 走 DELETE /settings。 */
+function resetSettings(): void {
+  if (isMauiEnvironment()) {
+    settingsReset();
+    return;
+  }
+  void game.resetSettingsHttp(httpBase.value);
+}
 
 /**
  * A0（saf-accel 计划）：文件日志开关切换——投递 setAgentLogEnabled 请求 C# 切换 +
@@ -14,9 +36,13 @@ const ui = useUiStore();
  * 再次同步——最终显示以 C# 权威状态为准。
  */
 function toggleAgentLog(): void {
-  const next = !game.agentLogEnabled;
-  setAgentLogEnabled(next);
-  game.agentLogEnabled = next;
+  if (isMauiEnvironment()) {
+    const next = !game.agentLogEnabled;
+    setAgentLogEnabled(next);
+    game.agentLogEnabled = next;
+    return;
+  }
+  void game.updateSettingsHttp(httpBase.value, 'agentLogEnabled', game.agentLogEnabled ? 'false' : 'true');
 }
 
 /**
@@ -25,8 +51,12 @@ function toggleAgentLog(): void {
  * （含 displayReportOverride 字段）再次同步——最终显示以 C# 权威状态为准。
  */
 function chooseDisplayReportOverride(value: DisplayReportOverride): void {
-  setDisplayReportOverride(value);
-  game.displayReportOverride = value;
+  if (isMauiEnvironment()) {
+    setDisplayReportOverride(value);
+    game.displayReportOverride = value;
+    return;
+  }
+  void game.updateSettingsHttp(httpBase.value, 'displayReportOverride', value);
 }
 
 /**
@@ -36,8 +66,12 @@ function chooseDisplayReportOverride(value: DisplayReportOverride): void {
  * 注意：这组开关只在 ERB 加载时被引擎读取，本局不受影响，重新进入游戏后生效。
  */
 function choosePerfOverride(key: PerfOverrideKey, value: DisplayReportOverride): void {
-  setPerfOverride(key, value);
-  game.perfOverrides[key] = value;
+  if (isMauiEnvironment()) {
+    setPerfOverride(key, value);
+    game.perfOverrides[key] = value;
+    return;
+  }
+  void game.updateSettingsHttp(httpBase.value, key, value);
 }
 
 /** 性能区块的四个开关行——label + wire key，模板内遍历渲染。 */
@@ -58,8 +92,12 @@ const perfRows: Array<{ key: PerfOverrideKey; label: string }> = [
  * 注意：策略只在 ERB 加载时被读取，本局不受影响，重新进入游戏后生效。
  */
 function chooseSweepGatePolicy(value: SweepGatePolicyValue): void {
-  setSweepGatePolicy(value);
-  game.sweepGatePolicy = value;
+  if (isMauiEnvironment()) {
+    setSweepGatePolicy(value);
+    game.sweepGatePolicy = value;
+    return;
+  }
+  void game.updateSettingsHttp(httpBase.value, 'sweepGatePolicy', value);
 }
 
 /** 读取并发度——模式（默认/手动）本地 UI 态；选手动时才显示数值输入框。 */
@@ -102,8 +140,12 @@ function chooseSafMode(mode: 'auto' | 'manual'): void {
 
 /** 投递 setSafReadDegree 请求 C# 规范化 + 写 Preferences；本地乐观更新。 */
 function applySafReadDegree(value: SafReadDegreeValue): void {
-  setSafReadDegree(value);
-  game.safReadDegree = value;
+  if (isMauiEnvironment()) {
+    setSafReadDegree(value);
+    game.safReadDegree = value;
+    return;
+  }
+  void game.updateSettingsHttp(httpBase.value, 'safReadDegree', value);
 }
 
 /** 手动值应用：非正整数忽略；越界按 C# 同款规则钳制 1–64 后投递，并给出"已应用"反馈。 */
@@ -127,8 +169,12 @@ function applyCustomSafReadDegree(): void {
  * 注意：生成度只在 ERB 加载时被读取，本局不受影响，重新进入游戏后生效。
  */
 function chooseMaxParallelErbFiles(value: MaxParallelErbFilesValue): void {
-  setMaxParallelErbFiles(value);
-  game.maxParallelErbFiles = value;
+  if (isMauiEnvironment()) {
+    setMaxParallelErbFiles(value);
+    game.maxParallelErbFiles = value;
+    return;
+  }
+  void game.updateSettingsHttp(httpBase.value, 'maxParallelErbFiles', value);
 }
 
 /**
@@ -139,8 +185,12 @@ function chooseMaxParallelErbFiles(value: MaxParallelErbFilesValue): void {
  * 锁策略只在 IdentifierDictionary 构造时被读取，本局不受影响，重新进入游戏后生效。
  */
 function chooseDimLockPolicy(value: DimLockPolicyValue): void {
-  setDimLockPolicy(value);
-  game.dimLockPolicy = value;
+  if (isMauiEnvironment()) {
+    setDimLockPolicy(value);
+    game.dimLockPolicy = value;
+    return;
+  }
+  void game.updateSettingsHttp(httpBase.value, 'dimLockPolicy', value);
 }
 
 /**
@@ -177,6 +227,22 @@ const logCopied = ref(false);
 <template>
   <section class="settings-view">
     <div class="settings-content">
+      <!-- ADR-0030：设置页现在是全局覆盖层（游戏选择页/游戏页都可打开）——提供显式返回 -->
+      <div class="settings-header">
+        <button type="button" class="btn-outline btn-sm" @click="closeSettings">← 返回</button>
+        <span class="settings-header-title">设置</span>
+      </div>
+      <div class="section">
+        <h3>全局设置</h3>
+        <div class="setting-row">
+          <span class="setting-label">恢复默认</span>
+          <button class="btn-outline" @click="resetSettings">恢复默认设置</button>
+        </div>
+        <p class="hint-text">
+          把全部全局设置重置为默认（auto/出厂值）。某设置导致进游戏即崩、改不回来时用它一键拨回；
+          CLI 侧等效命令：eracore_agent settings reset。
+        </p>
+      </div>
       <div class="section">
         <h3>基本配置（emuera.config）</h3>
         <div class="setting-row">
@@ -444,6 +510,18 @@ const logCopied = ref(false);
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
+}
+/* ADR-0030：设置页返回头——全局覆盖层（列表页/游戏页都可打开）的显式出口 */
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+}
+.settings-header-title {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--color-text);
 }
 .section {
   background: var(--color-surface);

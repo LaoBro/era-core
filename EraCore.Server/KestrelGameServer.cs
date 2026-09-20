@@ -40,9 +40,9 @@ internal sealed class KestrelGameServer : IDisposable
     /// <summary>测试接缝：端点测试经此访问当前 session（如注入 turn）。</summary>
     internal SessionRegistry Sessions => _sessions;
 
-    public KestrelGameServer(int port, ITerminalSetup terminalSetup, ConfigData configData, bool? displayReportOverride = null)
+    public KestrelGameServer(int port, ITerminalSetup terminalSetup, ConfigData configData, bool? displayReportOverride = null, AppSettings? appSettings = null)
     {
-        _config = new GameConfigService(configData, displayReportOverride);
+        _config = new GameConfigService(configData, displayReportOverride, appSettings);
         _sessions = new SessionRegistry(terminalSetup, _config, GameServerProtocol.ReadAgentLease());
         _protocol = new GameServerProtocol(_sessions, _config);
         _dispatcher = new HttpRouteDispatcher(_protocol, ServerJsonContext.Default);
@@ -105,6 +105,10 @@ internal sealed class KestrelGameServer : IDisposable
         _app.MapGet("/state", (Delegate)HandleGetStateAsync);
         _app.MapGet("/config", (Delegate)HandleGetConfigAsync);
         _app.MapGet("/snapshot", (Delegate)HandleGetSnapshotAsync);
+        // ADR-0030：全局设置端点（GET/PUT/DELETE 均经共享 dispatcher——PUT 触及 body 解析/校验）。
+        _app.MapGet("/settings", (Delegate)HandleGetSettingsAsync);
+        _app.MapPut("/settings", (Delegate)HandlePutSettingsAsync);
+        _app.MapDelete("/settings", (Delegate)HandleDeleteSettingsAsync);
         // issue 05：游戏选择器端点——/load-game 重载游戏目录，/native/pick-directory 安卓 SAF 桩
         _app.MapPost("/native/pick-directory", (Delegate)HandlePickDirectoryAsync);
         // 传输专属端点：WS / 静态资源中间件 / /assets 留宿主侧（不进 dispatcher）。
@@ -176,6 +180,15 @@ internal sealed class KestrelGameServer : IDisposable
     {
         return ToIResult(_protocol.GetConfig());
     }
+
+    /// <summary>GET /settings —— 全局设置全量（ADR-0030；无 body，仍经 dispatcher 保持单点路由）。</summary>
+    internal Task<IResult> HandleGetSettingsAsync(HttpContext context) => DispatchApiAsync("GET", "/settings", context);
+
+    /// <summary>PUT /settings —— 批量设置全局设置（body 解析/校验在 dispatcher，协议语义见 PutSettings）。</summary>
+    internal Task<IResult> HandlePutSettingsAsync(HttpContext context) => DispatchApiAsync("PUT", "/settings", context);
+
+    /// <summary>DELETE /settings —— 恢复默认（ADR-0030，协议语义见 ResetSettings）。</summary>
+    internal Task<IResult> HandleDeleteSettingsAsync(HttpContext context) => DispatchApiAsync("DELETE", "/settings", context);
 
     /// <summary>GET /snapshot —— 全量显示状态快照（协议语义见 GetSnapshot：404/503/200）。</summary>
     internal IResult HandleGetSnapshotAsync()

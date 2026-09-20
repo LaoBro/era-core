@@ -127,6 +127,15 @@ internal sealed class HttpRouteDispatcher
             case ("POST", "/game/dirs"):
                 return HandleListDirs(request);
 
+            // ADR-0030：全局设置端点——GET 全量 / PUT 批量 / DELETE reset。
+            // 无认证（与 /config 同级，localhost；Web 前端 HTTP 模式无 token）。
+            case ("GET", "/settings"):
+                return _protocol.GetSettings();
+            case ("PUT", "/settings"):
+                return _protocol.PutSettings(request.BodyText);
+            case ("DELETE", "/settings"):
+                return _protocol.ResetSettings();
+
             default:
                 return HttpResult.Text(NotFoundBody, statusCode: 404);
         }

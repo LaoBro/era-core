@@ -23,6 +23,9 @@ public class HttpRouteDispatcherTests
     private static GameConfigService CreateConfigService()
         => new(new ConfigData(), false);
 
+    private static GameConfigService CreateConfigService(AppSettings appSettings)
+        => new(new ConfigData(), appSettings: appSettings);
+
     private static SessionRegistry CreateRegistry()
         => new(new SessionRegistryTests.NullTerminalSetup(), CreateConfigService(), GameServerProtocol.ReadAgentLease());
 
@@ -204,6 +207,119 @@ public class HttpRouteDispatcherTests
         var dir = Path.Combine(root, name);
         Directory.CreateDirectory(Path.Combine(dir, "csv"));
         Directory.CreateDirectory(Path.Combine(dir, "erb"));
+    }
+
+    // ---- /settings（ADR-0030 全局设置端点）----
+
+    [Fact]
+    public async Task Settings_get_returns_all_13_keys()
+    {
+        var dispatcher = new HttpRouteDispatcher(
+            new GameServerProtocol(CreateRegistry(), CreateConfigService(new AppSettings())));
+        var resp = await DispatchAsync(dispatcher, "GET", "/settings");
+
+        Assert.Equal(200, resp.StatusCode);
+        Assert.Contains("\"displayReportOverride\":\"auto\"", resp.Body);
+        Assert.Contains("\"sweepGatePolicy\":\"auto\"", resp.Body);
+        Assert.Contains("\"dimLockPolicy\":\"auto\"", resp.Body);
+    }
+
+    [Fact]
+    public async Task Settings_put_valid_batch_applies_and_echoes()
+    {
+        var appSettings = new AppSettings();
+        var dispatcher = new HttpRouteDispatcher(
+            new GameServerProtocol(CreateRegistry(), CreateConfigService(appSettings)));
+        var resp = await DispatchAsync(
+            dispatcher, "PUT", "/settings",
+            JsonSerializer.Serialize(new { sweepGatePolicy = "forceoff", safReadDegree = "4" }));
+
+        Assert.Equal(200, resp.StatusCode);
+        Assert.Contains("\"sweepGatePolicy\":\"forceoff\"", resp.Body);
+        Assert.Contains("\"safReadDegree\":\"4\"", resp.Body);
+        Assert.Equal("forceoff", appSettings.Get(AppSettings.SweepGatePolicyKey));
+    }
+
+    [Fact]
+    public async Task Settings_put_unknown_key_returns_400_invalid_setting()
+    {
+        var dispatcher = new HttpRouteDispatcher(
+            new GameServerProtocol(CreateRegistry(), CreateConfigService(new AppSettings())));
+        var resp = await DispatchAsync(dispatcher, "PUT", "/settings", "{\"bogus\":\"auto\"}");
+
+        Assert.Equal(400, resp.StatusCode);
+        Assert.Contains("INVALID_SETTING", resp.Body);
+    }
+
+    [Fact]
+    public async Task Settings_put_invalid_value_returns_400_invalid_setting()
+    {
+        var dispatcher = new HttpRouteDispatcher(
+            new GameServerProtocol(CreateRegistry(), CreateConfigService(new AppSettings())));
+        var resp = await DispatchAsync(dispatcher, "PUT", "/settings", "{\"dimLockPolicy\":\"lock\"}");
+
+        Assert.Equal(400, resp.StatusCode);
+        Assert.Contains("INVALID_SETTING", resp.Body);
+    }
+
+    [Theory]
+    [InlineData("{\"safReadDegree\":4}")]
+    [InlineData("{\"agentLogEnabled\":true}")]
+    [InlineData("{\"sweepGatePolicy\":{\"a\":1}}")]
+    public async Task Settings_put_non_string_value_returns_400_invalid_setting(string body)
+    {
+        // 设置值是词表字符串——数字/布尔/对象一律 400（不得落成 500）
+        var dispatcher = new HttpRouteDispatcher(
+            new GameServerProtocol(CreateRegistry(), CreateConfigService(new AppSettings())));
+        var resp = await DispatchAsync(dispatcher, "PUT", "/settings", body);
+
+        Assert.Equal(400, resp.StatusCode);
+        Assert.Contains("INVALID_SETTING", resp.Body);
+    }
+
+    [Fact]
+    public async Task Settings_put_display_report_applies_immediately_to_current()
+    {
+        // PUT displayReportOverride=off 即时应用到当前 ConfigData（与 MAUI 运行时切换一致）
+        var appSettings = new AppSettings();
+        var config = CreateConfigService(appSettings);
+        var dispatcher = new HttpRouteDispatcher(
+            new GameServerProtocol(CreateRegistry(), config));
+        var resp = await DispatchAsync(
+            dispatcher, "PUT", "/settings",
+            JsonSerializer.Serialize(new { displayReportOverride = "off" }));
+
+        Assert.Equal(200, resp.StatusCode);
+        Assert.False(config.Current.OverrideDisplayReport);
+        Assert.False(config.Current.GetConfigValue<bool>(ConfigCode.DisplayReport));
+    }
+
+    [Theory]
+    [InlineData("not-json")]
+    [InlineData("")]
+    [InlineData(null)]
+    public async Task Settings_put_bad_or_empty_body_returns_400(string? body)
+    {
+        var dispatcher = new HttpRouteDispatcher(
+            new GameServerProtocol(CreateRegistry(), CreateConfigService(new AppSettings())));
+        var resp = await DispatchAsync(dispatcher, "PUT", "/settings", body);
+
+        Assert.Equal(400, resp.StatusCode);
+        Assert.Contains("Invalid JSON", resp.Body);
+    }
+
+    [Fact]
+    public async Task Settings_delete_resets_to_defaults()
+    {
+        var appSettings = new AppSettings();
+        Assert.True(appSettings.Set(AppSettings.SweepGatePolicyKey, "forceoff"));
+        var dispatcher = new HttpRouteDispatcher(
+            new GameServerProtocol(CreateRegistry(), CreateConfigService(appSettings)));
+
+        var resp = await DispatchAsync(dispatcher, "DELETE", "/settings");
+
+        Assert.Equal(200, resp.StatusCode);
+        Assert.Contains("\"sweepGatePolicy\":\"auto\"", resp.Body);
     }
 
     private sealed class TempRoot : IDisposable

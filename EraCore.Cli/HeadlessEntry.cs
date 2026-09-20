@@ -85,7 +85,7 @@ internal static class HeadlessEntry
 #if !ANDROID_NO_SERVER
             // --open-browser 便捷模式且未显式 --port → 传 0，由 ServerRunner 自动挑空闲端口。
             var port = options.OpenBrowser && !options.PortExplicit ? 0 : options.Port;
-            await ServerRunner.RunAsync(port, terminalSetup, configData, options.DisplayReportOverride, options.OpenBrowser);
+            await ServerRunner.RunAsync(port, terminalSetup, configData, options.DisplayReportOverride, options.OpenBrowser, BuildAppSettings(options));
 #else
             // android 交叉产物（3.2 验证）：无 Kestrel（AspNetCore 无 android runtime pack），
             // server 模式不可用——明确提示后走 CLI 模式，避免静默忽略 --server。
@@ -99,5 +99,26 @@ internal static class HeadlessEntry
             // 等环境错误由 HeadlessRunner 的 HeadlessFatalException 捕获块统一处理。
             await HeadlessRunner.RunAsync(paths, options.Protocol, options.TermWidthHint, terminalSetup, configData);
         }
+    }
+
+    /// <summary>
+    /// ADR-0030：构造 headless 全局设置（内存 store）——<c>--setting</c> 种子。
+    /// 非法 key/value 仅警告并忽略（不中断启动）；<c>--loading-report/--no-loading-report</c>
+    /// 由 <see cref="GameConfigService"/> 构造时折叠进同一 store（--setting 优先）。
+    /// </summary>
+    private static AppSettings BuildAppSettings(HeadlessOptions options)
+    {
+        var appSettings = new AppSettings(new InMemoryAppSettingsStore());
+        foreach (var entry in options.Settings)
+        {
+            var eq = entry.IndexOf('=');
+            var key = eq > 0 ? entry[..eq] : entry;
+            var value = eq >= 0 ? entry[(eq + 1)..] : null;
+            if (!appSettings.Set(key, value))
+                EmueraLog.Warn("options", $"--setting 忽略非法项: {entry}（key 或 value 不在 canonical 词表）");
+            else
+                EmueraLog.Info("options", $"--setting {entry}");
+        }
+        return appSettings;
     }
 }

@@ -55,15 +55,17 @@ internal sealed class HttpListenerHost : IDisposable
     /// 宿主可选的 <c>POST /load-game</c> 实现（MAUI 注入转交 <c>MainPage.OnReloadGame</c> 的实现；
     /// <c>null</c> = 走默认 <see cref="GameServerProtocol.LoadGame"/>）。见 <see cref="HttpRouteDispatcher"/> 同名委托。
     /// </param>
+    /// <param name="appSettings">全局设置服务（ADR-0030）——<c>null</c> 时用空内存 store（测试/占位路径）。</param>
     public HttpListenerHost(
         int port,
         ITerminalSetup terminalSetup,
         ConfigData configData,
         bool? displayReportOverride = null,
         Func<string, HttpResult?>? scanGameDirHandler = null,
-        Func<string, ControlIdentity?, HttpResult?>? loadGameHandler = null)
+        Func<string, ControlIdentity?, HttpResult?>? loadGameHandler = null,
+        AppSettings? appSettings = null)
     {
-        _config = new GameConfigService(configData, displayReportOverride);
+        _config = new GameConfigService(configData, displayReportOverride, appSettings);
         _sessions = new SessionRegistry(terminalSetup, _config, GameServerProtocol.ReadAgentLease());
         _protocol = new GameServerProtocol(_sessions, _config);
         _dispatcher = new HttpRouteDispatcher(_protocol, ServerJsonContext.Default, scanGameDirHandler, loadGameHandler);
@@ -177,6 +179,13 @@ internal sealed class HttpListenerHost : IDisposable
                 return _protocol.GetState();
             case ("GET", "/config"):
                 return _protocol.GetConfig();
+            // ADR-0030：全局设置端点——GET/DELETE 无 body 直连协议，PUT 触及 body 走共享 dispatcher。
+            case ("GET", "/settings"):
+                return _protocol.GetSettings();
+            case ("PUT", "/settings"):
+                return await _dispatcher.DispatchAsync(BuildRequestData(request), ct);
+            case ("DELETE", "/settings"):
+                return _protocol.ResetSettings();
             case ("GET", "/snapshot"):
                 return _protocol.GetSnapshot();
             case ("POST", "/native/pick-directory"):

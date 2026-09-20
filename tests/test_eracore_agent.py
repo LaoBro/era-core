@@ -164,6 +164,9 @@ def main():
                 str(game_dir),
                 "--eracore-path",
                 str(binary),
+                # ADR-0030：--setting 种子（headless 内存 store，仅新拉起的 server 生效）
+                "--setting",
+                "sweepGatePolicy=forceoff",
             ],
             env,
             timeout=60,
@@ -314,6 +317,49 @@ def main():
         check(release_json is not None, "release stdout is JSON")
         if release_json is not None:
             check(release_json.get("released") is True, "release reports released=true")
+
+        # --- ADR-0030：全局设置（/settings 端点 + settings 子命令） ---
+        settings_list = run_agent(["settings", "list"], env, timeout=15)
+        sl_json = parse_json_stdout(settings_list)
+        check(settings_list.returncode == 0, f"settings list exits 0 (got {settings_list.returncode})")
+        if sl_json is not None:
+            check(len(sl_json) == 13, f"settings list has 13 keys (got {len(sl_json)})")
+            check(sl_json.get("sweepGatePolicy") == "forceoff",
+                  f"settings list shows --setting seed sweepGatePolicy=forceoff (got {sl_json.get('sweepGatePolicy')!r})")
+            check(sl_json.get("displayReportOverride") == "off",
+                  f"settings list shows --display-report off seed (got {sl_json.get('displayReportOverride')!r})")
+
+        # 生效性证据：start 的 load-game 时 ApplyTo 打过确认日志（requested/effective + platform tag）
+        logs_apply = run_agent(["logs"], env, timeout=15)
+        la_json = parse_json_stdout(logs_apply)
+        if la_json is not None:
+            joined = "\n".join(la_json.get("lines") or [])
+            check("sweep gate policy override" in joined and "requested=forceoff" in joined,
+                  "apply log confirms sweepGatePolicy forceoff applied at load-game")
+
+        settings_get = run_agent(["settings", "get", "sweepGatePolicy"], env, timeout=15)
+        sg_json = parse_json_stdout(settings_get)
+        check(settings_get.returncode == 0, f"settings get exits 0 (got {settings_get.returncode})")
+        if sg_json is not None:
+            check(sg_json.get("key") == "sweepGatePolicy" and sg_json.get("value") == "forceoff",
+                  "settings get sweepGatePolicy → forceoff")
+
+        settings_set = run_agent(["settings", "set", "safReadDegree", "4"], env, timeout=15)
+        ss_json = parse_json_stdout(settings_set)
+        check(settings_set.returncode == 0, f"settings set exits 0 (got {settings_set.returncode})")
+        if ss_json is not None:
+            check(ss_json.get("key") == "safReadDegree" and ss_json.get("value") == "4",
+                  "settings set safReadDegree 4 → value 4")
+
+        settings_bad = run_agent(["settings", "set", "dimLockPolicy", "lock"], env, timeout=15)
+        check(settings_bad.returncode != 0, "settings set invalid value exits non-zero (server 400 INVALID_SETTING)")
+
+        settings_reset = run_agent(["settings", "reset"], env, timeout=15)
+        sr_json = parse_json_stdout(settings_reset)
+        check(settings_reset.returncode == 0, f"settings reset exits 0 (got {settings_reset.returncode})")
+        if sr_json is not None:
+            check(sr_json.get("sweepGatePolicy") == "auto", "settings reset returns sweepGatePolicy auto")
+            check(sr_json.get("safReadDegree") == "auto", "settings reset returns safReadDegree auto")
 
         stop = run_agent(["stop"], env, timeout=30)
         check(stop.returncode == 0, f"stop exits 0 (got {stop.returncode})")
