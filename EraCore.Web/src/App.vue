@@ -55,14 +55,15 @@ watch(() => ui.theme, (t) => {
 });
 
 /**
- * ADR-0030：从游戏选择页打开设置时，游戏被加载（gameDir null→有值，含 agent 经 CLI 加载）
- * → 自动关设置页回到游戏画面。`!prev` 守卫：已进游戏再从游戏页开设置、随后热切换新游戏
- * （gameDir 有值→有值）不触发，避免打断正在看的设置。
+ * ADR-0030：从游戏选择页打开设置时，游戏被加载（含 agent 经 CLI 加载）→ 自动关设置页回到游戏画面。
+ * 判据用 serverState 的 Idle→非 Idle 跃迁而非 gameDir：MAUI 加载流（layout 消息）只改 serverState，
+ * Vue store 的 gameDir 在 MAUI 恒为 null，挂 gameDir 的 watch 在 MAUI 永不触发。
+ * `prev === 'Idle'` 守卫：游戏页内开设置后热切换新游戏（非 Idle→非 Idle）不触发，避免打断正在看的设置。
  */
 watch(
-  () => game.gameDir,
-  (dir, prev) => {
-    if (!prev && dir && ui.currentView === 'settings') {
+  () => game.serverState,
+  (state, prev) => {
+    if (prev === 'Idle' && state !== 'Idle' && ui.currentView === 'settings') {
       ui.switchView('terminal');
     }
   },

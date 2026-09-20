@@ -86,9 +86,11 @@ describe('App: 视图切换不卸载 TerminalView（滚动位置不丢）', () =
     expect(body).not.toContain('display: none');
   });
 
-  it('ADR-0030：从列表页打开设置后游戏被加载（gameDir null→有值）自动关设置页', async () => {
+  it('ADR-0030：从列表页打开设置后游戏被加载（serverState Idle→非 Idle）自动关设置页', async () => {
     const game = useGameStore();
     const ui = useUiStore();
+    // 覆盖 beforeEach 的 'WaitInput'——本用例需要「列表页态」开局（Idle）
+    game.serverState = 'Idle';
     const wrapper = mount(App);
 
     // 列表页（无游戏）打开设置
@@ -96,8 +98,8 @@ describe('App: 视图切换不卸载 TerminalView（滚动位置不丢）', () =
     await nextTick();
     expect(wrapper.find('.settings-view').exists()).toBe(true);
 
-    // agent/CLI 加载游戏 → 自动关设置页回到游戏画面
-    game.setGameDir('/storage/emulated/0/emuera/TK1.29.3纯净版');
+    // agent/CLI 加载游戏 → MAUI 加载流只改 serverState（layout 消息）→ 自动关设置页回到游戏画面
+    game.serverState = 'WaitInput';
     await nextTick();
     expect(ui.currentView).toBe('terminal');
     expect(wrapper.find('.settings-view').exists()).toBe(false);
