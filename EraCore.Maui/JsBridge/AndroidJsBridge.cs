@@ -36,9 +36,8 @@ namespace EraCore.Maui.JsBridge;
 /// </para>
 /// <para>
 /// game-library spec ID11：原 <c>PickFolderAsync</c> 空桩已删除——Android 的「更改目录」走
-/// SAF 原生选择器（<c>pickSafDirectory</c>，ADR-0019）；issues/15 S2 的页内真实路径浏览器
-/// 另走 <see cref="BridgeHost.HandleListDirectories"/> + <c>getStorageRoots</c>
-/// （Vue 端 <c>ChangeDirDialog.vue</c> 浏览区块）。接口默认实现
+/// 系统选择器（<c>pickSafDirectory</c>，ADR-0019），且自 issues/15 方案 B 起这是唯一目录入口
+/// （页内真实路径浏览器已下线）。接口默认实现
 /// （<c>Task.FromResult&lt;string?&gt;(null)</c>）兜底，Android 路径不会到达此方法。
 /// </para>
 /// </remarks>

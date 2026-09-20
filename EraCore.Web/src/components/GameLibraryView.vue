@@ -165,15 +165,6 @@ watch(() => game.modeNotice, () => scheduleModeNoticeAutoDismiss(), { immediate:
 
 // ---------- 「更改目录」入口（统一走 ChangeDirDialog） ----------
 const dirDialogVisible = ref(false);
-/**
- * issues/15 S3：本次打开是否**直接展开浏览区**。
- *
- * ⋮ 菜单项承诺走快速模式，点进去却停在输入框、要再点一次「浏览…」才到直读浏览器——
- * 承诺与落点不一致。菜单入口走 `{ browse: true }`，让「点进来 = 看到目录」。
- * Web 的入口不带参数，保持原行为（手动输入为主）。
- */
-const dirDialogAutoBrowse = ref(false);
-
 // issues/13 M5：重扫脚本缓存（路线 2 显式失效）——⋮ 菜单 → 确认 → 删 IR+sidecar，下次启动建库轮。
 const rescanTarget = ref<{ name: string; fullPath: string } | null>(null);
 function onRequestRescan(name: string, fullPath: string): void {
@@ -197,11 +188,13 @@ async function scanDir(dir: string): Promise<void> {
   }
 }
 
-/** 打开共享的「更改目录」对话框（Web 经右上角菜单调用；MAUI 走 ⋮ 或空态按钮调用）。 */
-function openChangeDirDialog(opts?: { browse?: boolean }): void {
+/** 打开共享的「更改目录」对话框（Web 经右上角菜单调用）。
+ *
+ *  原有一个 `{ browse: true }` 选项用以「打开即展开浏览区」，服务 MAUI 菜单入口的承诺；
+ *  该入口自 issues/15 方案 B 起改走系统选择器，选项随之删除。 */
+function openChangeDirDialog(): void {
   game.clearMauiError();
   game.clearLoadGameError();
-  dirDialogAutoBrowse.value = opts?.browse === true;
   dirDialogVisible.value = true;
 }
 
@@ -359,11 +352,10 @@ defineExpose({ openChangeDirDialog });
       </div>
     </div>
 
-    <!-- 共享「更改目录」对话框（MAUI 原生 / Web 浏览 + 手动输入） -->
+    <!-- 共享「更改目录」对话框（Web：手动输入 + 逐层浏览；MAUI 走原生选择器，不打开它） -->
     <ChangeDirDialog
       v-model:visible="dirDialogVisible"
       :source="source"
-      :auto-browse="dirDialogAutoBrowse"
     />
 
     <!-- issues/13 M5：重扫脚本缓存确认——删 IR+sidecar 不可逆（下次启动付一次建库轮 ~30s），需用户确认 -->

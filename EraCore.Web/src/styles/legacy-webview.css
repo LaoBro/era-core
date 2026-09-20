@@ -26,7 +26,6 @@ html.legacy-webview .cd-browser > * + * { margin-top: var(--space-2); }
 html.legacy-webview .cd-browser-footer > * + * { margin-left: var(--space-2); }
 html.legacy-webview .cd-browser-loading > * + * { margin-left: var(--space-2); }
 html.legacy-webview .cd-dialog > * + * { margin-top: var(--space-3); }
-html.legacy-webview .cd-grant > * + * { margin-top: var(--space-2); }
 html.legacy-webview .cd-path-row > * + * { margin-left: var(--space-2); }
 
 /* components\ConfirmDialog.vue */

@@ -2,16 +2,17 @@
 /**
  * ChangeDirDialog.vue — 「更改目录」对话框（手动输入路径 + 页内目录浏览）。
  *
- * 两个平台共用：
- * - **Web/HTTP**：手动输入 + 页内浏览（`source.listDirs` 走 server `/game/dirs`）。
- * - **MAUI**：右上角 ⋮ 菜单「更改目录」直接弹原生选择器（Windows FolderPicker / Android SAF），
- *   本对话框作为**并列第二条路**——issues/15 S2（C2）的「浏览存储目录…」入口打开它，
- *   逐层选出一个**真实路径**目录，从而切到 legacy 直读模式（SAF picker 只产 content:// URI，
- *   拿不到真实路径）。MAUI 侧浏览走 `listDirectories` / `storageRoots` 桥接消息。
+ * **现为 Web 专用**（issues/15 方案 B）：MAUI 的目录入口唯一——「更改目录」直接弹原生选择器
+ * （Windows FolderPicker / Android 系统选择器），选完由 C# 判定快速/兼容轨，本对话框在 MAUI
+ * 上不再被打开。故此处只保留桌面浏览器真正会走的那条路：
  *
- * 内容：手动路径输入（未展开浏览时）+ 面包屑式页内浏览（`source.listDirs` 逐层列举，
- * 「上级/前往/存储」收编为可点面包屑段）；浏览中确认（「扫描此目录」）→ 直接
- * `source.scan(browsePath)` 并关闭（手动模式下仍是填框 + 「扫描」），传输失败时保留框体。
+ * - 手动输入路径（粘贴是正经用法）+ 「浏览…」逐层列举（`source.listDirs` → server `/game/dirs`）；
+ * - 面包屑导航（「上级 / 前往」收编为可点段）；
+ * - 浏览中确认（「扫描此目录」）→ `source.scan(browsePath)` 并关闭，传输失败时保留框体。
+ *
+ * 历史上它还承担过两件事，随入口收敛一并删除：存储根清单（挂载点由 C# 给的换卷入口）与
+ * 「未授权直读」的内联授权 CTA——两者都只在 Android 可达。
+ * 剩余几处 `isAndroidMaui` 显隐守卫保留为**意图声明**（Android 上不该出现手动输入框）。
  *
  * 视觉与交互遵循 ConfirmDialog.vue 的 Alert 式对话框约定（半透明遮罩 + 表面容器、
  * 点击遮罩 / Escape 关闭），按钮复用全局 .btn-primary / .btn-outline。
@@ -22,22 +23,13 @@ import {
   isAndroidMauiEnvironment,
   type GameLibrarySource,
   type DirListResult,
-  type StorageRoot,
 } from '../lib/gameLibrary';
-import { checkAllFilesAccess, requestAllFilesAccess } from '../lib/mauiBridge';
 
 const props = defineProps<{
   /** 是否显示。 */
   visible: boolean;
-  /** 游戏库数据源（maui 桥接 或 http）。 */
+  /** 游戏库数据源（当前恒为 http；见文件头——本对话框为 Web 专用）。 */
   source: GameLibrarySource;
-  /**
-   * issues/15 S3：打开后是否**直接展开浏览区**。
-   *
-   * ⋮ 菜单项承诺走快速模式，点进来却停在输入框、还要再点一次「浏览…」——承诺与落点不一致。
-   * 菜单入口传 true 让「点进来 = 看到目录」；Web 入口不传，保持手动输入为主的原行为。
-   */
-  autoBrowse?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -70,30 +62,17 @@ watch(
       inputPath.value = game.scanRootDir ?? game.mainGameDir ?? '';
       browsing.value = false;
       browseLoading.value = false;
-      inRootsView.value = false;
-      roots.value = null;
-      needsGrant.value = false;
-      awaitingGrant.value = false;
       localError.value = null;
       previouslyFocused = document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
       await nextTick();
-      // UX 改版：浏览展开时不聚焦手动输入框——真机上会拉起软键盘把目录列表顶出视口。
-      if (!props.autoBrowse) inputRef.value?.focus();
-      // issues/15 S3：菜单入口承诺「点到即见目录」——打开即展开浏览区。
-      // Android 下无条件展开（手动输入已隐藏，浏览是唯一模式）；enterBrowse
-      // 自带起点分派：当前目录是真实路径就从它起，否则列存储根。
-      if (props.autoBrowse || isAndroidMaui.value) {
-        browsing.value = true;
-        await enterBrowse(inputPath.value.trim());
-      }
+      // Web 以手动输入（粘贴路径）为主，打开即聚焦。
+      inputRef.value?.focus();
     } else if (previouslyFocused && previouslyFocused.isConnected) {
       previouslyFocused.focus();
       previouslyFocused = null;
     }
-    // 关闭即放弃「待授权重试」意图——否则它会在下一次授权状态变化时触发一次不可见的列举
-    if (!v) awaitingGrant.value = false;
   },
 );
 
@@ -122,31 +101,12 @@ const browsePath = ref<string>('');
 const browseDirs = ref<string[]>([]);
 /** 正在读目录（桥接往返 / 慢卷枚举）——给浏览区块一个 loading 态。 */
 const browseLoading = ref(false);
-/** 存储根清单；null = 尚未取到或取失败（此时不显示根列表）。 */
-const roots = ref<StorageRoot[] | null>(null);
-/** 当前是否显示的是「存储根」列表（区别于普通子目录列表）。 */
-const inRootsView = ref(false);
-/**
- * issues/15 S3：根列表为空（= 未授权直读）——改为展示**内联授权 CTA**。
- *
- * 改造前这里只写一句「请先在 ⋮ 菜单中申请所有文件访问权限」——那是死循环：
- * ⋮ 菜单正被本对话框盖着，用户点不到。
- */
-const needsGrant = ref(false);
-/** 待授权后重试列举的意图——授权结果经桥接异步回流，故需标记 + watch 兑现。 */
-const awaitingGrant = ref(false);
-
-/** 数据源是否提供挂载点清单——MAUI 有（问 C#），Web 没有（可直接从任意路径起浏览）。 */
-const canBrowseRoots = computed(() => typeof props.source.storageRoots === 'function');
-
-/** 本平台是否存在「所有文件访问」权限这一说——决定根列表为空时给授权 CTA 还是纯错误文案。 */
-const canGrant = computed(() => canBrowseRoots.value && isAndroidMauiEnvironment());
-
 /**
  * 是否为可直接浏览的**真实路径**。
  *
- * `content://`（SAF）与空串都不是——此时真实路径浏览器没有可用起点，退到存储根清单。
- * 判定宽松（只要有根形态即可），真正能否列举由 `source.listDirs` 说了算。
+ * `content://`（SAF）与空串都不是——页内浏览器没有可用起点（本组件现为 Web 专用，不再有
+ * 挂载点清单可退，只能提示用户先填一个真实路径）。判定宽松（只要有根形态即可），
+ * 真正能否列举由 `source.listDirs` 说了算。
  */
 function isRealPath(p: string): boolean {
   const t = p.trim();
@@ -160,103 +120,29 @@ async function toggleBrowse(): Promise<void> {
   await enterBrowse(inputPath.value.trim());
 }
 
-/**
- * 进入目录浏览指定路径。
- *
- * issues/15 S2：路径不是真实路径（空 / `content://`）且数据源能给出挂载点时，
- * 改为展示**存储根清单**——这是 Android 从 SAF 切到 legacy 时的常态起点
- * （当前主目录本身就是 `content://`）。
- */
+/** 进入目录浏览指定路径（逐层列举；起点由调用方给）。 */
 async function enterBrowse(dir: string): Promise<void> {
   const target = dir.trim();
-  if (!isRealPath(target) && canBrowseRoots.value) {
-    await showRoots();
+  // 非真实路径（空 / content://）没有可浏览的起点，先提示填绝对路径。
+  // 这原是「退到存储根清单」那条路，随存储根清单一并删除——Web 上本就落到同一句提示。
+  if (!isRealPath(target)) {
+    browseDirs.value = [];
+    localError.value = '无法读取存储位置——请在上方直接输入目录路径。';
     return;
   }
-  // 面包屑依赖 roots 折叠存储前缀（💾 内部存储）——走真实路径时也要拉一次。
-  // 幂等且便宜（单次桥接往返）；未授权时返回空清单，面包屑退化为逐段展开，无害。
-  if (canBrowseRoots.value && roots.value === null) {
-    roots.value = (await props.source.storageRoots?.()) ?? null;
-  }
-
   browsePath.value = target;
   browseLoading.value = true;
-  const result: DirListResult | null = await props.source.listDirs(target);
+  // listDirs 可选——不支持页内浏览的数据源返回 undefined，此处归一为 null（走同一条错误分支）
+  const result: DirListResult | null = await (props.source.listDirs?.(target) ?? null);
   browseLoading.value = false;
   if (result === null) {
     browseDirs.value = [];
-    inRootsView.value = false;
-    needsGrant.value = false;
     localError.value = `无法访问目录：${target || '(空)'}`;
     return;
   }
   browsePath.value = result.currentPath;
   browseDirs.value = result.dirs;
-  inRootsView.value = false;
   localError.value = null;
-}
-
-/**
- * 读取并展示存储根清单（MAUI：C# 的 `StorageManager` / `DriveInfo`）。
- *
- * 空清单有两种含义，文案必须分开（issues/15 S3）：
- * - **Android 未授权**——C# 侧 `CollectStorageRoots` 的门直接返空（scoped storage 会拒绝对
- *   `/storage/emulated/0` 的直接路径访问），给可点的授权入口；
- * - 其它失败（该平台无授权概念 / 真读不到）——退化为手动输入的提示。
- */
-async function showRoots(): Promise<void> {
-  browseLoading.value = true;
-  const list = (await props.source.storageRoots?.()) ?? null;
-  browseLoading.value = false;
-  if (!list || list.length === 0) {
-    roots.value = null;
-    inRootsView.value = false;
-    browsePath.value = '';
-    browseDirs.value = [];
-    needsGrant.value = canGrant.value;
-    localError.value = canGrant.value
-      ? null
-      : '无法读取存储位置——请在上方直接输入目录路径。';
-    return;
-  }
-  roots.value = list;
-  inRootsView.value = true;
-  needsGrant.value = false;
-  browsePath.value = '';
-  browseDirs.value = [];
-  localError.value = null;
-}
-
-/** issues/15 S3：内联授权入口——跳系统设置页，返回后复查。 */
-function onGrantClick(): void {
-  awaitingGrant.value = true;
-  document.addEventListener('visibilitychange', onGrantVisibilityRecheck);
-  requestAllFilesAccess();
-}
-
-/** 从系统设置页返回——复查授权（结果经 `watch(game.allFilesAccess)` 异步回流）。 */
-function onGrantVisibilityRecheck(): void {
-  if (document.hidden) return;
-  document.removeEventListener('visibilitychange', onGrantVisibilityRecheck);
-  checkAllFilesAccess();
-}
-
-/**
- * issues/15 S3：授权结果回流后兑现「待授权」意图——成功则立刻重试列举，
- * 让「授权 → 看到存储位置」连成一个动作；未授权则保留 CTA（不自作主张重试）。
- */
-watch(
-  () => game.allFilesAccess,
-  (granted) => {
-    if (!awaitingGrant.value) return;
-    awaitingGrant.value = false;
-    if (granted === true) void showRoots();
-  },
-);
-
-/** 点击存储根——进入该卷浏览。 */
-async function onPickRoot(path: string): Promise<void> {
-  await enterBrowse(path);
 }
 
 /** 点击子目录——进入该目录继续浏览。 */
@@ -267,35 +153,22 @@ async function onPickDir(name: string): Promise<void> {
 }
 
 /**
- * 面包屑段（UX 改版）：由 browsePath 切分而来，取代「上级 / 路径输入框 / 前往 / 存储」四件套。
+ * 面包屑段（UX 改版）：由 browsePath 切分而来，取代「上级 / 路径输入框 / 前往」三件套。
  *
- * - 有存储根清单时，最前面补一个**卷选择段**（「此电脑」/「存储」）——点它回存储根列表
- *   换卷。旧设备 / 平板 / 模拟器常有多卷（内部存储 + SD 卡、C: + D:），没有它进了第一个
- *   卷就再也切不出去（「存储」按钮被收编时漏掉的入口，在此补回）；
- * - 匹配到存储根时，根前缀折叠为**一个**可点段（显示 💾 卷名）——Android 上免看
- *   `/storage/emulated` 这类无人关心的中段；
- * - 否则按分隔符逐段展开（Windows 先给 `D:\` 盘符段，Unix 先给 `/` 根段）；
- * - 末段是当前位置，只读加粗不可点；点其余任意段 = 直接跳回该层（「上级」是其特例）。
+ * 按分隔符逐段展开（Windows 先给 `D:\` 盘符段，Unix 先给 `/` 根段）；
+ * 末段是当前位置，只读加粗不可点，点其余任意段 = 直接跳回该层（「上级」是其特例）。
+ *
+ * 历史上还有两种段型，随存储根清单一并删除（都只在 Android 可达）：**卷选择段**
+ * （多卷换卷入口）与**根前缀折叠**（把 `/storage/emulated` 折成一个 💾 卷名段）。
  */
-const crumbs = computed<{ label: string; path: string; isRoots?: boolean }[]>(() => {
+const crumbs = computed<{ label: string; path: string }[]>(() => {
   const p = browsePath.value.trim();
-  if (!p || inRootsView.value) return [];
+  if (!p) return [];
   const sep = p.includes('\\') ? '\\' : '/';
   const norm = p.replace(/[\\/]+$/, '');
-  const out: { label: string; path: string; isRoots?: boolean }[] = [];
-  // 卷选择段只在真有卷清单时出现——Web/HTTP 的 storageRoots 恒返 null，不该有换卷入口。
-  if (roots.value && roots.value.length > 0) {
-    out.push({ label: isAndroidMaui.value ? '存储' : '此电脑', path: '', isRoots: true });
-  }
+  const out: { label: string; path: string }[] = [];
   let consumed = '';
-  const root = roots.value?.find((r) => {
-    const rp = r.path.replace(/[\\/]+$/, '');
-    return rp !== '' && norm.toLowerCase().startsWith(rp.toLowerCase());
-  });
-  if (root) {
-    consumed = root.path.replace(/[\\/]+$/, '');
-    out.push({ label: root.label, path: consumed });
-  } else if (sep === '\\') {
+  if (sep === '\\') {
     const m = norm.match(/^[a-zA-Z]:/);
     consumed = m ? m[0] : norm.split('\\')[0];
     out.push({ label: `${consumed}\\`, path: `${consumed}\\` });
@@ -333,10 +206,7 @@ function onDocKeydown(e: KeyboardEvent): void {
 
 const inputRef = ref<HTMLInputElement | null>(null);
 onMounted(() => document.addEventListener('keydown', onDocKeydown));
-onUnmounted(() => {
-  document.removeEventListener('keydown', onDocKeydown);
-  document.removeEventListener('visibilitychange', onGrantVisibilityRecheck);
-});
+onUnmounted(() => document.removeEventListener('keydown', onDocKeydown));
 </script>
 
 <template>
@@ -354,15 +224,13 @@ onUnmounted(() => {
       >
         <h2 class="cd-title">更改目录</h2>
         <p class="cd-hint">
-          <template v-if="browsing">选择包含游戏的目录后点「扫描此目录」；真实路径目录走快速模式，加载更快。</template>
-          <template v-else>
-            输入游戏主目录（可包含多个游戏），或点「浏览…」逐层选择。
-            <template v-if="canBrowseRoots">选择真实路径目录（如 /storage/emulated/0/…）可启用快速模式，加载更快。</template>
-          </template>
+          <template v-if="browsing">选择包含游戏的目录后点「扫描此目录」。</template>
+          <template v-else>输入游戏主目录（可包含多个游戏），或点「浏览…」逐层选择。</template>
         </p>
 
         <!-- 手动路径输入（浏览展开时隐藏——路径信息由面包屑唯一呈现，消除三处重复；
-             Android 下彻底隐藏——软键盘输长路径是折磨，浏览是唯一模式） -->
+             Android 下彻底隐藏——软键盘输长路径是折磨，但该分支现已不可达：
+             本对话框在 MAUI 上不再打开，保留守卫作意图声明） -->
         <div v-if="!browsing && !isAndroidMaui" class="cd-path-row">
           <input
             ref="inputRef"
@@ -382,11 +250,11 @@ onUnmounted(() => {
 
         <p v-if="localError" class="cd-error">{{ localError }}</p>
 
-        <!-- 页面内目录浏览（面包屑导航；MAUI 走 listDirectories / storageRoots 桥接） -->
+        <!-- 页面内目录浏览（面包屑导航，走 source.listDirs） -->
         <div v-if="browsing" class="cd-browser">
           <!--
-            面包屑（UX 改版）：上级 / 前往 / 存储 三按钮 + 路径行的合体替代。
-            点任意父段跳回该层；点 ⌨ 回手动输入。存储根视图与授权 CTA 不渲染面包屑。
+            面包屑（UX 改版）：上级 / 前往 两按钮 + 路径行的合体替代。
+            点任意父段跳回该层；点 ⌨ 回手动输入。
           -->
           <nav
             v-if="crumbs.length"
@@ -403,8 +271,8 @@ onUnmounted(() => {
                 v-if="i < crumbs.length - 1"
                 type="button"
                 class="cd-crumb"
-                :title="c.isRoots ? '返回存储位置选择' : c.path"
-                @click="c.isRoots ? showRoots() : enterBrowse(c.path)"
+                :title="c.path"
+                @click="enterBrowse(c.path)"
               >{{ c.label }}</button>
               <span
                 v-else
@@ -428,32 +296,8 @@ onUnmounted(() => {
             <span>正在读取目录…</span>
           </div>
 
-          <!-- issues/15 S3：未授权直读 → 内联授权入口（不再是「请去被本对话框盖住的 ⋮ 菜单里申请」） -->
-          <div v-else-if="needsGrant" class="cd-grant">
-            <p class="cd-grant-text">需要「所有文件访问」权限才能浏览存储位置。</p>
-            <button type="button" class="btn-primary" @click="onGrantClick">
-              授予所有文件访问
-            </button>
-            <p class="cd-grant-hint">
-              不想授权？关闭本对话框，用菜单里的「改用系统选择器...」——兼容模式，无需授权。
-            </p>
-          </div>
-
           <div v-else class="cd-browser-dirs">
-            <!-- 存储根清单（issues/15 S2）：挂载点由系统给，作为浏览起点 -->
-            <ul v-if="inRootsView && roots?.length" class="cd-dir-list">
-              <li v-for="r in roots" :key="r.path">
-                <button type="button" class="cd-dir-row" @click="onPickRoot(r.path)">
-                  <span class="cd-dir-icon" aria-hidden="true">💾</span>
-                  <span class="cd-dir-name">
-                    {{ r.label }}
-                    <span class="cd-dir-sub">{{ r.path }}</span>
-                  </span>
-                  <span class="cd-dir-arrow" aria-hidden="true">›</span>
-                </button>
-              </li>
-            </ul>
-            <ul v-else-if="browseDirs.length" class="cd-dir-list">
+            <ul v-if="browseDirs.length" class="cd-dir-list">
               <li v-for="d in browseDirs" :key="d">
                 <button type="button" class="cd-dir-row" @click="onPickDir(d)">
                   <span class="cd-dir-icon" aria-hidden="true">📁</span>
@@ -463,7 +307,7 @@ onUnmounted(() => {
               </li>
             </ul>
             <div v-else class="cd-browser-empty">
-              {{ inRootsView ? '没有可用的存储位置' : '此目录下没有子目录' }}
+              此目录下没有子目录
             </div>
           </div>
 
@@ -664,14 +508,6 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 存储根条目下的挂载点副标题（issues/15 S2）——两行式，副行更弱 */
-.cd-dir-sub {
-  display: block;
-  color: var(--color-text-muted);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
-  opacity: 0.75;
-}
 /* issues/15 S2：读取目录中的 loading 态 */
 .cd-browser-loading {
   display: flex;
@@ -694,28 +530,6 @@ onUnmounted(() => {
 @keyframes cd-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
-}
-/* issues/15 S3：未授权直读时的内联授权入口 */
-.cd-grant {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-4);
-  background: var(--color-surface-raised);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  text-align: center;
-}
-.cd-grant-text {
-  margin: 0;
-  font-size: var(--font-size-md);
-  color: var(--color-text);
-}
-.cd-grant-hint {
-  margin: 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
 }
 .cd-dir-arrow {
   color: var(--color-text-muted);

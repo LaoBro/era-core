@@ -5,8 +5,6 @@ import {
   pickGameFolder,
   pickSafDirectory,
   scanGames as scanGamesBridge,
-  listDirectories as listDirectoriesBridge,
-  getStorageRoots as getStorageRootsBridge,
   MAUI_GAME_VIRTUAL_HOST,
   MAUI_WINDOWS_VIRTUAL_HOST,
 } from './mauiBridge';
@@ -16,10 +14,10 @@ import {
  * MAUI 与 Web/HTTP 共用同一个游戏选择页（GameLibraryView），只有"如何拿数据"不同：
  *
  * - maui（mauiGameLibrarySource）：走 C# JS 桥接消息（scanGames → gamesScanned 事件回 store），
- *   选目录用原生 FolderPicker/SAF；issues/15 S2 起另支持页内**真实路径**浏览
- *   （listDirectories / storageRoots → legacy 直读模式）。
+ *   选目录用原生选择器（Windows FolderPicker / Android 系统选择器）；**不提供页内浏览**
+ *   ——Android 的目录入口自 issues/15 方案 B 起唯一，页内浏览器只为 Web 保留。
  * - http（httpGameLibrarySource）：走 C# server 的 HTTP 端点（/game/scan、/game/dirs），
- *   选目录用页面内目录浏览（浏览器沙箱无原生选择器）。
+ *   选目录用页面内目录浏览（浏览器沙箱无原生选择器）——故 `listDirs` 只有它实现。
  *
  * 两者底层最终都调 Core 的 GameScanner.Scan / DirectoryLister，store 状态完全共享，
  * 所以列表页的展示/设计（GameLibraryView.vue）只需维护一份。
@@ -30,18 +28,6 @@ export interface DirListResult {
   currentPath: string;
   parentPath: string | null;
   dirs: string[];
-}
-
-/**
- * issues/15 S2：可浏览的真实路径根（与 C# `StorageRootDto` 对称）。
- *
- * `path` 恒为**真实文件路径**（非 content:// URI），挂载点由 C# 侧系统 API 给出。
- */
-export interface StorageRoot {
-  path: string;
-  label: string;
-  primary: boolean;
-  removable: boolean;
 }
 
 /**
@@ -58,15 +44,13 @@ export interface GameLibrarySource {
    * @returns true=请求成功（rootDir 不存在也算成功，rootDirExists=false）；false=传输失败（视图据此展示连接错误）。
    */
   scan(rootDir: string): Promise<boolean>;
-  /** 列举目录的子目录；失败 / 不支持返回 null。 */
-  listDirs(dir: string): Promise<DirListResult | null>;
   /**
-   * issues/15 S2：本机可浏览的**真实路径**根清单——页内浏览器的起点。
+   * 列举目录的子目录；失败 / 不支持返回 null。
    *
-   * 仅 MAUI 需要（挂载点前端猜不出，要问 C#）；Web/HTTP 返回 null（浏览器里可直接从任意路径起浏览）。
-   * 未实现 / 返回 null 时，页内浏览器退化为「从当前输入路径起浏览」。
+   * **可选**：只有能页内浏览真实路径的数据源才实现它。MAUI 不实现——它的目录入口唯一
+   * （系统选择器），页内浏览器（ChangeDirDialog）自 issues/15 方案 B 起为 Web 专用。
    */
-  storageRoots?(): Promise<StorageRoot[] | null>;
+  listDirs?(dir: string): Promise<DirListResult | null>;
   /**
    * 打开原生目录选择器。MAUI：触发 FolderPicker/SAF，选中后由事件（folderPicked /
    * safDirectoryPicked → useAppInit）更新 store；此方法只触发，返回 null。
@@ -123,25 +107,6 @@ export const mauiGameLibrarySource: GameLibrarySource = {
     return true;
   },
 
-  async listDirs(dir) {
-    // issues/15 S2：MAUI 也能逐层浏览**真实路径**了——走 listDirectories 桥接消息，
-    // C# 侧 HandleListDirectories 按路径形态分流 accessor（真实路径 → FileSystem）。
-    // 这是 legacy 模式（MANAGE_EXTERNAL_STORAGE 授权后直读）的唯一目录入口：
-    // SAF picker 只产出 content:// URI，拿不到真实路径。
-    const wire = await listDirectoriesBridge(dir);
-    if (wire === null) return null;
-    return {
-      currentPath: wire.currentPath,
-      parentPath: wire.parentPath,
-      dirs: wire.subDirectories,
-    };
-  },
-
-  async storageRoots(): Promise<StorageRoot[] | null> {
-    // 卷挂载点由系统给（Android StorageManager / Windows DriveInfo），前端不猜。
-    return getStorageRootsBridge();
-  },
-
   async pickMainDir() {
     if (isAndroidMaui()) {
       pickSafDirectory();
@@ -177,11 +142,6 @@ export const httpGameLibrarySource: GameLibrarySource = {
   async listDirs(dir) {
     const game = useGameStore();
     return game.browseDirectoryHttp(dir);
-  },
-
-  async storageRoots(): Promise<StorageRoot[] | null> {
-    // Web/HTTP 无「挂载点」概念——浏览器里可直接从任意路径起浏览，不需要根清单。
-    return null;
   },
 
   async pickMainDir() {

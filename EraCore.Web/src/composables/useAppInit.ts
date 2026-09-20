@@ -6,7 +6,6 @@ import {
   registerMessageHandler,
   scanGames as scanGamesBridge,
   loadGameFromPath,
-  consumeDirectoryMessage,
 } from '../lib/mauiBridge';
 
 /**
@@ -119,9 +118,6 @@ function parseBridgeController(raw: unknown): { kind: 'agent' | 'user'; leaseExp
  *   主目录已自动退回兼容轨，写 info 提示条告知（非错误）
  * - `{"type":"gameThreadStatus","alive":true/false}`——前端静默监控的线程存活探测回复，
  *   写入 gameStatusHint（'running'/'stopped'），App.vue 据此显示半透明状态提示
- * - `{"type":"directoriesListed",...}` / `{"type":"storageRoots",...}`——issues/15 S2 的
- *   页内真实路径浏览回执，由 `consumeDirectoryMessage` 兑现 mauiBridge 的在途 Promise
- *   （不写 store，故不进下面的 type 分发链）
  *
  * 收到 `folderPicked` 带 path 时的处理（game-library spec ID9 修订）：
  * 1. `game.setMainGameDir(path)`——更新 mainGameDir ref + 持久化到 localStorage
@@ -153,10 +149,6 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
   if (!msg || typeof msg !== 'object') return;
   const m = msg as Record<string, unknown>;
   const type = m.type;
-
-  // issues/15 S2：页内真实路径浏览的回执（directoriesListed / storageRoots）——
-  // 由 mauiBridge 内部配对在途 Promise 兑现，此处只负责转交（见 consumeDirectoryMessage）。
-  if (consumeDirectoryMessage(m)) return;
 
   if (type === 'layout') {
     game.setGameLayout({

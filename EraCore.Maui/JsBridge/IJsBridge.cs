@@ -93,11 +93,10 @@ internal interface IJsBridge
 	///     .NET 10 MAUI (10.0.20) 的 <c>Microsoft.Maui.Storage</c> 没有 <c>FolderPicker</c> 类型
 	///     （<c>FilePicker</c> 存在但 <c>FolderPicker</c> 不存在），故直接用 WinRT API。
 	///     unpackaged 模式必须调 <c>InitializeWithWindow.Initialize(picker, hwnd)</c> 关联窗口句柄。</item>
-	///   <item>Android：不走此方法——Android 的「更改目录」走 SAF 原生选择器
-	///     （<c>pickSafDirectory</c> → <see cref="BridgeHost.HandlePickSafDirectory"/>，ADR-0019）；
-	///     issues/15 S2 起的页内真实路径浏览器是<b>另一条</b>并列入口，走
-	///     <see cref="BridgeHost.HandleListDirectories"/> + <c>getStorageRoots</c>
-	///     （Vue 端 <c>ChangeDirDialog.vue</c> 的浏览区块）。Android 不会投递 <c>pickFolder</c>，
+	///   <item>Android：不走此方法——Android 的「更改目录」走系统选择器
+	///     （<c>pickSafDirectory</c> → <see cref="BridgeHost.HandlePickSafDirectory"/>，ADR-0019），
+	///     且自 issues/15 方案 B 起这是**唯一**目录入口（页内真实路径浏览器已下线，
+	///     见 <c>ChangeDirDialog.vue</c> —— 该对话框现为 Web 专用）。Android 不会投递 <c>pickFolder</c>，
 	///     故此方法不会被调用；默认实现返回 <c>null</c> 防御性兜底（万一被调用也不崩）。</item>
 	/// </list>
 	/// </para>

@@ -7,11 +7,12 @@ using Android.OS.Storage;
 namespace EraCore.Maui.Services;
 
 /// <summary>
-/// issues/15（方案 B）：Android 存储卷根枚举的**单一真相源**。
+/// issues/15（方案 B）：Android 存储卷根枚举——**唯一调用方**是 <see cref="SafLocalPathResolver"/>
+/// （把 <c>content://</c> 的卷前缀映射成挂载点，从而反推出真实路径）。
 /// <para>
-/// 两个调用方共用这一份枚举：<c>BridgeHost.CollectStorageRoots</c>（页内浏览器的起点清单）
-/// 与 <see cref="SafLocalPathResolver"/>（把 <c>content://</c> 的卷前缀映射成挂载点）。
-/// 各写一份必然漂移——尤其是低版本的兜底裁剪，很容易只修一边。
+/// 抽成独立类的历史原因：它曾同时服务「页内浏览器的起点清单」（<c>BridgeHost.CollectStorageRoots</c>）
+/// 与真实路径反推，避免低版本兜底裁剪逻辑两处各写一份而漂移。页内浏览器随方案 B 下线后
+/// 只剩反推一个调用方，但边界保留——反推本身不该知道"卷是怎么枚举出来的"。
 /// </para>
 /// <para>
 /// <c>StorageVolume.Directory</c>（卷根，非 app 私有子目录）是 API 30+；低版本没有"卷根"概念
@@ -25,14 +26,14 @@ internal static class AndroidStorageVolumes
     /// <c>primary</c>，可移动卷是卷 UUID（如 <c>1AEF-3B2C</c>）——这正是反推能把
     /// <c>1AEF-3B2C:games</c> 映射回挂载点的依据。
     /// </summary>
-    internal sealed record Volume(string VolumeId, string Path, string Label, bool Primary, bool Removable);
+    internal sealed record Volume(string VolumeId, string Path);
 
     /// <summary>app 私有目录里标记"以下是 Android/ 子树"的分段——裁卷根就靠它。</summary>
     private const string StorageDirMarker = "/Android/";
 
     /// <summary>
     /// 枚举当前挂载的卷。平台异常一律吞掉并返回已收集部分——
-    /// 调用方各有兜底（根清单空了给授权提示，反推失败退回 SAF），此处不该让上层挂住。
+    /// 调用方有兜底（反推失败退回 SAF 轨），此处不该让上层挂住。
     /// </summary>
     internal static List<Volume> Enumerate()
     {
@@ -59,9 +60,7 @@ internal static class AndroidStorageVolumes
                         if (string.IsNullOrEmpty(volumeId))
                             continue;
 
-                        volumes.Add(new Volume(
-                            volumeId!, path!, Describe(volume.IsPrimary),
-                            volume.IsPrimary, volume.IsRemovable));
+                        volumes.Add(new Volume(volumeId!, path!));
                     }
                 }
             }
@@ -89,8 +88,6 @@ internal static class AndroidStorageVolumes
         return null;
     }
 
-    private static string Describe(bool primary) => primary ? "内部存储" : "可移动存储";
-
     /// <summary>
     /// 兜底（API 24~29）：从 <c>GetExternalFilesDirs</c> 的 app 私有目录裁出卷根。
     /// 形如 <c>/storage/emulated/0/Android/data/&lt;pkg&gt;/files</c> → <c>/storage/emulated/0</c>；
@@ -117,7 +114,7 @@ internal static class AndroidStorageVolumes
             if (volumeId.Length == 0)
                 continue;
 
-            yield return new Volume(volumeId, root, Describe(i == 0), i == 0, i != 0);
+            yield return new Volume(volumeId, root);
         }
     }
 
