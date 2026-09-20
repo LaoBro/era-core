@@ -50,6 +50,7 @@ internal sealed class HttpListenerHost : IDisposable
     /// <param name="scanGameDirHandler">
     /// 宿主可选的 <c>POST /game/scan</c> 实现（MAUI 注入带 SAF accessor 的扫描；
     /// <c>null</c> = 走默认 <see cref="GameServerProtocol.ScanGameDir"/>）。见 <see cref="HttpRouteDispatcher"/> 同名委托。
+    /// 参数可为 <c>null</c> = 「扫宿主自己的主目录」（控制面因而不必持有会过期的路径）。
     /// </param>
     /// <param name="loadGameHandler">
     /// 宿主可选的 <c>POST /load-game</c> 实现（MAUI 注入转交 <c>MainPage.OnReloadGame</c> 的实现；
@@ -61,7 +62,7 @@ internal sealed class HttpListenerHost : IDisposable
         ITerminalSetup terminalSetup,
         ConfigData configData,
         bool? displayReportOverride = null,
-        Func<string, HttpResult?>? scanGameDirHandler = null,
+        Func<string?, HttpResult?>? scanGameDirHandler = null,
         Func<string, ControlIdentity?, HttpResult?>? loadGameHandler = null,
         AppSettings? appSettings = null)
     {

@@ -260,15 +260,45 @@ public partial class MainPage : ContentPage
     /// 与 UI 扫描共用 <see cref="BridgeHost.ResolveDirAccessor"/>，
     /// 使 Android 的 SAF <c>content://</c> 树 URI 也能枚举（Core 默认实现硬编码
     /// <c>FileSystemGameDirAccessor</c>，对 content URI 一律不可用）。
+    /// <para>
+    /// issues/15 后续：<paramref name="rootDir"/> 为 null = 「扫本宿主的主目录」，这是控制面的
+    /// 默认用法。agent 手上的路径会随权限/主目录变更而过期（它原先靠解析 logcat 标记行获得，
+    /// 那是一份快照），而这里取宿主的当前生效值并过一遍归一化，永远是新的——
+    /// <b>路径不越过边界，就没有"过期路径"这回事</b>。
+    /// </para>
+    /// <para>
+    /// 显式传入的 <paramref name="rootDir"/> <b>照扫、不替换</b>：它未必是 app 的目录，静默换成
+    /// 另一个目录会返回一份看起来正常、实则错位的结果，比空列表更坏。读不了时由响应里的
+    /// <c>reason</c> 说明（见 <see cref="BridgeHost.IsRealPathUnreadable"/>）。
+    /// </para>
     /// </summary>
     /// <returns>扫描结果；异常时返回 <c>null</c> 回落 Core 默认实现。</returns>
-    private HttpResult? ScanGamesForControlServer(string rootDir)
+    private HttpResult? ScanGamesForControlServer(string? rootDir)
     {
         try
         {
-            var accessor = BridgeHost.ResolveDirAccessor(rootDir);
-            var exists = GameScanner.RootDirectoryExists(rootDir, accessor);
-            var games = exists ? GameScanner.Scan(rootDir, accessor) : Array.Empty<GameEntry>();
+            var requested = string.IsNullOrWhiteSpace(rootDir) ? null : rootDir;
+
+            // 省略路径 = 扫本宿主主目录（过归一化——与 UI 同一套判定，不能有第二份）
+            var effective = requested
+                ?? _host?.NormalizeMainDirForDirectAccess(_host.MainGameDir);
+
+            if (string.IsNullOrEmpty(effective))
+            {
+                // 宿主还没有主目录（首启动未选目录）——如实回报，让 agent 说得出原因，
+                // 而不是拿到一个空列表去猜。
+                return HttpResult.Text(new JsonObject
+                {
+                    ["rootDir"] = null,
+                    ["rootDirExists"] = false,
+                    ["games"] = new JsonArray(),
+                    ["reason"] = "no-main-dir",
+                }.ToJsonString());
+            }
+
+            var accessor = BridgeHost.ResolveDirAccessor(effective);
+            var exists = GameScanner.RootDirectoryExists(effective, accessor);
+            var games = exists ? GameScanner.Scan(effective, accessor) : Array.Empty<GameEntry>();
             var arr = new JsonArray();
             foreach (var g in games)
             {
@@ -276,12 +306,16 @@ public partial class MainPage : ContentPage
             }
             var payload = new JsonObject
             {
-                ["rootDir"] = rootDir,
+                ["rootDir"] = effective,
                 ["rootDirExists"] = exists,
                 ["games"] = arr,
-            }.ToJsonString();
-            Console.WriteLine($"[maui] control scan: rootDir={rootDir}, {games.Count} games");
-            return HttpResult.Text(payload);
+            };
+            // 空结果要能分辨「不存在」与「读不了」——后者只在 Android 真实路径 + 未授权时发生。
+            if (!exists && BridgeHost.IsRealPathUnreadable(effective))
+                payload["reason"] = "direct-access-unreadable";
+
+            Console.WriteLine($"[maui] control scan: rootDir={effective}, {games.Count} games");
+            return HttpResult.Text(payload.ToJsonString());
         }
         catch (Exception ex)
         {

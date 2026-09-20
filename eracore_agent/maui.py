@@ -13,6 +13,11 @@ agent 因此可以在**未加载游戏**时列出游戏并触发加载。
 
 加载语义：``POST /load-game`` 在 MAUI 宿主下是**异步受理**（C# 转 Vue 代加载，走与手点
 相同的 OnReloadGame 链路），因此 ``load`` 默认轮询 ``/state`` 等 ``gameDir`` 变为目标目录。
+
+issues/15 后续——**scan 不再需要主目录**：``POST /game/scan`` 省略 ``rootDir`` 即「扫 app 自己
+当前生效的主目录」。上面那两条发现途径给的主目录都是**快照**（logcat 行只在启动/热切换重载时
+重打），一旦权限或主目录变更就会过期，拿过期路径去扫只会得到空列表且无从判断原因。
+路径不越过边界，就没有过期路径这回事；``--root-dir`` 保留为显式逃生口（照扫、不替换）。
 """
 
 from __future__ import annotations
@@ -170,43 +175,66 @@ def cmd_maui_status(args) -> int:
     return 0
 
 
-def cmd_maui_games(args) -> int:
-    """列出主目录下的游戏——走 MAUI 宿主的 scan 实现（Android SAF 可用）。"""
-    client, record, _source = _maui_client(args)
-    root = args.root_dir or record.get("mainGameDir")
-    if not root:
-        _die("未指定 --root-dir，且 app 未同步主目录（MAUI 尚未完成首次 scanGames）", 1)
+def _scan_reason_text(reason: str) -> str:
+    """把服务端的失败原因码翻成可执行的说明。
+
+    没有它，失败只表现为 ``rootDirExists: false`` + 空列表——而"目录不存在"和"目录存在但
+    读不了"是两件完全不同的事，后者只需要去授权。
+    """
+    if reason == "no-main-dir":
+        return "app 尚未选定游戏主目录——先在应用内选一个目录，或用 --root-dir 指定"
+    if reason == "direct-access-unreadable":
+        return ("该目录存在但读不了：Android 真实路径需要「所有文件访问」权限。"
+                "在 app 内「⋮ → 所有文件访问权限」授权后重试；"
+                "或省略 --root-dir，让 app 用它自己的 SAF 协议路径")
+    return f"扫描失败：{reason}"
+
+
+def _request_scan(client: EmueraClient, root_dir: Optional[str]):
+    """``POST /game/scan`` —— 不传 ``root_dir`` 即「扫 app 当前生效的主目录」（推荐姿势）。
+
+    返回 ``(payload, games)``。payload 里的 ``rootDir`` 是**服务端的生效值**，调用方应当用它
+    而不是回显请求值：省略路径时只有服务端知道扫的是哪个目录。
+    """
+    body = {"rootDir": root_dir} if root_dir else {}
     try:
-        status, payload, _raw = client.request("POST", "/game/scan", {"rootDir": root})
+        status, payload, _raw = client.request("POST", "/game/scan", body)
     except EmueraHttpError as exc:
         _die(f"POST /game/scan 失败: {exc}", 1)
     if status != 200:
-        _die(f"POST /game/scan 返回 {status}: {payload}", 1)
+        hint = "" if root_dir else "（app 不支持省略 rootDir，请传 --root-dir）"
+        _die(f"POST /game/scan 返回 {status}: {payload}{hint}", 1)
+    reason = payload.get("reason")
+    if reason:
+        _die(_scan_reason_text(str(reason)), 1)
+    return payload, (payload.get("games") or [])
+
+
+def cmd_maui_games(args) -> int:
+    """列出主目录下的游戏——走 MAUI 宿主的 scan 实现（Android SAF 可用）。
+
+    默认**不传路径**：由 app 扫它自己当前生效的主目录（见模块文档）。``--root-dir`` 是显式
+    逃生口，传了就照扫、不替换。
+    """
+    client, _record, _source = _maui_client(args)
+    payload, games = _request_scan(client, args.root_dir)
     _emit({
-        "rootDir": root,
+        "rootDir": payload.get("rootDir"),
         "rootDirExists": payload.get("rootDirExists"),
-        "games": payload.get("games") or [],
+        "games": games,
     })
     return 0
 
 
 def cmd_maui_load(args) -> int:
-    """触发加载——``--path`` 直连；``--name`` 先 scan 主目录再按名解析出 fullPath。"""
-    client, record, _source = _maui_client(args)
+    """触发加载——``--path`` 直连；``--name`` 先取 app 的游戏列表再按名解析出 fullPath。"""
+    client, _record, _source = _maui_client(args)
 
     if args.path:
         game_dir = args.path
     elif args.name:
-        root = args.root_dir or record.get("mainGameDir")
-        if not root:
-            _die("--name 需要主目录：传 --root-dir，或等 MAUI 完成首次 scanGames", 1)
-        try:
-            status, payload, _raw = client.request("POST", "/game/scan", {"rootDir": root})
-        except EmueraHttpError as exc:
-            _die(f"POST /game/scan 失败: {exc}", 1)
-        if status != 200:
-            _die(f"POST /game/scan 返回 {status}: {payload}", 1)
-        games = payload.get("games") or []
+        # 与 `maui games` 同源：默认由 app 扫自己当前生效的主目录，不持有路径
+        _payload, games = _request_scan(client, args.root_dir)
         matches = [g for g in games
                    if str(g.get("name", "")).lower() == args.name.lower()]
         if not matches:

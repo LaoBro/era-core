@@ -763,9 +763,9 @@ internal sealed class BridgeHost : IDisposable
             stayingOnSaf = effectivePath == result;
 #endif
 
-            // 更新主目录 + 持久化（存**生效路径**——前端按路径形态自动落到正确的模式与 accessor）
-            _mainGameDir = effectivePath;
-            SaveMainGameDir(effectivePath);
+            // 更新主目录 + 持久化 + 同步控制面（存**生效路径**——前端按路径形态自动落到
+            // 正确的模式与 accessor；控制面则靠刷新后的标记行拿到新值）
+            ApplyMainGameDir(effectivePath);
 
             // 方案 B / B1：写权限 + 探针（logcat 验收；缺写时提示重选）。
             // **只在留在 SAF 轨时才有意义**——走真实路径时 SAF 的写授权不影响读写，
@@ -918,9 +918,8 @@ internal sealed class BridgeHost : IDisposable
             rootDir = _mainGameDir;
         else if (rootDir != _mainGameDir)
         {
-            // 用户更改主目录——更新字段 + 持久化
-            _mainGameDir = rootDir;
-            SaveMainGameDir(rootDir!);
+            // 用户更改主目录——更新字段 + 持久化 + 同步控制面（见 ApplyMainGameDir）
+            ApplyMainGameDir(rootDir!);
             Console.WriteLine($"[bridge] mainGameDir updated to: {rootDir}");
         }
 
@@ -1214,8 +1213,13 @@ internal sealed class BridgeHost : IDisposable
     /// 归一化放在扫描入口，则授权后的任一次扫描（启动、退出游戏、手动重扫）都会自动升级；
     /// 权限被收回时同理自动降级。同一个函数、同一个位置，没有额外机制。
     /// </para>
+    /// <para>
+    /// <b>internal</b>：控制面 <c>POST /game/scan</c>（<c>MainPage.ScanGamesForControlServer</c>）
+    /// 复用同一套逻辑——它省略 rootDir 时扫的就是本宿主的主目录，判定必须与 UI 完全一致，
+    /// 不能有第二份。
+    /// </para>
     /// </summary>
-    private string? NormalizeMainDirForDirectAccess(string? rootDir)
+    internal string? NormalizeMainDirForDirectAccess(string? rootDir)
     {
 #if ANDROID
         if (string.IsNullOrEmpty(rootDir)) return rootDir;
@@ -1233,8 +1237,7 @@ internal sealed class BridgeHost : IDisposable
                 return rootDir;
             }
             LogResolve($"{localPath} <- {rootDir} (upgrade → 快速轨)");
-            _mainGameDir = localPath;
-            SaveMainGameDir(localPath);
+            ApplyMainGameDir(localPath);
             return localPath;
         }
 
@@ -1245,8 +1248,7 @@ internal sealed class BridgeHost : IDisposable
         if (string.IsNullOrEmpty(treeUri)) return rootDir;
 
         LogResolve($"kept-uri={treeUri} reason=all-files-access-revoked (downgrade → 兼容轨)");
-        _mainGameDir = treeUri;
-        SaveMainGameDir(treeUri!);
+        ApplyMainGameDir(treeUri!);
         if (!_directAccessRevokedNotified)
         {
             _directAccessRevokedNotified = true;
@@ -1255,6 +1257,46 @@ internal sealed class BridgeHost : IDisposable
         return treeUri;
 #else
         return rootDir;
+#endif
+    }
+
+    /// <summary>
+    /// issues/15（方案 B）：主目录变更的**唯一出口**——更新字段 + 持久化 + 同步控制面，三件事必须同时发生。
+    /// <para>
+    /// 为何收口：控制面（<c>eracore_agent</c>）读主目录的唯一途径是发现记录与 logcat 标记行，
+    /// 而它们原先只在 <c>MainPage</c> 的两处（启动 / 热切换重载）刷新。于是**任何**主目录变更
+    /// ——归一化升降轨、用户换目录、按新 rootDir 扫描——都会让标记行停在旧值：agent 拿着一个
+    /// 已作废的路径去 <c>POST /game/scan</c>，得到空列表且无从判断是"不存在"还是"读不了"。
+    /// 逐个补刷新点必然漏，故收成单一出口。
+    /// </para>
+    /// <para>值未变时直接返回：省掉冗余的 Preferences 写入（控制面侧另有自己的去重）。</para>
+    /// </summary>
+    private void ApplyMainGameDir(string dir)
+    {
+        if (_mainGameDir == dir) return;
+        _mainGameDir = dir;
+        SaveMainGameDir(dir);
+        MauiControlServer.Instance?.NotifyMainGameDir(dir);
+    }
+
+    /// <summary>
+    /// issues/15 后续：控制面空结果的**可诊断**判据——"真实路径 + 读不了"，而非"目录不存在"。
+    /// <para>
+    /// 只有 Android 会出现：真实路径需要「所有文件访问」，未授予时枚举被系统静默过滤成空
+    /// （<c>Directory.Exists</c> 也返回 false，不抛异常）；SAF 协议路径不受此限。
+    /// 注意这是<b>保守</b>判据——目录真的不存在 + 未授权时同样命中，因为那两种情形本就不加区分
+    /// （都是"读不了"）。控制面据此把裸的 <c>rootDirExists:false</c> 变成可解释的失败。
+    /// </para>
+    /// </summary>
+    internal static bool IsRealPathUnreadable(string? path)
+    {
+#if ANDROID
+        return !string.IsNullOrEmpty(path)
+            && !SafPath.IsContentUri(path)
+            && !HasAllFilesAccess();
+#else
+        _ = path;
+        return false;
 #endif
     }
 

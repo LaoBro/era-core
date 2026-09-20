@@ -714,7 +714,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     maui_games = maui_sub.add_parser("games", help="列出主目录下的游戏（走 MAUI 宿主的 scan 实现）")
     maui_games.add_argument("--root-dir", default=None,
-                            help="游戏库主目录（缺省用 app 同步的 mainGameDir）")
+                            help="逃生口：指定主目录（缺省由 app 扫它自己当前生效的主目录——"
+                                 "推荐，app 手上的路径会过期）")
     maui_games.add_argument("--adb", action="store_true",
                             help="强制走 adb logcat 解析端口（Android）")
     maui_games.set_defaults(func=cmd_maui_games)
@@ -722,9 +723,9 @@ def build_parser() -> argparse.ArgumentParser:
     maui_load = maui_sub.add_parser("load", help="触发 MAUI 加载某个游戏（异步受理 + 轮询确认）")
     target = maui_load.add_mutually_exclusive_group(required=True)
     target.add_argument("--path", help="游戏目录绝对路径（Windows）或 SAF content URI（Android）")
-    target.add_argument("--name", help="主目录下的游戏名（先 scan 主目录解析出 fullPath）")
+    target.add_argument("--name", help="主目录下的游戏名（先取 app 的游戏列表解析出 fullPath）")
     maui_load.add_argument("--root-dir", default=None,
-                           help="--name 解析用的主目录（缺省用 app 同步的 mainGameDir）")
+                           help="逃生口：--name 解析用的主目录（缺省由 app 扫自己当前生效的主目录）")
     maui_load.add_argument("--wait-timeout", type=float, default=15.0,
                            help="等待 gameDir 出现的超时秒数（默认 15；超时不算失败）")
     maui_load.add_argument("--adb", action="store_true",

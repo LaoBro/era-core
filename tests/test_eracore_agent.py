@@ -105,6 +105,61 @@ def wait_port_closed(port, timeout=10):
     return False
 
 
+def check_maui_scan_contract():
+    """`eracore_agent.maui` 的 scan 契约单测——**不需要 server / 二进制**。
+
+    为何白盒直调私有函数：这条契约（省略 rootDir = 扫 app 自己的主目录）无法经真实 app 验证
+    ——它要求"app 与 agent 同时在线且权限状态可控"。而分支判定纯在 Python 侧，用假 client
+    就能锁住，值当。（issues/15 后续：agent 从此不必持有会过期的主目录路径。）
+
+    同时把调用点放在 main() 最前：即使后面 e2e 段因缺二进制跑不起来，这几条也已被执行。
+    """
+    if str(ROOT_DIR) not in sys.path:
+        sys.path.insert(0, str(ROOT_DIR))
+    from eracore_agent import maui
+
+    class _FakeClient:
+        def __init__(self, payload, status=200):
+            self.payload = payload
+            self.status = status
+            self.bodies = []
+
+        def request(self, method, path, body=None, timeout=None):
+            self.bodies.append((method, path, body))
+            return self.status, self.payload, None
+
+    print("=== maui scan contract (no server) ===")
+
+    # 省略 root_dir → 请求体不得出现 rootDir 键（空 dict，而不是 {"rootDir": None}）
+    client = _FakeClient({"rootDir": "/app/main", "rootDirExists": True,
+                          "games": [{"name": "a", "fullPath": "/app/main/a"}]})
+    payload, games = maui._request_scan(client, None)
+    check(client.bodies[0][2] == {},
+          f"omitted root_dir sends empty body (got {client.bodies[0][2]!r})")
+    check(payload.get("rootDir") == "/app/main",
+          "rootDir comes from the response (server effective value), not echoed from request")
+    check(len(games) == 1, "games list passed through")
+
+    # 显式 root_dir → 照传（逃生口：不替换成 app 主目录）
+    client = _FakeClient({"rootDir": "/x", "rootDirExists": True, "games": []})
+    maui._request_scan(client, "/x")
+    check(client.bodies[0][2] == {"rootDir": "/x"}, "explicit root_dir is passed through unchanged")
+
+    # 失败原因 → 非零退出 + 可执行说明（不是静默空列表 + rootDirExists:false）
+    client = _FakeClient({"rootDir": None, "rootDirExists": False,
+                          "games": [], "reason": "no-main-dir"})
+    try:
+        maui._request_scan(client, None)
+        check(False, "reason=no-main-dir exits non-zero")
+    except SystemExit as exc:
+        check(exc.code == 1, f"reason=no-main-dir exits 1 (got {exc.code})")
+
+    check("尚未选定" in maui._scan_reason_text("no-main-dir"),
+          "no-main-dir is translated into an actionable message")
+    check("授权" in maui._scan_reason_text("direct-access-unreadable"),
+          "direct-access-unreadable tells the user to grant permission")
+
+
 def main():
     import argparse
 
@@ -112,6 +167,8 @@ def main():
     parser.add_argument("--binary", help="Path to Emuera.Headless binary")
     parser.add_argument("--game-dir", default=str(TEST_GAME_DIR), help="Path to game directory")
     args = parser.parse_args()
+
+    check_maui_scan_contract()
 
     binary = args.binary or find_binary(str(ROOT_DIR))[0]
     game_dir = Path(args.game_dir)

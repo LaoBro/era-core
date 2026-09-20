@@ -74,8 +74,12 @@ internal sealed class MauiControlServer
     /// <summary>
     /// <c>POST /game/scan</c> 的宿主实现——由 <see cref="MainPage"/> 注册（带 SAF accessor 的扫描）。
     /// 为 <c>null</c> 时端点回落默认实现（硬编码 FileSystem accessor，Android SAF 路径不可用）。
+    /// <para>
+    /// 参数为 <c>null</c> = 「扫本宿主的主目录」：控制面（agent）因此不必持有路径——
+    /// 它手上的路径会随权限/主目录变更而过期，而宿主取用自己当前生效的主目录永远是新的。
+    /// </para>
     /// </summary>
-    public Func<string, HttpResult?>? ScanGameDirSink { get; set; }
+    public Func<string?, HttpResult?>? ScanGameDirSink { get; set; }
 
     /// <summary>
     /// <c>POST /load-game</c> 的宿主实现——由 <see cref="MainPage"/> 注册（转交 <c>OnReloadGame</c> 链路）。

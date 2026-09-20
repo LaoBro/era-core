@@ -53,9 +53,15 @@ internal sealed class HttpRouteDispatcher
     /// <c>FileSystemGameDirAccessor</c>，Android 的 SAF <c>content://</c> 树 URI 无法枚举。
     /// MAUI 宿主注入自己的实现（按路径选 SAF / 文件系统 accessor）后此处优先。
     /// </para>
+    /// <para>
+    /// <b><c>rootDir</c> 可为 <c>null</c></b>（issues/15 后续）：表示"扫你自己的主目录"。
+    /// 控制面（eracore_agent）因此不必持有路径——它手上的路径会随权限/主目录变更而过期，
+    /// 而宿主取用自己当前生效的主目录永远是新的。无宿主时不放行 null（见
+    /// <see cref="HandleScanGame"/>）：Web 前端与独立 Server/CLI 一直传显式路径。
+    /// </para>
     /// <para>返回 <c>null</c> 表示"本次不接管"，回落到默认实现——宿主可据此做条件接管。</para>
     /// </summary>
-    private readonly Func<string, HttpResult?>? _scanGameDirHandler;
+    private readonly Func<string?, HttpResult?>? _scanGameDirHandler;
 
     /// <summary>
     /// 宿主可选的 <c>POST /load-game</c> 实现——<c>(gameDir, identity) =&gt; HttpResult?</c>。
@@ -87,7 +93,7 @@ internal sealed class HttpRouteDispatcher
     public HttpRouteDispatcher(
         GameServerProtocol protocol,
         JsonSerializerContext requestJsonContext,
-        Func<string, HttpResult?>? scanGameDirHandler,
+        Func<string?, HttpResult?>? scanGameDirHandler,
         Func<string, ControlIdentity?, HttpResult?>? loadGameHandler)
     {
         _protocol = protocol;
@@ -173,8 +179,16 @@ internal sealed class HttpRouteDispatcher
         var payload = Parse<ScanGameRequest>(request.BodyText);
         if (payload == null)
             return InvalidJsonScanGame();
-        if (string.IsNullOrWhiteSpace(payload.rootDir))
+
+        var hasRootDir = !string.IsNullOrWhiteSpace(payload.rootDir);
+
+        // 省略 rootDir = 「扫宿主自己的主目录」（issues/15 后续）。
+        // 为何放开：控制面（eracore_agent）手上的路径会随权限/主目录变更而过期，而宿主取用
+        // 自己当前生效的主目录永远是新的——路径根本不越过边界，就没有过期路径这回事。
+        // 无宿主时仍要求显式路径（保持原 400）：Web 前端与独立 Server/CLI 一直传路径，契约不变。
+        if (!hasRootDir && _scanGameDirHandler is null)
             return MissingRootDir();
+
         if (_scanGameDirHandler is { } scanHandler)
         {
             // 宿主接管（MAUI：带 SAF accessor 的扫描）——返回 null 表示不接管，走默认实现
@@ -182,7 +196,13 @@ internal sealed class HttpRouteDispatcher
             if (hosted.HasValue)
                 return hosted.Value;
         }
-        return GameServerProtocol.ScanGameDir(payload.rootDir);
+
+        // 到达此处 = 无宿主接管或宿主明确拒绝。空 rootDir 已无处可扫（默认实现硬编码文件系统
+        // accessor，也没有"主目录"概念），如实回落原有的缺参错误。
+        if (!hasRootDir)
+            return MissingRootDir();
+
+        return GameServerProtocol.ScanGameDir(payload.rootDir!);
     }
 
     private HttpResult HandleListDirs(HttpRequestData request)

@@ -20,6 +20,11 @@ public class HttpRouteDispatcherTests
     private static HttpRouteDispatcher CreateDispatcher()
         => new(new GameServerProtocol(CreateRegistry(), CreateConfigService()));
 
+    /// <summary>带宿主 <c>/game/scan</c> 实现的 dispatcher——用于验证「省略 rootDir」这条新边界。</summary>
+    private static HttpRouteDispatcher CreateDispatcherWithScanSink(Func<string?, HttpResult?> sink)
+        => new(new GameServerProtocol(CreateRegistry(), CreateConfigService()),
+               ServerJsonContext.Default, sink, loadGameHandler: null);
+
     private static GameConfigService CreateConfigService()
         => new(new ConfigData(), false);
 
@@ -138,6 +143,52 @@ public class HttpRouteDispatcherTests
     {
         var dispatcher = CreateDispatcher();
         var resp = await DispatchAsync(dispatcher, "POST", "/game/scan", "{\"foo\":\"bar\"}");
+        Assert.Equal(400, resp.StatusCode);
+        Assert.Contains("MISSING_ROOT_DIR", resp.Body);
+    }
+
+    // ---- issues/15 后续：省略 rootDir = 「扫宿主自己的主目录」 ----
+    // 控制面（eracore_agent）因而**不必持有路径**：它手上的路径会随权限/主目录变更而过期，
+    // 而宿主取用自己当前生效的主目录永远是新的。路径不越过边界，就没有过期路径这回事。
+
+    [Fact]
+    public async Task ScanGame_omitted_root_dir_reaches_host_sink_as_null()
+    {
+        string? seen = "sentinel";
+        var dispatcher = CreateDispatcherWithScanSink(rootDir =>
+        {
+            seen = rootDir;
+            return HttpResult.Text("""{"rootDir":"/host/main","rootDirExists":true,"games":[]}""");
+        });
+
+        var resp = await DispatchAsync(dispatcher, "POST", "/game/scan", "{}");
+
+        Assert.Equal(200, resp.StatusCode);
+        Assert.Null(seen);
+        Assert.Contains("/host/main", resp.Body);
+    }
+
+    [Fact]
+    public async Task ScanGame_omitted_root_dir_without_host_still_requires_root_dir()
+    {
+        // 无宿主（独立 Server/CLI）时不放行省略——Web 前端与命令行一直传显式路径，契约不变。
+        var dispatcher = CreateDispatcher();
+
+        var resp = await DispatchAsync(dispatcher, "POST", "/game/scan", "{}");
+
+        Assert.Equal(400, resp.StatusCode);
+        Assert.Contains("MISSING_ROOT_DIR", resp.Body);
+    }
+
+    [Fact]
+    public async Task ScanGame_omitted_root_dir_still_400_when_host_declines()
+    {
+        // 宿主存在但明确不接管（返回 null）时空 rootDir 已无处可扫——不得落到默认实现
+        // （它硬编码文件系统 accessor，也没有"主目录"概念），如实回落缺参错误。
+        var dispatcher = CreateDispatcherWithScanSink(_ => null);
+
+        var resp = await DispatchAsync(dispatcher, "POST", "/game/scan", "{}");
+
         Assert.Equal(400, resp.StatusCode);
         Assert.Contains("MISSING_ROOT_DIR", resp.Body);
     }
