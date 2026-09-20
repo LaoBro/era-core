@@ -578,8 +578,13 @@ def cmd_settings(args) -> int:
     """settings 子命令（ADR-0030）——list / get <key> / set <key> <value> / reset，走 /settings 端点。
 
     生效语义：perf 覆盖/诊断旋钮下次 load-game 生效（ApplyTo）；displayReportOverride / agentLogEnabled 即时。
+    --adb 时连接 Android MAUI 控制 server（logcat 解析端口 + adb forward，复用 maui 机制）。
     """
-    client, _record = _require_server()
+    if getattr(args, "adb", False):
+        from .maui import _maui_client
+        client, _record, _source = _maui_client(args)
+    else:
+        client, _record = _require_server()
     if args.settings_command == "list":
         _emit(client.get_settings())
         return 0
@@ -676,18 +681,26 @@ def build_parser() -> argparse.ArgumentParser:
     settings_sub = settings.add_subparsers(dest="settings_command", required=True)
 
     settings_list = settings_sub.add_parser("list", help="列出全部 13 个设置键当前值")
+    settings_list.add_argument("--adb", action="store_true",
+                               help="连接 Android MAUI 控制 server（adb logcat 解析端口 + adb forward；缺省用本地 server 记录）")
     settings_list.set_defaults(func=cmd_settings)
 
     settings_get = settings_sub.add_parser("get", help="读取单个设置键")
     settings_get.add_argument("key")
+    settings_get.add_argument("--adb", action="store_true",
+                              help="连接 Android MAUI 控制 server（adb logcat 解析端口 + adb forward；缺省用本地 server 记录）")
     settings_get.set_defaults(func=cmd_settings)
 
     settings_set = settings_sub.add_parser("set", help="设置单个键（perf/诊断旋钮下次 load-game 生效；displayReport/agentLog 即时）")
     settings_set.add_argument("key")
     settings_set.add_argument("value")
+    settings_set.add_argument("--adb", action="store_true",
+                              help="连接 Android MAUI 控制 server（adb logcat 解析端口 + adb forward；缺省用本地 server 记录）")
     settings_set.set_defaults(func=cmd_settings)
 
     settings_reset = settings_sub.add_parser("reset", help="恢复默认（清 headless 内存 store，回出厂 auto）")
+    settings_reset.add_argument("--adb", action="store_true",
+                                help="连接 Android MAUI 控制 server（adb logcat 解析端口 + adb forward；缺省用本地 server 记录）")
     settings_reset.set_defaults(func=cmd_settings)
 
     # issues/13 M6：MAUI 控制面命令组——面向「app 已启动但还没加载游戏」的场景

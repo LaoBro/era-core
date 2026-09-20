@@ -60,6 +60,25 @@ def _windows_record() -> Optional[Dict[str, Any]]:
     return None
 
 
+def _adb_cmd() -> list[str]:
+    """多设备时选中唯一在线的 adb 设备（`-s <serial>`）；否则裸 adb。
+
+    裸 adb 在「一台在线 + 一台离线/模拟器残留」的常见组合下会因设备歧义直接失败
+    （exit 1，logcat 拿不到任何行）；在线判定以 `adb devices` 的状态列为准
+    （`device`=在线，`offline`/`unauthorized` 均排除）。
+    """
+    try:
+        proc = subprocess.run(["adb", "devices"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return ["adb"]
+    serials: list[str] = []
+    for line in proc.stdout.splitlines()[1:]:
+        parts = line.strip().split()
+        if len(parts) == 2 and parts[1] == "device":
+            serials.append(parts[0])
+    return ["adb", "-s", serials[0]] if len(serials) == 1 else ["adb"]
+
+
 def _android_record() -> Optional[Dict[str, Any]]:
     """从 adb logcat 历史缓冲解析控制 server 端口/token/主目录，并建立 adb forward。
 
@@ -68,7 +87,7 @@ def _android_record() -> Optional[Dict[str, Any]]:
     """
     try:
         proc = subprocess.run(
-            ["adb", "logcat", "-d", "-s", LOGCAT_TAG],
+            [*_adb_cmd(), "logcat", "-d", "-s", LOGCAT_TAG],
             capture_output=True, text=True, timeout=10)
         if proc.returncode != 0:
             return None
@@ -94,7 +113,7 @@ def _android_record() -> Optional[Dict[str, Any]]:
         return None
 
     # PC → 设备的端口转发；失败不致命（模拟器/已转发场景可能成功连接）
-    subprocess.run(["adb", "forward", f"tcp:{port}", f"tcp:{port}"],
+    subprocess.run([*_adb_cmd(), "forward", f"tcp:{port}", f"tcp:{port}"],
                    capture_output=True, timeout=10)
     return {"host": "127.0.0.1", "port": port, "token": token, "mainGameDir": main_dir}
 
