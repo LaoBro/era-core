@@ -272,14 +272,15 @@ const popupItems = computed<PopupMenuItem[]>(() => [
           >⋮</button>
         </div>
 
-        <Transition name="drawer">
-          <DrawerMenu
-            v-if="showFloatMenu"
-            :items="popupItems"
-            :title="game.lastPlayedGame || game.gameDir || '更多操作'"
-            @close="showFloatMenu = false"
-          />
-        </Transition>
+        <!-- DrawerMenu 常驻渲染（不再 v-if + <Transition>）：收起始 opacity:0 + inert 保留
+             合成层与预先栅格化的 tile（见 spec）；① shader + ③ 真实面板栅格化由
+             组件内空闲期唤醒绘制触发。 -->
+        <DrawerMenu
+          :visible="showFloatMenu"
+          :items="popupItems"
+          :title="game.lastPlayedGame || game.gameDir || '更多操作'"
+          @close="showFloatMenu = false"
+        />
 
         <main class="app-main">
           <!-- TerminalView 常驻不卸载——视图切换只切可见性。

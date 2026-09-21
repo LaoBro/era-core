@@ -266,43 +266,9 @@ html.pointer-interaction :focus-visible {
   animation: popup-item-in calc(var(--motion-slow) * 2) var(--fx-ease-in) backwards;
 }
 
-/* DrawerMenu 出入场（替换 PopupMenu 浮层）——遮罩淡入淡出、面板横向滑入/滑出。
-   适配 Transition 根元素（.drawer-host）：enter/leave 类挂在 host 上。
-   根元素自身必须有 animation——Vue 靠探测根元素的动画时长决定过渡周期，
-   动画只挂在子元素上时会被当成长度 0 瞬间结束（表现为瞬弹）。
-   根元素整体淡入出（含 scrim），面板单独 slide。 */
-.drawer-enter-active.drawer-host {
-  animation: fade-in var(--motion-slow) var(--fx-ease-in) both;
-}
-.drawer-leave-active.drawer-host {
-  animation: fade-out var(--motion-fast) var(--fx-ease-out) forwards;
-}
-@keyframes drawer-slide-in {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
-}
-@keyframes drawer-slide-out {
-  from { transform: translateX(0); }
-  to { transform: translateX(100%); }
-}
-.drawer-enter-active.drawer-host .drawer {
-  animation: drawer-slide-in var(--motion-slow) var(--fx-ease-in) both;
-}
-.drawer-leave-active.drawer-host .drawer {
-  animation: drawer-slide-out var(--motion-fast) var(--fx-ease-out) forwards;
-}
-/* 菜单内容逐项浮现（慢一倍，与 PopupMenu popup-item-in 一致）：面板先整体滑入，
-   内容随后统一淡入 + 上浮，用 backwards 保证首帧从隐藏态开始。 */
-@keyframes drawer-item-in {
-  from { opacity: 0; transform: translateY(var(--fx-rise)); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.drawer-enter-active.drawer-host .drawer-item,
-.drawer-enter-active.drawer-host .drawer-zoom,
-.drawer-enter-active.drawer-host .drawer-separator,
-.drawer-enter-active.drawer-host .drawer-title {
-  animation: drawer-item-in calc(var(--motion-slow) * 2) var(--fx-ease-in) backwards;
-}
+/* DrawerMenu 出入场已不再用 Vue <Transition> 挂卸载驱动——组件改为常驻渲染，
+   打开/关闭由 drawer-host 的 .is-open 类 + CSS transition 控制（存活的合成层 + 空闲
+   唤醒绘制摊销首次 ②③）。动画声明见 components/DrawerMenu.vue 的 scoped 样式。 */
 
 /* 无障碍：prefers-reduced-motion 关闭非必要过渡（spec §2.3） */
 @media (prefers-reduced-motion: reduce) {
