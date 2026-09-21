@@ -4,6 +4,7 @@ import { useUiStore } from './stores/ui';
 import { useGameStore } from './stores/game';
 import { useConnectionStore } from './stores/connection';
 import { initAppState } from './composables/useAppInit';
+import { prewarmMenuShadow } from './lib/prewarmMenuShadow';
 import { startGameStatusMonitor } from './composables/useGameStatusMonitor';
 import { isMauiEnvironment, loadGameFromPath, exitGame as exitGameBridge } from './lib/mauiBridge';
 import AppShell from './components/AppShell.vue';
@@ -43,6 +44,8 @@ onMounted(() => {
   window.addEventListener('keydown', onControlHotkey);
   // 初始化时同步主题到 data-theme
   document.documentElement.dataset.theme = ui.theme;
+  // 首次弹出菜单卡顿优化：空闲期预热菜单阴影的 GPU shader（见 spec .scratch/menu-first-open-jank）
+  prewarmMenuShadow();
 });
 
 onUnmounted(() => {
