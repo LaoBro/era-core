@@ -272,15 +272,17 @@ const popupItems = computed<PopupMenuItem[]>(() => [
           >⋮</button>
         </div>
 
-        <!-- DrawerMenu 常驻渲染（不再 v-if + <Transition>）：收起始 opacity:0 + inert 保留
-             合成层与预先栅格化的 tile（见 spec）；① shader + ③ 真实面板栅格化由
-             组件内空闲期唤醒绘制触发。 -->
-        <DrawerMenu
-          :visible="showFloatMenu"
-          :items="popupItems"
-          :title="game.lastPlayedGame || game.gameDir || '更多操作'"
-          @close="showFloatMenu = false"
-        />
+        <!-- 抽屉用 v-show（display:none 切换）：组件随 App 常驻挂载、展开才经 Transition 显示。
+             首次打开性能由空闲期预热探针（prewarmMenuShadow.ts）覆盖①。见 spec。 -->
+        <Transition name="drawer">
+          <DrawerMenu
+            v-show="showFloatMenu"
+            :visible="showFloatMenu"
+            :items="popupItems"
+            :title="game.lastPlayedGame || game.gameDir || '更多操作'"
+            @close="showFloatMenu = false"
+          />
+        </Transition>
 
         <main class="app-main">
           <!-- TerminalView 常驻不卸载——视图切换只切可见性。

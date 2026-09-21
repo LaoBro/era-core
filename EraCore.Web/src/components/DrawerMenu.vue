@@ -6,11 +6,9 @@
  * 样式沿用 ui-redesign 统一令牌：--color-surface-raised、--radius-surface、--elevation-menu；
  * 出入场为横向 slide，动效走 --motion-slow / --motion-fast。
  *
- * 常驻渲染：本组件**不随开关挂卸载**，由 visible prop + .is-open 类驱动。收起态 opacity:0
- * + inert 保留合成层；空闲期做一次「唤醒绘制」（is-warming + opacity 0.01，面板归位），
- * 让真实面板的 tile 与 shader 提前栅格化/编译并存留，从而消掉首次打开的③（真实面板
- * 栅格化）与①（shader 编译）。收起态不能 display:none / visibility:hidden / scale(0)——
- * 那会打掉合成层与 tile。见 .scratch/menu-first-open-jank/spec.md。
+ * 由父级以 v-show（display:none）控制显示：组件随 App 常驻挂载、只在展开时才显示。
+ * 因此焦点/键盘监听等副作用必须「放在展开时」而非挂载时——见下方 watch(visible)。
+ * 首次打开性能由空闲期预热探针（prewarmMenuShadow.ts）覆盖，见 spec。
  */
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import type { PopupMenuItem } from './menuTypes';
@@ -19,7 +17,7 @@ const props = defineProps<{
   items: PopupMenuItem[];
   /** 抽屉头部左对齐标题——游戏显示名（game.lastPlayedGame）。 */
   title: string;
-  /** 打开态。常驻渲染：关闭不光卸载、仅 opacity:0 + inert 隐藏（保住合成层与 tile）。 */
+  /** 展开态。组件常驻挂载，v-show 控制 display；本 prop 驱动焦点与键盘副作用。 */
   visible: boolean;
 }>();
 
@@ -32,31 +30,10 @@ const rootEl = ref<HTMLElement | null>(null);
 /** 菜单打开前获得焦点的元素——关闭时归还焦点（沿用 PopupMenu 的最小焦点管理）。 */
 let previouslyFocused: HTMLElement | null = null;
 
-/* ---------- 空闲期唤醒绘制（真实面板一次，进程只做一次） ---------- */
-const warming = ref(false); // 挂 .is-warming：真实面板以 opacity 0.01 归位绘制，完成后收回
-let warmed = false;
-
-/** 页面空闲后把真实抽屉面板画一次（非零透明度→真栅格化），随后收回为收起态。
- *  因为面板常驻（层/tile 不销毁），这次的 tile 会存到下个首开，③ 被提前付掉。 */
-function warmRaster(times = 3): void {
-  if (warmed) return;
-  warmed = true;
-  warming.value = true;
-  let n = 0;
-  const tick = (): void => {
-    if (++n >= times) {
-      warming.value = false;
-      return;
-    }
-    requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
-}
-
 /* ---------- 右滑收起手势 ---------- */
 const DRAG_THRESHOLD = 96; // 拖拽超过此偏移量释放即收起（像素）
 const drawerTranslateX = ref(0); // 面板当前拖动偏移量（≥0，右滑为正）
-const tracking = ref(false); // 是否正在拖拽——拖拽期间用内联 transform 覆盖开路/关定位
+let tracking = false;
 let startX = 0;
 let startOffset = 0;
 let pointerId = -1;
@@ -64,7 +41,7 @@ let pointerId = -1;
 function onHandlePointerDown(e: PointerEvent): void {
   // 只跟踪主指针的水平拖拽，避免干扰抽屉内部纵向滚动（touch-action: pan-y）。
   if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
-  tracking.value = true;
+  tracking = true;
   pointerId = e.pointerId;
   startX = e.clientX;
   startOffset = drawerTranslateX.value;
@@ -72,7 +49,7 @@ function onHandlePointerDown(e: PointerEvent): void {
 }
 
 function onHandlePointerMove(e: PointerEvent): void {
-  if (!tracking.value || e.pointerId !== pointerId) return;
+  if (!tracking || e.pointerId !== pointerId) return;
   const delta = e.clientX - startX;
   if (delta <= 0) {
     // 用户没有向右拖动——归零，允许垂直滚动/点击
@@ -83,8 +60,8 @@ function onHandlePointerMove(e: PointerEvent): void {
 }
 
 function finishSwipe(e: PointerEvent): void {
-  if (!tracking.value || e.pointerId !== pointerId) return;
-  tracking.value = false;
+  if (!tracking || e.pointerId !== pointerId) return;
+  tracking = false;
   pointerId = -1;
   if (drawerTranslateX.value >= DRAG_THRESHOLD) {
     emit('close');
@@ -98,22 +75,15 @@ function onScrimPointerDown(): void {
   emit('close');
 }
 
-/** Escape 关闭——仅打开态响应。组件常驻，监听器只在挂载时装一次。 */
+/** Escape 关闭——仅展开态响应。组件常驻，监听器只在挂载时装一次。 */
 function onDocKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape' && props.visible) emit('close');
 }
 
-onMounted(() => {
-  document.addEventListener('keydown', onDocKeydown);
-  // 空闲期唤醒绘制：晚于首帧、不抢主线程；缺 requestIdleCallback 时退化为定时器
-  const idle = (typeof (window as any).requestIdleCallback === 'function')
-    ? (cb: () => void) => (window as any).requestIdleCallback(cb, { timeout: 2000 })
-    : (cb: () => void) => setTimeout(cb, 1500);
-  idle(() => requestAnimationFrame(() => warmRaster()));
-});
+onMounted(() => document.addEventListener('keydown', onDocKeydown));
 onUnmounted(() => document.removeEventListener('keydown', onDocKeydown));
 
-/** 焦点随可见性切换：打开时把焦点移入首项，关闭时归还给打开前的触发元素。 */
+/** 焦点随展开切换：展开时把焦点移入首项，关闭时归还给展开前的触发元素。 */
 watch(() => props.visible, (open) => {
   if (open) {
     previouslyFocused = document.activeElement instanceof HTMLElement
@@ -129,12 +99,7 @@ watch(() => props.visible, (open) => {
 </script>
 
 <template>
-  <div
-    class="drawer-host"
-    :class="{ 'is-open': visible, 'is-warming': warming && !visible }"
-    role="presentation"
-    :inert="!visible"
-  >
+  <div class="drawer-host" role="presentation">
     <!-- 全屏遮罩（scrim）：非模态轻档 --color-scrim-menu，点它关闭。
          浮层层级与 PopupMenu 一致：面板 900 > 遮罩 899。 -->
     <div class="drawer-scrim" @pointerdown="onScrimPointerDown" />
@@ -143,7 +108,10 @@ watch(() => props.visible, (open) => {
       ref="rootEl"
       class="drawer"
       role="menu"
-      :style="tracking ? { transform: `translateX(${drawerTranslateX}px)`, transition: 'none' } : undefined"
+      :style="{
+        transform: `translateX(${drawerTranslateX}px)`,
+        transition: tracking ? 'none' : 'transform var(--motion-slow) var(--fx-ease-in)',
+      }"
       @pointerdown="onHandlePointerDown"
       @pointermove="onHandlePointerMove"
       @pointerup="finishSwipe"
@@ -233,48 +201,16 @@ watch(() => props.visible, (open) => {
 </template>
 
 <style scoped>
-/* 常驻渲染的动效（替代原 Vue <Transition> enter/leave）+ 空闲唤醒绘制。
-   .drawer-host 收起态 opacity:0 但**必须保留在渲染树**（不能 display:none / visibility:
-   hidden / scale(0——那会把合成层连同 ②③ 摊销一起打掉）；inert 由模板负责收起态的
-   键盘/辅助技术隐身。打开慢、收起快，与原名节点一致（enter slow / leave fast）。 */
 .drawer-host {
   position: fixed;
   inset: 0;
   z-index: 899;
-  pointer-events: none; /* 容器不拦截事件，实际交互由打开态的子元素接管 */
-  opacity: 0;
-  transition: opacity var(--motion-fast) var(--fx-ease-out); /* 关闭：快速淡出 */
-}
-.drawer-host.is-open {
-  opacity: 1;
-  transition: opacity var(--motion-slow) var(--fx-ease-in); /* 打开：慢速淡入 */
-}
-/* 空闲期唤醒绘制：非零透明度让真实面板真栅格化一次；面板归位（translateX(0)）、
-   transition 关掉以免动画；因为常驻层/tile 不销毁，这次的 tile 存给下一个首开（消③）。 */
-.drawer-host.is-warming {
-  opacity: 0.01;
-  transition: none;
-}
-.drawer-host.is-warming .drawer {
-  transform: translateX(0);
-  transition: none;
-}
-/* 唤醒期内容也归位参与栅格化（否则内容透明度 0 不绘制，tile 不完整） */
-.drawer-host.is-warming .drawer-title,
-.drawer-host.is-warming .drawer-item,
-.drawer-host.is-warming .drawer-zoom,
-.drawer-host.is-warming .drawer-separator {
-  opacity: 1;
-  transform: translateY(0);
-  transition: none;
+  pointer-events: none; /* 容器不拦截事件，实际交互由子元素接管 */
 }
 .drawer-scrim {
   position: absolute;
   inset: 0;
   background: var(--color-scrim-menu);
-  pointer-events: none; /* 收起态不响应，打开态再开启 */
-}
-.drawer-host.is-open .drawer-scrim {
   pointer-events: auto;
 }
 .drawer {
@@ -297,34 +233,8 @@ watch(() => props.visible, (open) => {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y; /* 纵向可滚，横向拖拽留给右滑手势 */
-  pointer-events: none; /* 收起态不响应，打开态再开启 */
-  will-change: transform;
-  transform: translateX(100%); /* 收起态面板退到屏外 */
-  transition: transform var(--motion-fast) var(--fx-ease-out); /* 关闭：快速滑出 */
-}
-.drawer-host.is-open .drawer {
   pointer-events: auto;
-  transform: translateX(0); /* 打开态面板滑入 */
-  transition: transform var(--motion-slow) var(--fx-ease-in); /* 打开：慢速滑入 */
-}
-/* 内容逐项浮现（慢一倍，同 PopupMenu popup-item-in）：transition 只挂在 is-open 侧，
-   这样关闭时无过渡即退场（被 host 快速淡出盖住），与原先只摒弃内容出场一致。 */
-.drawer-title,
-.drawer-item,
-.drawer-zoom,
-.drawer-separator {
-  opacity: 0;
-  transform: translateY(var(--fx-rise));
-}
-.drawer-host.is-open .drawer-title,
-.drawer-host.is-open .drawer-item,
-.drawer-host.is-open .drawer-zoom,
-.drawer-host.is-open .drawer-separator {
-  opacity: 1;
-  transform: translateY(0);
-  transition:
-    opacity calc(var(--motion-slow) * 2) var(--fx-ease-in),
-    transform calc(var(--motion-slow) * 2) var(--fx-ease-in);
+  will-change: transform;
 }
 /* 抽屉头部：左对齐纯文字标题，下接分隔线。非交互，仅作语义锚点。 */
 .drawer-title {
