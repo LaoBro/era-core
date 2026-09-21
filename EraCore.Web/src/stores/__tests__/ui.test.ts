@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { useUiStore, detectPlatform } from '../ui';
 
@@ -137,5 +137,93 @@ describe('useUiStore manualInputVisible', () => {
     expect(ui.manualInputVisible).toBe(true);
     ui.toggleManualInput();
     expect(ui.manualInputVisible).toBe(false);
+  });
+});
+
+// ---------- menuPrewarm（菜单首次打开优化的预热开关） ----------
+//
+// 纯前端本地设置（同 theme）：localStorage `app.menuPrewarm` 存 'on'/'off'，默认开。
+// store 每次新建时读一次 → 用「重建 pinia + 重建 store」验证持久化真的落到了存储。
+describe('useUiStore menuPrewarm', () => {
+  function makeLocalStorage(): Storage {
+    const map = new Map<string, string>();
+    return {
+      getItem: (k: string) => (map.has(k) ? map.get(k)! : null),
+      setItem: (k: string, v: string) => {
+        map.set(k, v);
+      },
+      removeItem: (k: string) => {
+        map.delete(k);
+      },
+      clear: () => {
+        map.clear();
+      },
+      key: (i: number) => Array.from(map.keys())[i] ?? null,
+      get length() {
+        return map.size;
+      },
+    };
+  }
+
+  beforeEach(() => setActivePinia(createPinia()));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('未设置 → 默认开（保持既有优化行为）', () => {
+    vi.stubGlobal('localStorage', makeLocalStorage());
+    expect(useUiStore().menuPrewarm).toBe(true);
+  });
+
+  it("存储值 'off' → 关；'on' → 开", () => {
+    const storage = makeLocalStorage();
+    storage.setItem('app.menuPrewarm', 'off');
+    vi.stubGlobal('localStorage', storage);
+    expect(useUiStore().menuPrewarm).toBe(false);
+
+    setActivePinia(createPinia());
+    storage.setItem('app.menuPrewarm', 'on');
+    expect(useUiStore().menuPrewarm).toBe(true);
+  });
+
+  it('非法值 → 回落默认开（不当成关）', () => {
+    const storage = makeLocalStorage();
+    storage.setItem('app.menuPrewarm', 'true'); // 非 'on'/'off' 词表，忽略
+    vi.stubGlobal('localStorage', storage);
+    expect(useUiStore().menuPrewarm).toBe(true);
+  });
+
+  it('setMenuPrewarm(false) 写入存储——新建 store 后仍为关', () => {
+    vi.stubGlobal('localStorage', makeLocalStorage());
+    useUiStore().setMenuPrewarm(false);
+    expect(localStorage.getItem('app.menuPrewarm')).toBe('off');
+
+    setActivePinia(createPinia()); // 模拟重开应用：store 重建 → 从存储回填
+    expect(useUiStore().menuPrewarm).toBe(false);
+  });
+
+  it('toggleMenuPrewarm 翻转并持久化', () => {
+    vi.stubGlobal('localStorage', makeLocalStorage());
+    const ui = useUiStore();
+    expect(ui.menuPrewarm).toBe(true);
+    ui.toggleMenuPrewarm();
+    expect(ui.menuPrewarm).toBe(false);
+    expect(localStorage.getItem('app.menuPrewarm')).toBe('off');
+    ui.toggleMenuPrewarm();
+    expect(ui.menuPrewarm).toBe(true);
+    expect(localStorage.getItem('app.menuPrewarm')).toBe('on');
+  });
+
+  it('存储不可用（读写皆抛）→ 默认开，且切换不抛异常', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => {
+        throw new Error('denied');
+      },
+      setItem: () => {
+        throw new Error('denied');
+      },
+    });
+    const ui = useUiStore();
+    expect(ui.menuPrewarm).toBe(true);
+    ui.setMenuPrewarm(false);
+    expect(ui.menuPrewarm).toBe(false); // 未持久化，但内存态仍可切
   });
 });

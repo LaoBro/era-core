@@ -106,6 +106,41 @@ export const useUiStore = defineStore('ui', () => {
     writeThemeToStorage(theme.value);
   }
 
+  /**
+   * 菜单首次打开优化（空闲期预热探针）开关：localStorage 读 'on'/'off'，默认开。
+   *
+   * 与 theme 同类：**纯前端本地设置**，不进 ADR-0030 全局设置——预热是 WebView 渲染行为
+   * （把菜单材质的 GPU shader 编译提前到空闲期），C#/HTTP/CLI 侧没有任何消费者，
+   * 硬塞进 canonical 键表只是给它找个持久化容器。见 .scratch/menu-first-open-jank/spec.md。
+   *
+   * 关 = 回到优化前基线（首次打开可能丢帧、看不到完整出场动画），供低端设备与对比复验用。
+   */
+  const MENU_PREWARM_STORAGE_KEY = 'app.menuPrewarm';
+  function readMenuPrewarmFromStorage(): boolean {
+    try {
+      const v = localStorage.getItem(MENU_PREWARM_STORAGE_KEY);
+      if (v === 'on') return true;
+      if (v === 'off') return false;
+      // 未设置 / 非法值 → 回落默认（含旧版本升级上来第一次运行）
+    } catch { /* 静默：存储被禁或非浏览器环境（vitest 用 node 环境） */ }
+    return true;
+  }
+  function writeMenuPrewarmToStorage(on: boolean): void {
+    try { localStorage.setItem(MENU_PREWARM_STORAGE_KEY, on ? 'on' : 'off'); } catch { /* 静默 */ }
+  }
+  const menuPrewarm = ref<boolean>(readMenuPrewarmFromStorage());
+
+  /** 设置预热开关并持久化——App 据此决定要不要调 prewarmMenuShadow()。 */
+  function setMenuPrewarm(on: boolean): void {
+    menuPrewarm.value = on;
+    writeMenuPrewarmToStorage(on);
+  }
+
+  /** 切换预热开关并持久化（设置页 toggle 用）。 */
+  function toggleMenuPrewarm(): void {
+    setMenuPrewarm(!menuPrewarm.value);
+  }
+
   return {
     currentView,
     platform,
@@ -116,5 +151,8 @@ export const useUiStore = defineStore('ui', () => {
     toggleManualInput,
     theme,
     toggleTheme,
+    menuPrewarm,
+    setMenuPrewarm,
+    toggleMenuPrewarm,
   };
 });

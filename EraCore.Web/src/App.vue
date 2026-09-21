@@ -44,8 +44,9 @@ onMounted(() => {
   window.addEventListener('keydown', onControlHotkey);
   // 初始化时同步主题到 data-theme
   document.documentElement.dataset.theme = ui.theme;
-  // 首次弹出菜单卡顿优化：空闲期预热菜单阴影的 GPU shader（见 spec .scratch/menu-first-open-jank）
-  prewarmMenuShadow();
+  // 首次弹出菜单卡顿优化：空闲期预热菜单阴影的 GPU shader（见 spec .scratch/menu-first-open-jank）。
+  // 开关在设置页「外观 · 菜单预热」：关 = 不预热，回到优化前基线（低端设备 / 对比复验用）。
+  if (ui.menuPrewarm) prewarmMenuShadow();
 });
 
 onUnmounted(() => {
@@ -55,6 +56,15 @@ onUnmounted(() => {
 // 同步主题到 <html data-theme>
 watch(() => ui.theme, (t) => {
   document.documentElement.dataset.theme = t;
+});
+
+/**
+ * 菜单预热开关（设置页「外观 · 菜单预热」）：拨到「开」时补一次空闲期预热——当次会话立即生效，
+ * 不必重开应用；prewarmMenuShadow 本身幂等（进程内只做一次）。
+ * 拨到「关」无法撤销：已编译的 shader 是进程级缓存，故只影响下次启动——该语义在设置页 hint 里说明。
+ */
+watch(() => ui.menuPrewarm, (on) => {
+  if (on) prewarmMenuShadow();
 });
 
 /**

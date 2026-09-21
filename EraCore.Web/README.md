@@ -98,6 +98,7 @@ npm run build
 | 修改页面导航、顶部按钮或模式分流 | `App.vue`、`components/DrawerMenu.vue` |
 | 修改 UI 主题、颜色、圆角、阴影、动效或字号 | `styles/theme.css`（唯一令牌源，组件一律 `var(--token)`） |
 | 修改弹窗、菜单或确认框 | `components/PopupMenu.vue`、`components/DrawerMenu.vue`、`components/ConfirmDialog.vue` |
+| 修改菜单首次打开的卡顿优化（或其开关） | `lib/prewarmMenuShadow.ts`、`stores/ui.ts`（`menuPrewarm`，纯前端 localStorage 开关）、`views/SettingsView.vue`；取舍与实测见 `.scratch/menu-first-open-jank/spec.md` |
 
 ## 数据流
 

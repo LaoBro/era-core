@@ -279,6 +279,26 @@ const logCopied = ref(false);
           </button>
           <span class="setting-value">{{ ui.theme === 'light' ? '开' : '关' }}</span>
         </div>
+        <div class="setting-row">
+          <span class="setting-label">菜单预热</span>
+          <button
+            class="toggle"
+            :class="{ on: ui.menuPrewarm }"
+            role="switch"
+            :aria-checked="ui.menuPrewarm"
+            @click="ui.toggleMenuPrewarm()"
+          >
+            <span class="toggle-knob" />
+          </button>
+          <span class="setting-value">{{ ui.menuPrewarm ? '开' : '关' }}</span>
+        </div>
+        <p class="hint-text">
+          首次点开 ⋮ 菜单的卡顿优化：页面空闲时用一个不可见的探针把菜单材质（阴影 / 遮罩 /
+          圆角裁剪 / 图标）提前绘制一次，把 GPU shader 编译挪出首次打开的那几帧，让出场动画
+          完整播出来。本机开关只作用于前端渲染，不随「恢复默认」重置。默认开；关掉即回到
+          优化前基线（首次打开可能丢帧），供低端设备或对比复验使用。关掉不会撤销本会话
+          已编译好的 shader，重开应用后才完全回到基线。
+        </p>
       </div>
       <div class="section">
         <h3>性能（启动加载）</h3>
