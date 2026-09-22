@@ -9,8 +9,7 @@ import { isMauiEnvironment } from '../lib/mauiBridge';
 import { shouldSubmitButtonValue, shouldAdvanceOnTerminalClick, isLiveButton } from '../lib/inputRouting';
 import {
   computeLineHitExpansions,
-  computeVerticalLayout,
-  NO_VERTICAL_LAYOUT,
+  computeLineExtras,
   type HitExpansion,
 } from '../lib/touchLayout';
 import { resolveResource } from '../lib/resourceResolver';
@@ -116,10 +115,10 @@ const effectiveRowHeight = computed(() => effectiveLineHeight.value * game.effec
  * 触控排版的目标行高（含 scale）——按钮盒按它取高，于是点击盒是 48px 级别的触控目标。
  *
  * 盒高恒等于这个值、且**以文字行为中心**向上下各长 `(目标行高 - 基准行高) / 2`；
- * **行高**只在必要时才抬到它（见下方 touchVertical）：竖向**相邻**行有列区间重叠的
- * 存活按钮时才抬（撑开槽位让两张盒不相撞），其余冲突改用收窄热区解决，更远的行
- * 什么都不做。抬高的行也只是把槽位变高，盒与文字的位置都不变——抬高的那些行由
- * useVirtualScroll 的 `lineExtras`（稀疏额外高度表）吸收。
+ * **行高**只在必要时才撑开（见下方 touchLineExtras）：某行下方窗口内有列区间重叠的存活
+ * 按钮时，按几何上必需的量撑开槽位让两张盒不相撞——相邻行才是满额，隔 1 行只要一点，
+ * 再远根本不用撑。撑高只加槽位：盒与文字位置都不变。撑高的那些行由 useVirtualScroll
+ * 的 `lineExtras`（稀疏额外高度表）吸收。
  */
 const touchRowHeight = computed(() =>
   Math.max(effectiveLineHeight.value, TOUCH_TARGET_MIN_PX) * game.effectiveScale,
@@ -135,7 +134,7 @@ const touchLineExtraPx = computed(() => Math.max(0, touchRowHeight.value - effec
  * 实现是 `padding-top/bottom` 外扩 + **等量负 margin 抵消**（见 .term-btn-touch）：
  * 盒变高而它在行盒里的贡献不变，所以行高仍等于基准行距、后续行一格不动，
  * 也就完全不必进虚拟滚动的加高表（Chromium 实测：排版总高与纯文本严格一致）。
- * 被收窄的行由 lineStyle 按可用空间覆盖这个变量——见 computeVerticalLayout。
+ * 这个值处处一致——热区相撞由撑高解决，不靠收窄盒高（见 lineStyle 的注释）。
  */
 const touchHalfGrowPx = computed(() => touchLineExtraPx.value / 2);
 
@@ -208,25 +207,23 @@ function isTouchTarget(entry: DisplayEntry): boolean {
 }
 
 /**
- * 触控排版的纵向决策（纯函数，见 lib/touchLayout.ts 的 `computeVerticalLayout`）：
- * **相邻行**有列区间重叠的存活按钮 → 那两行撑高（撑开槽位让两张盒不相撞）；
- * 相隔 ≥2 行才冲突的 → 不撑高，改成把纵向热区收窄到两盒正好相切。其余行什么都不做。
+ * 触控排版的纵向撑高表（纯函数，见 lib/touchLayout.ts 的 `computeLineExtras`）：
+ * 每行只对**它下方**窗口内的列区间冲突负责，撑高量取几何上必需的最小值——相邻行满额
+ * （撑开槽位让两张盒正好相切），隔 1 行只需一点，再远根本不用撑。撑高只加槽位，
+ * 按钮盒与文字位置都不变。
  *
- * null / 空表时 useVirtualScroll 走原定高快路径。扫描是 O(lines)：绝大多数行没有按钮，
- * 第一步就被筛掉；且只在 lines / generation / inputType / scale / 开关变化时重算，
+ * null / 空表时 useVirtualScroll 走原定高快路径。扫描是 O(lines × 窗口)：绝大多数行没有
+ * 按钮，第一步就被筛掉；且只在 lines / generation / inputType / scale / 开关变化时重算，
  * 触控排版关闭时整个计算被短路，普通终端不受影响。
  */
-const touchVertical = computed(() => {
-  if (!ui.touchLayout) return NO_VERTICAL_LAYOUT;
-  return computeVerticalLayout(game.displayState.lines, {
+const touchLineExtras = computed<Map<number, number> | null>(() => {
+  if (!ui.touchLayout) return null;
+  return computeLineExtras(game.displayState.lines, {
     rowHeightPx: effectiveRowHeight.value,
     targetRowPx: touchRowHeight.value,
     isLive: (entry) => isLiveButtonEntry(entry),
   });
 });
-
-/** 撑高表——传给虚拟滚动做稀疏加高记账。 */
-const touchLineExtras = computed(() => touchVertical.value.extras);
 
 /**
  * 虚拟滚动实例——传入 itemCount（lines.length）、rowHeight、viewportRef。
@@ -467,29 +464,24 @@ async function onImageClick(e: MouseEvent, img: SegmentImage, entry: DisplayEntr
 }
 
 /**
- * 单行样式——对齐 +（被撑高的行）精确行高 +（被收窄的行）纵向热区量。
+ * 单行样式——对齐 +（被撑高的行）精确行高。
  *
  * 为什么被撑高的行要显式钉高：按钮盒在行盒里溢出，行盒最终还会叠加当前字体的
  * ascent/descent（每种游戏字体不同，可能多出 1~2px）。而 useVirtualScroll 的加高表按
  * "基准行高 + extra" 记账，多出来的零头会随行数累积成漂移。显式 height 让 DOM 与账本
  * 严格一致，行超过的部分仍在 overflow 语义下正常绘制（图片溢出不受影响）。
  *
- * 撑高**不改** `--hit-v`：撑高只把这一行的槽位变高，按钮盒与文字位置都和撑高时一样，
- * 相邻两张盒照样正好相切。曾经在这里把它归零过——那会让盒被 `min-height` 拉满整槽，
- * 而 Chromium 的 button 布局会把内容在**内容盒**里垂直居中，于是按钮文字整体下沉半个
- * 增量（默认 14.5px）、离开游戏给它的位置，前置的文本行与按钮行之间因此多出空白。
- * 不要再改回去。
- *
- * `--hit-v` 只在「相隔 ≥2 行才冲突」的行上被收窄（见 computeVerticalLayout）——
- * 那里不撑高，靠把盒缩小到与冲突方相切来解决重叠。
+ * **不要**在这里覆盖 `--hit-v`（盒高必须处处一致）：
+ * - 收窄它 → 同屏出现两种高度的矩形（38px 那些上下紧贴文本），真机上一眼看出不齐；
+ *   热区相撞改用撑高解决，见 computeLineExtras。
+ * - 归零它 → 盒被撑满整槽，而 Chromium 的 button 布局会把内容在内容盒里垂直居中，
+ *   按钮文字整体下沉半个增量、离开游戏给它的位置。
+ * 这两条都在真机上错过一次，别再改回去。
  */
 function lineStyle(item: { line: DisplayLine; absIdx: number }): Record<string, string> {
   const style: Record<string, string> = { textAlign: lineAlign(item.line) };
-  const { extras, narrowed } = touchVertical.value;
-  const extra = extras?.get(item.absIdx);
+  const extra = touchLineExtras.value?.get(item.absIdx);
   if (extra !== undefined) style.height = `${effectiveRowHeight.value + extra}px`;
-  const half = narrowed.get(item.absIdx);
-  if (half !== undefined) style['--hit-v'] = `${half}px`;
   return style;
 }
 
@@ -734,18 +726,17 @@ watch(() => game.inputInFlight, (inFlight) => {
  *   z-index 是必需的：外扩区与后续文本 entry 在几何上重叠，不提升层叠则事件被文本取走、
  *   热区失效。
  *
- * 纵向——盒高恒为一个触控目标高、以文字行为中心上下各长 --hit-v；**行高**是否撑开由
- *   lineStyle 决定，而撑开只加槽位、不动盒与文字：
- *   ① 撑高的行（竖向**相邻行**有列区间重叠的存活按钮——判定见 touchVertical）：行被钉到
- *      目标高度，盒仍是同样的高度，于是相邻两张盒正好相切、命中边界就是槽边界；
- *      文字仍落在游戏给它的位置（撑高只往该行下方加空白）。
+ * 纵向——盒高恒为一个触控目标高、以文字行为中心上下各长 --hit-v，**处处一致**（不做任何
+ *   按行收窄——那会做出 38px 那种上下紧贴文本的「压缩矩形」）；行高是否撑开由 lineStyle
+ *   决定，而撑开只加槽位、不动盒与文字：
+ *   ① 撑高的行（**它下方**窗口内有列区间重叠的存活按钮——判定见 computeLineExtras）：行被
+ *      钉到「基准行高 + 几何上必需的撑高量」（相邻行才是满额，隔 1 行只要一点，再远不用），
+ *      盒仍是同样的高度，于是与下方那张盒正好相切、命中边界就是槽边界；文字仍落在游戏
+ *      给它的位置（撑高只往该行下方加空白）。
  *   ② 不撑高的行：行维持基准行距，盒靠「padding-top/bottom 外扩 + 等量负 margin 抵消」
  *      自己长到目标高度，上下各溢出 --hit-v、压住相邻的非按钮文本——与横向同一取舍。
  *      负 margin 抵消了 padding 对行盒高度的贡献，所以排版总高与后续行位置一格不变
  *      （Chromium 实测总高严格等于行数 × 基准行距），不进加高表。
- *   ③ 相隔 ≥2 行才冲突的行（见 computeVerticalLayout）：不撑高，改由 lineStyle
- *      按可用空间收窄 --hit-v，两盒正好相切——只为消除 10px 重叠而撑两行 29px 空白
- *      是不成比例的。
  *
  * 视觉——圆角矩形提示就画在这个盒子上，所以「提示范围 == 真实热区」自动成立，不存在
  *   提示与热区不一致的误导。用低对比填充 + 极淡描边而非实心块：一屏二三十个按钮时
@@ -763,9 +754,10 @@ watch(() => game.inputInFlight, (inFlight) => {
      所以盒高正常恰为目标高度；内容更高时盒跟着长，不会截断——「最小宽高」语义仍然成立。 */
   padding-left: var(--hit-l, 0px);
   padding-right: var(--hit-r, 0px);
-  /* 纵向：定义「内容盒落在行盒的哪一段」。默认按满额长到目标高度；冲突密集的行由
-     lineStyle 收窄 --hit-v。与横向同理，负 margin 与 padding 等量相消——盒变高，
-     行盒贡献不变（所以撑高与否都不影响这一行的行盒高度，撑高只由 lineStyle 决定）。 */
+  /* 纵向：定义「内容盒落在行盒的哪一段」。值是全局一致的满额（盒高 = 内容行高 +
+     2 × 本值 = 目标高度）；**不按行收窄**——那会让同屏出现两种高度的矩形。
+     与横向同理，负 margin 与 padding 等量相消——盒变高，行盒贡献不变
+     （撑高与否都不影响这一行的行盒高度，撑高只由 lineStyle 决定）。 */
   padding-top: var(--hit-v, 0px);
   padding-bottom: var(--hit-v, 0px);
   margin-left: calc(var(--hit-l, 0px) * -1);

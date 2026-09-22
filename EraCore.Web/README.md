@@ -68,11 +68,11 @@ npm run build
 - `ui.touchLayout`：触控排版开关（localStorage `app.touchLayout`，Android 默认开 / Web 默认关）；入口有**两处**——右上角常驻按钮组的 ◎ 钮（与 ⌨ / ⋮ 并列，第一下就点到）与抽屉菜单「触控排版」项，两处共享同一状态。
 - `ui.touchTargetCols`：触控排版的横向阈值（列，设置页「外观」可调，默认 5 列，限定在候选档位内——越界或非法值回落默认）。
 
-**触控排版的排版规则**：按钮盒高 = 内容行高 + 2 × 纵向外扩量 = `max(LineHeight, 48px)`（内容行高恒等于基准行高，故恰为目标高度）。**不用 `min-height` 兜底**——那会把盒钉死在目标高度上，收窄外扩量时盒收不动、而等量负 `margin` 仍按收窄后的值抵消，行盒反而被撑高、与虚拟滚动账本失配。
+**触控排版的排版规则**：按钮盒高恒为 `max(LineHeight, 48px)`——由「内容行高 + 2 × 纵向外扩量」得到（内容行高恒等于基准行高，故恰为目标高度）。**不用 `min-height`**，也**不按行收窄外扩量**：前者会把盒钉死在目标高度上、收窄时行盒反被撑高而与虚拟滚动账本失配；后者会让同屏出现两种高度的矩形（38px 那些上下紧贴文本），真机上一眼看出不齐。盒高因此处处一致。
 
-**行高只在必要时才抬**：只有**相邻行**有列区间重叠的存活按钮时才抬（撑开槽位让两张盒不相撞——不抬则两盒必然互相覆盖 29px，命中归属由 DOM 顺序决定、不可预测）；**相隔 ≥2 行**才冲突的不抬，改成把纵向外扩量收窄到 `(k-1) × 行距 / 2`（默认行距 19px、隔 1 行 → 各 9.5px、盒 38px），两盒正好相切、**零多余空白**。判定窗口 `W = ceil(目标行高 / 行距) - 1`（默认行距 19px → 2：k=1 撑高、k=2 收窄、k≥3 互不相干）。撑高只加槽位——按钮盒与文字位置都不变，所以文本行与按钮行之间的间距和不开触控排版时逐行一致（这条曾经做错过：`min-height` 让盒铺满整槽，而 Chromium 的 button 布局会把文字在内容盒里垂直居中，按钮文字于是整体下沉半个增量、离开游戏给它的位置）。
+**行高只撑几何上必需的那一点**：**撑高只会把它后面的行往下推**，所以每条冲突的约束都由**上方那一行**负责——`e = max(0, 2g − (k−1)·行距)`（`g` 是半个纵向外扩量，`k` 是两行的行索引差，限定在判定窗口 `W = ceil(目标行高 / 行距) − 1` 内；默认行距 19px 时 W = 2）。于是：相邻行满额（29px，两槽各一个盒高、两张盒正好相切），隔 1 行只要 10px，隔 2 行及以上完全不用撑；列区间不重叠的配对一律不管。撑高只加槽位——按钮盒与文字位置都不变，所以文本行与按钮行之间的间距和不开触控排版时逐行一致（这条曾经做错过：`min-height` 让盒铺满整槽，而 Chromium 的 button 布局会把内容在内容盒里垂直居中，按钮文字于是整体下沉半个增量、离开游戏给它的位置）。
 
-横向热区**按需外扩**——按钮自身已达目标列数就零外扩；与邻居之间只要求**两个热区不重叠**（空闲空隙两侧平分，最多相切，不刻意留净空）。两个方向的扩大量都靠 `padding` 与**等量负 `margin`** 相消：盒变大而它在行盒里的贡献不变，因此**文字位置一格都不动**，排版总高也与纯文本严格一致（纵向收窄因此不必进加高表）；被撑高的行由 `lineStyle` 显式钉高，走 `useVirtualScroll` 的 `lineExtras` 稀疏表。圆角矩形就画在那个盒子上，故「提示范围 == 真实热区」自动成立。几何全部来自快照既有的 `ButtonRef.col` / `width`，零 DOM 测量——见 `src/lib/touchLayout.ts`。
+横向热区**按需外扩**——按钮自身已达目标列数就零外扩；与邻居之间只要求**两个热区不重叠**（空闲空隙两侧平分，最多相切，不刻意留净空）。两个方向的扩大量都靠 `padding` 与**等量负 `margin`** 相消：盒变大而它在行盒里的贡献不变，因此**文字位置一格都不动**，排版总高也与纯文本严格一致（收窄/撑高因此都不必改盒高）；被撑高的行由 `lineStyle` 显式钉高，走 `useVirtualScroll` 的 `lineExtras` 稀疏表。圆角矩形就画在那个盒子上，故「提示范围 == 真实热区」自动成立。几何全部来自快照既有的 `ButtonRef.col` / `width`，零 DOM 测量——见 `src/lib/touchLayout.ts`。
 
 ## Composable 和通信层
 
@@ -85,7 +85,7 @@ npm run build
 | `src/lib/mauiBridge.ts` | Vue 与 MAUI C# 桥接消息、游戏扫描和加载 |
 | `src/lib/gameLibrary.ts` | 游戏库数据源抽象：`GameLibrarySource` 接口 + maui（桥接）/ http（HTTP）两个 adapter |
 | `src/lib/inputRouting.ts` | 按钮点击和终端点击的输入路由判定（含 `isLiveButton`——「有效按钮」的单一判据） |
-| `src/lib/touchLayout.ts` | 触控排版的热区几何（纯函数）：横向按 `ButtonRef.col`/`width` 列几何算外扩列数、纵向判定哪些行需要抬高（列区间重叠窗口），零 DOM 测量 |
+| `src/lib/touchLayout.ts` | 触控排版的热区几何（纯函数）：横向按 `ButtonRef.col`/`width` 列几何算外扩列数；纵向算每行该撑高多少（只撑几何上必需的那一点），零 DOM 测量 |
 | `src/lib/parseTurnRecord.ts` | 解析 C# 回合协议 |
 | `src/lib/opsApplier.ts` | 应用终端增量操作 |
 | `src/lib/snapshotReducer.ts` | 应用完整终端快照 |
@@ -103,7 +103,7 @@ npm run build
 | 修改手动输入和按钮输入 | `components/InputBar.vue`、`lib/inputRouting.ts` |
 | 修改 TINPUT 倒计时 | `components/TinputCountdown.vue`、`stores/game.ts` |
 | 修改终端滚动或缩放 | `composables/useVirtualScroll.ts`、`composables/usePinchZoom.ts`、`TerminalDisplay.vue` |
-| 修改按钮点击区域 / 触控排版规则 | `components/TerminalDisplay.vue`（`.term-btn-touch` + 加高表）、`lib/touchLayout.ts`（横向外扩几何 + 纵向抬行高判定）、`lib/inputRouting.ts`（`isLiveButton`）、`stores/ui.ts`（开关与阈值） |
+| 修改按钮点击区域 / 触控排版规则 | `components/TerminalDisplay.vue`（`.term-btn-touch` + 撑高表）、`lib/touchLayout.ts`（横向外扩几何 + 纵向撑高量）、`lib/inputRouting.ts`（`isLiveButton`）、`stores/ui.ts`（开关与阈值） |
 | 修改 MAUI 启动和 C# 消息处理 | `composables/useAppInit.ts`、`lib/mauiBridge.ts` |
 | 修改页面导航、顶部按钮或模式分流 | `App.vue`、`components/DrawerMenu.vue` |
 | 修改 UI 主题、颜色、圆角、阴影、动效或字号 | `styles/theme.css`（唯一令牌源，组件一律 `var(--token)`） |
@@ -171,7 +171,8 @@ Web ⋮ 菜单「更改目录」
 
 | 测试文件 | 覆盖内容 |
 |---|---|
-| `src/components/__tests__/TerminalDisplay.test.ts` | 终端文本、图片、图形、背景、按钮、MAUI 空状态和触控排版（横向按需外扩的列几何 + 纵向条件抬高的判定窗口） |
+| `src/components/__tests__/TerminalDisplay.test.ts` | 终端文本、图片、图形、背景、按钮、MAUI 空状态和触控排版（横向按需外扩的列几何 + 纵向最小撑高的取值） |
+| `src/lib/__tests__/touchLayout.vertical.test.ts` | 纵向撑高规则的直接取值 + 不变量（穷举小布局验证「列区间重叠的两张热区盒永不重叠」）——组件测试没有布局，测不到这条几何 |
 | `src/stores/__tests__/connectionControl.test.ts` | HTTP 控制权：旁观/接管、事件序列、输入 409 |
 | `src/stores/__tests__/game.test.ts` | 游戏状态、回合和目录状态 |
 | `src/stores/__tests__/gameLoadGame.test.ts` | HTTP 游戏加载 |
