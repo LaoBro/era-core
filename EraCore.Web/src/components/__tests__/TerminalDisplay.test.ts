@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import TerminalDisplay from '../TerminalDisplay.vue';
 import { useGameStore } from '../../stores/game';
 import { useConnectionStore } from '../../stores/connection';
+import { useUiStore } from '../../stores/ui';
 import { loadImageAndReadPixel } from '../../lib/imageLayout';
 import type { DisplaySnapshot, PrintSegment, BgImageState } from '../../types/protocol';
 
@@ -490,5 +491,79 @@ describe('TerminalDisplay: 背景图层', () => {
     ];
     const { wrapper } = await mountWith([line([imgSeg()])], bgImages);
     expect(wrapper.find('.term-bg-layer').exists()).toBe(false);
+  });
+});
+
+// ---------- 触控排版（把含有效按钮的行撑到 ≥48px） ----------
+//
+// 判定规则与虚拟滚动加高表同源（inputRouting.isLiveButton）：
+// 只有「当前回合 generation 且非 EnterKey/AnyKey 惰性态」的按钮才会撑成触控目标。
+// 默认开关按平台走（Android 开 / Web 关），测试里显式置位，
+// 并在 afterEach 清掉持久化，避免污染同文件后续用例。
+describe('TerminalDisplay: 触控排版', () => {
+  function btnLine(generation: number): DisplaySnapshot['lines'][number] {
+    return {
+      entries: [{ segments: [{ text: '[0] 選項' }], button: { value: 0, isInteger: true, generation } }],
+      align: 'left',
+      isLineEnd: true,
+    };
+  }
+
+  async function mountTouch(opts: { inputType?: string; turnGeneration?: number; lineGeneration?: number } = {}) {
+    // scale 显式传 1——game store 会持久化缩放，同文件前面的用例可能留下 1.5
+    const lines = [
+      line([{ text: '普通文本行' }]),
+      btnLine(opts.lineGeneration ?? 0),
+    ];
+    const { wrapper, game } = await mountWith(lines, [], 1);
+    // pinia 由 mountWith 创建，store 必须在那之后取（否则拿到的是前一个 pinia 的实例）
+    useUiStore().setTouchLayout(true);
+    game.currentTurnGeneration = opts.turnGeneration ?? 0;
+    game.displayState = { ...game.displayState, inputType: opts.inputType ?? 'IntValue' };
+    await wrapper.vm.$nextTick();
+    return wrapper;
+  }
+
+  afterEach(() => {
+    try {
+      localStorage.removeItem('app.touchLayout');
+    } catch { /* 静默 */ }
+  });
+
+  it('默认（开关关）按钮不带触控盒类——桌面/关闭态零视觉变化', async () => {
+    const { wrapper } = await mountWith([btnLine(0)]);
+    expect(wrapper.find('.term-btn').classes()).not.toContain('term-btn-touch');
+  });
+
+  it('开关开 + 当前回合按钮 → 该按钮为触控目标', async () => {
+    const wrapper = await mountTouch();
+    expect(wrapper.find('.term-btn').classes()).toContain('term-btn-touch');
+  });
+
+  it('历史回合残留按钮（generation 落后）→ 不撑行，避免白白占屏', async () => {
+    const wrapper = await mountTouch({ turnGeneration: 7, lineGeneration: 3 });
+    expect(wrapper.find('.term-btn').classes()).not.toContain('term-btn-touch');
+  });
+
+  it('EnterKey/AnyKey 惰性态 → 按钮不是触控目标（点击只推进，不提 value）', async () => {
+    expect((await mountTouch({ inputType: 'EnterKey' })).find('.term-btn').classes())
+      .not.toContain('term-btn-touch');
+    expect((await mountTouch({ inputType: 'AnyKey' })).find('.term-btn').classes())
+      .not.toContain('term-btn-touch');
+  });
+
+  it('行距保持游戏自身值，只有含按钮的那一行被钉到 48px——文本行密度不受影响', async () => {
+    const wrapper = await mountTouch();
+    const terminalStyle = wrapper.find('.terminal').attributes('style') ?? '';
+    // 19px 是 ConfigCode.LineHeight 默认；触控排版不改变普通行的行距
+    expect(terminalStyle).toContain('line-height: 19px');
+    expect(terminalStyle).toContain('--term-btn-h: 48px');
+    expect(terminalStyle).toContain('--term-btn-pad-x: 10px');
+
+    const rows = wrapper.findAll('.term-line');
+    expect(rows).toHaveLength(2);
+    // 文本行不钉高；按钮行钉到基准 + extra = 48px（与虚拟滚动加高表同一本账）
+    expect(rows[0].attributes('style') ?? '').not.toContain('height: 48px');
+    expect(rows[1].attributes('style') ?? '').toContain('height: 48px');
   });
 });

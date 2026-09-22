@@ -14,6 +14,28 @@ export function isAnyKeyInput(inputType: string | null | undefined): boolean {
   return inputType === 'EnterKey' || inputType === 'AnyKey';
 }
 
+/**
+ * 按钮当前是否「有效」（可被玩家点到并真正生效）。
+ *
+ * 与 `shouldSubmitButtonValue` 的差别：本函数只判按钮自身是否存活，不含 `inputInFlight`
+ * 乐观锁（那是一次点击期间的一过性状态）与连接态——排版关心的是"这一行要不要为其撑高"，
+ * 与当前是否正在提交无关。
+ *
+ * 无效的两类来源，都会让关掉它们的排版收益为零：
+ * - 历史回合残留：`generation` 落后于当前回合（旧画面里的按钮点了也不生效）；
+ * - EnterKey / AnyKey 等待态：按钮是惰性的，点击只推进，不提交 value。
+ */
+export function isLiveButton(ctx: {
+  state: string;
+  inputType: string | null;
+  buttonGeneration: number;
+  currentTurnGeneration: number;
+}): boolean {
+  if (ctx.state !== 'WaitInput') return false;
+  if (isAnyKeyInput(ctx.inputType)) return false;
+  return ctx.buttonGeneration === ctx.currentTurnGeneration;
+}
+
 /** 按钮点击提交判定入参——TerminalDisplay.onButtonClick 的守卫上下文。 */
 export interface ButtonClickContext {
   connected: boolean;

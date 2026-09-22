@@ -211,6 +211,18 @@ const popupItems = computed<PopupMenuItem[]>(() => [
   { type: 'separator' },
   {
     type: 'item',
+    id: 'touch-layout',
+    label: '触控排版',
+    icon: 'touch',
+    // 副文案写明代价——开关把含按钮的行撑到 ≥48px，历史区会变长
+    hint: ui.touchLayout ? '已开' : '关',
+    active: ui.touchLayout,
+    onClick: () => {
+      ui.toggleTouchLayout();
+    },
+  },
+  {
+    type: 'item',
     id: 'terminal',
     label: 'Terminal',
     icon: 'terminal',

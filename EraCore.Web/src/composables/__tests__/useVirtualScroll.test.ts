@@ -562,3 +562,105 @@ describe('useVirtualScroll: itemCount 变化时自动跟随', () => {
     expect(mock.scrollTop).toBe(originalScrollTop);
   });
 });
+
+/**
+ * 稀疏加高行（lineExtras）——触控排版专用路径。
+ *
+ * 行高不均时最容易出的错是"用 floor(scrollTop / rowHeight) 反推行号"：
+ * 上方每有一个加高行，行号就往后偏一截，看得越深偏得越多。以下断言锁定三点：
+ * 总高含加高量、offsetY 含其上方的加高量、startIndex 按真实行首偏移取。
+ */
+describe('useVirtualScroll: lineExtras 稀疏加高行', () => {
+  /** 100 行 × 19px，其中第 10、20 行各加高 29px（模拟两行被撑到 48px 的按钮行）。 */
+  function setup(extrasAt: Array<[number, number]> = [[10, 29], [20, 29]]) {
+    const itemCount = ref(100);
+    const rowHeight = ref(19);
+    const lineExtras = ref<ReadonlyMap<number, number> | null>(new Map(extrasAt));
+    const viewportRef = ref<HTMLElement | null>(null);
+    const vs = useVirtualScroll({ itemCount, rowHeight, lineExtras, viewportRef });
+    const mock = makeMockViewport({ clientHeight: 600, scrollHeight: 0, scrollTop: 0 });
+    attachMockViewport(viewportRef, mock);
+    return { itemCount, rowHeight, lineExtras, viewportRef, vs, mock };
+  }
+
+  it('totalHeight = itemCount × rowHeight + 所有加高量之和', async () => {
+    const { vs } = setup();
+    await nextTick();
+    expect(vs.totalHeight.value).toBe(100 * 19 + 29 * 2);
+  });
+
+  it('未传 lineExtras 时与旧定高行为一致（totalHeight 不含加高量）', async () => {
+    const itemCount = ref(100);
+    const rowHeight = ref(19);
+    const viewportRef = ref<HTMLElement | null>(null);
+    const vs = useVirtualScroll({ itemCount, rowHeight, viewportRef });
+    await nextTick();
+    expect(vs.totalHeight.value).toBe(1900);
+  });
+
+  it('空表（size=0）等价未传——不进入二分分支', async () => {
+    const itemCount = ref(100);
+    const rowHeight = ref(19);
+    const lineExtras = ref<ReadonlyMap<number, number> | null>(new Map());
+    const viewportRef = ref<HTMLElement | null>(null);
+    const vs = useVirtualScroll({ itemCount, rowHeight, lineExtras, viewportRef });
+    const mock = makeMockViewport({ clientHeight: 600, scrollHeight: 1900, scrollTop: 190 });
+    attachMockViewport(viewportRef, mock);
+    await nextTick();
+    getScrollListener(mock)();
+    expect(vs.totalHeight.value).toBe(1900);
+    expect(vs.startIndex.value).toBe(5); // floor(190/19)=10 → overscan 5
+  });
+
+  it('offsetY 计入其上方的加高量——滚动到加高行之后起点不偏', async () => {
+    const { vs, mock } = setup();
+    await nextTick();
+    // 定高算法会认为第 30 行起点 = 570；实际第 10、20 行各高出 29px → 570 + 58
+    mock.scrollTop = 30 * 19 + 29 * 2;
+    getScrollListener(mock)();
+    await nextTick();
+    expect(vs.startIndex.value).toBe(25); // rawStart 30 - overscan 5
+    expect(vs.offsetY.value).toBe(25 * 19 + 29 * 2);
+  });
+
+  it('startIndex 落在加高行内部时归属该行（不跳到下一行）', async () => {
+    const { vs, mock } = setup();
+    await nextTick();
+    // 第 10 行占据 [190, 219)，定高算法在这里会把它算成第 11 行
+    mock.scrollTop = 205;
+    getScrollListener(mock)();
+    await nextTick();
+    expect(vs.startIndex.value).toBe(5); // rawStart = 10 → overscan 5
+  });
+
+  it('scrollToIndex 按真实偏移跳转——越过加高行不少推不多推', async () => {
+    const { vs, mock } = setup();
+    await nextTick();
+    vs.scrollToIndex(50);
+    expect(mock.scrollTop).toBe(50 * 19 + 29 * 2);
+  });
+
+  it('可见行数按真实高度算——视口内有加高行时不至于少渲染一行', async () => {
+    const itemCount = ref(1000);
+    const rowHeight = ref(19);
+    // 前 30 行全加高 29px，视口 600px 里几乎全是加高行
+    const extras = new Map<number, number>();
+    for (let i = 0; i < 30; i++) extras.set(i, 29);
+    const lineExtras = ref<ReadonlyMap<number, number> | null>(extras);
+    const viewportRef = ref<HTMLElement | null>(null);
+    const vs = useVirtualScroll({ itemCount, rowHeight, lineExtras, viewportRef });
+    const mock = makeMockViewport({ clientHeight: 600, scrollHeight: 0, scrollTop: 0 });
+    attachMockViewport(viewportRef, mock);
+    await nextTick();
+    // 30 行 × 48px = 1440 > 600 → 从 0 起至少需要 ceil(600/48) = 13 行才铺满视口；
+    // overscan 之外渲染的行数必须 ≥ 13，否则底部留白。
+    expect(vs.endIndex.value - vs.startIndex.value).toBeGreaterThanOrEqual(13 + 5);
+  });
+
+  it('越界 / 非正的加高项被忽略——不污染总高', async () => {
+    const { vs } = setup([[10, 29], [999, 29], [-1, 29], [20, 0]]);
+    await nextTick();
+    // 索引越界（999 / -1）与非正值（0）都不计入
+    expect(vs.totalHeight.value).toBe(100 * 19 + 29);
+  });
+});

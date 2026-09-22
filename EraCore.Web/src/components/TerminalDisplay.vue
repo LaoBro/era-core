@@ -2,11 +2,11 @@
 import { computed, ref, watch } from 'vue';
 import { useGameStore } from '../stores/game';
 import { useConnectionStore } from '../stores/connection';
-import { useUiStore } from '../stores/ui';
+import { useUiStore, TOUCH_TARGET_MIN_PX, TOUCH_BUTTON_PAD_X } from '../stores/ui';
 import { useVirtualScroll } from '../composables/useVirtualScroll';
 import { usePinchZoom } from '../composables/usePinchZoom';
 import { isMauiEnvironment } from '../lib/mauiBridge';
-import { shouldSubmitButtonValue, shouldAdvanceOnTerminalClick } from '../lib/inputRouting';
+import { shouldSubmitButtonValue, shouldAdvanceOnTerminalClick, isLiveButton } from '../lib/inputRouting';
 import { resolveResource } from '../lib/resourceResolver';
 import { clickToImagePixel, loadImageAndReadPixel, sortBgImages } from '../lib/imageLayout';
 import SegmentRenderer from './SegmentRenderer.vue';
@@ -103,8 +103,23 @@ const effectiveFontFamily = computed(() => {
   return `'${name.replace(/'/g, "\\'")}', ${MONOSPACE_FALLBACK}`;
 });
 
-/** 虚拟滚动的有效行高——含 scale。useVirtualScroll 据此算 startIndex/totalHeight/offsetY。 */
+/** 虚拟滚动的基准行高——不含触控加高，含 scale。useVirtualScroll 据此定位绝大多数行。 */
 const effectiveRowHeight = computed(() => effectiveLineHeight.value * game.effectiveScale);
+
+/**
+ * 触控排版的目标行高（含 scale）——一行只要有「有效按钮」，该行的行盒就被撑到这么高，
+ * 按钮自身按 `--term-btn-h` 取同样高度，于是点击盒 = 整行高。
+ *
+ * 与「统一抬高所有行」的区别：只有含有效按钮的行变高，其余行保持 LineHeight，
+ * 手机竖屏的信息密度不被无谓稀释。代价是行高不再均匀——由 useVirtualScroll 的
+ * `lineExtras`（稀疏额外高度表）吸收，见下方 touchLineExtras。
+ */
+const touchRowHeight = computed(() =>
+  Math.max(effectiveLineHeight.value, TOUCH_TARGET_MIN_PX) * game.effectiveScale,
+);
+
+/** 单行因触控排版多出来的高度（px）；< 0 时取 0（游戏自身行距已够大则不再加）。 */
+const touchLineExtraPx = computed(() => Math.max(0, touchRowHeight.value - effectiveRowHeight.value));
 
 /** .terminal 容器内联 style——动态绑定 width（ch 单位）/font-size/line-height/font-family + CSS 变量。 */
 const terminalStyle = computed<Record<string, string>>(() => {
@@ -120,6 +135,10 @@ const terminalStyle = computed<Record<string, string>>(() => {
     // CSS 变量供 .term-line min-height 引用——必须含 effectiveScale，与缩放后的行高及
     // 虚拟滚动 rowHeight 严格一致（否则 scale<1 时行被拉高、行排版与滚动漂移错位）
     '--term-line-min-height': `${effectiveLineHeight.value * game.effectiveScale}px`,
+    // 触控排版：按钮盒的目标高度（.term-btn-touch 用它钉死盒高，不靠 font metrics 撑）与左右内边距。
+    // 两者都只在 .term-btn-touch 上消费，关闭触控排版时零视觉影响。
+    '--term-btn-h': `${touchRowHeight.value}px`,
+    '--term-btn-pad-x': `${TOUCH_BUTTON_PAD_X * game.effectiveScale}px`,
   };
   if (game.displayState.bgColor) style.backgroundColor = game.displayState.bgColor;
   return style;
@@ -145,8 +164,54 @@ const contentStyle = computed<Record<string, string>>(() => ({
  */
 const terminalRef = ref<HTMLDivElement | null>(null);
 
+function lineHasLiveButton(line: DisplayLine): boolean {
+  return line.entries.some((entry) => isLiveButtonEntry(entry));
+}
+
+/** 单个 entry 上的按钮当前是否为有效按钮——决定要不要把它撑成触控目标。 */
+function isLiveButtonEntry(entry: DisplayEntry): boolean {
+  const button = entry.button;
+  if (!button) return false;
+  return isLiveButton({
+    state: game.displayState.state,
+    inputType: game.displayState.inputType,
+    buttonGeneration: button.generation,
+    currentTurnGeneration: game.currentTurnGeneration,
+  });
+}
+
+/** 触控排版下该按钮是否撑成整行高的点击盒（关闭开关时恒 false，零成本短路）。 */
+function isTouchTarget(entry: DisplayEntry): boolean {
+  if (!ui.touchLayout) return false;
+  if (touchLineExtraPx.value <= 0) return false;
+  return isLiveButtonEntry(entry);
+}
+
+/**
+ * 触控排版的稀疏加高表：行索引 → 该行在基准行高之上额外增加的像素。
+ *
+ * 只收「含有效按钮」的行。null / 空表时 useVirtualScroll 走原定高快路径。
+ * 扫描是 O(lines)——行索引与"哪行有按钮"之间没有别的索引来源，且只在 lines /
+ * generation / inputType / scale / 开关变化时重算；触控排版关闭时整个计算被短路，
+ * 普通终端不受影响。
+ */
+const touchLineExtras = computed<Map<number, number> | null>(() => {
+  if (!ui.touchLayout) return null;
+  const extra = touchLineExtraPx.value;
+  if (extra <= 0) return null;
+  const lines = game.displayState.lines;
+  const map = new Map<number, number>();
+  for (let i = 0; i < lines.length; i++) {
+    if (lineHasLiveButton(lines[i])) map.set(i, extra);
+  }
+  return map;
+});
+
 /**
  * 虚拟滚动实例——传入 itemCount（lines.length）、rowHeight、viewportRef。
+ *
+ * lineExtras：触控排版下被撑高的那些行。行高因此不再均匀，定位改由 composable 内的
+ * 二分承担；整体上大多数行仍是标准行高，所以传稀疏表而不是全量行高数组。
  *
  * onStickyChange 回调同步到 ui store，供 InputBar 实现 AnyKey 全局 click 守卫。
  * 用户向上滚过后 isStickyToBottom=false，InputBar.onGlobalClick 拒绝推进游戏。
@@ -154,6 +219,7 @@ const terminalRef = ref<HTMLDivElement | null>(null);
 const vs = useVirtualScroll({
   itemCount: computed(() => game.displayState.lines.length),
   rowHeight: effectiveRowHeight,
+  lineExtras: touchLineExtras,
   viewportRef: terminalRef,
   onStickyChange: (v) => ui.setStickyToBottom(v),
 });
@@ -339,6 +405,21 @@ async function onImageClick(e: MouseEvent, img: SegmentImage, entry: DisplayEntr
   }
 }
 
+/**
+ * 单行样式——对齐 + 触控排版下的精确行高。
+ *
+ * 为什么把含按钮的行显式钉高：按钮用 `height` 撑到目标高度后，行盒最终还会叠加当前字体
+ * 的 ascent/descent（每种游戏字体不同，可能多出 1~2px）。而 useVirtualScroll 的加高表按
+ * "基准行高 + extra" 记账，多出来的零头会随行数累积成漂移。显式 height 让 DOM 与账本
+ * 严格一致，行超过的部分仍在 overflow 语义下正常绘制（图片溢出不受影响）。
+ */
+function lineStyle(item: { line: DisplayLine; absIdx: number }): Record<string, string> {
+  const style: Record<string, string> = { textAlign: lineAlign(item.line) };
+  const extra = touchLineExtras.value?.get(item.absIdx);
+  if (extra !== undefined) style.height = `${effectiveRowHeight.value + extra}px`;
+  return style;
+}
+
 /** 行 align 映射 CSS text-align。null / undefined 默认 'left'。 */
 function lineAlign(line: DisplayLine): 'left' | 'center' | 'right' {
   return line.align ?? 'left';
@@ -428,12 +509,13 @@ watch(() => game.inputInFlight, (inFlight) => {
           v-for="item in visibleLines"
           :key="item.absIdx"
           class="term-line"
-          :style="{ textAlign: lineAlign(item.line) }"
+          :style="lineStyle(item)"
         >
           <template v-for="(entry, entryIdx) in item.line.entries" :key="entryIdx">
             <button
               v-if="entry.button"
               class="term-btn"
+              :class="{ 'term-btn-touch': isTouchTarget(entry) }"
               :title="`点击提交: ${valueToWire(entry.button.value)}`"
               :disabled="conn.status !== 'connected' || game.displayState.state !== 'WaitInput'"
               @click="onButtonClick(entry)"
@@ -563,6 +645,27 @@ watch(() => game.inputInFlight, (inFlight) => {
 .term-btn:active:not(:disabled) {
   background: var(--term-btn-active);
   background: color-mix(in srgb, var(--term-btn-active) 25%, transparent);
+}
+/**
+ * 触控排版的按钮盒——把该行撑到 --term-btn-h，让整行都成为点击目标。
+ *
+ * height 显式指定，不靠 padding / font metrics 去撑：若盒高由字体的 ascent+descent 决定，
+ * 实际像素会随游戏字体漂移几像素，而 useVirtualScroll 的加高表必须与真实像素严格一致，
+ * 否则含按钮的行会与左右的行错位。显式 height + vertical-align: baseline 保证盒高可预期，
+ * 且按钮文字仍与同行文本共用基线。
+ *
+ * 左右 padding 会把同行后续文本往右推，溢出部分由 .terminal 的 overflow-x 兜底
+ * ——这正是该模式预期的视觉代价，关掉开关即可完全还原。
+ */
+.term-btn-touch {
+  display: inline-block;
+  height: var(--term-btn-h, 48px);
+  padding: 0 var(--term-btn-pad-x, 10px);
+  vertical-align: baseline;
+  /* 常显下划线——让"这一块是可点的"在没有 hover 的触屏上也能被看见 */
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--term-btn-hover-line);
 }
 .term-btn:disabled {
   cursor: default;

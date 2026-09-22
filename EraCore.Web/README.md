@@ -53,7 +53,7 @@ npm run build
 |---|---|
 | `src/stores/game.ts` | 游戏目录、服务器状态、回合数据、显示快照、加载和快速重开 |
 | `src/stores/connection.ts` | HTTP/WS 地址、连接生命周期、输入和回合请求、控制权状态（旁观/接管） |
-| `src/stores/ui.ts` | 当前页面、平台、缩放和手动输入面板状态 |
+| `src/stores/ui.ts` | 当前页面、平台、缩放和手动输入面板状态、**触控排版开关**（含 `TOUCH_TARGET_MIN_PX` / `TOUCH_BUTTON_PAD_X` 常量） |
 
 关键状态：
 
@@ -65,6 +65,7 @@ npm run build
 - `game.reloadStatus`：游戏加载/快速重开是否正在进行。
 - `game.displayReportOverride` / `game.perfOverrides`：启动日志与性能（懒加载/IR/并行两项）覆盖三态。
 - `game.sweepGatePolicy` / `game.safReadDegree` / `game.maxParallelErbFiles` / `game.dimLockPolicy`：ADR-0026 诊断旋钮（设置页「诊断」分组，`SettingsView.vue` 渲染，`mauiBridge.ts` 的 set* 消息投递，`useAppInit.ts` 按词表校验 config 消息）。
+- `ui.touchLayout`：触控排版开关（localStorage `app.touchLayout`，Android 默认开 / Web 默认关）。开启后只把**含有效按钮**的行撑到 ≥48px，历史文本行保持原行距；抽屉菜单「触控排版」项一键开关。行高因此不均，由 `useVirtualScroll` 的 `lineExtras` 稀疏加高表吸收（详见组件注释）。
 
 ## Composable 和通信层
 
@@ -72,7 +73,7 @@ npm run build
 |---|---|
 | `src/composables/useAppInit.ts` | 应用启动、MAUI 回调注册、HTTP 状态恢复 |
 | `src/composables/useGameStatusMonitor.ts` | MAUI 游戏线程存活状态探测 |
-| `src/composables/useVirtualScroll.ts` | 终端虚拟滚动和底部跟随 |
+| `src/composables/useVirtualScroll.ts` | 终端虚拟滚动和底部跟随（可选 `lineExtras` 支持稀疏加高行） |
 | `src/composables/usePinchZoom.ts` | 终端双指缩放 |
 | `src/lib/mauiBridge.ts` | Vue 与 MAUI C# 桥接消息、游戏扫描和加载 |
 | `src/lib/gameLibrary.ts` | 游戏库数据源抽象：`GameLibrarySource` 接口 + maui（桥接）/ http（HTTP）两个 adapter |
@@ -94,6 +95,7 @@ npm run build
 | 修改手动输入和按钮输入 | `components/InputBar.vue`、`lib/inputRouting.ts` |
 | 修改 TINPUT 倒计时 | `components/TinputCountdown.vue`、`stores/game.ts` |
 | 修改终端滚动或缩放 | `composables/useVirtualScroll.ts`、`composables/usePinchZoom.ts`、`TerminalDisplay.vue` |
+| 修改按钮点击区域 / 触控排版规则 | `components/TerminalDisplay.vue`（`.term-btn-touch` + 加高表）、`lib/inputRouting.ts`（`isLiveButton`）、`stores/ui.ts`（开关与尺寸常量） |
 | 修改 MAUI 启动和 C# 消息处理 | `composables/useAppInit.ts`、`lib/mauiBridge.ts` |
 | 修改页面导航、顶部按钮或模式分流 | `App.vue`、`components/DrawerMenu.vue` |
 | 修改 UI 主题、颜色、圆角、阴影、动效或字号 | `styles/theme.css`（唯一令牌源，组件一律 `var(--token)`） |
@@ -161,7 +163,7 @@ Web ⋮ 菜单「更改目录」
 
 | 测试文件 | 覆盖内容 |
 |---|---|
-| `src/components/__tests__/TerminalDisplay.test.ts` | 终端文本、图片、图形、背景、按钮和 MAUI 空状态 |
+| `src/components/__tests__/TerminalDisplay.test.ts` | 终端文本、图片、图形、背景、按钮、MAUI 空状态和触控排版（含按钮行的撑高规则） |
 | `src/stores/__tests__/connectionControl.test.ts` | HTTP 控制权：旁观/接管、事件序列、输入 409 |
 | `src/stores/__tests__/game.test.ts` | 游戏状态、回合和目录状态 |
 | `src/stores/__tests__/gameLoadGame.test.ts` | HTTP 游戏加载 |

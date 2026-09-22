@@ -227,3 +227,89 @@ describe('useUiStore menuPrewarm', () => {
     expect(ui.menuPrewarm).toBe(false); // 未持久化，但内存态仍可切
   });
 });
+
+// ---------- touchLayout（触控排版：撑高含有效按钮的行） ----------
+//
+// localStorage `app.touchLayout` 存 'on'/'off'；默认值跟随平台——Android 默认开，
+// Web 默认关（鼠标点击精度足够，不必付出排挤版面的代价）。
+describe('useUiStore touchLayout', () => {
+  function makeLocalStorage(): Storage {
+    const map = new Map<string, string>();
+    return {
+      getItem: (k: string) => (map.has(k) ? map.get(k)! : null),
+      setItem: (k: string, v: string) => {
+        map.set(k, v);
+      },
+      removeItem: (k: string) => {
+        map.delete(k);
+      },
+      clear: () => {
+        map.clear();
+      },
+      key: (i: number) => Array.from(map.keys())[i] ?? null,
+      get length() {
+        return map.size;
+      },
+    };
+  }
+
+  beforeEach(() => setActivePinia(createPinia()));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('Web 平台未设置 → 默认关（不改既有桌面视觉）', () => {
+    vi.stubGlobal('localStorage', makeLocalStorage());
+    const ui = useUiStore();
+    expect(ui.platform).toBe('web');
+    expect(ui.touchLayout).toBe(false);
+  });
+
+  it("存储值 'on' 优先于平台默认", () => {
+    const storage = makeLocalStorage();
+    storage.setItem('app.touchLayout', 'on');
+    vi.stubGlobal('localStorage', storage);
+    expect(useUiStore().touchLayout).toBe(true);
+  });
+
+  it("存储值 'off' → 关", () => {
+    const storage = makeLocalStorage();
+    storage.setItem('app.touchLayout', 'off');
+    vi.stubGlobal('localStorage', storage);
+    expect(useUiStore().touchLayout).toBe(false);
+  });
+
+  it('非法值 → 回落平台默认', () => {
+    const storage = makeLocalStorage();
+    storage.setItem('app.touchLayout', 'yes');
+    vi.stubGlobal('localStorage', storage);
+    expect(useUiStore().touchLayout).toBe(false);
+  });
+
+  it('toggleTouchLayout 翻转并持久化——重开应用后保留', () => {
+    vi.stubGlobal('localStorage', makeLocalStorage());
+    const ui = useUiStore();
+    ui.toggleTouchLayout();
+    expect(ui.touchLayout).toBe(true);
+    expect(localStorage.getItem('app.touchLayout')).toBe('on');
+
+    setActivePinia(createPinia());
+    expect(useUiStore().touchLayout).toBe(true);
+
+    useUiStore().toggleTouchLayout();
+    expect(localStorage.getItem('app.touchLayout')).toBe('off');
+  });
+
+  it('存储不可用（读写皆抛）→ 不抛异常，内存态仍可切', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => {
+        throw new Error('denied');
+      },
+      setItem: () => {
+        throw new Error('denied');
+      },
+    });
+    const ui = useUiStore();
+    expect(ui.touchLayout).toBe(false);
+    ui.setTouchLayout(true);
+    expect(ui.touchLayout).toBe(true);
+  });
+});

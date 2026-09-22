@@ -10,7 +10,8 @@ export type IconName =
   | 'terminal'
   | 'debug'
   | 'settings'
-  | 'exit';
+  | 'exit'
+  | 'touch';
 
 export type PopupMenuItem =
   | {

@@ -191,6 +191,10 @@ watch(() => props.visible, (open) => {
                 <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
                 <path d="M12 2v10" />
               </template>
+              <template v-else-if="it.icon === 'touch'">
+                <path d="M6 3l12.5 7.4-5.6 1.5L9.8 20z" />
+                <path d="M4 13h3M4 17h2.5" />
+              </template>
             </svg>
           </span>
           <span class="drawer-item-label">{{ it.label }}</span>

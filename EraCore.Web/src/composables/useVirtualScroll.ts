@@ -1,11 +1,15 @@
 import { computed, nextTick, ref, watch, type ComputedRef, type Ref } from 'vue';
 
 /**
- * useVirtualScroll — 定高虚拟滚动 composable（spec.md「虚拟滚动与shift_head协议」）。
+ * useVirtualScroll — 虚拟滚动 composable（spec.md「虚拟滚动与shift_head协议」）。
  *
  * 仅渲染视口内 + overscan 缓冲的行（~40 行），DOM 节点从 ~50000 降到 ~400。
- * 行高确定（`effectiveLineHeight * effectiveScale`），CSS `white-space: pre` 保证
- * 行不换行——定高虚拟滚动的理想场景。
+ * CSS `white-space: pre` 保证行不换行——行高可预期的理想场景。
+ *
+ * 行高模型：默认**定高**（传入 `rowHeight`）；可选传入稀疏表 `lineExtras` 支持「少数行更高」
+ * （触控排版只撑高含有效按钮的行）。有加高行时，`startIndex` / `visibleCount` / `offsetY`
+ * 都改为按实际行首偏移二分，而不是 `floor(scrollTop / rowHeight)`——后者在行高不均时会
+ * 产生随加高行数量累积的定位误差。
  *
  * 同时维护 `isStickyToBottom` 标志——用户在底部时新行自动跟随；向上滚过后不再自动跟随。
  * 该标志通过 `onStickyChange` 回调同步到 `useUiStore`，供 `InputBar` 实现"点击推进"守卫。
@@ -36,6 +40,17 @@ export interface VirtualScrollOptions {
   overscan?: number;
   /** isStickyToBottom 变化回调——同步到 ui store */
   onStickyChange?: (v: boolean) => void;
+  /**
+   * 稀疏额外高度表（可选）：行索引 → 该行在 `rowHeight` 之上额外增加的像素高度。
+   *
+   * 用于「少数行比别人高」的场景（如触控排版只撑高含有效按钮的行）。绝大多数行仍是
+   * rowHeight，故这里传稀疏表而不是 heights[] 全长数组——避免每次追加都重建 O(n) 数组，
+   * 也省掉几万行的内存常驻。
+   *
+   * 未传 / 传 null / 空表 → 完全等价原来的定高行为（`lineExtras` 的所有分支短路）。
+   * 表里的项必须 index ∈ [0, itemCount) 且值 > 0，越界或 0 的项会被忽略。
+   */
+  lineExtras?: Ref<ReadonlyMap<number, number> | null>;
 }
 
 export interface VirtualScrollReturn {
@@ -79,8 +94,57 @@ export function useVirtualScroll(opts: VirtualScrollOptions): VirtualScrollRetur
   /** 总行数。 */
   const itemCount = computed(() => Math.max(0, opts.itemCount.value));
 
-  /** 总高度——spacer 撑开滚动条。 */
-  const totalHeight = computed(() => itemCount.value * rowHeight.value);
+  /**
+   * 稀疏额外高度表压成的两个等长有序数组——只在明细表变化时重算一次：
+   * - `keys[k]`：第 k 个被加高的行索引（升序）
+   * - `prefix[k]`：前 k 个加高行的额外高度之和（长度 keys.length + 1，prefix[0] = 0）
+   *
+   * null = 没有加高行，所有派生走定高快路径（与加本选项之前逐字节一致）。
+   */
+  const extraTable = computed(() => {
+    const map = opts.lineExtras?.value;
+    if (!map || map.size === 0) return null;
+    const n = itemCount.value;
+    const keys: number[] = [];
+    const prefix: number[] = [0];
+    const usable: number[] = [];
+    for (const key of map.keys()) {
+      const extra = map.get(key) ?? 0;
+      if (extra > 0 && key >= 0 && key < n) usable.push(key);
+    }
+    usable.sort((a, b) => a - b);
+    for (const key of usable) {
+      keys.push(key);
+      prefix.push(prefix[prefix.length - 1] + (map.get(key) ?? 0));
+    }
+    return { keys, prefix, total: prefix[prefix.length - 1] };
+  });
+
+  /** keys 中严格小于 i 的元素个数——prefix 的下标（二分，O(log k)）。 */
+  function countBefore(keys: number[], i: number): number {
+    let lo = 0;
+    let hi = keys.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (keys[mid] < i) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  /**
+   * 第 i 行顶部的绝对偏移——= i * rowHeight + 该行之前所有加高行的额外高度。
+   * 偏移对 i 单调不减，是下面两个二分的前提。
+   */
+  function offsetOf(i: number): number {
+    const t = extraTable.value;
+    return i * rowHeight.value + (t ? t.prefix[countBefore(t.keys, i)] : 0);
+  }
+
+  /** 总高度——spacer 撑开滚动条：基准总高 + 所有加高行的额外高度之和。 */
+  const totalHeight = computed(() =>
+    itemCount.value * rowHeight.value + (extraTable.value?.total ?? 0),
+  );
 
   /**
    * isStickyToBottom——初始 true（未滚动过视为在底部）。
@@ -89,15 +153,25 @@ export function useVirtualScroll(opts: VirtualScrollOptions): VirtualScrollRetur
   const isStickyToBottom = ref<boolean>(true);
 
   /**
-   * 视口内首行索引（不含 overscan）——floor(scrollTop / rowHeight)。
-   * 钳制到 [0, max(0, itemCount - 1)]。
+   * 视口内首行索引（不含 overscan）——满足 `offsetOf(i) <= scrollTop` 的最大 i。
+   *
+   * 定高时 offsetOf(i) = i * rowHeight，二分结果与原来的 floor(scrollTop / rowHeight) 相同；
+   * 有加高行时上式不再成立（同一个 scrollTop 可能落在某行内部），必须按实际偏移二分，
+   * 否则误差会随上方加高行的数量累积。
    */
   const rawStartIndex = computed(() => {
     if (itemCount.value === 0) return 0;
-    return Math.min(
-      Math.max(0, Math.floor(scrollTop.value / rowHeight.value)),
-      itemCount.value - 1,
-    );
+    const last = itemCount.value - 1;
+    const top = scrollTop.value;
+    if (offsetOf(last) <= top) return last;
+    let lo = 0;
+    let hi = last;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (offsetOf(mid) <= top) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
   });
 
   /**
@@ -110,13 +184,26 @@ export function useVirtualScroll(opts: VirtualScrollOptions): VirtualScrollRetur
   });
 
   /**
-   * 视口内可见行数（不含 overscan）——ceil(viewportHeight / rowHeight)。
+   * 视口内可见行数（不含 overscan）——满足「start 起这么多行铺满 viewportHeight」的最小行数。
+   *
+   * 定高时 = ceil(viewportHeight / rowHeight)；有加高行时同样按实际偏移二分，否则会因为
+   * 高行占掉像素而在视口底部留白（少渲染一行）。
    * viewportHeight=0 时（首次渲染前）按 1 行兜底，避免 endIndex < startIndex。
    */
   const visibleCount = computed(() => {
     const h = viewportHeight.value;
     if (h <= 0) return 1;
-    return Math.ceil(h / rowHeight.value);
+    if (!extraTable.value) return Math.ceil(h / rowHeight.value);
+    const start = rawStartIndex.value;
+    const base = offsetOf(start);
+    let lo = 1;
+    let hi = Math.max(1, itemCount.value - start);
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (offsetOf(start + mid) - base >= h) hi = mid;
+      else lo = mid + 1;
+    }
+    return Math.max(1, lo);
   });
 
   /**
@@ -128,8 +215,8 @@ export function useVirtualScroll(opts: VirtualScrollOptions): VirtualScrollRetur
     return Math.min(itemCount.value, end);
   });
 
-  /** 可见区域 translateY 偏移——startIndex * rowHeight。 */
-  const offsetY = computed(() => startIndex.value * rowHeight.value);
+  /** 可见区域 translateY 偏移——第 startIndex 行的绝对偏移（含其上方的加高行）。 */
+  const offsetY = computed(() => offsetOf(startIndex.value));
 
   /**
    * 判定是否贴底——scrollTop + clientHeight >= scrollHeight - threshold。
@@ -239,6 +326,19 @@ export function useVirtualScroll(opts: VirtualScrollOptions): VirtualScrollRetur
     applyScrollTopAfterRender((el2) => el2.scrollHeight, () => isStickyToBottom.value);
   });
 
+  /**
+   * 监听加高表变化——触控排版开关、回合推进（有效按钮所在行变了）都会改变总高。
+   * 贴底时同样要重新吸底：否则新撑高的行把内容顶长后，视口会停在旧位置而不是底部。
+   * 仅在真的有加高行时才可能触发（无加高行时 extraTable 恒为 null）。
+   */
+  watch(extraTable, (next, prev) => {
+    if (!isStickyToBottom.value) return;
+    if (!next && !prev) return;
+    const el = opts.viewportRef.value;
+    if (!el) return;
+    applyScrollTopAfterRender((el2) => el2.scrollHeight, () => isStickyToBottom.value);
+  });
+
   /** 程序化滚到底部 + 置 sticky=true。 */
   function scrollToBottom(): void {
     const el = opts.viewportRef.value;
@@ -255,7 +355,7 @@ export function useVirtualScroll(opts: VirtualScrollOptions): VirtualScrollRetur
     const el = opts.viewportRef.value;
     if (!el) return;
     const target = Math.max(0, Math.min(i, Math.max(0, itemCount.value - 1)));
-    applyScrollTop(el, target * rowHeight.value);
+    applyScrollTop(el, offsetOf(target));
     // 跳转后重判定 sticky——若跳到底部则置 true
     updateSticky(el);
   }

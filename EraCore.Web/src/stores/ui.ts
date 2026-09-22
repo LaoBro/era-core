@@ -21,6 +21,20 @@ export type UiView = 'terminal' | 'debug' | 'settings';
 export type Platform = 'web' | 'android';
 
 /**
+ * 触控排版下终端按钮的目标高度（px）——与 `styles/theme.css` 的 `--touch-target` 一致。
+ *
+ * 含有效按钮的那一行会被撑到这个高度，按钮盒高度取同一值，于是点击盒 = 整行。
+ * 导出给 `TerminalDisplay` 用，避免同一常量在两处漂移。
+ */
+export const TOUCH_TARGET_MIN_PX = 48;
+
+/**
+ * 触控排版下按钮的左右内边距（px，未缩放）——拉开相邻按钮之间、按钮与文本之间的横向间距，
+ * 让目标更容易分清。横向撑挤会改变同行后续文本位置，这是该模式的预期代价。
+ */
+export const TOUCH_BUTTON_PAD_X = 10;
+
+/**
  * 检测当前运行平台——纯函数，便于单测。
  *
  * MAUI 壳启动时在 WebView 注入：
@@ -141,6 +155,45 @@ export const useUiStore = defineStore('ui', () => {
     setMenuPrewarm(!menuPrewarm.value);
   }
 
+  /**
+   * 触控排版开关——把含「有效按钮」的行整体撑到 ≥ TOUCH_TARGET_MIN_PX，让小按钮在触屏上点得准。
+   *
+   * 只撑有按钮的行，不动满屏文本行：手机竖屏的信息密度是最稀缺的资源，
+   * 为几十行历史文本统一抬高行距纯属浪费。代价是行高不再均匀，由 `useVirtualScroll`
+   * 的稀疏额外高度表（`lineExtras`）吸收——见 composable 内的说明。
+   *
+   * 「有效按钮」判定沿用 `inputRouting.isLiveButton`：当前回合 generation 且不在
+   * EnterKey/AnyKey 惰性态。历史回合残留的失效按钮不参与排版，避免白白占屏。
+   *
+   * 纯前端本地设置（与 theme / menuPrewarm 同类）：C# / HTTP / CLI 侧没有消费者。
+   * Android 默认开（触屏是主要输入方式），Web 默认关（鼠标点击精度足够）。
+   */
+  const TOUCH_LAYOUT_STORAGE_KEY = 'app.touchLayout';
+  function readTouchLayoutFromStorage(): boolean {
+    try {
+      const v = localStorage.getItem(TOUCH_LAYOUT_STORAGE_KEY);
+      if (v === 'on') return true;
+      if (v === 'off') return false;
+      // 未设置 / 非法值 → 回落平台默认值（含旧版本升级上来第一次运行）
+    } catch { /* 静默：存储被禁或非浏览器环境（vitest 用 node 环境） */ }
+    return platform.value === 'android';
+  }
+  function writeTouchLayoutToStorage(on: boolean): void {
+    try { localStorage.setItem(TOUCH_LAYOUT_STORAGE_KEY, on ? 'on' : 'off'); } catch { /* 静默 */ }
+  }
+  const touchLayout = ref<boolean>(readTouchLayoutFromStorage());
+
+  /** 设置触控排版开关并持久化。 */
+  function setTouchLayout(on: boolean): void {
+    touchLayout.value = on;
+    writeTouchLayoutToStorage(on);
+  }
+
+  /** 切换触控排版开关并持久化（抽屉菜单 toggle 用）。 */
+  function toggleTouchLayout(): void {
+    setTouchLayout(!touchLayout.value);
+  }
+
   return {
     currentView,
     platform,
@@ -154,5 +207,8 @@ export const useUiStore = defineStore('ui', () => {
     menuPrewarm,
     setMenuPrewarm,
     toggleMenuPrewarm,
+    touchLayout,
+    setTouchLayout,
+    toggleTouchLayout,
   };
 });
