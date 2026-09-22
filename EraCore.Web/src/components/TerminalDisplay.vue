@@ -2,11 +2,12 @@
 import { computed, ref, watch } from 'vue';
 import { useGameStore } from '../stores/game';
 import { useConnectionStore } from '../stores/connection';
-import { useUiStore, TOUCH_TARGET_MIN_PX, TOUCH_BUTTON_PAD_X } from '../stores/ui';
+import { useUiStore, TOUCH_TARGET_MIN_PX } from '../stores/ui';
 import { useVirtualScroll } from '../composables/useVirtualScroll';
 import { usePinchZoom } from '../composables/usePinchZoom';
 import { isMauiEnvironment } from '../lib/mauiBridge';
 import { shouldSubmitButtonValue, shouldAdvanceOnTerminalClick, isLiveButton } from '../lib/inputRouting';
+import { computeLineHitExpansions, type HitExpansion } from '../lib/touchLayout';
 import { resolveResource } from '../lib/resourceResolver';
 import { clickToImagePixel, loadImageAndReadPixel, sortBgImages } from '../lib/imageLayout';
 import SegmentRenderer from './SegmentRenderer.vue';
@@ -135,10 +136,10 @@ const terminalStyle = computed<Record<string, string>>(() => {
     // CSS 变量供 .term-line min-height 引用——必须含 effectiveScale，与缩放后的行高及
     // 虚拟滚动 rowHeight 严格一致（否则 scale<1 时行被拉高、行排版与滚动漂移错位）
     '--term-line-min-height': `${effectiveLineHeight.value * game.effectiveScale}px`,
-    // 触控排版：按钮盒的目标高度（.term-btn-touch 用它钉死盒高，不靠 font metrics 撑）与左右内边距。
-    // 两者都只在 .term-btn-touch 上消费，关闭触控排版时零视觉影响。
+    // 触控排版：按钮盒的**最小**高度（`.term-btn-touch` 用它兜底，不靠 font metrics 撑）。
+    // 只在 .term-btn-touch 上消费，关闭触控排版时零视觉影响。
+    // 横向热区不在这里给固定值——由 hitStyle() 按列几何逐按钮注入 --hit-l / --hit-r。
     '--term-btn-h': `${touchRowHeight.value}px`,
-    '--term-btn-pad-x': `${TOUCH_BUTTON_PAD_X * game.effectiveScale}px`,
   };
   if (game.displayState.bgColor) style.backgroundColor = game.displayState.bgColor;
   return style;
@@ -180,10 +181,15 @@ function isLiveButtonEntry(entry: DisplayEntry): boolean {
   });
 }
 
-/** 触控排版下该按钮是否撑成整行高的点击盒（关闭开关时恒 false，零成本短路）。 */
+/**
+ * 触控排版下该按钮是否套上触控盒（关闭开关时恒 false，零成本短路）。
+ *
+ * 判据只有「开关开 + 有效按钮」，**不再**以「本行需要抬高」为前提：抬高只解决纵向
+ * 触控目标，横向热区与圆角提示在行距本已够大的游戏里（LineHeight ≥ 48px，加高量为 0）
+ * 同样有价值——那种游戏里按钮仍有可能是两列宽的窄按钮。
+ */
 function isTouchTarget(entry: DisplayEntry): boolean {
   if (!ui.touchLayout) return false;
-  if (touchLineExtraPx.value <= 0) return false;
   return isLiveButtonEntry(entry);
 }
 
@@ -252,6 +258,47 @@ const visibleLines = computed(() => {
     absIdx: start + i,
   }));
 });
+
+/**
+ * 触控排版的横向热区外扩表——`绝对行号 → (entry 下标 → 左右外扩列数)`。
+ *
+ * 只算**已渲染的行**：外扩量只影响可见行的按钮盒样式，不必为几万行历史文本预计算；
+ * 也因此不参与 `useVirtualScroll` 的记账（外扩用负 margin 抵消行内推进，行高与总宽都不变）。
+ *
+ * 几何全部来自快照既有的 `ButtonRef.col` / `width`（见 lib/touchLayout.ts），零 DOM 测量、
+ * 零字体度量依赖。关闭触控排版时短路成空表。
+ */
+const hitExpansions = computed<ReadonlyMap<number, ReadonlyMap<number, HitExpansion>>>(() => {
+  const table = new Map<number, ReadonlyMap<number, HitExpansion>>();
+  if (!ui.touchLayout) return table;
+  for (const item of visibleLines.value) {
+    const expansions = computeLineHitExpansions(item.line, {
+      targetCols: ui.touchTargetCols,
+      minGapCols: ui.touchMinGapCols,
+      isLive: (entry) => isLiveButtonEntry(entry),
+    });
+    if (expansions.size > 0) table.set(item.absIdx, expansions);
+  }
+  return table;
+});
+
+/**
+ * 单个按钮的热区外扩内联样式——注入 `--hit-l` / `--hit-r`（单位 `ch`）。
+ *
+ * 用 `ch` 而非 px：等宽终端下 1ch 就是 1 个 ASCII 字符推进宽，与快照里的「列」一一对应
+ * （全角字符占 2 列 = 2ch），因此列几何可以直接落成样式，不需要把列换算成像素。
+ *
+ * 左右可以不对称——`.term-btn-touch` 用等量的负 margin 抵消各自一侧的 padding，
+ * 所以两侧独立取值不会移动文字，也不会改变行内推进宽度。
+ */
+function hitStyle(item: { line: DisplayLine; absIdx: number }, entryIdx: number): Record<string, string> {
+  const expansion = hitExpansions.value.get(item.absIdx)?.get(entryIdx);
+  if (!expansion) return {};
+  const style: Record<string, string> = {};
+  if (expansion.left > 0) style['--hit-l'] = `${expansion.left}ch`;
+  if (expansion.right > 0) style['--hit-r'] = `${expansion.right}ch`;
+  return style;
+}
 
 /**
  * 把 ButtonValue 转 wire 字符串。
@@ -408,8 +455,8 @@ async function onImageClick(e: MouseEvent, img: SegmentImage, entry: DisplayEntr
 /**
  * 单行样式——对齐 + 触控排版下的精确行高。
  *
- * 为什么把含按钮的行显式钉高：按钮用 `height` 撑到目标高度后，行盒最终还会叠加当前字体
- * 的 ascent/descent（每种游戏字体不同，可能多出 1~2px）。而 useVirtualScroll 的加高表按
+ * 为什么把含按钮的行显式钉高：按钮盒撑到目标高度后，行盒最终还会叠加当前字体的
+ * ascent/descent（每种游戏字体不同，可能多出 1~2px）。而 useVirtualScroll 的加高表按
  * "基准行高 + extra" 记账，多出来的零头会随行数累积成漂移。显式 height 让 DOM 与账本
  * 严格一致，行超过的部分仍在 overflow 语义下正常绘制（图片溢出不受影响）。
  */
@@ -516,6 +563,7 @@ watch(() => game.inputInFlight, (inFlight) => {
               v-if="entry.button"
               class="term-btn"
               :class="{ 'term-btn-touch': isTouchTarget(entry) }"
+              :style="hitStyle(item, entryIdx)"
               :title="`点击提交: ${valueToWire(entry.button.value)}`"
               :disabled="conn.status !== 'connected' || game.displayState.state !== 'WaitInput'"
               @click="onButtonClick(entry)"
@@ -633,7 +681,9 @@ watch(() => game.inputInFlight, (inFlight) => {
   vertical-align: baseline;
   transition: background var(--motion-fast), text-decoration-color var(--motion-fast);
 }
-.term-btn:hover:not(:disabled) {
+/* 触控盒自己管 hover / active 视觉（见下方 .term-btn-touch:xxx）——这里用 :not 排除，
+   避免 0,4,0 的 hover 背景把热区矩形顶掉（那会让触控提示在桌面端忽隐忽现）。 */
+.term-btn:not(.term-btn-touch):hover:not(:disabled) {
   /* 双声明：旧 WebView 无 color-mix → 落到满强度 */
   background: var(--term-btn-hover-bg);
   background: color-mix(in srgb, var(--term-btn-hover-bg) 60%, transparent);
@@ -642,30 +692,68 @@ watch(() => game.inputInFlight, (inFlight) => {
   text-decoration-color: var(--term-btn-hover-line);
   text-decoration-color: color-mix(in srgb, var(--term-btn-hover-line) 70%, transparent);
 }
-.term-btn:active:not(:disabled) {
+.term-btn:not(.term-btn-touch):active:not(:disabled) {
   background: var(--term-btn-active);
   background: color-mix(in srgb, var(--term-btn-active) 25%, transparent);
 }
 /**
- * 触控排版的按钮盒——把该行撑到 --term-btn-h，让整行都成为点击目标。
+ * 触控排版的按钮盒。
  *
- * height 显式指定，不靠 padding / font metrics 去撑：若盒高由字体的 ascent+descent 决定，
- * 实际像素会随游戏字体漂移几像素，而 useVirtualScroll 的加高表必须与真实像素严格一致，
- * 否则含按钮的行会与左右的行错位。显式 height + vertical-align: baseline 保证盒高可预期，
- * 且按钮文字仍与同行文本共用基线。
+ * 横向——热区按需外扩，且**文本一格都不动**：
+ *   padding 把盒子撑宽（热区变大），等量负 margin 把行内推进宽度还原（后续字符横向位置
+ *   不变）。二者相消后，这一行的排版与普通文本完全一致——这是「长按钮不必再挤开左右文本」
+ *   与「邻居隔得够远时也不必挤开」的实现本体。外扩量由 lib/touchLayout.ts 按快照的
+ *   col/width 列几何逐按钮算出，经 --hit-l / --hit-r 注入（ch 单位，1ch = 1 个 ASCII 字符
+ *   = 1 列）。按钮自身已够宽、或与邻居的余量不足时外扩量为 0，它完全按原样渲染。
+ *   z-index 是必需的：外扩区与后续文本 entry 在几何上重叠，不提升层叠则事件被文本取走、
+ *   热区失效。
  *
- * 左右 padding 会把同行后续文本往右推，溢出部分由 .terminal 的 overflow-x 兜底
- * ——这正是该模式预期的视觉代价，关掉开关即可完全还原。
+ * 纵向——min-height 兜底到 --term-btn-h，让触控目标 ≥ 48px；行本身仍由 lineStyle 钉高，
+ *   两者同一个值，于是按钮盒恰好铺满该行，点击盒 == 整行高。
+ *
+ * 视觉——圆角矩形提示就画在这个盒子上，所以「提示范围 == 真实热区」自动成立，不存在
+ *   提示与热区不一致的误导。用低对比填充 + 极淡描边而非实心块：一屏二三十个按钮时
+ *   高对比会糊成一堵墙。热区覆盖到的相邻文本仍可读（低 alpha，不做不透明遮挡）。
+ *
+ * 常显下划线在触控模式下取消——与圆角矩形同时存在会很吵；下划线留给 hover。
+ *
+ * `user-select: none`——终端文本默认可选中，不收掉的话点热区会顺手选中半屏文本。
  */
 .term-btn-touch {
   display: inline-block;
-  height: var(--term-btn-h, 48px);
-  padding: 0 var(--term-btn-pad-x, 10px);
+  min-height: var(--term-btn-h, 48px);
+  padding-left: var(--hit-l, 0px);
+  padding-right: var(--hit-r, 0px);
+  margin-left: calc(var(--hit-l, 0px) * -1);
+  margin-right: calc(var(--hit-r, 0px) * -1);
+  position: relative;
+  z-index: 1;
   vertical-align: baseline;
-  /* 常显下划线——让"这一块是可点的"在没有 hover 的触屏上也能被看见 */
+  border-radius: var(--radius-hit, 6px);
+  /* 双声明：旧 WebView 无 color-mix → 落到 token（等价低 alpha 字面量） */
+  background: var(--term-hit-bg);
+  background: color-mix(in srgb, var(--term-btn-active) 12%, transparent);
+  box-shadow: 0 0 0 1px var(--term-hit-line);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--term-btn-active) 25%, transparent);
+  -webkit-user-select: none;
+  user-select: none;
+  transition: background var(--motion-fast), box-shadow var(--motion-fast),
+    text-decoration-color var(--motion-fast);
+}
+/* hover 只补下划线，不替换热区矩形——矩形是常驻的触控提示。 */
+.term-btn-touch:hover:not(:disabled) {
   text-decoration: underline;
   text-underline-offset: 2px;
   text-decoration-color: var(--term-btn-hover-line);
+  text-decoration-color: color-mix(in srgb, var(--term-btn-hover-line) 70%, transparent);
+}
+/* 按下时加强——触屏没有 hover，这是一过性反馈的唯一来源（确认感）。 */
+.term-btn-touch:active:not(:disabled) {
+  /* 双声明：旧 WebView 无 color-mix → 落到满强度 */
+  background: var(--term-btn-active);
+  background: color-mix(in srgb, var(--term-btn-active) 30%, transparent);
+  box-shadow: 0 0 0 1px var(--term-btn-active);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--term-btn-active) 55%, transparent);
 }
 .term-btn:disabled {
   cursor: default;

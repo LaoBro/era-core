@@ -30,6 +30,11 @@
   --term-btn-hover-bg: #2a2b2e;   /* 按钮 hover 背景 */
   --term-btn-hover-line: #a8c7fa; /* 按钮 hover 下划线 */
   --term-btn-active: #a8c7fa;     /* 按钮 active 背景 */
+  /* 触控排版的热区提示（圆角矩形）——填充 / 描边两个低 alpha 值，与 --term-btn-active
+     同色系。它们是 color-mix 不可用（旧 WebView）时的**兜底**：不做成满强度，因为一屏
+     二三十个按钮时高对比实心块会糊成一堵墙。终端颜色不随主题变化，故这里也只有一份。 */
+  --term-hit-bg: rgba(168, 199, 250, 0.12);   /* 热区填充 */
+  --term-hit-line: rgba(168, 199, 250, 0.25); /* 热区描边 */
 
   /* ---------- 指针状态层（Material 风格，透明叠加在当前文字色上） ---------- */
   --state-layer-hover: color-mix(in srgb, var(--color-text) 8%, transparent);
@@ -40,6 +45,8 @@
   --radius-indicator: 2px;        /* 左指示条 */
   --radius-control: 12px;         /* 选择页与游戏页通用大圆角控件 */
   --radius-surface: 12px;         /* 对话框、Popup Menu、表面化容器 */
+  --radius-hit: 6px;              /* 终端触控热区提示——比 control 更方正，避免胶囊感
+                                     （ui-redesign-spec §6.2 只对触控模式开这个例外） */
 
   /* ---------- 阴影（spec §3.4，单档浮层，不递增） ---------- */
   --elevation-none: none;         /* 默认层级：仅 1px --color-border 表达边界 */

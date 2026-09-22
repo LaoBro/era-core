@@ -88,6 +88,7 @@ html.legacy-webview .input-row > * + * { margin-left: var(--space-1); }
 /* views\SettingsView.vue */
 html.legacy-webview .setting-row > * + * { margin-left: var(--space-3); }
 html.legacy-webview .settings-content > * + * { margin-top: var(--space-5); }
+html.legacy-webview .settings-header > * + * { margin-left: var(--space-3); }
 
 /* views\TerminalView.vue */
 html.legacy-webview .overlay-status > * + * { margin-top: var(--space-1); }

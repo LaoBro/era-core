@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted, onUnmounted } from 'vue';
 import { useGameStore } from '../stores/game';
-import { useUiStore } from '../stores/ui';
+import { useUiStore, TOUCH_TARGET_COLS_CHOICES, TOUCH_MIN_GAP_COLS_CHOICES } from '../stores/ui';
 import { useConnectionStore } from '../stores/connection';
 import { isMauiEnvironment, setAgentLogEnabled, setDimLockPolicy, setDisplayReportOverride, setMaxParallelErbFiles, setPerfOverride, setSafReadDegree, setSweepGatePolicy, settingsReset, setSettingsOpen, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
 import type { DimLockPolicyValue, DisplayReportOverride, MaxParallelErbFilesValue, PerfOverrideKey, SafReadDegreeValue, SweepGatePolicyValue } from '../lib/mauiBridge';
@@ -292,6 +292,46 @@ const logCopied = ref(false);
           </button>
           <span class="setting-value">{{ ui.menuPrewarm ? '开' : '关' }}</span>
         </div>
+        <div class="setting-row">
+          <span class="setting-label">触控宽度（列）</span>
+          <div class="segmented" role="radiogroup" aria-label="触控目标宽度（列）">
+            <button
+              v-for="n in TOUCH_TARGET_COLS_CHOICES"
+              :key="n"
+              class="segmented-item"
+              :class="{ active: ui.touchTargetCols === n }"
+              role="radio"
+              :aria-checked="ui.touchTargetCols === n"
+              @click="ui.setTouchTargetCols(n)"
+            >
+              {{ n }}
+            </button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">按钮间隔（列）</span>
+          <div class="segmented" role="radiogroup" aria-label="按钮最小间隔（列）">
+            <button
+              v-for="n in TOUCH_MIN_GAP_COLS_CHOICES"
+              :key="n"
+              class="segmented-item"
+              :class="{ active: ui.touchMinGapCols === n }"
+              role="radio"
+              :aria-checked="ui.touchMinGapCols === n"
+              @click="ui.setTouchMinGapCols(n)"
+            >
+              {{ n }}
+            </button>
+          </div>
+        </div>
+        <p class="hint-text">
+          触控排版（顶栏 ◎ 钮 / 抽屉菜单可开关）的热区横向尺度，仅在开关打开时生效，以「列」
+          为单位——1 列 = 1 个半角字符宽，全角字符占 2 列。「触控目标宽度」= 按钮热区总宽扩到
+          多少列就停止外扩：按钮本身已经这么宽时一点都不会外扩，所以长按钮周围不会多出空隙。
+          「按钮最小间隔」= 相邻两个按钮的热区之间至少保留几列：余量不足时宁可热区小一点也不
+          挤开版面。外扩只放大可点区域与圆角提示，不改文字位置——按钮左右的内边距被等量负
+          外边距抵消，整行排版与不开触控排版时逐字一致。本机设置，不随「恢复默认」重置。
+        </p>
         <p class="hint-text">
           首次点开 ⋮ 菜单的卡顿优化：页面空闲时用一个不可见的探针把菜单材质（阴影 / 遮罩 /
           圆角裁剪 / 图标）提前绘制一次，把 GPU shader 编译挪出首次打开的那几帧，让出场动画

@@ -146,10 +146,10 @@ const showInputBar = computed<boolean>(() => {
   z-index: 6;
   pointer-events: none;
 }
-/* MAUI 全屏游戏页：右侧让出两个常驻悬浮按钮（⌨ ⋮，各 48px + 间距 + 右缘 8px）——
-   否则旁观横幅的「接管」按钮被盖住无法点击（issue 05 手测发现）。 */
+/* MAUI 全屏游戏页：右侧让出三个常驻悬浮按钮（◎ ⌨ ⋮，各 48px + 两个 4px 间距 + 右缘 8px）——
+   否则旁观横幅的「接管」按钮被盖住无法点击（issue 05 手测发现；触控开关上浮后从两个变三个）。 */
 .overlay-status.maui-topbar {
-  right: calc(var(--touch-target) * 2 + var(--space-1) + var(--space-2));
+  right: calc(var(--touch-target) * 3 + var(--space-1) * 2 + var(--space-2));
 }
 .overlay-status :deep(.status-banner) {
   pointer-events: auto;

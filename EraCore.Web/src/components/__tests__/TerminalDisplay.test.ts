@@ -494,30 +494,69 @@ describe('TerminalDisplay: 背景图层', () => {
   });
 });
 
-// ---------- 触控排版（把含有效按钮的行撑到 ≥48px） ----------
+// ---------- 触控排版（把含有效按钮的行撑到 ≥48px + 横向按需外扩热区） ----------
 //
 // 判定规则与虚拟滚动加高表同源（inputRouting.isLiveButton）：
 // 只有「当前回合 generation 且非 EnterKey/AnyKey 惰性态」的按钮才会撑成触控目标。
 // 默认开关按平台走（Android 开 / Web 关），测试里显式置位，
 // 并在 afterEach 清掉持久化，避免污染同文件后续用例。
 describe('TerminalDisplay: 触控排版', () => {
+  /** 一个按钮 entry（默认不带 col/width 几何）。 */
+  function btnEntry(generation: number) {
+    return { segments: [{ text: '[0] 選項' }], button: { value: 0, isInteger: true, generation } };
+  }
+
   function btnLine(generation: number): DisplaySnapshot['lines'][number] {
+    return { entries: [btnEntry(generation)], align: 'left', isLineEnd: true };
+  }
+
+  /**
+   * 按列几何拼一行——省略 `col` 的 part 是普通文本 entry，否则是带 `col`/`width` 的按钮 entry。
+   * generation 默认 0（当前回合）；`width` 默认 2（一个全角字）。
+   */
+  function geoLine(
+    parts: Array<{ text: string; col?: number; width?: number; generation?: number }>,
+  ): DisplaySnapshot['lines'][number] {
     return {
-      entries: [{ segments: [{ text: '[0] 選項' }], button: { value: 0, isInteger: true, generation } }],
+      entries: parts.map((p) =>
+        p.col === undefined
+          ? { segments: [{ text: p.text }], button: null }
+          : {
+              segments: [{ text: p.text }],
+              button: { value: 0, isInteger: true, generation: p.generation ?? 0, col: p.col, width: p.width ?? 2 },
+            },
+      ),
       align: 'left',
       isLineEnd: true,
     };
   }
 
-  async function mountTouch(opts: { inputType?: string; turnGeneration?: number; lineGeneration?: number } = {}) {
+  /** 按钮内联注入的热区外扩列数（ch）——未注入视为 0。 */
+  function hitCols(el: Element, side: 'left' | 'right'): number {
+    const inline = el.getAttribute('style') ?? '';
+    const m = new RegExp(`--hit-${side[0]}:\\s*(-?[\\d.]+)ch`).exec(inline);
+    return m ? Number(m[1]) : 0;
+  }
+
+  async function mountTouch(opts: {
+    inputType?: string;
+    turnGeneration?: number;
+    lineGeneration?: number;
+    lines?: DisplaySnapshot['lines'][number][];
+    targetCols?: number;
+    minGapCols?: number;
+  } = {}) {
     // scale 显式传 1——game store 会持久化缩放，同文件前面的用例可能留下 1.5
-    const lines = [
+    const lines = opts.lines ?? [
       line([{ text: '普通文本行' }]),
       btnLine(opts.lineGeneration ?? 0),
     ];
     const { wrapper, game } = await mountWith(lines, [], 1);
     // pinia 由 mountWith 创建，store 必须在那之后取（否则拿到的是前一个 pinia 的实例）
-    useUiStore().setTouchLayout(true);
+    const ui = useUiStore();
+    ui.setTouchLayout(true);
+    if (opts.targetCols !== undefined) ui.setTouchTargetCols(opts.targetCols);
+    if (opts.minGapCols !== undefined) ui.setTouchMinGapCols(opts.minGapCols);
     game.currentTurnGeneration = opts.turnGeneration ?? 0;
     game.displayState = { ...game.displayState, inputType: opts.inputType ?? 'IntValue' };
     await wrapper.vm.$nextTick();
@@ -527,6 +566,8 @@ describe('TerminalDisplay: 触控排版', () => {
   afterEach(() => {
     try {
       localStorage.removeItem('app.touchLayout');
+      localStorage.removeItem('app.touchLayout.targetCols');
+      localStorage.removeItem('app.touchLayout.minGapCols');
     } catch { /* 静默 */ }
   });
 
@@ -558,12 +599,126 @@ describe('TerminalDisplay: 触控排版', () => {
     // 19px 是 ConfigCode.LineHeight 默认；触控排版不改变普通行的行距
     expect(terminalStyle).toContain('line-height: 19px');
     expect(terminalStyle).toContain('--term-btn-h: 48px');
-    expect(terminalStyle).toContain('--term-btn-pad-x: 10px');
 
     const rows = wrapper.findAll('.term-line');
     expect(rows).toHaveLength(2);
     // 文本行不钉高；按钮行钉到基准 + extra = 48px（与虚拟滚动加高表同一本账）
     expect(rows[0].attributes('style') ?? '').not.toContain('height: 48px');
     expect(rows[1].attributes('style') ?? '').toContain('height: 48px');
+  });
+
+  // ---------- 横向按需外扩（v1）----------
+  //
+  // 外扩量由快照的 col/width 列几何算出（lib/touchLayout.ts），零 DOM 测量。
+  // 默认阈值：目标触控宽度 5 列 / 按钮最小间隔 2 列。
+  describe('横向外扩', () => {
+    it('窄按钮（2 列）在开阔处双侧对称外扩到目标宽度——(5-2)/2 = 1.5 列', async () => {
+      const wrapper = await mountTouch({ lines: [geoLine([{ text: '選項', col: 0, width: 2 }])] });
+      const btn = wrapper.find('.term-btn').element;
+      expect(hitCols(btn, 'left')).toBe(1.5);
+      expect(hitCols(btn, 'right')).toBe(1.5);
+    });
+
+    it('按钮自身已达目标宽度 → 零外扩，长按钮周围不会多出空隙', async () => {
+      const wrapper = await mountTouch({ lines: [geoLine([{ text: '很長的選項文字', col: 0, width: 6 }])] });
+      const btn = wrapper.find('.term-btn').element;
+      expect(hitCols(btn, 'left')).toBe(0);
+      expect(hitCols(btn, 'right')).toBe(0);
+    });
+
+    it('目标宽度可调——调到 7 列时同一按钮外扩到 (7-2)/2 = 2.5 列', async () => {
+      const wrapper = await mountTouch({
+        lines: [geoLine([{ text: '選項', col: 0, width: 2 }])],
+        targetCols: 7,
+      });
+      const btn = wrapper.find('.term-btn').element;
+      expect(hitCols(btn, 'left')).toBe(2.5);
+      expect(hitCols(btn, 'right')).toBe(2.5);
+    });
+
+    it('相邻按钮的空隙不足最小间隔 → 朝对方那一侧不外扩（外侧仍按目标宽度封顶）', async () => {
+      // 两个 2 列按钮间隔 1 列，最小间隔要 2 列 → 内侧无余量
+      const wrapper = await mountTouch({
+        lines: [geoLine([{ text: 'A', col: 0, width: 2 }, { text: 'B', col: 3, width: 2 }])],
+      });
+      const btns = wrapper.findAll('.term-btn');
+      expect(btns).toHaveLength(2);
+      // 内侧被空隙卡住——宁可热区小也不挤开版面
+      expect(hitCols(btns[0].element, 'right')).toBe(0);
+      expect(hitCols(btns[1].element, 'left')).toBe(0);
+      // 外侧没有邻居约束，仍由目标宽度封顶——两侧独立取值，各自只朝有余量的方向长
+      expect(hitCols(btns[0].element, 'left')).toBe(1.5);
+      expect(hitCols(btns[1].element, 'right')).toBe(1.5);
+    });
+
+    it('空隙富余但目标宽度先到顶 → 外扩量取两者较小者（不为填满空隙而白扩）', async () => {
+      // 间隔 4 列：余量上限 (4-2)/2 = 1 列，目标需要 1.5 列 → 取 1 列
+      const wrapper = await mountTouch({
+        lines: [geoLine([{ text: 'A', col: 0, width: 2 }, { text: 'B', col: 6, width: 2 }])],
+      });
+      const btns = wrapper.findAll('.term-btn');
+      expect(hitCols(btns[0].element, 'right')).toBe(1);
+      expect(hitCols(btns[1].element, 'left')).toBe(1);
+      // 对外两侧无邻居约束，仍由目标宽度封顶
+      expect(hitCols(btns[0].element, 'left')).toBe(1.5);
+      expect(hitCols(btns[1].element, 'right')).toBe(1.5);
+    });
+
+    it('最小间隔可调——间隔 4 列 + 最小间隔 4 列时无余量，两侧都不外扩', async () => {
+      const wrapper = await mountTouch({
+        lines: [geoLine([{ text: 'A', col: 0, width: 2 }, { text: 'B', col: 6, width: 2 }])],
+        minGapCols: 4,
+      });
+      const btns = wrapper.findAll('.term-btn');
+      expect(hitCols(btns[0].element, 'right')).toBe(0);
+      expect(hitCols(btns[1].element, 'left')).toBe(0);
+    });
+
+    it('非按钮文本不是障碍物——它占的列不挡外扩（「隔了足够空间的文本」正是不该挤的那些）', async () => {
+      const wrapper = await mountTouch({
+        lines: [geoLine([{ text: '　・' }, { text: '選項', col: 0, width: 2 }])],
+      });
+      const btn = wrapper.find('.term-btn').element;
+      expect(hitCols(btn, 'left')).toBe(1.5);
+      expect(hitCols(btn, 'right')).toBe(1.5);
+    });
+
+    it('失效按钮仍算障碍物——热区不会压在「看起来还在」的旧回合按钮上', async () => {
+      // 右侧 4 列处是历史回合按钮：它不参与外扩，但把它当障碍物 → 空隙只有 2 列 → 无余量
+      const wrapper = await mountTouch({
+        lines: [geoLine([
+          { text: 'A', col: 0, width: 2 },
+          { text: 'B', col: 4, width: 2, generation: 9 },
+        ])],
+        turnGeneration: 0,
+      });
+      const btns = wrapper.findAll('.term-btn');
+      expect(hitCols(btns[0].element, 'right')).toBe(0);
+      // 历史回合的按钮自己也不带触控盒类
+      expect(btns[1].classes()).not.toContain('term-btn-touch');
+    });
+
+    it('缺 col/width 的按钮不参与横向外扩（不猜值：只损失放大，不产生误点）', async () => {
+      const wrapper = await mountTouch({ lines: [btnLine(0)] });
+      const btn = wrapper.find('.term-btn');
+      expect(btn.classes()).toContain('term-btn-touch');
+      expect(btn.attributes('style') ?? '').not.toContain('--hit-');
+    });
+
+    it('关闭开关 → 既不带触控盒类也不注入任何热区变量（可逆、零痕迹）', async () => {
+      const { wrapper } = await mountWith([geoLine([{ text: '選項', col: 0, width: 2 }])]);
+      const btn = wrapper.find('.term-btn');
+      expect(btn.classes()).not.toContain('term-btn-touch');
+      expect(btn.attributes('style') ?? '').not.toContain('--hit-');
+    });
+
+    it('内联样式只注入 --hit-l / --hit-r——外扩量与文字的相消留在 CSS 里（padding 与等量负 margin 成对）', async () => {
+      const wrapper = await mountTouch({ lines: [geoLine([{ text: '選項', col: 0, width: 2 }])] });
+      const inline = wrapper.find('.term-btn').attributes('style') ?? '';
+      expect(inline).toContain('--hit-l');
+      expect(inline).toContain('--hit-r');
+      // 若有人改从内联注入单边 padding/margin，就再也不是「两侧相消」了——锁住这条边界
+      expect(inline).not.toMatch(/padding|margin|width:/);
+    });
   });
 });

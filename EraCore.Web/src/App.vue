@@ -273,10 +273,20 @@ const popupItems = computed<PopupMenuItem[]>(() => [
       <MauiGameList v-if="showMauiGameList" key="game-list" />
       <WebGameList v-else-if="showWebGameList" key="web-game-list" />
       <div v-else class="game-view-wrapper" key="game-view">
-        <!-- 全屏游戏页：两个常驻无边框图标（spec §6.1），fixed 不占布局。
+        <!-- 全屏游戏页：三个常驻无边框图标（spec §6.1），fixed 不占布局。
              DOM 顺序在 main 之前——满足 §9 Tab 顺序「更多 → 主要内容」。
+             触控排版排在最左：它是触屏玩法里最想随手切换的开关（要「第一时间点到」），
+             且与最右的 ⋮ 拉开距离，避免三个按钮挤在一起误触。
              MAUI 与 Web 共用同一壳层——除更改目录行为外 UI 与 MAUI 一致。 -->
         <div class="game-shell-controls">
+          <button
+            class="icon-btn touch-toggle"
+            :class="{ active: ui.touchLayout }"
+            :aria-pressed="ui.touchLayout"
+            aria-label="触控排版"
+            title="触控排版（放大按钮热区）"
+            @click="ui.toggleTouchLayout()"
+          >◎</button>
           <button
             class="icon-btn"
             :class="{ active: keyboardActive }"
@@ -440,6 +450,12 @@ const popupItems = computed<PopupMenuItem[]>(() => [
 }
 .game-shell-controls .icon-btn.active {
   color: var(--term-color-text);
+}
+/* 触控排版开关的「已开」必须看得见——上面那条把本作用域内的 .active 有意中和成终端
+   文字色（⌨ / ⋮ 的 active 只是「面板正开着」的瞬时态，不需要常亮），而触控排版是
+   常驻开关，状态必须一眼可辨。故只给这一个按钮补背景，不动另外两个。 */
+.game-shell-controls .icon-btn.touch-toggle.active {
+  background: var(--color-control-hover);
 }
 
 /* 游戏静默状态提示（MAUI）——顶部半透明窄条，pointer-events:none */
