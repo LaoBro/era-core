@@ -29,21 +29,20 @@ export type Platform = 'web' | 'android';
 export const TOUCH_TARGET_MIN_PX = 48;
 
 /**
- * 触控排版的横向阈值（列）——两个都可配置，见下方 `touchTargetCols` / `touchMinGapCols`。
+ * 触控排版的横向阈值（列）——唯一的旋钮，见下方 `touchTargetCols`。
  *
  * 以**列**为单位而非像素：列几何直接来自快照的 `ButtonRef.col`/`width`（零 DOM 测量），
  * 注入样式时用 `ch` 表达（等宽终端下 1ch = 1 个 ASCII 字符 = 1 个游戏列）。代价是实际
  * 像素会随字体在 ch 的真实宽度上浮动（浏览器 monospace 约 0.5–0.6em）——即以「字符」
  * 而非绝对像素为触控尺度。目标高度（纵向）仍是像素，见 `TOUCH_TARGET_MIN_PX`。
+ *
+ * 曾经还有一个「按钮最小间隔」（相邻热区之间强制留几列净空）的旋钮，已撤掉：约束只需
+ * 「两个热区不重叠」，两侧平分空隙即可，刻意留净空只会让热区变小而且几乎看不出来
+ * （多数游戏一行一个按钮或按钮本就够宽，那个旋钮根本不被触发）。
  */
 export const TOUCH_TARGET_COLS_DEFAULT = 5;
 /** 目标触控宽度的候选档位（列）——同时充当读档时的合法值白名单。 */
 export const TOUCH_TARGET_COLS_CHOICES = [3, 4, 5, 6, 7] as const;
-
-/** 相邻按钮热区之间至少保留的列数——余量不足时宁可热区小也不挤。默认 2 列。 */
-export const TOUCH_MIN_GAP_COLS_DEFAULT = 2;
-/** 最小间隔的候选档位（列）——同时充当读档时的合法值白名单。 */
-export const TOUCH_MIN_GAP_COLS_CHOICES = [1, 2, 3, 4] as const;
 
 /**
  * 检测当前运行平台——纯函数，便于单测。
@@ -206,18 +205,17 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   /**
-   * 触控排版的横向阈值——两个都以列为单位、都可在设置页「外观 · 触控排版」调整。
+   * 触控排版的横向阈值——以列为单位，可在设置页「外观 · 触控排版」调整。
    *
-   * 为什么做成可配置：合适的触控尺度取决于手指粗细与屏幕大小，没有普适值；而且两条
-   * 规则本身带取舍（「要多大才够」与「宁可小也不挤到什么程度」），把取舍交给玩家比
-   * 我们替他定死更合理。改动即时生效——渲染按列几何重算，不需要重开游戏或重连。
+   * 为什么做成可配置：合适的触控尺度取决于手指粗细与屏幕大小，没有普适值，把取舍交给
+   * 玩家比我们替他定死更合理。改动即时生效——渲染按列几何重算，不需要重开游戏或重连
+   * （但设置页会盖住终端，返回游戏页才看得到效果）。
    *
    * 与 `touchLayout` 同类：纯前端本地设置，不进 ADR-0030 全局设置（C#/HTTP/CLI 无消费者）。
    * 取值限定在候选档位内（`..._CHOICES`），越界/非法一律回落默认值——与其钳到一个
    * 玩家没选过的值，不如回到我们验证过的默认。
    */
   const TOUCH_TARGET_COLS_STORAGE_KEY = 'app.touchLayout.targetCols';
-  const TOUCH_MIN_GAP_COLS_STORAGE_KEY = 'app.touchLayout.minGapCols';
 
   /** 从 localStorage 读一个「档位值」——只接受候选表内的整数，否则回落 fallback。 */
   function readChoiceFromStorage(
@@ -242,22 +240,12 @@ export const useUiStore = defineStore('ui', () => {
   const touchTargetCols = ref<number>(
     readChoiceFromStorage(TOUCH_TARGET_COLS_STORAGE_KEY, TOUCH_TARGET_COLS_CHOICES, TOUCH_TARGET_COLS_DEFAULT),
   );
-  const touchMinGapCols = ref<number>(
-    readChoiceFromStorage(TOUCH_MIN_GAP_COLS_STORAGE_KEY, TOUCH_MIN_GAP_COLS_CHOICES, TOUCH_MIN_GAP_COLS_DEFAULT),
-  );
 
   /** 设置目标触控宽度（列）并持久化。非候选档位直接忽略（UI 只提供候选档位）。 */
   function setTouchTargetCols(cols: number): void {
     if (!(TOUCH_TARGET_COLS_CHOICES as readonly number[]).includes(cols)) return;
     touchTargetCols.value = cols;
     writeChoiceToStorage(TOUCH_TARGET_COLS_STORAGE_KEY, cols);
-  }
-
-  /** 设置按钮最小间隔（列）并持久化。非候选档位直接忽略。 */
-  function setTouchMinGapCols(cols: number): void {
-    if (!(TOUCH_MIN_GAP_COLS_CHOICES as readonly number[]).includes(cols)) return;
-    touchMinGapCols.value = cols;
-    writeChoiceToStorage(TOUCH_MIN_GAP_COLS_STORAGE_KEY, cols);
   }
 
   return {
@@ -278,7 +266,5 @@ export const useUiStore = defineStore('ui', () => {
     toggleTouchLayout,
     touchTargetCols,
     setTouchTargetCols,
-    touchMinGapCols,
-    setTouchMinGapCols,
   };
 });

@@ -33,11 +33,6 @@ export interface LineHitExpansionOptions {
    */
   targetCols: number;
   /**
-   * 相邻两个按钮的热区之间**至少要保留**的列数。余量不足时宁可热区小一点也不挤——
-   * 外扩的收益（更容易点中）必须大于代价（版面被推动 / 误点隔壁），这条是判据。
-   */
-  minGapCols: number;
-  /**
    * 判定某 entry 的按钮当前是否「有效」（当前回合 generation、非 EnterKey/AnyKey 惰性态）。
    * 只有有效按钮会被外扩——历史回合残留的失效按钮不该白占版面与热区。
    */
@@ -63,12 +58,18 @@ function floor2(value: number): number {
 }
 
 /**
- * 某侧可用外扩列数——由「到该侧最近按钮障碍物的空隙」与最小间隔推出。
- * 该侧没有障碍物时视为无约束（返回 Infinity），由 `targetCols` 自己封顶。
+ * 该侧可用外扩列数——与邻居**平分**空隙，故最多只能拿到一半。
+ *
+ * 只要求「两个热区不重叠」，不额外留净空：平分空闲空隙后，两个热区最多**相切**。
+ * 不需要刻意留缝——提示矩形是内描边画法，相切时两条描边各自贴在自己盒子的内侧，
+ * 视觉上本来就有 2px 的缝，而 0 净空的误触风险只落在 1px 的边界线上，不值得为此
+ * 牺牲热区面积（原设计里那个「最小间隔」旋钮就是这么来的，现已撤掉）。
+ *
+ * 该侧没有邻居障碍物时无约束（返回 Infinity），由 `targetCols` 自己封顶。
  */
-function sideCap(gapCols: number, minGapCols: number): number {
+function sideCap(gapCols: number): number {
   if (gapCols === Infinity) return Infinity;
-  return Math.max(0, (gapCols - minGapCols) / 2);
+  return Math.max(0, gapCols / 2);
 }
 
 /**
@@ -79,8 +80,7 @@ function sideCap(gapCols: number, minGapCols: number): number {
  *   比只算存活按钮更保守，避免热区与提示矩形压在一个「看起来还在」的失效按钮上。
  * - 障碍物缺 `col` / `width` 时**整体忽略**它（既不外扩也不当障碍）：无法定位就不猜，
  *   保守方向是「只损失放大，不产生误点」。
- * - 左右两侧独立计算。两个相邻按钮各自按同一空隙取一半，故两者热区之间恰好剩下
- *   `minGapCols` 列，不会重叠。
+ * - 左右两侧独立计算。两个相邻按钮按同一空隙各取一半，故两者热区最多**相切**、不会重叠。
  * - 返回表只含**至少一侧有正外扩**的 entry；调用方对缺席者零处理。
  *
  * 边界：行首 / 行尾按钮的对外一侧无约束，仍由 `targetCols` 封顶（不因处在边界而特殊对待）。
@@ -116,8 +116,8 @@ export function computeLineHitExpansions(
 
     // 自身已够宽 → 目标外扩为 0 → 两侧都不动，绝不因为「反正有余量」而白扩。
     const wanted = Math.max(0, (opts.targetCols - self.width) / 2);
-    const left = floor2(Math.min(wanted, sideCap(gapLeft, opts.minGapCols)));
-    const right = floor2(Math.min(wanted, sideCap(gapRight, opts.minGapCols)));
+    const left = floor2(Math.min(wanted, sideCap(gapLeft)));
+    const right = floor2(Math.min(wanted, sideCap(gapRight)));
 
     if (left > 0 || right > 0) expansions.set(self.index, { left, right });
   }

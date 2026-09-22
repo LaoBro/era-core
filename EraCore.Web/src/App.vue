@@ -413,8 +413,19 @@ const popupItems = computed<PopupMenuItem[]>(() => [
   font-family: var(--font-ui);
   transition: background var(--motion-fast), color var(--motion-fast);
 }
-.icon-btn:hover:not(:disabled) {
-  background: var(--color-surface-raised);
+/* 悬停底色只对**真能悬停**的设备生效（触屏的 `hover: none` 不匹配）。
+   不隔离的话，触屏点过一次会把 :hover 粘在该按钮上（直到点别处），留下一个常驻的
+   灰圆底，看起来正像「卡住的焦点态」——三个顶栏图标都踩这个坑，不是某个开关的问题。
+   已知边界：触屏笔记本这类「同时有鼠标和触摸」的设备主指针仍报 hover: hover，
+   此时触摸后仍会粘住，需点别处清除。 */
+@media (hover: hover) {
+  .icon-btn:hover:not(:disabled) {
+    background: var(--color-surface-raised);
+  }
+  .game-shell-controls .icon-btn:hover:not(:disabled) {
+    background: var(--color-control-hover);
+    color: var(--term-color-text);
+  }
 }
 .icon-btn:active:not(:disabled) {
   background: var(--color-surface);
@@ -443,7 +454,6 @@ const popupItems = computed<PopupMenuItem[]>(() => [
   background: transparent;
   color: var(--term-color-text);
 }
-.game-shell-controls .icon-btn:hover:not(:disabled),
 .game-shell-controls .icon-btn:active:not(:disabled) {
   background: var(--color-control-hover);
   color: var(--term-color-text);
@@ -451,11 +461,12 @@ const popupItems = computed<PopupMenuItem[]>(() => [
 .game-shell-controls .icon-btn.active {
   color: var(--term-color-text);
 }
-/* 触控排版开关的「已开」必须看得见——上面那条把本作用域内的 .active 有意中和成终端
-   文字色（⌨ / ⋮ 的 active 只是「面板正开着」的瞬时态，不需要常亮），而触控排版是
-   常驻开关，状态必须一眼可辨。故只给这一个按钮补背景，不动另外两个。 */
+/* 触控排版开关的「已开」用**图标着色**表达，刻意不用背景：上面那条把本作用域内的
+   .active 有意中和成终端文字色（⌨ / ⋮ 的 active 只是「面板正开着」的瞬时态，不需要
+   常亮），而触控排版是常驻开关，状态必须一眼可辨。但补一块常驻背景会被误读成卡住的
+   hover / 焦点态（触屏粘住 hover 的坑就是这么暴露出来的），所以这里只动颜色。 */
 .game-shell-controls .icon-btn.touch-toggle.active {
-  background: var(--color-control-hover);
+  color: var(--color-indicator);
 }
 
 /* 游戏静默状态提示（MAUI）——顶部半透明窄条，pointer-events:none */

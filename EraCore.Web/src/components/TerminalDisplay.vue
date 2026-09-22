@@ -274,7 +274,6 @@ const hitExpansions = computed<ReadonlyMap<number, ReadonlyMap<number, HitExpans
   for (const item of visibleLines.value) {
     const expansions = computeLineHitExpansions(item.line, {
       targetCols: ui.touchTargetCols,
-      minGapCols: ui.touchMinGapCols,
       isLive: (entry) => isLiveButtonEntry(entry),
     });
     if (expansions.size > 0) table.set(item.absIdx, expansions);
@@ -730,11 +729,14 @@ watch(() => game.inputInFlight, (inFlight) => {
   z-index: 1;
   vertical-align: baseline;
   border-radius: var(--radius-hit, 6px);
-  /* 双声明：旧 WebView 无 color-mix → 落到 token（等价低 alpha 字面量） */
+  /* 双声明：旧 WebView 无 color-mix → 落到 token（等价低 alpha 字面量）。
+     描边用 **inset**：外描边会溢出盒子 1px，而按钮盒恰好铺满 48px 行高、上下相邻行
+     严丝合缝，于是相邻两行的描边各外溢 1px 就会在视觉上叠成 2px 的压边。内描边永不
+     超出盒子，纵向横向都不可能重叠；填充本来就裁在盒内，所以「矩形 == 真实热区」仍成立。 */
   background: var(--term-hit-bg);
   background: color-mix(in srgb, var(--term-btn-active) 12%, transparent);
-  box-shadow: 0 0 0 1px var(--term-hit-line);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--term-btn-active) 25%, transparent);
+  box-shadow: inset 0 0 0 1px var(--term-hit-line);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--term-btn-active) 25%, transparent);
   -webkit-user-select: none;
   user-select: none;
   transition: background var(--motion-fast), box-shadow var(--motion-fast),
@@ -752,8 +754,8 @@ watch(() => game.inputInFlight, (inFlight) => {
   /* 双声明：旧 WebView 无 color-mix → 落到满强度 */
   background: var(--term-btn-active);
   background: color-mix(in srgb, var(--term-btn-active) 30%, transparent);
-  box-shadow: 0 0 0 1px var(--term-btn-active);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--term-btn-active) 55%, transparent);
+  box-shadow: inset 0 0 0 1px var(--term-btn-active);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--term-btn-active) 55%, transparent);
 }
 .term-btn:disabled {
   cursor: default;

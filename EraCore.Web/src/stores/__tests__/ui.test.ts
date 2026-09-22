@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
-import { useUiStore, detectPlatform, TOUCH_TARGET_COLS_DEFAULT, TOUCH_MIN_GAP_COLS_DEFAULT } from '../ui';
+import { useUiStore, detectPlatform, TOUCH_TARGET_COLS_DEFAULT } from '../ui';
 
 /**
  * useUiStore / detectPlatform 单测——issue 05 平台检测。
@@ -338,21 +338,16 @@ describe('useUiStore 触控排版阈值', () => {
   beforeEach(() => setActivePinia(createPinia()));
   afterEach(() => vi.unstubAllGlobals());
 
-  it('未设置 → 用默认档位（目标宽度 5 列 / 最小间隔 2 列）', () => {
+  it('未设置 → 用默认档位（目标宽度 5 列）', () => {
     vi.stubGlobal('localStorage', makeLocalStorage());
-    const ui = useUiStore();
-    expect(ui.touchTargetCols).toBe(TOUCH_TARGET_COLS_DEFAULT);
-    expect(ui.touchMinGapCols).toBe(TOUCH_MIN_GAP_COLS_DEFAULT);
+    expect(useUiStore().touchTargetCols).toBe(TOUCH_TARGET_COLS_DEFAULT);
   });
 
   it('存储值优先于默认值', () => {
     const storage = makeLocalStorage();
     storage.setItem('app.touchLayout.targetCols', '6');
-    storage.setItem('app.touchLayout.minGapCols', '3');
     vi.stubGlobal('localStorage', storage);
-    const ui = useUiStore();
-    expect(ui.touchTargetCols).toBe(6);
-    expect(ui.touchMinGapCols).toBe(3);
+    expect(useUiStore().touchTargetCols).toBe(6);
   });
 
   it('非法值一律回落默认——越界 / 非数字 / 非整数都不接受', () => {
@@ -374,23 +369,14 @@ describe('useUiStore 触控排版阈值', () => {
     ui.setTouchTargetCols(99);
     expect(ui.touchTargetCols).toBe(6);
     expect(localStorage.getItem('app.touchLayout.targetCols')).toBe('6');
-
-    ui.setTouchMinGapCols(4);
-    expect(ui.touchMinGapCols).toBe(4);
-    ui.setTouchMinGapCols(0);
-    expect(ui.touchMinGapCols).toBe(4);
-    expect(localStorage.getItem('app.touchLayout.minGapCols')).toBe('4');
   });
 
   it('改动持久化——重建 store 后仍是玩家选的值', () => {
     vi.stubGlobal('localStorage', makeLocalStorage());
     useUiStore().setTouchTargetCols(7);
-    useUiStore().setTouchMinGapCols(1);
 
     setActivePinia(createPinia());
-    const reopened = useUiStore();
-    expect(reopened.touchTargetCols).toBe(7);
-    expect(reopened.touchMinGapCols).toBe(1);
+    expect(useUiStore().touchTargetCols).toBe(7);
   });
 
   it('存储不可用（读写皆抛）→ 不抛异常，内存态仍可设', () => {

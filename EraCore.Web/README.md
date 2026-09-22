@@ -53,7 +53,7 @@ npm run build
 |---|---|
 | `src/stores/game.ts` | 游戏目录、服务器状态、回合数据、显示快照、加载和快速重开 |
 | `src/stores/connection.ts` | HTTP/WS 地址、连接生命周期、输入和回合请求、控制权状态（旁观/接管） |
-| `src/stores/ui.ts` | 当前页面、平台、缩放和手动输入面板状态、**触控排版开关与两个横向阈值**（含 `TOUCH_TARGET_MIN_PX` 与 `TOUCH_TARGET_COLS_*` / `TOUCH_MIN_GAP_COLS_*` 档位常量） |
+| `src/stores/ui.ts` | 当前页面、平台、缩放和手动输入面板状态、**触控排版开关与横向阈值**（含 `TOUCH_TARGET_MIN_PX` 与 `TOUCH_TARGET_COLS_*` 档位常量） |
 
 关键状态：
 
@@ -66,9 +66,9 @@ npm run build
 - `game.displayReportOverride` / `game.perfOverrides`：启动日志与性能（懒加载/IR/并行两项）覆盖三态。
 - `game.sweepGatePolicy` / `game.safReadDegree` / `game.maxParallelErbFiles` / `game.dimLockPolicy`：ADR-0026 诊断旋钮（设置页「诊断」分组，`SettingsView.vue` 渲染，`mauiBridge.ts` 的 set* 消息投递，`useAppInit.ts` 按词表校验 config 消息）。
 - `ui.touchLayout`：触控排版开关（localStorage `app.touchLayout`，Android 默认开 / Web 默认关）；入口有**两处**——右上角常驻按钮组的 ◎ 钮（与 ⌨ / ⋮ 并列，第一下就点到）与抽屉菜单「触控排版」项，两处共享同一状态。
-- `ui.touchTargetCols` / `ui.touchMinGapCols`：触控排版的横向阈值（列，设置页「外观」可调）。默认 5 列 / 2 列，各自限定在候选档位内（越界或非法值回落默认）。
+- `ui.touchTargetCols`：触控排版的横向阈值（列，设置页「外观」可调，默认 5 列，限定在候选档位内——越界或非法值回落默认）。
 
-**触控排版的排版规则**：只把**含有效按钮**的行撑到 ≥48px，历史文本行保持原行距（行高因此不均，由 `useVirtualScroll` 的 `lineExtras` 稀疏加高表吸收）。横向热区**按需外扩**——按钮自身已达目标列数就零外扩，与邻居的余量不足最小间隔列数时朝该侧零外扩；外扩靠 `padding` 与**等量负 `margin`** 相消，因此文字位置一格都不动，只有热区与圆角提示变大（圆角矩形就画在同一个盒子上，故提示范围 == 真实热区）。几何全部来自快照既有的 `ButtonRef.col` / `width`，零 DOM 测量——见 `src/lib/touchLayout.ts`。
+**触控排版的排版规则**：只把**含有效按钮**的行撑到 ≥48px，历史文本行保持原行距（行高因此不均，由 `useVirtualScroll` 的 `lineExtras` 稀疏加高表吸收）。横向热区**按需外扩**——按钮自身已达目标列数就零外扩；与邻居之间只要求**两个热区不重叠**（空闲空隙两侧平分，最多相切，不刻意留净空）。外扩靠 `padding` 与**等量负 `margin`** 相消，因此文字位置一格都不动，只有热区与圆角提示变大（圆角矩形就画在同一个盒子上，故提示范围 == 真实热区）。几何全部来自快照既有的 `ButtonRef.col` / `width`，零 DOM 测量——见 `src/lib/touchLayout.ts`。
 
 ## Composable 和通信层
 

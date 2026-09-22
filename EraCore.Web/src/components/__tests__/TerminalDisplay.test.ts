@@ -544,7 +544,6 @@ describe('TerminalDisplay: 触控排版', () => {
     lineGeneration?: number;
     lines?: DisplaySnapshot['lines'][number][];
     targetCols?: number;
-    minGapCols?: number;
   } = {}) {
     // scale 显式传 1——game store 会持久化缩放，同文件前面的用例可能留下 1.5
     const lines = opts.lines ?? [
@@ -556,7 +555,6 @@ describe('TerminalDisplay: 触控排版', () => {
     const ui = useUiStore();
     ui.setTouchLayout(true);
     if (opts.targetCols !== undefined) ui.setTouchTargetCols(opts.targetCols);
-    if (opts.minGapCols !== undefined) ui.setTouchMinGapCols(opts.minGapCols);
     game.currentTurnGeneration = opts.turnGeneration ?? 0;
     game.displayState = { ...game.displayState, inputType: opts.inputType ?? 'IntValue' };
     await wrapper.vm.$nextTick();
@@ -567,7 +565,6 @@ describe('TerminalDisplay: 触控排版', () => {
     try {
       localStorage.removeItem('app.touchLayout');
       localStorage.removeItem('app.touchLayout.targetCols');
-      localStorage.removeItem('app.touchLayout.minGapCols');
     } catch { /* 静默 */ }
   });
 
@@ -610,7 +607,7 @@ describe('TerminalDisplay: 触控排版', () => {
   // ---------- 横向按需外扩（v1）----------
   //
   // 外扩量由快照的 col/width 列几何算出（lib/touchLayout.ts），零 DOM 测量。
-  // 默认阈值：目标触控宽度 5 列 / 按钮最小间隔 2 列。
+  // 唯一的阈值是「目标触控宽度」，默认 5 列；与邻居之间只要求不重叠（平分空隙，最多相切）。
   describe('横向外扩', () => {
     it('窄按钮（2 列）在开阔处双侧对称外扩到目标宽度——(5-2)/2 = 1.5 列', async () => {
       const wrapper = await mountTouch({ lines: [geoLine([{ text: '選項', col: 0, width: 2 }])] });
@@ -636,25 +633,33 @@ describe('TerminalDisplay: 触控排版', () => {
       expect(hitCols(btn, 'right')).toBe(2.5);
     });
 
-    it('相邻按钮的空隙不足最小间隔 → 朝对方那一侧不外扩（外侧仍按目标宽度封顶）', async () => {
-      // 两个 2 列按钮间隔 1 列，最小间隔要 2 列 → 内侧无余量
+    it('空隙小于目标需求 → 两侧平分空隙，两个热区正好相切不重叠', async () => {
+      // 两个 2 列按钮之间只隔 1 列：目标各要 1.5 列，但空隙只够各拿 0.5 列
       const wrapper = await mountTouch({
         lines: [geoLine([{ text: 'A', col: 0, width: 2 }, { text: 'B', col: 3, width: 2 }])],
       });
       const btns = wrapper.findAll('.term-btn');
       expect(btns).toHaveLength(2);
-      // 内侧被空隙卡住——宁可热区小也不挤开版面
-      expect(hitCols(btns[0].element, 'right')).toBe(0);
-      expect(hitCols(btns[1].element, 'left')).toBe(0);
+      expect(hitCols(btns[0].element, 'right')).toBe(0.5);
+      expect(hitCols(btns[1].element, 'left')).toBe(0.5);
       // 外侧没有邻居约束，仍由目标宽度封顶——两侧独立取值，各自只朝有余量的方向长
       expect(hitCols(btns[0].element, 'left')).toBe(1.5);
       expect(hitCols(btns[1].element, 'right')).toBe(1.5);
     });
 
-    it('空隙富余但目标宽度先到顶 → 外扩量取两者较小者（不为填满空隙而白扩）', async () => {
-      // 间隔 4 列：余量上限 (4-2)/2 = 1 列，目标需要 1.5 列 → 取 1 列
+    it('两按钮紧邻（空隙 0 列）→ 朝对方那一侧零外扩，热区绝不重叠', async () => {
       const wrapper = await mountTouch({
-        lines: [geoLine([{ text: 'A', col: 0, width: 2 }, { text: 'B', col: 6, width: 2 }])],
+        lines: [geoLine([{ text: 'A', col: 0, width: 2 }, { text: 'B', col: 2, width: 2 }])],
+      });
+      const btns = wrapper.findAll('.term-btn');
+      expect(hitCols(btns[0].element, 'right')).toBe(0);
+      expect(hitCols(btns[1].element, 'left')).toBe(0);
+    });
+
+    it('空隙富余但目标宽度先到顶 → 外扩量取两者较小者（不为填满空隙而白扩）', async () => {
+      // 间隔 2 列：余量上限 1 列，目标需要 1.5 列 → 取 1 列
+      const wrapper = await mountTouch({
+        lines: [geoLine([{ text: 'A', col: 0, width: 2 }, { text: 'B', col: 4, width: 2 }])],
       });
       const btns = wrapper.findAll('.term-btn');
       expect(hitCols(btns[0].element, 'right')).toBe(1);
@@ -662,16 +667,6 @@ describe('TerminalDisplay: 触控排版', () => {
       // 对外两侧无邻居约束，仍由目标宽度封顶
       expect(hitCols(btns[0].element, 'left')).toBe(1.5);
       expect(hitCols(btns[1].element, 'right')).toBe(1.5);
-    });
-
-    it('最小间隔可调——间隔 4 列 + 最小间隔 4 列时无余量，两侧都不外扩', async () => {
-      const wrapper = await mountTouch({
-        lines: [geoLine([{ text: 'A', col: 0, width: 2 }, { text: 'B', col: 6, width: 2 }])],
-        minGapCols: 4,
-      });
-      const btns = wrapper.findAll('.term-btn');
-      expect(hitCols(btns[0].element, 'right')).toBe(0);
-      expect(hitCols(btns[1].element, 'left')).toBe(0);
     });
 
     it('非按钮文本不是障碍物——它占的列不挡外扩（「隔了足够空间的文本」正是不该挤的那些）', async () => {
@@ -684,17 +679,21 @@ describe('TerminalDisplay: 触控排版', () => {
     });
 
     it('失效按钮仍算障碍物——热区不会压在「看起来还在」的旧回合按钮上', async () => {
-      // 右侧 4 列处是历史回合按钮：它不参与外扩，但把它当障碍物 → 空隙只有 2 列 → 无余量
-      const wrapper = await mountTouch({
+      // 同一位置对照：A 右侧有没有「历史回合按钮」决定它能不能扩满
+      const alone = await mountTouch({ lines: [geoLine([{ text: 'A', col: 0, width: 2 }])] });
+      expect(hitCols(alone.find('.term-btn').element, 'right')).toBe(1.5);
+
+      const withNeighbor = await mountTouch({
         lines: [geoLine([
           { text: 'A', col: 0, width: 2 },
           { text: 'B', col: 4, width: 2, generation: 9 },
         ])],
         turnGeneration: 0,
       });
-      const btns = wrapper.findAll('.term-btn');
-      expect(hitCols(btns[0].element, 'right')).toBe(0);
-      // 历史回合的按钮自己也不带触控盒类
+      const btns = withNeighbor.findAll('.term-btn');
+      // 4 列处那个按钮虽已失效（generation 不匹配、自己不外扩），仍把 A 的右侧卡到空隙的一半
+      expect(hitCols(btns[0].element, 'right')).toBe(1);
+      // 失效按钮自己也不带触控盒类
       expect(btns[1].classes()).not.toContain('term-btn-touch');
     });
 
