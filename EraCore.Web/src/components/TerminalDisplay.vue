@@ -195,15 +195,40 @@ function isLiveButtonEntry(entry: DisplayEntry): boolean {
 }
 
 /**
+ * 图形按钮——内容由游戏以**像素**画出来（图片 `<img>` 或色块 `<rect>`），不是文字。
+ *
+ * 为什么要单独挑出来：这类按钮的 `ButtonRef.width` 恒为 0（C# 侧 `ConsoleImagePart.Text`
+ * 是空串，`BuildPrintOpsForLine` 按文本算显示宽度，图片的显示宽度另由 px 决定）。于是
+ * 拿列几何去处理它会同时错三处：横向按「(目标列数 − 0) / 2」外扩（对 px 尺寸的图毫无
+ * 意义）、把它当有效按钮撑高所在行并画圆角矩形、还占一个零宽列区间当障碍物。
+ * 真机上它的观感也多余——图形按钮本身就是够大的点击目标。
+ */
+function isGraphicButtonEntry(entry: DisplayEntry): boolean {
+  return entry.segments.some((seg) => seg.image != null || seg.shape != null);
+}
+
+/**
+ * 该按钮是否**参与触控排版**——有效按钮，且内容不是图形（图片 / 色块）。
+ *
+ * 三个消费点必须用同一个判据，否则会出现「不套触控盒却被撑高」这类不一致：
+ * `isTouchTarget`（套不套盒）、传给 `computeLineExtras` 的判据（撑不撑高）、
+ * 传给 `computeLineHitExpansions` 的判据（横不横向外扩）。
+ * 图形按钮照旧**可点**——这里只决定呈现层的放大，不碰可提交性（ADR-0021）。
+ */
+function isTouchEligible(entry: DisplayEntry): boolean {
+  return isLiveButtonEntry(entry) && !isGraphicButtonEntry(entry);
+}
+
+/**
  * 触控排版下该按钮是否套上触控盒（关闭开关时恒 false，零成本短路）。
  *
- * 判据只有「开关开 + 有效按钮」，**不再**以「本行需要抬高」为前提：抬高只解决纵向
- * 触控目标，横向热区与圆角提示在行距本已够大的游戏里（LineHeight ≥ 48px，加高量为 0）
+ * 判据是「开关开 + 参与触控排版」，**不再**以「本行需要撑高」为前提：撑高只解决纵向
+ * 触控目标，横向热区与圆角提示在行距本已够大的游戏里（LineHeight ≥ 48px，撑高量为 0）
  * 同样有价值——那种游戏里按钮仍有可能是两列宽的窄按钮。
  */
 function isTouchTarget(entry: DisplayEntry): boolean {
   if (!ui.touchLayout) return false;
-  return isLiveButtonEntry(entry);
+  return isTouchEligible(entry);
 }
 
 /**
@@ -221,7 +246,7 @@ const touchLineExtras = computed<Map<number, number> | null>(() => {
   return computeLineExtras(game.displayState.lines, {
     rowHeightPx: effectiveRowHeight.value,
     targetRowPx: touchRowHeight.value,
-    isLive: (entry) => isLiveButtonEntry(entry),
+    isLive: (entry) => isTouchEligible(entry),
   });
 });
 
@@ -286,7 +311,7 @@ const hitExpansions = computed<ReadonlyMap<number, ReadonlyMap<number, HitExpans
   for (const item of visibleLines.value) {
     const expansions = computeLineHitExpansions(item.line, {
       targetCols: ui.touchTargetCols,
-      isLive: (entry) => isLiveButtonEntry(entry),
+      isLive: (entry) => isTouchEligible(entry),
     });
     if (expansions.size > 0) table.set(item.absIdx, expansions);
   }

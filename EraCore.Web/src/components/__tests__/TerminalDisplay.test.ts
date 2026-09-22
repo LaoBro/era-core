@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mount } from '@vue/test-utils';
+import { mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import TerminalDisplay from '../TerminalDisplay.vue';
 import { useGameStore } from '../../stores/game';
@@ -881,6 +881,80 @@ describe('TerminalDisplay: 触控排版', () => {
       const terminalStyle = wrapper.find('.terminal').attributes('style') ?? '';
       expect(terminalStyle).toContain('--hit-v: 0px');
       for (const row of wrapper.findAll('.term-line')) expect(lifted(row.element)).toBe(false);
+    });
+  });
+
+  // ---------- 图形按钮（图片 / 色块）整体跳过 ----------
+  //
+  // 这类按钮的内容由游戏以**像素**画出来（`<img>` / `<rect>`），`ButtonRef.width` 恒为 0
+  // （C# 侧 `ConsoleImagePart.Text` 是空串，`BuildPrintOpsForLine` 按文本算显示宽度，图片的
+  // 显示宽度另由 px 决定）。拿列几何去处理它会同时错三处：横向按「(目标列数 − 0) / 2」外扩、
+  // 被当有效按钮撑高所在行并画圆角矩形、还占一个零宽列区间当障碍物。真机上它们本身就够大，
+  // 所以整体跳过——但**照旧可点**（只跳呈现层的放大，不碰可提交性）。
+  describe('图形按钮跳过', () => {
+    /** 一行：一个由图片或色块画出来的按钮。 */
+    function graphicBtnLine(seg: PrintSegment): DisplaySnapshot['lines'][number] {
+      return {
+        entries: [{ segments: [seg], button: { value: 7, isInteger: true, generation: 0 } }],
+        align: 'left',
+        isLineEnd: true,
+      };
+    }
+    /** 一行：一个两列宽的纯文字按钮。 */
+    function textBtnLine(): DisplaySnapshot['lines'][number] {
+      return {
+        entries: [{
+          segments: [{ text: '選項' }],
+          button: { value: 0, isInteger: true, generation: 0, col: 0, width: 2 },
+        }],
+        align: 'left',
+        isLineEnd: true,
+      };
+    }
+    const styleOf = (wrapper: VueWrapper, sel: string) => wrapper.find(sel).attributes('style') ?? '';
+
+    it('图片按钮不套触控盒、不注入热区、所在行也不被撑高', async () => {
+      const wrapper = await mountTouch({ lines: [graphicBtnLine(imgSeg())] });
+      const btn = wrapper.find('.term-btn');
+      expect(btn.classes()).not.toContain('term-btn-touch');
+      expect(styleOf(wrapper, '.term-btn')).not.toContain('--hit-');
+      expect(styleOf(wrapper, '.term-line')).not.toContain('height:');
+    });
+
+    it('色块（rect）按钮同样跳过', async () => {
+      const wrapper = await mountTouch({ lines: [graphicBtnLine(rectSeg())] });
+      expect(wrapper.find('.term-btn').classes()).not.toContain('term-btn-touch');
+      expect(styleOf(wrapper, '.term-line')).not.toContain('height:');
+    });
+
+    it('文字与图片混在一个按钮里 → 也算图形按钮，整体跳过', async () => {
+      const wrapper = await mountTouch({
+        lines: [{
+          entries: [{
+            segments: [{ text: '選項' }, imgSeg()],
+            button: { value: 7, isInteger: true, generation: 0 },
+          }],
+          align: 'left',
+          isLineEnd: true,
+        }],
+      });
+      expect(wrapper.find('.term-btn').classes()).not.toContain('term-btn-touch');
+    });
+
+    it('图形按钮不会让相邻的文字按钮行被撑高（它不参与纵向冲突判定）', async () => {
+      // 上下相邻、列区间重叠：若图形按钮参与判定，两行都会被钉高
+      const wrapper = await mountTouch({ lines: [graphicBtnLine(imgSeg()), textBtnLine()] });
+      for (const row of wrapper.findAll('.term-line')) {
+        expect(row.attributes('style') ?? '').not.toContain('height:');
+      }
+    });
+
+    it('开着触控排版时图形按钮照旧可点（只跳呈现层，不碰可提交性）', async () => {
+      const { wrapper, conn } = await mountWith([graphicBtnLine(imgSeg())]);
+      useUiStore().setTouchLayout(true);
+      await wrapper.vm.$nextTick();
+      await wrapper.find('.term-mask').trigger('click', { clientX: 10, clientY: 5 });
+      expect(conn.sendInput).toHaveBeenCalledWith('7');
     });
   });
 });

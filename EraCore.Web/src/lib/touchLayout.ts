@@ -19,8 +19,9 @@
  * 因此这里不需要任何 DOM 测量，也不依赖字体度量。调用方把列数注入样式时用 `ch`：
  * 等宽终端下 1ch 即 1 个 ASCII 字符推进宽，与「列」一一对应。
  *
- * 无 store 依赖：有效按钮判定由调用方以谓词注入（见 `inputRouting.isLiveButton`），
- * 本模块只做几何，便于单测与复用。
+ * 无 store 依赖：是否参与触控排版由调用方以谓词注入（组件里是「有效按钮 且 非图片/色块」，
+ * 见 `isTouchEligible`；有效性判定来自 `inputRouting.isLiveButton`），本模块只做几何，
+ * 便于单测与复用。
  */
 
 import type { DisplayEntry, DisplayLine } from '../types/protocol';
@@ -38,8 +39,10 @@ export interface LineHitExpansionOptions {
    */
   targetCols: number;
   /**
-   * 判定某 entry 的按钮当前是否「有效」（当前回合 generation、非 EnterKey/AnyKey 惰性态）。
-   * 只有有效按钮会被外扩——历史回合残留的失效按钮不该白占版面与热区。
+   * 判定某 entry 是否**参与触控排版**。调用方注入的是「有效按钮（当前回合 generation、
+   * 非 EnterKey/AnyKey 惰性态）**且内容不是图片/色块**」——见组件里的 `isTouchEligible`。
+   * 只有它们会被外扩：失效按钮不该白占版面与热区，图形按钮的尺寸以 px 计、列几何恒为 0，
+   * 拿列去扩它没有意义。
    */
   isLive: (entry: DisplayEntry) => boolean;
 }
@@ -138,9 +141,9 @@ export interface LineExtrasOptions {
   /** 触控目标行高（px，含缩放）——`max(LineHeight, 48)` × effectiveScale。 */
   targetRowPx: number;
   /**
-   * 判定某 entry 的按钮当前是否「有效」（当前回合 generation、非 EnterKey/AnyKey 惰性态）。
-   * 只有有效按钮参与判定：失效按钮没有放大热区（不套 `.term-btn-touch`），
-   * 它的行高就是普通行距，不构成纵向重叠风险。
+   * 判定某 entry 是否**参与触控排版**（与 `LineHitExpansionOptions.isLive` 同一判据：
+   * 有效按钮 且 内容不是图片/色块）。没参与的行没有放大热区（不套 `.term-btn-touch`），
+   * 行高就是普通行距，不构成纵向重叠风险——既不会被撑高，也不会让邻居的行被撑高。
    */
   isLive: (entry: DisplayEntry) => boolean;
 }
