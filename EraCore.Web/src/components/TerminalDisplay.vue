@@ -7,7 +7,7 @@ import { useVirtualScroll } from '../composables/useVirtualScroll';
 import { usePinchZoom } from '../composables/usePinchZoom';
 import { isMauiEnvironment } from '../lib/mauiBridge';
 import { shouldSubmitButtonValue, shouldAdvanceOnTerminalClick, isLiveButton } from '../lib/inputRouting';
-import { computeLineHitExpansions, type HitExpansion } from '../lib/touchLayout';
+import { computeLineHitExpansions, computeLineExtras, type HitExpansion } from '../lib/touchLayout';
 import { resolveResource } from '../lib/resourceResolver';
 import { clickToImagePixel, loadImageAndReadPixel, sortBgImages } from '../lib/imageLayout';
 import SegmentRenderer from './SegmentRenderer.vue';
@@ -108,12 +108,14 @@ const effectiveFontFamily = computed(() => {
 const effectiveRowHeight = computed(() => effectiveLineHeight.value * game.effectiveScale);
 
 /**
- * 触控排版的目标行高（含 scale）——一行只要有「有效按钮」，该行的行盒就被撑到这么高，
- * 按钮自身按 `--term-btn-h` 取同样高度，于是点击盒 = 整行高。
+ * 触控排版的目标行高（含 scale）——按钮盒按它取高，于是点击盒是 48px 级别的触控目标。
  *
- * 与「统一抬高所有行」的区别：只有含有效按钮的行变高，其余行保持 LineHeight，
- * 手机竖屏的信息密度不被无谓稀释。代价是行高不再均匀——由 useVirtualScroll 的
- * `lineExtras`（稀疏额外高度表）吸收，见下方 touchLineExtras。
+ * 盒高恒等于这个值；**行高**则只在必要时才抬到它（见下方 touchLineExtras）：
+ * 竖向 ±W 行内有列区间重叠的存活按钮时才需要抬高（撑开槽位让两张盒不相撞），
+ * 否则该行仍维持 LineHeight，48px 的盒越过行界溢出到相邻的文本行上
+ * ——与横向同一取舍（非按钮文本被盖住几乎零成本），密集排版的菜单区因此不必
+ * 为了一个孤立按钮白撑 29px。抬高的行高不均由 useVirtualScroll 的 `lineExtras`
+ * （稀疏额外高度表）吸收。
  */
 const touchRowHeight = computed(() =>
   Math.max(effectiveLineHeight.value, TOUCH_TARGET_MIN_PX) * game.effectiveScale,
@@ -121,6 +123,16 @@ const touchRowHeight = computed(() =>
 
 /** 单行因触控排版多出来的高度（px）；< 0 时取 0（游戏自身行距已够大则不再加）。 */
 const touchLineExtraPx = computed(() => Math.max(0, touchRowHeight.value - effectiveRowHeight.value));
+
+/**
+ * 不抬高的行把热区纵向做到目标高度所需的一侧外扩量（px，含 scale）。
+ *
+ * 实现是 `padding-top/bottom` 外扩 + **等量负 margin 抵消**（见 .term-btn-touch）：
+ * 盒变高而它在行盒里的贡献不变，所以行高仍等于基准行距、后续行一格不动，
+ * 也就完全不必进虚拟滚动的加高表（Chromium 实测：排版总高与纯文本严格一致）。
+ * 抬高的行由 lineStyle 把这个变量归零——那里盒改由 min-height 撑满整个 48px 槽。
+ */
+const touchHalfGrowPx = computed(() => touchLineExtraPx.value / 2);
 
 /** .terminal 容器内联 style——动态绑定 width（ch 单位）/font-size/line-height/font-family + CSS 变量。 */
 const terminalStyle = computed<Record<string, string>>(() => {
@@ -140,6 +152,9 @@ const terminalStyle = computed<Record<string, string>>(() => {
     // 只在 .term-btn-touch 上消费，关闭触控排版时零视觉影响。
     // 横向热区不在这里给固定值——由 hitStyle() 按列几何逐按钮注入 --hit-l / --hit-r。
     '--term-btn-h': `${touchRowHeight.value}px`,
+    // 非抬高行的纵向热区外扩量（一侧）。抬高的行由 lineStyle 覆盖成 0px——
+    // 默认给「不抬高」的值，因为绝大多数含按钮的行都不需要抬高。
+    '--hit-v': `${touchHalfGrowPx.value}px`,
   };
   if (game.displayState.bgColor) style.backgroundColor = game.displayState.bgColor;
   return style;
@@ -164,10 +179,6 @@ const contentStyle = computed<Record<string, string>>(() => ({
  * 由其管理 scroll listener + isStickyToBottom + startIndex/endIndex 计算。
  */
 const terminalRef = ref<HTMLDivElement | null>(null);
-
-function lineHasLiveButton(line: DisplayLine): boolean {
-  return line.entries.some((entry) => isLiveButtonEntry(entry));
-}
 
 /** 单个 entry 上的按钮当前是否为有效按钮——决定要不要把它撑成触控目标。 */
 function isLiveButtonEntry(entry: DisplayEntry): boolean {
@@ -196,21 +207,21 @@ function isTouchTarget(entry: DisplayEntry): boolean {
 /**
  * 触控排版的稀疏加高表：行索引 → 该行在基准行高之上额外增加的像素。
  *
- * 只收「含有效按钮」的行。null / 空表时 useVirtualScroll 走原定高快路径。
- * 扫描是 O(lines)——行索引与"哪行有按钮"之间没有别的索引来源，且只在 lines /
- * generation / inputType / scale / 开关变化时重算；触控排版关闭时整个计算被短路，
- * 普通终端不受影响。
+ * 判定在 `computeLineExtras`（纯函数，见 lib/touchLayout.ts）：**只有竖向 ±W 行内
+ * 存在列区间重叠的存活按钮的行才被抬高**——抬高只是为了撑开槽位、让两张 48px 盒
+ * 不相撞；没有这个冲突时热区直接溢到相邻文本行上，不必白撑（见 touchRowHeight 注释）。
+ *
+ * null / 空表时 useVirtualScroll 走原定高快路径。扫描是 O(lines)：绝大多数行没有按钮，
+ * 第一步就被筛掉；且只在 lines / generation / inputType / scale / 开关变化时重算，
+ * 触控排版关闭时整个计算被短路，普通终端不受影响。
  */
 const touchLineExtras = computed<Map<number, number> | null>(() => {
   if (!ui.touchLayout) return null;
-  const extra = touchLineExtraPx.value;
-  if (extra <= 0) return null;
-  const lines = game.displayState.lines;
-  const map = new Map<number, number>();
-  for (let i = 0; i < lines.length; i++) {
-    if (lineHasLiveButton(lines[i])) map.set(i, extra);
-  }
-  return map;
+  return computeLineExtras(game.displayState.lines, {
+    rowHeightPx: effectiveRowHeight.value,
+    targetRowPx: touchRowHeight.value,
+    isLive: (entry) => isLiveButtonEntry(entry),
+  });
 });
 
 /**
@@ -452,17 +463,24 @@ async function onImageClick(e: MouseEvent, img: SegmentImage, entry: DisplayEntr
 }
 
 /**
- * 单行样式——对齐 + 触控排版下的精确行高。
+ * 单行样式——对齐 +（抬高的行）精确行高 +（抬高的行）纵向热区变量归零。
  *
- * 为什么把含按钮的行显式钉高：按钮盒撑到目标高度后，行盒最终还会叠加当前字体的
+ * 为什么被抬高的行要显式钉高：按钮盒撑到目标高度后，行盒最终还会叠加当前字体的
  * ascent/descent（每种游戏字体不同，可能多出 1~2px）。而 useVirtualScroll 的加高表按
  * "基准行高 + extra" 记账，多出来的零头会随行数累积成漂移。显式 height 让 DOM 与账本
  * 严格一致，行超过的部分仍在 overflow 语义下正常绘制（图片溢出不受影响）。
+ *
+ * 为什么被抬高的行要把 `--hit-v` 归零：抬高的行里按钮盒由 `min-height: --term-btn-h`
+ * 撑满整个 48px 槽；若同时保留纵向 padding 外扩，盒会再各探出 14.5px 压到上一行上
+ * （Chromium 实测）。不抬高的行没有这个问题——那里 `--hit-v` 正是热区的来源。
  */
 function lineStyle(item: { line: DisplayLine; absIdx: number }): Record<string, string> {
   const style: Record<string, string> = { textAlign: lineAlign(item.line) };
   const extra = touchLineExtras.value?.get(item.absIdx);
-  if (extra !== undefined) style.height = `${effectiveRowHeight.value + extra}px`;
+  if (extra !== undefined) {
+    style.height = `${effectiveRowHeight.value + extra}px`;
+    style['--hit-v'] = '0px';
+  }
   return style;
 }
 
@@ -707,8 +725,14 @@ watch(() => game.inputInFlight, (inFlight) => {
  *   z-index 是必需的：外扩区与后续文本 entry 在几何上重叠，不提升层叠则事件被文本取走、
  *   热区失效。
  *
- * 纵向——min-height 兜底到 --term-btn-h，让触控目标 ≥ 48px；行本身仍由 lineStyle 钉高，
- *   两者同一个值，于是按钮盒恰好铺满该行，点击盒 == 整行高。
+ * 纵向——两种行、两条路，盒高都是 --term-btn-h（≥48px）：
+ *   ① 被抬高的行（竖向 ±W 行内有列区间重叠的存活按钮——判定见 touchLineExtras）：
+ *      行由 lineStyle 钉到目标高度、并把 --hit-v 归零，盒由 min-height 恰好铺满该行，
+ *      于是点击盒 == 整行高，相邻两张盒正好相切、命中边界就是槽边界。
+ *   ② 不抬高的行：行维持基准行距，盒靠「padding-top/bottom 外扩 + 等量负 margin 抵消」
+ *      自己长出 48px（--hit-v 即一侧外扩量），上下各溢出约 14.5px、压住相邻的非按钮
+ *      文本——与横向同一取舍。负 margin 抵消了 padding 对行盒高度的贡献，所以排版总高
+ *      与后续行位置一格不变（Chromium 实测总高严格等于行数 × 基准行距），不必进加高表。
  *
  * 视觉——圆角矩形提示就画在这个盒子上，所以「提示范围 == 真实热区」自动成立，不存在
  *   提示与热区不一致的误导。用低对比填充 + 极淡描边而非实心块：一屏二三十个按钮时
@@ -723,8 +747,14 @@ watch(() => game.inputInFlight, (inFlight) => {
   min-height: var(--term-btn-h, 48px);
   padding-left: var(--hit-l, 0px);
   padding-right: var(--hit-r, 0px);
+  /* 纵向：不抬高的行靠它把盒长到目标高度（抬高的行由 lineStyle 把 --hit-v 归零）。
+     与横向同理，负 margin 与 padding 等量相消——盒变高，行盒贡献不变。 */
+  padding-top: var(--hit-v, 0px);
+  padding-bottom: var(--hit-v, 0px);
   margin-left: calc(var(--hit-l, 0px) * -1);
   margin-right: calc(var(--hit-r, 0px) * -1);
+  margin-top: calc(var(--hit-v, 0px) * -1);
+  margin-bottom: calc(var(--hit-v, 0px) * -1);
   position: relative;
   z-index: 1;
   vertical-align: baseline;

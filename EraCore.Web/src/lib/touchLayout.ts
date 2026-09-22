@@ -1,13 +1,18 @@
 /**
- * touchLayout — 触控排版的热区外扩几何（纯函数）。
+ * touchLayout — 触控排版的热区几何（纯函数）。
  *
  * 为什么需要它：Emuera 的按钮是行内文本，默认行高（LineHeight≈19px）远低于 48px
  * 触控目标，竖屏下点不准。v0 的对策是把含按钮的行整体撑高、并给按钮加**固定**左右
  * 内边距——后者无论按钮多宽都往两侧挤 10px，把同行后续字符往右推（`white-space: pre`
  * 下没有回旋余地），长按钮白付代价、列对齐也会被顶歪。
  *
- * 本模块算的是「每个有效按钮左右各能外扩多少列」，让调用方按需外扩：
- * 按钮自身已够宽就零外扩；两侧余量不足就少扩甚至不扩；只有真的有余量才扩。
+ * 本模块有两件事，对应横向与纵向：
+ *
+ * 1. `computeLineHitExpansions`——每个有效按钮**左右**各能外扩多少列：按钮自身已够宽
+ *    就零外扩；两侧余量不足就少扩甚至不扩；只有真的有余量才扩。
+ * 2. `computeLineExtras`——哪些行需要**纵向**被撑高。撑高只是为了给 48px 高的按钮盒
+ *    腾出槽位；竖向邻居没有「列区间重叠」的按钮时不必撑高，热区直接溢出到相邻的
+ *    非按钮文本上（与横向同一取舍：文本不是点击目标，被盖住几乎零成本）。
  *
  * 几何来源是快照里**已有**的 `ButtonRef.col` / `width`（行内 0-based 列，全角占 2 列，
  * 由 C# `ConsolePrintManager.BuildPrintOpsForLine` 统一计算、快照与增量 ops 一致透传）——
@@ -123,4 +128,129 @@ export function computeLineHitExpansions(
   }
 
   return expansions;
+}
+
+// ---------- 纵向：哪些行需要被撑高 ----------
+
+export interface LineExtrasOptions {
+  /** 基准行高（px，含缩放）——游戏自身的 LineHeight × effectiveScale。 */
+  rowHeightPx: number;
+  /** 触控目标行高（px，含缩放）——`max(LineHeight, 48)` × effectiveScale。 */
+  targetRowPx: number;
+  /**
+   * 判定某 entry 的按钮当前是否「有效」（当前回合 generation、非 EnterKey/AnyKey 惰性态）。
+   * 只有有效按钮参与判定：失效按钮没有放大热区（不套 `.term-btn-touch`），
+   * 它的行高就是普通行距，不构成纵向重叠风险。
+   */
+  isLive: (entry: DisplayEntry) => boolean;
+}
+
+/** 带存活按钮的一行：行号 + 该行存活按钮的列区间。 */
+interface LiveLine {
+  index: number;
+  /** 列区间，`[起始列, 结束列)`（列 = 半角字符宽，全角占 2 列）。 */
+  spans: Array<[number, number]>;
+  /** 有存活按钮缺 `col`/`width`（脏数据）——无法定位，见下方判定语义。 */
+  unbounded: boolean;
+}
+
+/**
+ * 纵向判定窗口（行数）——相隔**几行**之内的两个按钮盒才可能上下重叠。
+ *
+ * 盒高固定等于目标行高 H，行距为 r，则第 i 行与第 i+k 行的槽起点相差 `k·r`，
+ * 两盒重叠 ⟺ `k·r < H`。故窗口 `W = ceil(H / r) - 1`：
+ * - 默认（LineHeight 19、H 48）→ `ceil(2.53) - 1 = 2`——**不是 1**：隔 2 行时两槽
+ *   只差 38px，两张 48px 盒仍有 10px 重叠（Chromium 实测），漏判会留下一条
+ *   掉进去就点错的窄带。
+ * - 行距 ≥ 48px → W = 0（此时 extra 也是 0，本来就不用抬）。
+ *
+ * 用**一致行距** r 推算（而非抬高后的实际位置）：抬高只会让两行离得更远，所以这是
+ * 保守方向——可能多抬一行，绝不会漏判。
+ */
+function conflictWindowRows(targetRowPx: number, rowHeightPx: number): number {
+  if (!(rowHeightPx > 0) || !(targetRowPx > 0)) return 0;
+  // 减去极小量：H/r 恰为整数时（如 48/16=3）第 k=H/r 行只是**相切**不算重叠，
+  // 不减会让它多抬一行。
+  return Math.max(0, Math.ceil(targetRowPx / rowHeightPx - 1e-9) - 1);
+}
+
+/** 两行是否有列区间重叠。任一行含「无几何」的存活按钮 → 无法排除重叠，按重叠处理。 */
+function linesOverlap(a: LiveLine, b: LiveLine): boolean {
+  if (a.unbounded || b.unbounded) return true;
+  for (const [aStart, aEnd] of a.spans) {
+    for (const [bStart, bEnd] of b.spans) {
+      if (aStart < bEnd && bStart < aEnd) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 算出哪些行需要在基准行高之上额外撑高，以及各撑高多少（px）——`行号 → extra`。
+ *
+ * 判定（唯一规则）：**某行有存活按钮，且纵向 ±W 行内存在列区间与它重叠的存活按钮**
+ * 时才撑高；否则该行维持基准行高，48px 热区直接溢到相邻的文本行上（非按钮文本被
+ * 盖住是可以接受的代价，横向同此取舍——见 `computeLineHitExpansions` 的注释）。
+ *
+ * 为什么要撑：两张 48px 盒在重叠列上会互相覆盖，命中归属由 DOM 顺序决定，
+ * 行为不可预测（Chromium 实测：相邻两行叠 29px，48px 里有一半点下去落到隔壁按钮）；
+ * 撑高后两槽各 48px、盒子正好相切，命中边界就是槽边界。
+ *
+ * 其余语义：
+ * - **只有存活按钮参与**：失效按钮不套触控盒，没有重叠风险。这与横向「任何带几何的
+ *   按钮 entry 都算障碍物」不同——那里保守是为了别拿提示矩形压住「看起来还在」的
+ *   按钮文字（视觉理由），这里则是纯粹的命中几何。
+ * - 存活按钮缺 `col`/`width`：视为占满整行 → 与窗口内任何存活按钮都判为重叠
+ *   （多留白的保守方向，符合「脏数据只导致没放大、不导致点错」）。
+ * - 冲突**对称**：一对冲突双方都抬，冲突对被彻底消除。
+ * - 返回表只含需要撑高的行；无人需要撑高时返回 `null`（调用方据此走定高快路径）。
+ */
+export function computeLineExtras(
+  lines: readonly DisplayLine[],
+  opts: LineExtrasOptions,
+): Map<number, number> | null {
+  const extra = Math.max(0, opts.targetRowPx - opts.rowHeightPx);
+  if (extra <= 0) return null;
+
+  // 先收「哪些行有存活按钮」及其列区间——绝大多数行没有按钮，这一步就把它们筛掉。
+  const live: LiveLine[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const entries = lines[i].entries;
+    let spans: Array<[number, number]> | null = null;
+    let unbounded = false;
+    for (const entry of entries) {
+      if (!opts.isLive(entry)) continue;
+      if (!spans) spans = [];
+      const button = entry.button;
+      const col = button?.col;
+      const width = button?.width;
+      if (typeof col !== 'number' || typeof width !== 'number') {
+        unbounded = true;
+        continue;
+      }
+      spans.push([col, col + width]);
+    }
+    if (spans) live.push({ index: i, spans, unbounded });
+  }
+  if (live.length === 0) return null;
+
+  const windowRows = conflictWindowRows(opts.targetRowPx, opts.rowHeightPx);
+  if (windowRows <= 0) return null;
+
+  // live 按行号升序，故内层一旦超出窗口即可跳出。
+  const lifted = new Set<number>();
+  for (let a = 0; a < live.length; a++) {
+    for (let b = a + 1; b < live.length; b++) {
+      if (live[b].index - live[a].index > windowRows) break;
+      if (linesOverlap(live[a], live[b])) {
+        lifted.add(live[a].index);
+        lifted.add(live[b].index);
+      }
+    }
+  }
+  if (lifted.size === 0) return null;
+
+  const extras = new Map<number, number>();
+  for (const index of lifted) extras.set(index, extra);
+  return extras;
 }

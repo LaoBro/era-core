@@ -68,7 +68,9 @@ npm run build
 - `ui.touchLayout`：触控排版开关（localStorage `app.touchLayout`，Android 默认开 / Web 默认关）；入口有**两处**——右上角常驻按钮组的 ◎ 钮（与 ⌨ / ⋮ 并列，第一下就点到）与抽屉菜单「触控排版」项，两处共享同一状态。
 - `ui.touchTargetCols`：触控排版的横向阈值（列，设置页「外观」可调，默认 5 列，限定在候选档位内——越界或非法值回落默认）。
 
-**触控排版的排版规则**：只把**含有效按钮**的行撑到 ≥48px，历史文本行保持原行距（行高因此不均，由 `useVirtualScroll` 的 `lineExtras` 稀疏加高表吸收）。横向热区**按需外扩**——按钮自身已达目标列数就零外扩；与邻居之间只要求**两个热区不重叠**（空闲空隙两侧平分，最多相切，不刻意留净空）。外扩靠 `padding` 与**等量负 `margin`** 相消，因此文字位置一格都不动，只有热区与圆角提示变大（圆角矩形就画在同一个盒子上，故提示范围 == 真实热区）。几何全部来自快照既有的 `ButtonRef.col` / `width`，零 DOM 测量——见 `src/lib/touchLayout.ts`。
+**触控排版的排版规则**：按钮盒恒为 `max(LineHeight, 48px)` 级别的触控目标；**行高只在必要时才抬到它**——竖向 ±W 行内有**列区间重叠**的存活按钮时才抬（撑开槽位让相邻两张盒不相撞），`W = ceil(目标行高 / 基准行高) - 1`，默认行距 19px 时 W = 2（隔 2 行两槽只差 38px，两张 48px 盒仍重叠 10px，窗口取 1 会漏判）。没有被抬高的行保持原行距、热区直接溢到相邻的非按钮文本上——与横向同一取舍。被抬高的那些行由 `useVirtualScroll` 的 `lineExtras` 稀疏加高表吸收。
+
+横向热区**按需外扩**——按钮自身已达目标列数就零外扩；与邻居之间只要求**两个热区不重叠**（空闲空隙两侧平分，最多相切，不刻意留净空）。两个方向的扩大量都靠 `padding` 与**等量负 `margin`** 相消：盒变大而它在行盒里的贡献不变，因此**文字位置一格都不动**，排版总高也与纯文本严格一致（纵向外扩因此不必进加高表）；被抬高的行则把纵向外扩量归零，盒改由 `min-height` 铺满整个槽。圆角矩形就画在那个盒子上，故「提示范围 == 真实热区」自动成立。几何全部来自快照既有的 `ButtonRef.col` / `width`，零 DOM 测量——见 `src/lib/touchLayout.ts`。
 
 ## Composable 和通信层
 
@@ -81,7 +83,7 @@ npm run build
 | `src/lib/mauiBridge.ts` | Vue 与 MAUI C# 桥接消息、游戏扫描和加载 |
 | `src/lib/gameLibrary.ts` | 游戏库数据源抽象：`GameLibrarySource` 接口 + maui（桥接）/ http（HTTP）两个 adapter |
 | `src/lib/inputRouting.ts` | 按钮点击和终端点击的输入路由判定（含 `isLiveButton`——「有效按钮」的单一判据） |
-| `src/lib/touchLayout.ts` | 触控排版的热区外扩几何（纯函数，按 `ButtonRef.col`/`width` 列几何算，零 DOM 测量） |
+| `src/lib/touchLayout.ts` | 触控排版的热区几何（纯函数）：横向按 `ButtonRef.col`/`width` 列几何算外扩列数、纵向判定哪些行需要抬高（列区间重叠窗口），零 DOM 测量 |
 | `src/lib/parseTurnRecord.ts` | 解析 C# 回合协议 |
 | `src/lib/opsApplier.ts` | 应用终端增量操作 |
 | `src/lib/snapshotReducer.ts` | 应用完整终端快照 |
@@ -99,7 +101,7 @@ npm run build
 | 修改手动输入和按钮输入 | `components/InputBar.vue`、`lib/inputRouting.ts` |
 | 修改 TINPUT 倒计时 | `components/TinputCountdown.vue`、`stores/game.ts` |
 | 修改终端滚动或缩放 | `composables/useVirtualScroll.ts`、`composables/usePinchZoom.ts`、`TerminalDisplay.vue` |
-| 修改按钮点击区域 / 触控排版规则 | `components/TerminalDisplay.vue`（`.term-btn-touch` + 加高表）、`lib/touchLayout.ts`（外扩几何）、`lib/inputRouting.ts`（`isLiveButton`）、`stores/ui.ts`（开关与阈值） |
+| 修改按钮点击区域 / 触控排版规则 | `components/TerminalDisplay.vue`（`.term-btn-touch` + 加高表）、`lib/touchLayout.ts`（横向外扩几何 + 纵向抬行高判定）、`lib/inputRouting.ts`（`isLiveButton`）、`stores/ui.ts`（开关与阈值） |
 | 修改 MAUI 启动和 C# 消息处理 | `composables/useAppInit.ts`、`lib/mauiBridge.ts` |
 | 修改页面导航、顶部按钮或模式分流 | `App.vue`、`components/DrawerMenu.vue` |
 | 修改 UI 主题、颜色、圆角、阴影、动效或字号 | `styles/theme.css`（唯一令牌源，组件一律 `var(--token)`） |
@@ -167,7 +169,7 @@ Web ⋮ 菜单「更改目录」
 
 | 测试文件 | 覆盖内容 |
 |---|---|
-| `src/components/__tests__/TerminalDisplay.test.ts` | 终端文本、图片、图形、背景、按钮、MAUI 空状态和触控排版（按钮行的撑高规则 + 横向按需外扩的列几何） |
+| `src/components/__tests__/TerminalDisplay.test.ts` | 终端文本、图片、图形、背景、按钮、MAUI 空状态和触控排版（横向按需外扩的列几何 + 纵向条件抬高的判定窗口） |
 | `src/stores/__tests__/connectionControl.test.ts` | HTTP 控制权：旁观/接管、事件序列、输入 409 |
 | `src/stores/__tests__/game.test.ts` | 游戏状态、回合和目录状态 |
 | `src/stores/__tests__/gameLoadGame.test.ts` | HTTP 游戏加载 |

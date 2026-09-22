@@ -494,10 +494,10 @@ describe('TerminalDisplay: 背景图层', () => {
   });
 });
 
-// ---------- 触控排版（把含有效按钮的行撑到 ≥48px + 横向按需外扩热区） ----------
+// ---------- 触控排版（按钮盒 ≥48px + 横向按需外扩 + 纵向条件抬高） ----------
 //
 // 判定规则与虚拟滚动加高表同源（inputRouting.isLiveButton）：
-// 只有「当前回合 generation 且非 EnterKey/AnyKey 惰性态」的按钮才会撑成触控目标。
+// 只有「当前回合 generation 且非 EnterKey/AnyKey 惰性态」的按钮才会套上触控盒。
 // 默认开关按平台走（Android 开 / Web 关），测试里显式置位，
 // 并在 afterEach 清掉持久化，避免污染同文件后续用例。
 describe('TerminalDisplay: 触控排版', () => {
@@ -544,6 +544,7 @@ describe('TerminalDisplay: 触控排版', () => {
     lineGeneration?: number;
     lines?: DisplaySnapshot['lines'][number][];
     targetCols?: number;
+    lineHeight?: number;
   } = {}) {
     // scale 显式传 1——game store 会持久化缩放，同文件前面的用例可能留下 1.5
     const lines = opts.lines ?? [
@@ -555,6 +556,7 @@ describe('TerminalDisplay: 触控排版', () => {
     const ui = useUiStore();
     ui.setTouchLayout(true);
     if (opts.targetCols !== undefined) ui.setTouchTargetCols(opts.targetCols);
+    if (opts.lineHeight !== undefined) game.setGameLayout({ lineHeight: opts.lineHeight });
     game.currentTurnGeneration = opts.turnGeneration ?? 0;
     game.displayState = { ...game.displayState, inputType: opts.inputType ?? 'IntValue' };
     await wrapper.vm.$nextTick();
@@ -590,18 +592,21 @@ describe('TerminalDisplay: 触控排版', () => {
       .not.toContain('term-btn-touch');
   });
 
-  it('行距保持游戏自身值，只有含按钮的那一行被钉到 48px——文本行密度不受影响', async () => {
+  it('孤立按钮的行不被抬高——热区改由 --hit-v 纵向溢出，行距保持游戏自身值', async () => {
     const wrapper = await mountTouch();
     const terminalStyle = wrapper.find('.terminal').attributes('style') ?? '';
     // 19px 是 ConfigCode.LineHeight 默认；触控排版不改变普通行的行距
     expect(terminalStyle).toContain('line-height: 19px');
+    // 按钮盒仍按目标高度取高（与行是否抬高无关）
     expect(terminalStyle).toContain('--term-btn-h: 48px');
+    // 不抬高的行：一侧纵向外扩 (48-19)/2 = 14.5px，由等量负 margin 抵消，行高不变
+    expect(terminalStyle).toContain('--hit-v: 14.5px');
 
     const rows = wrapper.findAll('.term-line');
     expect(rows).toHaveLength(2);
-    // 文本行不钉高；按钮行钉到基准 + extra = 48px（与虚拟滚动加高表同一本账）
-    expect(rows[0].attributes('style') ?? '').not.toContain('height: 48px');
-    expect(rows[1].attributes('style') ?? '').toContain('height: 48px');
+    // 上下没有列区间重叠的其它按钮 → 两行都不钉高（这正是 v2 与 v0 的差别）
+    expect(rows[0].attributes('style') ?? '').not.toContain('height:');
+    expect(rows[1].attributes('style') ?? '').not.toContain('height:');
   });
 
   // ---------- 横向按需外扩（v1）----------
@@ -718,6 +723,126 @@ describe('TerminalDisplay: 触控排版', () => {
       expect(inline).toContain('--hit-r');
       // 若有人改从内联注入单边 padding/margin，就再也不是「两侧相消」了——锁住这条边界
       expect(inline).not.toMatch(/padding|margin|width:/);
+    });
+  });
+
+  // ---------- 纵向：条件抬高（v2）----------
+  //
+  // 抬高只有一个目的：撑开槽位，让两张 48px 盒不相撞。盒高 48 / 行距 19 时相隔 2 行
+  // （38px）仍会重叠 10px，所以判定窗口是 ±2 而不是 ±1。没有这个冲突就不抬，
+  // 热区直接溢到相邻的非按钮文本上——与横向同一取舍。
+  describe('纵向条件抬高', () => {
+    /** 该行是否被钉高（= 被抬到目标行高）。 */
+    function lifted(el: Element): boolean {
+      return /(^|;)\s*height:/.test(el.getAttribute('style') ?? '');
+    }
+    /** 该行自己覆盖的 --hit-v（px）——未覆盖时返回 null（说明用 .terminal 的默认值）。 */
+    function hitV(el: Element): number | null {
+      const m = /--hit-v:\s*(-?[\d.]+)px/.exec(el.getAttribute('style') ?? '');
+      return m ? Number(m[1]) : null;
+    }
+    /** 一个 2 列宽的按钮 part。 */
+    function btnAt(col: number, generation?: number) {
+      return { text: '選項', col, width: 2, ...(generation === undefined ? {} : { generation }) };
+    }
+
+    it('相邻两行同列按钮 → 两行都抬到 48px，纵向溢出归零（盒改由 min-height 铺满整槽）', async () => {
+      const wrapper = await mountTouch({ lines: [geoLine([btnAt(0)]), geoLine([btnAt(0)])] });
+      const rows = wrapper.findAll('.term-line');
+      expect(lifted(rows[0].element)).toBe(true);
+      expect(lifted(rows[1].element)).toBe(true);
+      expect(rows[0].attributes('style')).toContain('height: 48px');
+      expect(rows[1].attributes('style')).toContain('height: 48px');
+      // 抬高的行必须把纵向外扩归零，否则盒会再探出槽外压到上一行
+      expect(hitV(rows[0].element)).toBe(0);
+      expect(hitV(rows[1].element)).toBe(0);
+    });
+
+    it('相隔 2 行仍抬（48 > 行距 19 × 2 = 38，两盒还有 10px 重叠）——夹在中间的行不受影响', async () => {
+      const wrapper = await mountTouch({
+        lines: [geoLine([btnAt(0)]), line([{ text: '中間文本' }]), geoLine([btnAt(0)])],
+      });
+      const rows = wrapper.findAll('.term-line');
+      expect(lifted(rows[0].element)).toBe(true);
+      expect(lifted(rows[2].element)).toBe(true);
+      expect(lifted(rows[1].element)).toBe(false);
+    });
+
+    it('相隔 3 行（57px ≥ 48px 盒高）→ 都不抬，两行都保留原行距', async () => {
+      const wrapper = await mountTouch({
+        lines: [
+          geoLine([btnAt(0)]),
+          line([{ text: 'a' }]),
+          line([{ text: 'b' }]),
+          geoLine([btnAt(0)]),
+        ],
+      });
+      const rows = wrapper.findAll('.term-line');
+      expect(lifted(rows[0].element)).toBe(false);
+      expect(lifted(rows[3].element)).toBe(false);
+      // 不覆盖 --hit-v → 沿用 .terminal 上的默认值，热区照常纵向溢出
+      expect(hitV(rows[0].element)).toBe(null);
+    });
+
+    it('相隔 2 行但列不重叠 → 不抬（纵向重叠时列不重叠就不会误点）', async () => {
+      const wrapper = await mountTouch({
+        lines: [geoLine([btnAt(0)]), line([{ text: '中間文本' }]), geoLine([btnAt(20)])],
+      });
+      const rows = wrapper.findAll('.term-line');
+      expect(lifted(rows[0].element)).toBe(false);
+      expect(lifted(rows[2].element)).toBe(false);
+    });
+
+    it('失效按钮不参与纵向判定——同一位置换成历史回合按钮就不再抬', async () => {
+      const lines = (generation: number) => [
+        geoLine([btnAt(0)]),
+        line([{ text: '中間文本' }]),
+        geoLine([btnAt(0, generation)]),
+      ];
+      const stale = await mountTouch({ lines: lines(9), turnGeneration: 0 });
+      expect(lifted(stale.findAll('.term-line')[0].element)).toBe(false);
+
+      const live = await mountTouch({ lines: lines(0), turnGeneration: 0 });
+      expect(lifted(live.findAll('.term-line')[0].element)).toBe(true);
+    });
+
+    it('缺 col/width 的存活按钮视为占满整行 → 窗口内有其它存活按钮就抬（脏数据只多留白，不产生误点）', async () => {
+      const wrapper = await mountTouch({
+        lines: [geoLine([btnAt(0)]), line([{ text: '中間文本' }]), btnLine(0)],
+      });
+      const rows = wrapper.findAll('.term-line');
+      expect(lifted(rows[0].element)).toBe(true);
+      expect(lifted(rows[2].element)).toBe(true);
+    });
+
+    it('窗口随行距缩放——行距 10px 时 W = ceil(48/10) - 1 = 4：隔 4 行抬、隔 5 行不抬', async () => {
+      /** 两个按钮行，中间隔 gap-1 行文本——两行的行索引差即 gap。 */
+      const withGap = (gap: number) => [
+        geoLine([btnAt(0)]),
+        ...Array.from({ length: gap - 1 }, (_, i) => line([{ text: `t${i}` }])),
+        geoLine([btnAt(0)]),
+      ];
+      const within = await mountTouch({ lines: withGap(4), lineHeight: 10 });
+      const rows4 = within.findAll('.term-line');
+      expect(rows4).toHaveLength(5);
+      expect(lifted(rows4[0].element)).toBe(true);
+      expect(lifted(rows4[4].element)).toBe(true);
+
+      const beyond = await mountTouch({ lines: withGap(5), lineHeight: 10 }); // 行索引差 5 → 50px ≥ 48px
+      const rows5 = beyond.findAll('.term-line');
+      expect(rows5).toHaveLength(6);
+      expect(lifted(rows5[0].element)).toBe(false);
+      expect(lifted(rows5[5].element)).toBe(false);
+    });
+
+    it('游戏自身行距已 ≥ 48px → 既不抬也不纵向溢出（冷路径：--hit-v 0）', async () => {
+      const wrapper = await mountTouch({
+        lines: [geoLine([btnAt(0)]), geoLine([btnAt(0)])],
+        lineHeight: 60,
+      });
+      const terminalStyle = wrapper.find('.terminal').attributes('style') ?? '';
+      expect(terminalStyle).toContain('--hit-v: 0px');
+      for (const row of wrapper.findAll('.term-line')) expect(lifted(row.element)).toBe(false);
     });
   });
 });
