@@ -10,9 +10,9 @@
  *
  * 1. `computeLineHitExpansions`——每个有效按钮**左右**各能外扩多少列：按钮自身已够宽
  *    就零外扩；两侧余量不足就少扩甚至不扩；只有真的有余量才扩。
- * 2. `computeLineExtras`——哪些行需要**纵向**被撑高。撑高只是为了给 48px 高的按钮盒
- *    腾出槽位；竖向邻居没有「列区间重叠」的按钮时不必撑高，热区直接溢出到相邻的
- *    非按钮文本上（与横向同一取舍：文本不是点击目标，被盖住几乎零成本）。
+ * 2. `computeVerticalLayout`——哪些行需要**纵向**被撑高、哪些行需要把纵向热区**收窄**。
+ *    按钮盒恒为一个触控目标高；撑高只是为了撑开槽位让两张盒不相撞，而相隔较远的冲突
+ *    改用「收窄热区」解决——两者都不动文字位置，也不把非按钮文本挤开。
  *
  * 几何来源是快照里**已有**的 `ButtonRef.col` / `width`（行内 0-based 列，全角占 2 列，
  * 由 C# `ConsolePrintManager.BuildPrintOpsForLine` 统一计算、快照与增量 ops 一致透传）——
@@ -132,7 +132,7 @@ export function computeLineHitExpansions(
 
 // ---------- 纵向：哪些行需要被撑高 ----------
 
-export interface LineExtrasOptions {
+export interface VerticalLayoutOptions {
   /** 基准行高（px，含缩放）——游戏自身的 LineHeight × effectiveScale。 */
   rowHeightPx: number;
   /** 触控目标行高（px，含缩放）——`max(LineHeight, 48)` × effectiveScale。 */
@@ -185,16 +185,44 @@ function linesOverlap(a: LiveLine, b: LiveLine): boolean {
   return false;
 }
 
+/** 一行的纵向排版决策。 */
+export interface VerticalLayout {
+  /**
+   * 需要被撑高的行 → 基准行高之上额外增加的像素。无人需要撑高时为 `null`
+   * （调用方据此让虚拟滚动走定高快路径）。
+   */
+  extras: Map<number, number> | null;
+  /**
+   * 需要**收窄**纵向热区的行 → 一侧外扩量（px）。缺席 = 用满额。
+   * 只含真正被收窄（值小于满额）的行。
+   */
+  narrowed: Map<number, number>;
+}
+
+/** 无任何纵向改动时的共享空布局——调用方只读（`narrowed` 是共享的空表，勿写入）。 */
+export const NO_VERTICAL_LAYOUT: VerticalLayout = { extras: null, narrowed: new Map<number, number>() };
+
 /**
- * 算出哪些行需要在基准行高之上额外撑高，以及各撑高多少（px）——`行号 → extra`。
+ * 算出每行的纵向排版决策——**抬高**哪些行、**收窄**哪些行的纵向热区。
  *
- * 判定（唯一规则）：**某行有存活按钮，且纵向 ±W 行内存在列区间与它重叠的存活按钮**
- * 时才撑高；否则该行维持基准行高，48px 热区直接溢到相邻的文本行上（非按钮文本被
- * 盖住是可以接受的代价，横向同此取舍——见 `computeLineHitExpansions` 的注释）。
+ * 统一的前提：按钮盒高恒为 `targetRowPx`，且以文字行为中心向上下各长
+ * `(targetRowPx - rowHeightPx) / 2`（见 `.term-btn-touch`）。于是两行按钮盒是否相撞
+ * 只取决于两者槽位的纵向距离。
  *
- * 为什么要撑：两张 48px 盒在重叠列上会互相覆盖，命中归属由 DOM 顺序决定，
- * 行为不可预测（Chromium 实测：相邻两行叠 29px，48px 里有一半点下去落到隔壁按钮）；
- * 撑高后两槽各 48px、盒子正好相切，命中边界就是槽边界。
+ * 两条处置，按冲突距离分工：
+ *
+ * 1. **相邻两行（k = 1）冲突 → 两行都撑高**（`extras`）。这是唯一真正的取舍：不撑高
+ *    两个盒必然互相覆盖（各向对方长 14.5px，必然交叠），撑高后两槽各一个盒高、盒子
+ *    正好相切，命中边界就是槽边界（Chromium 实测：不撑时 48px 里有一半点下去落到
+ *    隔壁按钮）。代价是每行多出 `target - rowHeight` 的空白——这是「大热区」的价钱。
+ * 2. **相隔 k ≥ 2 行冲突 → 都不撑高，改成把纵向热区收窄到 `(k-1) × rowHeight / 2`**
+ *    （`narrowed`）。这时可用空间已经存在，撑高是过度反应：默认行距 19px、隔 1 行时
+ *    两盒只重叠 10px，撑高两行要多花 29px 空白去消它。收窄后两盒正好相切——
+ *    证明：两槽起点差 `k·r`，各自向对方长 `c`，相切条件 `r + 2c = k·r` 即
+ *    `c = (k-1)·r / 2`，正是收窄量。
+ *    - 收窄**对称**（上下同值）：既省一个 CSS 变量，也让盒仍以文字行居中；代价是
+ *      未被冲突约束的那一侧少长几像素（k = 2、行距 19 时盒 38px 而非 43px）。
+ *    - 若某一方已被撑高（因另一处相邻冲突），该约束自动满足，不再收窄对方。
  *
  * 其余语义：
  * - **只有存活按钮参与**：失效按钮不套触控盒，没有重叠风险。这与横向「任何带几何的
@@ -202,15 +230,18 @@ function linesOverlap(a: LiveLine, b: LiveLine): boolean {
  *   按钮文字（视觉理由），这里则是纯粹的命中几何。
  * - 存活按钮缺 `col`/`width`：视为占满整行 → 与窗口内任何存活按钮都判为重叠
  *   （多留白的保守方向，符合「脏数据只导致没放大、不导致点错」）。
- * - 冲突**对称**：一对冲突双方都抬，冲突对被彻底消除。
- * - 返回表只含需要撑高的行；无人需要撑高时返回 `null`（调用方据此走定高快路径）。
+ * - 冲突**对称**：一对冲突双方的处置一致，冲突对被彻底消除。
  */
-export function computeLineExtras(
+export function computeVerticalLayout(
   lines: readonly DisplayLine[],
-  opts: LineExtrasOptions,
-): Map<number, number> | null {
-  const extra = Math.max(0, opts.targetRowPx - opts.rowHeightPx);
-  if (extra <= 0) return null;
+  opts: VerticalLayoutOptions,
+): VerticalLayout {
+  const grow = Math.max(0, opts.targetRowPx - opts.rowHeightPx);
+  // 游戏自身行距已达目标（grow = 0）→ 无冲突可言，纵向什么都不用做。
+  if (grow <= 0) return NO_VERTICAL_LAYOUT;
+
+  const windowRows = conflictWindowRows(opts.targetRowPx, opts.rowHeightPx);
+  if (windowRows <= 0) return NO_VERTICAL_LAYOUT;
 
   // 先收「哪些行有存活按钮」及其列区间——绝大多数行没有按钮，这一步就把它们筛掉。
   const live: LiveLine[] = [];
@@ -232,25 +263,50 @@ export function computeLineExtras(
     }
     if (spans) live.push({ index: i, spans, unbounded });
   }
-  if (live.length === 0) return null;
+  if (live.length === 0) return NO_VERTICAL_LAYOUT;
 
-  const windowRows = conflictWindowRows(opts.targetRowPx, opts.rowHeightPx);
-  if (windowRows <= 0) return null;
+  const r = opts.rowHeightPx;
 
-  // live 按行号升序，故内层一旦超出窗口即可跳出。
+  // 第一遍：相邻（k = 1）冲突 → 撑高。live 按行号升序，内层越界即跳出。
   const lifted = new Set<number>();
   for (let a = 0; a < live.length; a++) {
     for (let b = a + 1; b < live.length; b++) {
-      if (live[b].index - live[a].index > windowRows) break;
-      if (linesOverlap(live[a], live[b])) {
+      const k = live[b].index - live[a].index;
+      if (k > windowRows) break;
+      if (k === 1 && linesOverlap(live[a], live[b])) {
         lifted.add(live[a].index);
         lifted.add(live[b].index);
       }
     }
   }
-  if (lifted.size === 0) return null;
 
-  const extras = new Map<number, number>();
-  for (const index of lifted) extras.set(index, extra);
-  return extras;
+  // 第二遍：k ≥ 2 冲突 → 收窄（双方都未被撑高时才需要）。
+  const narrowed = new Map<number, number>();
+  const capFor = (k: number) => ((k - 1) * r) / 2;
+  for (let a = 0; a < live.length; a++) {
+    for (let b = a + 1; b < live.length; b++) {
+      const k = live[b].index - live[a].index;
+      if (k > windowRows) break;
+      if (k < 2 || !linesOverlap(live[a], live[b])) continue;
+      if (lifted.has(live[a].index) || lifted.has(live[b].index)) continue;
+      const cap = capFor(k);
+      for (const index of [live[a].index, live[b].index]) {
+        const prev = narrowed.get(index);
+        if (prev === undefined || cap < prev) narrowed.set(index, cap);
+      }
+    }
+  }
+
+  // 收窄量不小于满额时等于没收窄——不注入，避免无谓的内联样式。
+  const half = grow / 2;
+  for (const [index, cap] of [...narrowed]) {
+    if (cap >= half) narrowed.delete(index);
+  }
+
+  const extras: Map<number, number> | null = lifted.size === 0 ? null : new Map<number, number>();
+  if (extras) {
+    for (const index of lifted) extras.set(index, grow);
+  }
+
+  return { extras, narrowed };
 }
