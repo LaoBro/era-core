@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Utils;
 using Xunit;
@@ -9,7 +11,7 @@ using Xunit;
 namespace MinorShift.Emuera.Tests;
 
 /// <summary>
-/// 配置写盘政策：**产品代码里没有任何自动 <c>SaveConfig</c> 调用方**——加载期三源合并、语言探测
+/// 配置读/写侧政策：**产品代码里没有任何自动 <c>SaveConfig</c> 调用方**——加载期三源合并、语言探测
 /// （<c>Lang.SetLanguage</c>）、<c>/load-game</c>、设置页都不得触碰玩家游戏目录里的 emuera.config，
 /// 玩家未手动设置时该文件必须逐字节不变。
 ///
@@ -21,7 +23,9 @@ namespace MinorShift.Emuera.Tests;
 ///
 /// 配套钉子：
 /// <list type="bullet">
+/// <item>中文键名经 <see cref="ConfigKeyAliases"/> 别名表被识别（值真正生效，不只是"不报未知"）；</item>
 /// <item>未识别键登记进 <see cref="ConfigData.UnknownConfigKeys"/>（发聚合告警而非静默丢弃）；</item>
+/// <item>文件编码不是 UTF-8 时另发一条专门告警（与"作者写了别的键名"区分）；</item>
 /// <item>主 config 的未识别原始行在**显式** SaveConfig 时原样回写（不抹掉其它分支的专有键）；</item>
 /// <item>ONCE 的变更判据改寄生到 IR 指纹：<see cref="ConfigData.ApplyReduceArgumentOnLoad"/> 真值表。</item>
 /// </list>
@@ -30,15 +34,28 @@ namespace MinorShift.Emuera.Tests;
 public class ConfigWritePolicyTests
 {
 	/// <summary>
-	/// 简体中文分支形态的 config：三源里绝大多数键名本引擎都不认，只有一行是日文键名（部分识别形态）。
-	/// 末行含 ONCE——旧实现下它会因「最終更新コード 失配」触发整份重写，是本次回归的关键触发器。
+	/// 简体中文分支写出的键名（前 3 行 + useLanguage 现已由别名表识别），末行是日文键名、含 ONCE
+	/// ——旧实现下 ONCE 会因「最終更新コード 失配」触发整份重写，是本次回归的关键触发器。
 	/// </summary>
 	private const string CnStyleConfig =
 		"忽略大小写:YES\n" +
 		"启用鼠标:YES\n" +
 		"在sav文件夹中创建存档:YES\n" +
-		"全部以UTF-8编码读入文件:YES\n" +
+		"记录日志的行数:10000\n" +
+		"窗口宽度:1330\n" +
+		"内部使用东亚语言:CHINESE_HANS\n" +
 		"ロード時に引数を解析する:ONCE\n";
+
+	/// <summary>
+	/// 含**本引擎确实没有**的键（中文分支独有的 UTF-8 开关 + 本分支已移除的两项）——
+	/// 用于钉"登记 + 聚合告警 + 显式保存原样回写"，这些键即使填了别名表也仍应无法识别。
+	/// </summary>
+	private const string ConfigWithUnsupportedKeys =
+		"忽略大小写:YES\n" +
+		"全部以UTF-8编码读入文件:YES\n" +
+		"全部以UTF-8编码输出文件:YES\n" +
+		"以UTF-8格式保存存档:NO\n" +
+		"死循环超时警告(毫秒):5000\n";
 
 	[Fact]
 	public void LoadConfig_never_writes_the_game_config()
@@ -65,38 +82,93 @@ public class ConfigWritePolicyTests
 		Assert.False(File.Exists(Path.Combine(game.Root, "emuera.config")));
 	}
 
+	/// <summary>
+	/// 别名不是"不报未知"而已——中文键名的值必须真正落到对应配置项上。
+	/// 这几项正是当初读不到值导致行为偏差的典型（存档目录 / 东亚语言 / 日志行数 / 窗口宽度）。
+	/// </summary>
 	[Fact]
-	public void Unrecognized_keys_are_collected_not_dropped()
+	public void Chinese_keys_actually_apply_through_aliases()
 	{
 		using var game = new TempGameDir();
 		game.Write("emuera.config", CnStyleConfig);
 
 		Assert.True(game.Load());
 
+		var config = ConfigData.Current!;
+		Assert.True(config.GetConfigValue<bool>(ConfigCode.UseSaveFolder), "「在sav文件夹中创建存档」应生效");
+		Assert.Equal(UseLanguage.CHINESE_HANS, config.GetConfigValue<UseLanguage>(ConfigCode.useLanguage));
+		Assert.Equal(10000, config.GetConfigValue<int>(ConfigCode.MaxLog));
+		Assert.Equal(1330, config.GetConfigValue<int>(ConfigCode.WindowX));
+		// 别名表命中后就不该再出现在"未知键"名单里
+		Assert.DoesNotContain(config.UnknownConfigKeys, k => k.Key == "忽略大小写");
+	}
+
+	[Fact]
+	public void Unrecognized_keys_are_collected_not_dropped()
+	{
+		using var game = new TempGameDir();
+		game.Write("emuera.config", ConfigWithUnsupportedKeys);
+
+		Assert.True(game.Load());
+
 		var keys = ConfigData.Current!.UnknownConfigKeys;
-		Assert.Contains(keys, k => k.Key == "忽略大小写");
+		// 本引擎确实没有的键仍要登记（别名表只覆盖"本引擎有的项"）
 		Assert.Contains(keys, k => k.Key == "全部以UTF-8编码读入文件");
-		// 本引擎认识的键不得进名单（否则告警会误报）
-		Assert.DoesNotContain(keys, k => k.Key == "ロード時に引数を解析する");
+		Assert.Contains(keys, k => k.Key == "死循环超时警告(毫秒)");
+		// 已由别名识别的键不得进名单（否则告警会误报）
+		Assert.DoesNotContain(keys, k => k.Key == "忽略大小写");
 		// 行号与来源文件都要能定位
 		Assert.All(keys, k => Assert.Equal("emuera.config", k.File));
-		Assert.Contains(keys, k => k.Key == "忽略大小写" && k.Line == 1);
+		Assert.Contains(keys, k => k.Key == "全部以UTF-8编码读入文件" && k.Line == 2);
 	}
 
 	[Fact]
 	public void Explicit_save_round_trips_unrecognized_lines()
 	{
 		using var game = new TempGameDir();
-		game.Write("emuera.config", CnStyleConfig);
+		game.Write("emuera.config", ConfigWithUnsupportedKeys);
 
 		Assert.True(game.Load());
 		Assert.True(ConfigData.Current!.SaveConfig());
 
 		string saved = File.ReadAllText(Path.Combine(game.Root, "emuera.config"), Encoding.UTF8);
-		// 其它分支的专有键必须原样保留——显式保存也不得抹掉本引擎不认识的行
+		// 本引擎不认识的专有键必须原样保留——显式保存也不得抹掉别人的行
 		Assert.Contains("全部以UTF-8编码读入文件:YES", saved);
-		Assert.Contains("忽略大小写:YES", saved);
-		Assert.Contains("在sav文件夹中创建存档:YES", saved);
+		Assert.Contains("全部以UTF-8编码输出文件:YES", saved);
+		Assert.Contains("死循环超时警告(毫秒):5000", saved);
+		// 已识别的项按本引擎的键名（Text）规范化写出——别名是读侧映射，不是写侧改名
+		Assert.Contains("大文字小文字の違いを無視する:YES", saved);
+	}
+
+	/// <summary>
+	/// 编码不是 UTF-8（如 GBK 写出的中文键名配置）时必须**专门告警**：键名解不出来是编码问题，
+	/// 不是"作者写了别的键名"。此路径同时验证解码抛异常不会打崩启动。
+	/// </summary>
+	[Fact]
+	public void Non_utf8_config_reports_an_encoding_warning()
+	{
+		Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+		using var game = new TempGameDir();
+		File.WriteAllBytes(
+			Path.Combine(game.Root, "emuera.config"),
+			Encoding.GetEncoding(936).GetBytes(CnStyleConfig)); // GBK
+
+		var warnings = new List<string>();
+		EmueraLog.SetPlatformSink((level, line) =>
+		{
+			if (level >= EmueraLog.Level.Warn)
+				warnings.Add(line);
+		});
+		try
+		{
+			_ = game.Load(); // 不崩即达标（解码失败由 loadConfig 兜成告警）
+		}
+		finally
+		{
+			EmueraLog.SetPlatformSink(null);
+		}
+
+		Assert.Contains(warnings, l => l.Contains("编码不是 UTF-8"));
 	}
 
 	/// <summary>

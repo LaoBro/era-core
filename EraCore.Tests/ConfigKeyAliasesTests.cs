@@ -40,6 +40,11 @@ public class ConfigKeyAliasesTests
 		var declared = new Dictionary<string, ConfigCode>(StringComparer.Ordinal);
 		foreach (var (code, aliases) in ConfigKeyAliases.All)
 		{
+			// 别名只在"该 ConfigCode 真实存在"时才会被投影进索引（BuildIndex 对取不到的项直接跳过）——
+			// 死条目不报错但等于白填，故显式钉住。
+			Assert.True(config.GetConfigItem(code) != null,
+				$"{code} 有别名声明，但本引擎没有这个配置项（别名会被静默丢弃）");
+
 			foreach (string alias in aliases)
 			{
 				Assert.False(string.IsNullOrWhiteSpace(alias), $"{code} 声明了空别名");

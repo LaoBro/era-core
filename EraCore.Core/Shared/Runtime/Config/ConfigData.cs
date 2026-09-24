@@ -1079,6 +1079,11 @@ internal sealed class ConfigData
 	/// <see cref="UnknownConfigKeys"/> 并发出一条**聚合告警**（不再静默丢弃）；主 config
 	/// （<paramref name="role"/> = <see cref="ConfigSourceRole.Main"/>）的未识别**原始行**另
 	/// 留存一份，供显式 <see cref="SaveConfig()"/> 原样回写。
+	/// <para>
+	/// 另做一次**编码体检**：本引擎与各本地化分支写出的 config 恒为 UTF-8。文件不是 UTF-8 时
+	/// 键名可能因编码不符而解不出来，此时（且确有键名无法识别）追加一条专门告警——把"编码坏了"
+	/// 和"作者写了别的键名"区分开。
+	/// </para>
 	/// </summary>
 	/// <param name="role">来源角色：决定是否强制项（fixed）与是否留存原始行（main）。</param>
 	private bool loadConfig(string confPath, ConfigSourceRole role)
@@ -1087,14 +1092,35 @@ internal sealed class ConfigData
 		// SAF：必须用 SafCompat / DirAccessor，File.Exists(content://) 恒 false
 		if (!ConfigFileExists(confPath))
 			return false;
-		using var eReader = new EraStreamReader(false);
-		if (!eReader.Open(confPath))
-			return false;
-		ScriptPosition? pos = null;
 		string logicalName = SafPath.GetLogicalFileName(confPath);
+		// 编码体检（只读一次原始字节，经 accessor 故本地/SAF 同源）：0 = 读不到，跳过体检。
+		int configCodePage = 0;
+		var probeAccessor = GamePaths.Current?.DirAccessor;
+		if (probeAccessor != null && probeAccessor.ReadAllBytes(confPath) is { Length: > 0 } rawBytes)
+			configCodePage = EncodingHandler.DetectEncoding(rawBytes).CodePage;
 		int unknownStart = _unknownKeys.Count;
+		// 编码不符的专门告警：把"编码坏了（键名根本没解对）"与"作者写了别的键名"区分开。
+		// 三个触发点——整份读不了 / 解析抛异常 / 有键名认不出；纯非 UTF-8 但全部识别成功
+		//（如日文 SJIS 配置）属正常，不打扰。
+		void WarnEncodingSuspect()
+		{
+			if (configCodePage == 0 || configCodePage == EncodingHandler.UTF8Encoding.CodePage)
+				return;
+			EmueraLog.Warn("Config",
+				$"{logicalName}: 该文件编码不是 UTF-8（检测为代码页 {configCodePage}）——键名很可能因编码不符而损坏；" +
+				"把它转成 UTF-8 保存即可（中文键名与日文键名本引擎都能识别）");
+		}
+		using var eReader = new EraStreamReader(false);
+		ScriptPosition? pos = null;
 		try
 		{
+			// Open 放进 try：非 UTF-8 文件在严格逐字节解码下可能直接抛（GBK 撞上非法 SJIS 序列等），
+			// 不能让它把启动打崩——按"这份 config 读不了"处理并告警。
+			if (!eReader.Open(confPath))
+			{
+				WarnEncodingSuspect();
+				return false;
+			}
 			string line = null!;
 			//bool defineIgnoreWarningFiles = false;
 			while ((line = eReader.ReadLine()) != null)
@@ -1173,10 +1199,12 @@ internal sealed class ConfigData
 			// 不用 ParserMediator.ConfigWarn：它在启动首轮读 Config.Current（尚未 SetCurrent）会 NPE，
 			// 且 console 未绑定会静默丢弃。EmueraLog 无配置依赖，直达 stderr + agent.log。
 			EmueraLog.Warn("Config", $"{logicalName}: 配置行解析失败（第 {pos?.LineNo ?? 0} 行）: {ee.Message}");
+			WarnEncodingSuspect();
 		}
 		catch (Exception exc)
 		{
 			EmueraLog.Warn("Config", $"{logicalName}: 配置行解析异常（第 {pos?.LineNo ?? 0} 行）: {exc.GetType().Name}: {exc.Message}");
+			WarnEncodingSuspect();
 		}
 		finally { eReader.Dispose(); }
 
@@ -1188,6 +1216,7 @@ internal sealed class ConfigData
 			string tail = unknownCount > previewLimit ? $"，…（共 {unknownCount} 项）" : "";
 			EmueraLog.Warn("Config",
 				$"{logicalName}: {unknownCount} 个配置项无法识别，已按引擎默认值处理（不写回文件）: {preview}{tail}");
+			WarnEncodingSuspect();
 		}
 		return true;
 	}
