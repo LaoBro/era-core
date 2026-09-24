@@ -68,5 +68,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/__tests__/**/*.test.ts'],
+    // 补 Node 22+ 自带 `localStorage` 全局导致 happy-dom 那份装不进来的缺口——
+    // 原因与取舍见 src/test-setup.ts 顶部说明。
+    setupFiles: ['./src/test-setup.ts'],
   },
 });
