@@ -68,6 +68,28 @@ public class ErbIrCacheTests
 		Assert.NotEqual(baseline, withRename);
 	}
 
+	/// <summary>
+	/// 指纹**不得**依赖 NeedReduceArgumentOnLoad（NR）：NR 现在是由本指纹的命中结果反推的
+	///（ONCE：命中 = 源未变 ⇒ 跳过全量参数解析；未命中 ⇒ 强制），若它仍参与哈希即构成循环依赖
+	///（指纹→命中→NR→指纹）。移除是安全的：NR 只决定"何时解析参数"，不改 blob 内容。
+	/// </summary>
+	[Fact]
+	public void Fingerprint_is_independent_of_NeedReduceArgumentOnLoad()
+	{
+		using var _ = OpenScope();
+		var config = ConfigData.Current!;
+
+		config.ApplyReduceArgumentOnLoad(ReduceArgumentOnLoadFlag.NO, irHit: false);
+		Assert.False(config.NeedReduceArgumentOnLoad);
+		long nrOff = ErbIrCache.ComputeContentFingerprint(Files, null);
+
+		config.ApplyReduceArgumentOnLoad(ReduceArgumentOnLoadFlag.YES, irHit: false);
+		Assert.True(config.NeedReduceArgumentOnLoad);
+		long nrOn = ErbIrCache.ComputeContentFingerprint(Files, null);
+
+		Assert.Equal(nrOff, nrOn);
+	}
+
 	[Theory]
 	[InlineData(false, false, false, false)]
 	[InlineData(false, false, true, false)]

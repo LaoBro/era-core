@@ -1,6 +1,5 @@
-﻿using System;
+using System;
 using System.IO;
-using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Runtime.Config;
@@ -17,60 +16,11 @@ public sealed class SafStage3CompatibilityTests
 	private const string Root =
 		"content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FStage3";
 
-	[Fact]
-	public void Saf_update_key_is_stable_and_tracks_logical_file_set()
-	{
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
-		using var scope = new GamePathsScope(Root, accessor);
-		var erbDir = SafCompat.ResolveSubPath(Root, "erb");
-		var csvDir = SafCompat.ResolveSubPath(Root, "csv");
-		SafCompat.CreateDirectory(erbDir);
-		SafCompat.CreateDirectory(csvDir);
-		accessor.Seed(SafCompat.CombinePath(erbDir, "MAIN.ERB"), [1]);
-		accessor.Seed(SafCompat.CombinePath(csvDir, "GAMEBASE.CSV"), [2]);
-
-		var method = typeof(ConfigData).GetMethod(
-			"getSafUpdateKey", BindingFlags.Static | BindingFlags.NonPublic)
-			?? throw new MissingMethodException(typeof(ConfigData).FullName, "getSafUpdateKey");
-		var first = (long)method.Invoke(null, [SearchOption.AllDirectories])!;
-		var second = (long)method.Invoke(null, [SearchOption.AllDirectories])!;
-
-		Assert.Equal(first, second);
-		accessor.Seed(SafCompat.CombinePath(erbDir, "NEW.ERB"), [3]);
-		var changed = (long)method.Invoke(null, [SearchOption.AllDirectories])!;
-		Assert.NotEqual(first, changed);
-	}
-
-	[Fact]
-	public void Saf_update_key_failure_does_not_block_startup()
-	{
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
-		using var scope = new GamePathsScope(Root, accessor);
-		GamePaths.Current.DirAccessor = null!;
-
-		var method = typeof(ConfigData).GetMethod(
-			"getSafUpdateKey", BindingFlags.Static | BindingFlags.NonPublic)
-			?? throw new MissingMethodException(typeof(ConfigData).FullName, "getSafUpdateKey");
-		var key = (long)method.Invoke(null, [SearchOption.TopDirectoryOnly])!;
-
-		Assert.Equal(0, key);
-	}
-
-	[Fact]
-	public void Saf_once_update_sets_the_runtime_reduction_flag()
-	{
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
-		using var scope = new GamePathsScope(Root, accessor);
-		using var globals = GlobalStatic.OpenScope(new ConfigData());
-		var config = ConfigData.Current!;
-		SafCompat.CreateDirectory(SafCompat.ResolveSubPath(Root, "erb"));
-		SafCompat.CreateDirectory(SafCompat.ResolveSubPath(Root, "csv"));
-		accessor.Seed(SafCompat.CombinePath(SafCompat.ResolveSubPath(Root, "erb"), "MAIN.ERB"), [1]);
-
-		config.GetConfigItem(ConfigCode.ReduceArgumentOnLoad).SetValue(ReduceArgumentOnLoadFlag.ONCE);
-		Assert.True(config.CheckUpdate());
-		Assert.True(config.NeedReduceArgumentOnLoad);
-	}
+	// 原 `Saf_update_key_is_stable_and_tracks_logical_file_set` / `Saf_update_key_failure_does_not_block_startup`
+	// 随 ConfigData.getSafUpdateKey 一起移除：ONCE 的变更判据已寄生到 IR 指纹（ErbIrCache.ComputeContentFingerprint
+	// + ErbLoader 的 pending 清单），SAF 侧的覆盖见 ErbIrCacheTests（fromTree vs fromCache 指纹一致）
+	// 与 FileSystemGameDirAccessorPatternTests。原 `Saf_once_update_sets_the_runtime_reduction_flag`
+	// 改写到 ConfigWritePolicyTests（新口径：NR 由 IR 命中结果决定，且任何加载路径都不得写盘）。
 
 	[Fact]
 	public void Saf_language_generation_writes_through_the_game_accessor()

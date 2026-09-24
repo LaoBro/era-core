@@ -42,19 +42,27 @@ public class SafStage2StorageTests
 		Assert.True(accessor.FileExists(SafCompat.CombinePath(Root, "macro.txt")));
 	}
 
+	/// <summary>
+	/// 加载一个没有 emuera.config 的 SAF 游戏：**不得创建**该文件——写盘政策是"玩家未手动设置时
+	/// 绝不修改游戏目录"，缺失时全部走内存默认值（原版 Emuera 会创建它自己的那份）。
+	/// 同时断言加载不会跨游戏根写入：另一个根下既有的 config 不受影响。
+	/// </summary>
 	[Fact]
-	public void Loading_a_new_SAF_game_creates_its_missing_config_in_that_game_root()
+	public void Loading_a_new_SAF_game_does_not_create_a_config()
 	{
 		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
 		using var gamePaths = new GamePathsScope(Root, accessor);
 		var config = new ConfigData();
 		using var globals = GlobalStatic.OpenScope(config);
+		// 显式保存（唯一允许的写盘入口）在 Root 下建出一份，作为"别动我"的对照物
+		Assert.True(config.SaveConfig());
+		Assert.True(accessor.FileExists(SafCompat.CombinePath(Root, "emuera.config")));
 
 		_ = GamePaths.Resolve(OtherRoot, accessor);
 		Assert.True(config.LoadConfig(OtherRoot));
 
-		Assert.True(accessor.FileExists(SafCompat.CombinePath(OtherRoot, "emuera.config")));
-		Assert.False(accessor.FileExists(SafCompat.CombinePath(Root, "emuera.config")));
+		Assert.False(accessor.FileExists(SafCompat.CombinePath(OtherRoot, "emuera.config")));
+		Assert.True(accessor.FileExists(SafCompat.CombinePath(Root, "emuera.config")));
 	}
 
     [Fact]

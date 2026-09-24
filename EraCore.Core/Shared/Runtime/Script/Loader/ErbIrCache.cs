@@ -103,7 +103,10 @@ internal static class ErbIrCache
 		h = Fnv1a(h, Config.Config.UseRenameFile ? "RF1" : "RF0");
 		h = Fnv1a(h, Config.Config.UseReplaceFile ? "RP1" : "RP0");
 		h = Fnv1a(h, ((int)Config.Config.ReduceArgumentOnLoad).ToString(System.Globalization.CultureInfo.InvariantCulture));
-		h = Fnv1a(h, Config.Config.NeedReduceArgumentOnLoad ? "NR1" : "NR0");
+		// 注意：曾经把 NeedReduceArgumentOnLoad（NR）也哈希进来，现已移除——NR 现在**由本指纹的
+		// 命中结果反推**（ONCE：命中⇒NR=false，未命中⇒NR=true，见 ConfigData.ApplyReduceArgumentOnLoad），
+		// 若仍参与哈希即构成循环依赖。移除是安全的：NR 只决定"何时解析参数"（加载期预解析 vs 首次执行），
+		// 不改变 blob 内容（blob = 源文本 + 由 @/# 行得出的签名）。
 		h = Fnv1a(h, Config.Config.SystemIgnoreTripleSymbol ? "T3" : "T0");
 		// SearchSubdirectory（issues/12 M4 起）：firstDir 清单是扫描结果的存储形态，其口径受本配置影响
 		//（TopDirectoryOnly 只扫 erb 根级 *#*）——不改则清单跨配置陈旧、firstDir 优先序漂移。

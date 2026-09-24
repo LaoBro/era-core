@@ -407,6 +407,8 @@ string[] csvFiles = Directory.GetFiles(Program.CsvDir, "*.CSV", option); // ← 
 
 **解决**：本地分支改走 `GamePaths.Current.DirAccessor.GetFiles(...)`（保留 `File.GetLastWriteTime` 的 mtime 语义）。同类剩余（`SafCompat.GetFiles/EnumerateFiles` 的本地分支，3 个调用点）另立 issues/21，不扩大本次范围。
 
+**后续（2026-09-25）**：`ConfigData.getUpdateKey`/`getSafUpdateKey` 已随「配置写盘政策」一并删除——`ReduceArgumentOnLoad=ONCE` 的变更判据改寄生到 IR 指纹（`ErbIrCache.ComputeContentFingerprint` + `ErbLoader.BuildPendingList`），本教训的两条守卫由 `ErbIrCacheTests` / `FileSystemGameDirAccessorPatternTests` / `WildcardTests` 承接。
+
 **教训**：
 - **改抽象层实现后，必须 grep 该抽象对应原始 API 的直连调用点**（`Directory.GetFiles`/`File.Exists`/`Path.GetFileName`…），逐个确认是否真在抽象内——否则修的是「抽象的效果」，不是「行为」。`grep -rn --include=*.cs 'Directory\.GetFiles' EraCore.Core` 一行就能列全。
 - 违反契约的调用点常常**在两种模式下都「能工作」**（被平台的大小写不敏感掩盖），只在第三种组合下分叉 → 缺陷不报错、不崩、CI 绿，只能靠调用点审计发现，不能靠症状定位。

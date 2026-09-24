@@ -89,7 +89,8 @@ internal enum ConfigCode
 	// 内新增可检）。FALSE = 命中轮回到懒读现状；建库轮写侧不受影响。
 	SrcContentCache = 304,
 	ChangeMasterNameIfDebug = 34,
-	LastKey = 35,
+	// 35 曾为 LastKey（最終更新コード）——已移除：ONCE 的变更判据改寄生到 IR 指纹，
+	// 本引擎不再读写该键（见 ConfigData.ApplyReduceArgumentOnLoad / LoadConfigCore 的写回策略）。
 	ButtonWrap = 36,
 	SearchSubdirectory = 37,
 	SortWithFilename = 38,

@@ -361,7 +361,7 @@ internal sealed class ErbLoader
 				$"firstDirSrc={(irFirstDirs != null ? $"ir({irFirstDirs.Count})" : "scan")} " +
 				$"fileListSrc={(irFileList != null ? $"ir({irFileList.Count})" : "enum")} " +
 				$"ic={Config.Config.IgnoreCase} rf={Config.Config.UseRenameFile} rp={Config.Config.UseReplaceFile} " +
-				$"ra={(int)Config.Config.ReduceArgumentOnLoad} nr={Config.Config.NeedReduceArgumentOnLoad} " +
+				$"ra={(int)Config.Config.ReduceArgumentOnLoad} " +
 				$"t3={Config.Config.SystemIgnoreTripleSymbol} rename={ParserMediator.RenameDic.Count}");
 			return hit;
 		}
@@ -523,6 +523,13 @@ internal sealed class ErbLoader
 				}
 				EmueraLog.Info("ErbIrCache", $"ir hit={_ir.Available} files={pending.Count} fp={irFp:x16}");
 			}
+			// ReduceArgumentOnLoad=ONCE 的"上次启动以来源有没有变"判据寄生到 IR 指纹：
+			// 命中 = 指纹一致 = 源未变（本地路径下指纹含逐文件 mtime）→ 跳过全量参数解析；
+			// 未命中（首次运行／源变更／IR 未启用）→ 强制全量参数解析。必须在任何参数解析之前
+			// （生成期与 ParseScript 三遍都在此后），故此处是唯一正确的位置。
+			ConfigData.Current!.ApplyReduceArgumentOnLoad(
+				Config.Config.ReduceArgumentOnLoad,
+				irHit: irEnabled && _ir is { Available: true });
 			// lazy-function-load：建立 逻辑文件名→物理路径 映射（Position.Filename 与 fname 同源）。
 			// 须用 IR 判定后的最终 pending——issues/12 M4 的 miss 兜底可能在上方重建过清单。
 			_filePathByLogical = new(StringComparer.OrdinalIgnoreCase);

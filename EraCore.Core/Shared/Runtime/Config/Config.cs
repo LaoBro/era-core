@@ -9,7 +9,6 @@ using System.Threading;
 #if !HEADLESS
 using System.Windows.Forms;
 #endif
-using trmb = MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.MessageBox;
 
 namespace MinorShift.Emuera.Runtime.Config;
 
@@ -122,7 +121,6 @@ internal sealed class Config
 	public static DisplayWarningFlag FunctionNotFoundWarning => Current!._data.GetConfigValue<DisplayWarningFlag>(ConfigCode.FunctionNotFoundWarning);
 	public static DisplayWarningFlag FunctionNotCalledWarning => Current!._data.GetConfigValue<DisplayWarningFlag>(ConfigCode.FunctionNotCalledWarning);
 	public static bool ChangeMasterNameIfDebug => Current!._data.GetConfigValue<bool>(ConfigCode.ChangeMasterNameIfDebug);
-	public static long LastKey => Current!._data.GetConfigValue<long>(ConfigCode.LastKey);
 	public static bool ButtonWrap => Current!._data.GetConfigValue<bool>(ConfigCode.ButtonWrap);
 	public static string TextEditor => Current!._data.GetConfigValue<string>(ConfigCode.TextEditor);
 	public static TextEditorType EditorType => Current!._data.GetConfigValue<TextEditorType>(ConfigCode.EditorType);
@@ -230,7 +228,7 @@ internal sealed class Config
 	/// <summary>语言 LCID（derived，值由 ConfigData.ApplyPostLoadEffects 经 useLanguage 计算并缓存）。</summary>
 	public static int Language => Current!._data.Language;
 
-	/// <summary>加载期是否需要缩减参数（derived/缓存，由 ConfigData.CheckUpdate 设置）。</summary>
+	/// <summary>加载期是否需要逐行预解析参数（derived/缓存，唯一写入口 ConfigData.ApplyReduceArgumentOnLoad）。</summary>
 	public static bool NeedReduceArgumentOnLoad => Current!._data.NeedReduceArgumentOnLoad;
 
 	/// <summary>默认字体（无 GDI，Headless 返回 EmuFont 值类型）。</summary>
@@ -257,12 +255,14 @@ internal sealed class Config
 
 
 
-	/// <summary>语言设置：把语言写入 ConfigData 并保存（不再回填静态字段，视图自动反射）。</summary>
-	public static void SetLanguageSetting(ConfigData instance, string lang)
+	/// <summary>
+	/// 应用界面语言设置：只写内存项（视图自动反射），**不落盘**。
+	/// 语言探测（<c>Lang.SetLanguage</c>）每次启动都会跑，原先在此处 SaveConfig 会把整份
+	/// emuera.config 以日文键名回写、破坏其它本地化分支的配置——已移除（配置写盘改为纯显式动作）。
+	/// </summary>
+	public static void ApplyLanguageSetting(ConfigData instance, string lang)
 	{
 		instance.GetConfigItem(ConfigCode.EmueraLang).SetValue(lang);
-		if (!instance.SaveConfig())
-			Dialog.Show(trmb.ConfigError.Text, trmb.ConfigSaveFailure.Text);
 	}
 
 	/// <summary>KeyValuePair&lt;相对路径, 完全路径&gt; 列表。</summary>

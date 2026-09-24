@@ -99,8 +99,9 @@ $CENSUS_DOLLAR
 		// NeedReduceArgumentOnLoad=true，此时 setArgument 才会对每行调 SetArgumentTo（ErbLoader.setArgument:3106）。
 		// 两处坑（实测踩过）：
 		//   ① 漏设 → 28 行里 17 行 Argument 为 null、argprimitive/assigndest 未 Pop，测的不是生产终态；
-		//   ② NR 是**派生属性**（无 ConfigCode，只在 ConfigData.CheckUpdate:965-969 重算），光 SetValue 不生效
-		//      ——必须显式 CheckUpdate；且必须设在本次手工加载之前（引擎自身的 Initialize 已经跑过）。
+		//   ② NR 是**派生属性**（无 ConfigCode，唯一写入口 ConfigData.ApplyReduceArgumentOnLoad，由 ErbLoader
+	//      在 IR 命中判定后按 ReduceArgumentOnLoad 三态重算），光 SetValue 不生效——故此处把标志设成
+	//      YES 后显式调一次（LoadErbDir 内部还会再调一次，结果为 YES⇒true，一致）。
 		ForceReduceArgumentOnLoad();
 		Assert.True(MinorShift.Emuera.Runtime.Config.Config.NeedReduceArgumentOnLoad, "NR 应已生效为 true");
 
@@ -166,7 +167,8 @@ $CENSUS_DOLLAR
 	/// 两者物化终态完全不同：NR=NO 下实测 11504 行里 **3229 行没有 Argument**（参数解析被推到运行期首次执行），
 	/// NR=YES 才是 v3 量到 `setArgument 2332ms` 的那个生产形态。⇒ 类型覆盖必须两种都采，
 	/// 编解码器要覆盖**两者并集**。
-	/// 手法：引擎初始化（含一次 NR=NO 全量加载）之后强开 NR + CheckUpdate，再用**全新 LabelDictionary**
+	/// 手法：引擎初始化（含一次 NR=NO 全量加载）之后把标志改成 YES 并重算 NR（唯一写入口
+	/// <c>ConfigData.ApplyReduceArgumentOnLoad</c>），再用**全新 LabelDictionary**
 	/// 二次 LoadErbDir（等价于「改完配置再开一局」的生产路径）。
 	/// </summary>
 	[Fact]
@@ -316,7 +318,9 @@ $CENSUS_DOLLAR
 	{
 		var cfg = ConfigData.Current!;
 		cfg.GetConfigItem(ConfigCode.ReduceArgumentOnLoad).SetValue(ReduceArgumentOnLoadFlag.YES);
-		cfg.CheckUpdate();
+		// CheckUpdate 已移除（ONCE 的变更判据改寄生到 IR 指纹）；本普查需要强制逐行 setArgument，
+		// 故直接以 YES 走唯一写入口（irHit 对 YES 无影响）。
+		cfg.ApplyReduceArgumentOnLoad(ReduceArgumentOnLoadFlag.YES, irHit: false);
 	}
 
 	// ================= 反射辅助 =================

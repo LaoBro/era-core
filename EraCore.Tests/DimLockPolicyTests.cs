@@ -76,7 +76,7 @@ public class DimLockPolicyTests
 			using var globals = GlobalStatic.OpenScope(config);
 			Assert.True(config.LoadConfig(tempRoot));
 
-			// 无对应 ConfigCode，loadConfig 对未知键静默跳过——旋钮保持 null（=Auto 恒加锁）
+			// 无对应 ConfigCode，loadConfig 对该键只登记告警（UnknownConfigKeys）、不改任何项——旋钮保持 null（=Auto 恒加锁）
 			Assert.Null(config.OverrideDimLockPolicy);
 		}
 		finally

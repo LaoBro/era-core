@@ -39,6 +39,31 @@ internal sealed class ConfigData
 	internal static void ClearCurrent() => _current.Value = null;
 
 	private readonly Dictionary<ConfigCode, AConfigItem> _index = new();
+	/// <summary>
+	/// 别名索引（键名 → 项）。为将来合并其它本地化分支（如简体中文版）的配置键名留的接缝——
+	/// 数据表在 <see cref="ConfigKeyAliases"/>，此处只做归一化投影。归一化与
+	/// <see cref="GetConfigItem(string)"/> 现有口径一致（Trim + ToUpperInvariant）。
+	/// </summary>
+	private readonly Dictionary<string, AConfigItem> _aliasIndex = new(StringComparer.Ordinal);
+	/// <summary>最近一次三源加载中无法识别的键（诊断/告警用）。</summary>
+	private readonly List<ConfigUnknownKey> _unknownKeys = [];
+	/// <summary>
+	/// 主 config（游戏目录 emuera.config）中无法识别的**原始行**。仅用于显式
+	/// <see cref="SaveConfig()"/> 时原样回写，避免把本引擎不认识的键（例如其它分支的
+	/// UTF-8 读写开关）抹掉。自动写盘路径已全部移除，故常态下不会被消费。
+	/// </summary>
+	private readonly List<string> _preservedUnknownLines = [];
+
+	/// <summary>最近一次加载中无法识别的配置键（按来源文件 + 行号）。</summary>
+	public IReadOnlyList<ConfigUnknownKey> UnknownConfigKeys => _unknownKeys;
+
+	/// <summary>
+	/// 加载期是否逐行预解析参数（derived/缓存）。唯一写入口是
+	/// <see cref="ApplyReduceArgumentOnLoad"/>，由 <c>ErbLoader</c> 在 IR 命中判定后调用：
+	/// YES=恒 true；NO=恒 false；ONCE=IR 命中（源未变）为 false、未命中为 true。
+	/// 不再由 config 加载期决定——原 <c>CheckUpdate</c> + <c>最終更新コード</c> 已移除，
+	/// 变更判据改寄生到 IR 指纹（比 mtime 哈希更严：含文件集合/firstDir/Rename 表/解析配置）。
+	/// </summary>
 	public bool NeedReduceArgumentOnLoad { get; private set; }
 	public int Language { get; private set; }
 
@@ -56,7 +81,7 @@ internal sealed class ConfigData
 	/// <see cref="SweepGatePolicy.Auto"/> 跟随平台门）；ForceOn/ForceOff 由 app 壳层经
 	/// Preferences 写入，ErbLoader.ParseScript 读并提供给
 	/// <c>ShouldRunParallelSweep</c>（唯一决策点）。无对应 ConfigCode——游戏随包的
-	/// emuera.config 无法设置（loadConfig 对未知键静默跳过）；仅内存覆盖，不落盘。
+	/// emuera.config 无法设置（loadConfig 对未知键只登记告警、不改任何项）；仅内存覆盖，不落盘。
 	/// </summary>
 	public SweepGatePolicy? OverrideSweepGatePolicy { get; set; }
 
@@ -66,7 +91,7 @@ internal sealed class ConfigData
 	/// Preferences 写入，Preload.Load 读取并经 <c>preload_policy</c> 日志自证，取证阈值二分用。
 	/// <b>2026-09-15 起显式值对本地文件系统路径同样生效</b>（原实现该分支只绑 content-URI，
 	/// 本地路径并发度恒 -1 且旋钮在其上无效，而崩溃恰只在本地路径复现）。无对应 ConfigCode——
-	/// 游戏随包的 emuera.config 无法设置（loadConfig 对未知键静默跳过）；仅内存覆盖，不落盘。
+	/// 游戏随包的 emuera.config 无法设置（loadConfig 对未知键只登记告警、不改任何项）；仅内存覆盖，不落盘。
 	/// </summary>
 	public int? OverrideSafReadDegree { get; set; }
 
@@ -74,7 +99,7 @@ internal sealed class ConfigData
 	/// 诊断旋钮（ADR-0026，06-K1）：并行生成度上限的内存覆盖——null=不覆盖（默认 min(核数,8)，
 	/// 与现状逐位一致）；显式 4/8/16（词表见 <see cref="MaxParallelErbFilesCodec"/>）=取证档直接生效
 	/// （与核数解耦），ERB 生成窗口与未调用遍历清扫度同源同拨。无对应 ConfigCode——游戏随包的
-	/// emuera.config 无法设置（loadConfig 对未知键静默跳过）；仅内存覆盖，不落盘。
+	/// emuera.config 无法设置（loadConfig 对未知键只登记告警、不改任何项）；仅内存覆盖，不落盘。
 	/// </summary>
 	public int? OverrideMaxParallelErbFiles { get; set; }
 
@@ -82,7 +107,7 @@ internal sealed class ConfigData
 	/// 诊断旋钮（ADR-0026，06-K2）：privateDimList 生成期全局锁策略的内存覆盖——null/Auto=恒加锁
 	/// （与 771708b 方案 B 止血逐位一致）；NoLock=纯取证档（关锁重开并发损坏竞态，可致状态损坏，
 	/// issue 04-H1 判别用）。无对应 ConfigCode——游戏随包的 emuera.config 无法设置
-	/// （loadConfig 对未知键静默跳过）；仅内存覆盖，不落盘。
+	/// （loadConfig 对未知键只登记告警、不改任何项）；仅内存覆盖，不落盘。
 	/// </summary>
 	public DimLockPolicy? OverrideDimLockPolicy { get; set; }
 
@@ -170,7 +195,6 @@ internal sealed class ConfigData
 		configArray.Add(new ConfigItem<bool>(ConfigCode.ButtonWrap, "ボタンの途中で行を折りかえさない", "Button wrapping", false));
 		configArray.Add(new ConfigItem<bool>(ConfigCode.SearchSubdirectory, "サブディレクトリを検索する", "Search subfolders", false));
 		configArray.Add(new ConfigItem<bool>(ConfigCode.SortWithFilename, "読み込み順をファイル名順にソートする", "Sort filenames", false));
-		configArray.Add(new ConfigItem<long>(ConfigCode.LastKey, "最終更新コード", "Latest identify code", 0));
 		configArray.Add(new ConfigItem<int>(ConfigCode.SaveDataNos, "表示するセーブデータ数", "Save data count per page", 20));
 		configArray.Add(new ConfigItem<bool>(ConfigCode.WarnBackCompatibility, "eramaker互換性に関する警告を表示する", "Eramaker compatibility warning", true));
 		configArray.Add(new ConfigItem<bool>(ConfigCode.AllowFunctionOverloading, "システム関数の上書きを許可する", "Allow overriding system functions", true));
@@ -487,6 +511,23 @@ internal sealed class ConfigData
 			if (item != null && !_index.ContainsKey(item.Code)) _index[item.Code] = item;
 		foreach (AConfigItem item in debugArray)
 			if (item != null && !_index.ContainsKey(item.Code)) _index[item.Code] = item;
+
+		// 别名投影：为将来合并其它本地化分支的键名留的接缝（数据表当前为空）。
+		// 归一化沿用 GetConfigItem 的 key.ToUpper()，故纯增量——现有 Name/Text/EngText 命中
+		// 优先级不变，别名只在三者都不中时兜底。冲突（两个 Code 抢同一别名）由单测拦截。
+		_aliasIndex.Clear();
+		foreach (var (code, aliases) in ConfigKeyAliases.All)
+		{
+			AConfigItem item = GetConfigItem(code);
+			if (item == null)
+				continue;
+			foreach (string alias in aliases)
+			{
+				if (string.IsNullOrWhiteSpace(alias))
+					continue;
+				_aliasIndex.TryAdd(alias.Trim().ToUpper(), item);
+			}
+		}
 	}
 
 	public AConfigItem GetConfigItem(ConfigCode code)
@@ -508,6 +549,9 @@ internal sealed class ConfigData
 			if (item.EngText == key)
 				return item;
 		}
+		// 别名兜底（其它本地化分支的键名，如将来的简体中文键名；表当前为空）
+		if (_aliasIndex.TryGetValue(key, out AConfigItem? aliased))
+			return aliased!;
 		return null!;
 		#endregion
 	}
@@ -695,6 +739,12 @@ internal sealed class ConfigData
 	#endregion
 
 
+	/// <summary>
+	/// 显式保存配置。**产品代码里没有任何自动调用方**（加载期三源合并、语言探测、
+	/// <c>/load-game</c>、设置页均不再触发写盘——见 <see cref="LoadConfigCore"/> 的说明），
+	/// 只有测试与将来可能的显式「保存设置」动作会调用。
+	/// 主 config 中本引擎不认识的原始行会原样回写，避免显式保存抹掉其它分支的专有键。
+	/// </summary>
 	public bool SaveConfig()
 	{
 		return SaveConfig(configPath);
@@ -719,8 +769,6 @@ internal sealed class ConfigData
 				if (item.Code == ConfigCode.CompatiDRAWLINE)
 					continue;
 				if ((item.Code == ConfigCode.ChangeMasterNameIfDebug) && item.GetValue<bool>())
-					continue;
-				if ((item.Code == ConfigCode.LastKey) && (item.GetValue<long>() == 0))
 					continue;
 				#region EM_私家版_LoadText＆SaveText機能拡張
 				if (item.Code == ConfigCode.ValidExtension)
@@ -749,6 +797,11 @@ internal sealed class ConfigData
 				//}
 				writer.WriteLine(item.ToString());
 			}
+
+			// 原样回写主 config 中本引擎不认识的键——避免显式保存把其它本地化分支的专有项
+			// （如简体中文版的「全部以UTF-8编码读入文件」）抹掉。
+			foreach (string raw in _preservedUnknownLines)
+				writer.WriteLine(raw);
 		}
 		catch (Exception ex)
 		{
@@ -807,9 +860,11 @@ internal sealed class ConfigData
 		if (!ConfigFileExists(fixedConfigPath))
 			fixedConfigPath = CombineConfigPath(csvDir, "fixed.config");
 
-		bool loadedDefault = loadConfig(defaultConfigPath, false);
-		bool loadedMain = loadConfig(configPathLocal, false);
-		bool loadedFixed = loadConfig(fixedConfigPath, true);
+		_unknownKeys.Clear();
+		_preservedUnknownLines.Clear();
+		bool loadedDefault = loadConfig(defaultConfigPath, ConfigSourceRole.Default);
+		bool loadedMain = loadConfig(configPathLocal, ConfigSourceRole.Main);
+		bool loadedFixed = loadConfig(fixedConfigPath, ConfigSourceRole.Fixed);
 
 		// 候选 2 / ADR-0009：原 Config.SetConfig(this) 已坍缩——视图（Config）是薄转发层，
 		// 无副本可刷新；clamp/语言/存档目录逻辑下沉为实例方法 ApplyPostLoadEffects。
@@ -817,22 +872,18 @@ internal sealed class ConfigData
 
 		// DisplayReport 覆盖：三源（default/emuera/fixed.config）已合并且 post-load 已应用，
 		// 此时压 DisplayReport 能盖过一切来源（含 fixed.config 的强制值）。
-		// 仅内存覆盖，不落盘（不影响下方 needSave/SaveConfig 逻辑）。
+		// 仅内存覆盖，不落盘。
 		if (OverrideDisplayReport.HasValue)
 			GetItem(ConfigCode.DisplayReport).SetValue(OverrideDisplayReport.Value);
 
-		bool needSave = false;
-		// Issue 12：使用当前实际读取的 config 文件路径判断是否需要创建默认 config。
-		// SAF：不能用 File.Exists（content URI 恒 false），否则会误判缺失并 SaveConfig。
-		if (!ConfigFileExists(configPathLocal))
-			needSave = true;
-		if (CheckUpdate())
-		{
-			GetItem(ConfigCode.LastKey).SetValue(GetConfigValue<long>(ConfigCode.LastKey));
-			needSave = true;
-		}
-		if (needSave && !SaveConfig(configPathLocal))
-			EmueraLog.Error("Config", $"Could not create or update {configPathLocal}.");
+		// 写回策略：**加载期永不写盘**（玩家未手动设置时 emuera.config 保持逐字节不变）。
+		// 原先两条自动 SaveConfig 触发已移除：
+		//   ① 文件缺失 → 新建默认 config；
+		//   ② CheckUpdate()（最終更新コード 失配）→ 整份回写。
+		// 理由：emuera.config 位于玩家的游戏目录，本引擎以日文键名整份回写会破坏其它本地化分支
+		// （如简体中文版）的键名与专有项；"未知键回落默认值"本身不构成写盘理由。
+		// ONCE 所需的跨会话记忆改由 IR 指纹承载（见 NeedReduceArgumentOnLoad 文档）。
+		// 文件缺失时全部走内存默认值——玩家自己的 Emuera 会创建它自己的 config。
 
 		EmueraLog.Info("Config",
 			$"LoadConfig: path={configPathLocal}, main={loadedMain}, default={loadedDefault}, fixed={loadedFixed}, " +
@@ -958,97 +1009,30 @@ internal sealed class ConfigData
 		}
 	}
 
-	//先にApplyPostLoadEffectsを呼ぶこと
-	//戻り値はセーブが必要かどうか
-	public bool CheckUpdate()
-	{
-		ReduceArgumentOnLoadFlag flag = GetConfigValue<ReduceArgumentOnLoadFlag>(ConfigCode.ReduceArgumentOnLoad);
-		if (flag != ReduceArgumentOnLoadFlag.ONCE)
-		{
-			if (flag == ReduceArgumentOnLoadFlag.YES)
-				NeedReduceArgumentOnLoad = true;
-			else if (flag == ReduceArgumentOnLoadFlag.NO)
-				NeedReduceArgumentOnLoad = false;
-			return false;
-		}
-
-		long key = getUpdateKey();
-		bool updated = GetConfigValue<long>(ConfigCode.LastKey) != key;
-		NeedReduceArgumentOnLoad = updated;
-		if (updated)
-			GetConfigItem(ConfigCode.LastKey).SetValue(key);
-		return updated;
-	}
-
-	private long getUpdateKey()
-	{
-		SearchOption option = SearchOption.TopDirectoryOnly;
-		if (GetConfigValue<bool>(ConfigCode.SearchSubdirectory))
-			option = SearchOption.AllDirectories;
-		if (SafPath.IsContentUri(Program.ExeDir))
-			return getSafUpdateKey(option);
-
-		// issue 19：本地分支也必须经 accessor——直连 Directory.GetFiles 会绕过通配大小写不敏感
-		// （.NET 在 Unix/Android 由托管代码 glob），只命中全大写扩展名，与 SAF 分支算出不同 key。
-		var accessor = GamePaths.Current.DirAccessor;
-		string[] erbFiles = accessor.GetFiles(Program.ErbDir, "*.ERB", option);
-		string[] csvFiles = accessor.GetFiles(Program.CsvDir, "*.CSV", option);
-		long[] writetimes = new long[erbFiles.Length + csvFiles.Length];
-		for (int i = 0; i < erbFiles.Length; i++)
-			if (Path.GetExtension(erbFiles[i]).Equals(".ERB", StringComparison.OrdinalIgnoreCase))
-				writetimes[i] = File.GetLastWriteTime(erbFiles[i]).ToBinary();
-		for (int i = 0; i < csvFiles.Length; i++)
-			if (Path.GetExtension(csvFiles[i]).Equals(".CSV", StringComparison.OrdinalIgnoreCase))
-				writetimes[i + erbFiles.Length] = File.GetLastWriteTime(csvFiles[i]).ToBinary();
-		long key = 0;
-		for (int i = 0; i < writetimes.Length; i++)
-		{
-			unchecked
-			{
-				key ^= writetimes[i] * 1103515245 + 12345;
-			}
-		}
-		return key;
-	}
-
 	/// <summary>
-	/// SAF providers do not expose a portable last-write-time contract. Keep ONCE
-	/// deterministic by hashing the logical ERB/CSV paths, which still detects
-	/// added/removed files without calling File.GetLastWriteTime(content://...).
+	/// 按 <c>ロード時に引数を解析する</c> 三态 + 本轮 IR 命中结果决定
+	/// <see cref="NeedReduceArgumentOnLoad"/>。由 <c>ErbLoader</c> 在 IR 命中判定之后、
+	/// 任何参数解析之前调用（<b>唯一写入口</b>）。
+	/// <para>
+	/// ONCE 的判据是"上次启动以来 csv 或 ERB 有没有变"。本引擎把它改由 IR 指纹承载：
+	/// 命中 = 指纹一致 = 源未变（本地路径下指纹含逐文件 mtime，比旧的 XOR 哈希更严）→
+	/// 跳过全量参数解析；未命中（首次运行／源变更／IR 未启用）→ 强制全量参数解析。
+	/// </para>
+	/// <para>
+	/// 已知差异：IR 未启用的三种情形（<c>IrDiskCacheLoad=false</c>、<c>LazyFunctionLoad=false</c>、
+	/// AnalysisMode）下 ONCE 退化为"每轮全量"。上游靠 emuera.config 的 <c>最終更新コード</c> 记忆，
+	/// 而本引擎不再写该键（见 <see cref="LoadConfigCore"/> 的写回策略）。AnalysisMode 本就强制
+	/// 逐行解析，不受影响；关掉懒加载的玩家只失去这项跳过优化，无语义风险。
+	/// </para>
 	/// </summary>
-	private static long getSafUpdateKey(SearchOption option)
+	internal void ApplyReduceArgumentOnLoad(ReduceArgumentOnLoadFlag flag, bool irHit)
 	{
-		try
+		NeedReduceArgumentOnLoad = flag switch
 		{
-			var accessor = GamePaths.Current.DirAccessor;
-			var files = new List<string>();
-			files.AddRange(accessor.GetFiles(Program.ErbDir, "*.ERB", option)
-				.Where(path => string.Equals(Path.GetExtension(SafPath.GetLogicalFileName(path)), ".ERB", StringComparison.OrdinalIgnoreCase))
-				.Select(path => "erb:" + SafPath.GetRelativePathFromRoot(Program.ExeDir, path)));
-			files.AddRange(accessor.GetFiles(Program.CsvDir, "*.CSV", option)
-				.Where(path => string.Equals(Path.GetExtension(SafPath.GetLogicalFileName(path)), ".CSV", StringComparison.OrdinalIgnoreCase))
-				.Select(path => "csv:" + SafPath.GetRelativePathFromRoot(Program.ExeDir, path)));
-
-			files.Sort(StringComparer.OrdinalIgnoreCase);
-			unchecked
-			{
-				long key = 1469598103934665603L;
-				foreach (var file in files)
-				{
-					foreach (var ch in file)
-					{
-						key ^= ch;
-						key *= 1099511628211L;
-					}
-				}
-				return key;
-			}
-		}
-		catch (Exception ex)
-		{
-			EmueraLog.Warn("Config", $"SAF update detection unavailable; continuing without timestamp reduction: {ex.Message}");
-			return 0;
-		}
+			ReduceArgumentOnLoadFlag.YES => true,
+			ReduceArgumentOnLoadFlag.NO => false,
+			_ => !irHit,
+		};
 	}
 
 	private void createSavDirAndMoveFiles()
@@ -1090,8 +1074,16 @@ internal sealed class ConfigData
 	}
 	#endregion
 
-	private bool loadConfig(string confPath, bool fix)
+	/// <summary>
+	/// 解析单个 config 文件（三源之一）。无法识别的键会被登记到
+	/// <see cref="UnknownConfigKeys"/> 并发出一条**聚合告警**（不再静默丢弃）；主 config
+	/// （<paramref name="role"/> = <see cref="ConfigSourceRole.Main"/>）的未识别**原始行**另
+	/// 留存一份，供显式 <see cref="SaveConfig()"/> 原样回写。
+	/// </summary>
+	/// <param name="role">来源角色：决定是否强制项（fixed）与是否留存原始行（main）。</param>
+	private bool loadConfig(string confPath, ConfigSourceRole role)
 	{
+		bool fix = role == ConfigSourceRole.Fixed;
 		// SAF：必须用 SafCompat / DirAccessor，File.Exists(content://) 恒 false
 		if (!ConfigFileExists(confPath))
 			return false;
@@ -1099,6 +1091,8 @@ internal sealed class ConfigData
 		if (!eReader.Open(confPath))
 			return false;
 		ScriptPosition? pos = null;
+		string logicalName = SafPath.GetLogicalFileName(confPath);
+		int unknownStart = _unknownKeys.Count;
 		try
 		{
 			string line = null!;
@@ -1160,17 +1154,41 @@ internal sealed class ConfigData
 					if (item.TryParse(tokens[1]) && fix)
 						item.Fixed = true;
 				}
+				else
+				{
+					// 无法识别的键：登记 + 聚合告警（不再静默丢弃）。
+					// 取不到项有两种成因：本引擎确实没有该配置项，或它不是本引擎认识的键名
+					// （典型 = 其它本地化分支写出的键，如简体中文版的「忽略大小写」）。
+					// 后者由 ConfigKeyAliases 别名表作为将来合并的接缝承接。
+					_unknownKeys.Add(new ConfigUnknownKey(logicalName, tokens[0].Trim(), pos?.LineNo ?? 0));
+					// 主 config 的未识别行原样留存，供显式 SaveConfig 回写——避免把其它分支
+					// 的专有键（如「全部以UTF-8编码读入文件」）在玩家保存设置时抹掉。
+					if (role == ConfigSourceRole.Main)
+						_preservedUnknownLines.Add(line);
+				}
 			}
 		}
 		catch (EmueraException ee)
 		{
-			ParserMediator.ConfigWarn(ee.Message, pos, 1, null!);
+			// 不用 ParserMediator.ConfigWarn：它在启动首轮读 Config.Current（尚未 SetCurrent）会 NPE，
+			// 且 console 未绑定会静默丢弃。EmueraLog 无配置依赖，直达 stderr + agent.log。
+			EmueraLog.Warn("Config", $"{logicalName}: 配置行解析失败（第 {pos?.LineNo ?? 0} 行）: {ee.Message}");
 		}
 		catch (Exception exc)
 		{
-			ParserMediator.ConfigWarn(exc.GetType().ToString() + ":" + exc.Message, pos, 1, exc.StackTrace!);
+			EmueraLog.Warn("Config", $"{logicalName}: 配置行解析异常（第 {pos?.LineNo ?? 0} 行）: {exc.GetType().Name}: {exc.Message}");
 		}
 		finally { eReader.Dispose(); }
+
+		int unknownCount = _unknownKeys.Count - unknownStart;
+		if (unknownCount > 0)
+		{
+			const int previewLimit = 12;
+			string preview = string.Join(", ", _unknownKeys.Skip(unknownStart).Take(previewLimit).Select(static k => k.Key));
+			string tail = unknownCount > previewLimit ? $"，…（共 {unknownCount} 项）" : "";
+			EmueraLog.Warn("Config",
+				$"{logicalName}: {unknownCount} 个配置项无法识别，已按引擎默认值处理（不写回文件）: {preview}{tail}");
+		}
 		return true;
 	}
 
@@ -1294,3 +1312,24 @@ internal sealed class ConfigData
 
 	#endregion
 }
+
+/// <summary>
+/// config 三源的角色。决定两项行为：<see cref="ConfigSourceRole.Fixed"/> 时解析成功即标记
+/// <c>Fixed</c>（不可被普通项覆盖）；<see cref="ConfigSourceRole.Main"/> 时未识别的原始行会被留存，
+/// 供显式 <c>SaveConfig</c> 原样回写（另两源从不写回，因为它们属于游戏作者而非玩家）。
+/// </summary>
+internal enum ConfigSourceRole
+{
+	/// <summary>csv/_default.config（或 default.config）——标准值来源。</summary>
+	Default,
+	/// <summary>游戏目录 emuera.config——玩家配置，唯一会被写回的文件。</summary>
+	Main,
+	/// <summary>csv/_fixed.config（或 fixed.config）——游戏作者强制项。</summary>
+	Fixed,
+}
+
+/// <summary>三源 config 中无法识别的配置键（既非 Name/Text/EngText，也未命中别名表）。</summary>
+/// <param name="File">来源文件逻辑名（SAF 友好）。</param>
+/// <param name="Key">原始键名（未归一化）。</param>
+/// <param name="Line">行号（1 起）。</param>
+public readonly record struct ConfigUnknownKey(string File, string Key, int Line);
