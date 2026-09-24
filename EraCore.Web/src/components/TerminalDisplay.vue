@@ -40,6 +40,8 @@ import type { ButtonValue, SegmentImage, DisplayLine, DisplayEntry } from '../ty
  *   issue 03 不做字体替换；issue 08 字体面板会处理）。
  * - 行对齐 `align`（left/center/right）映射 CSS `text-align`。
  * - 容器背景色 `bgColor` 设置在 `.terminal` 根上。
+ * - 默认文字色 `defaultTextColor`（游戏 ConfigCode.ForeColor）覆盖 `.terminal` 的
+ *   `--term-color-text`——普通文字段的 `color` 在协议里为 null（与默认色相同），靠它画对。
  *
  * 虚拟滚动（spec.md「虚拟滚动与shift_head协议」）：
  * - 仅渲染视口内 + overscan 缓冲的行（~40 行），DOM 节点从 ~50000 降到 ~400。
@@ -138,7 +140,8 @@ const touchLineExtraPx = computed(() => Math.max(0, touchRowHeight.value - effec
  */
 const touchHalfGrowPx = computed(() => touchLineExtraPx.value / 2);
 
-/** .terminal 容器内联 style——动态绑定 width（ch 单位）/font-size/line-height/font-family + CSS 变量。 */
+/** .terminal 容器内联 style——动态绑定 width（ch 单位）/font-size/line-height/font-family
+ * + CSS 变量（行高、触控热区、默认文字色）。 */
 const terminalStyle = computed<Record<string, string>>(() => {
   const style: Record<string, string> = {
     // 字体缩放随 effectiveScale；窗口宽度由 .terminal-content 的固定 width 同步缩放（见 contentStyle），
@@ -158,6 +161,11 @@ const terminalStyle = computed<Record<string, string>>(() => {
     // 盒与文字位置都不动）。横向热区不在这里给固定值——由 hitStyle() 逐按钮注入。
     '--hit-v': `${touchHalfGrowPx.value}px`,
   };
+  // 游戏默认文字色（ConfigCode.ForeColor）——turn 协议只在「与默认色不同」的 segment 上带
+  // color（SegmentRenderer 只应用 s.color），普通文字段没有颜色可应用。这里覆盖
+  // --term-color-text：`.terminal` 与 `.term-btn` 都引用该变量（WinForms 里按钮文字与普通
+  // 文字同色），一处覆盖即两者同时生效；未读到（null）时保留主题令牌作 fallback。
+  if (game.defaultTextColor) style['--term-color-text'] = game.defaultTextColor;
   if (game.displayState.bgColor) style.backgroundColor = game.displayState.bgColor;
   return style;
 });

@@ -19,16 +19,17 @@ describe('useGameStore - Issue 12 窗口布局元信息', () => {
     setActivePinia(createPinia());
   });
 
-  it('初始状态：windowWidth/fontSize/lineHeight/gameColumns/fontName 均为 null', () => {
+  it('初始状态：windowWidth/fontSize/lineHeight/gameColumns/fontName/defaultTextColor 均为 null', () => {
     const game = useGameStore();
     expect(game.windowWidth).toBeNull();
     expect(game.fontSize).toBeNull();
     expect(game.lineHeight).toBeNull();
     expect(game.gameColumns).toBeNull();
     expect(game.fontName).toBeNull();
+    expect(game.defaultTextColor).toBeNull();
   });
 
-  it('setGameLayout：同时写入五个字段', () => {
+  it('setGameLayout：同时写入各字段（含默认文字色 foreColor）', () => {
     const game = useGameStore();
     game.setGameLayout({
       windowWidth: 1000,
@@ -36,12 +37,14 @@ describe('useGameStore - Issue 12 窗口布局元信息', () => {
       lineHeight: 22,
       gameColumns: 124,
       fontName: 'ＭＳ ゴシック',
+      foreColor: '#C0C0C0',
     });
     expect(game.windowWidth).toBe(1000);
     expect(game.fontSize).toBe(20);
     expect(game.lineHeight).toBe(22);
     expect(game.gameColumns).toBe(124);
     expect(game.fontName).toBe('ＭＳ ゴシック');
+    expect(game.defaultTextColor).toBe('#C0C0C0');
   });
 
   it('setGameLayout：单独写入一个字段不影响其他字段', () => {
@@ -70,6 +73,7 @@ describe('useGameStore - Issue 12 窗口布局元信息', () => {
       lineHeight: 22,
       gameColumns: 124,
       fontName: 'ＭＳ ゴシック',
+      foreColor: '#C0C0C0',
     });
 
     // null 不覆盖
@@ -79,12 +83,14 @@ describe('useGameStore - Issue 12 窗口布局元信息', () => {
       lineHeight: null,
       gameColumns: null,
       fontName: null,
+      foreColor: null,
     });
     expect(game.windowWidth).toBe(1000);
     expect(game.fontSize).toBe(20);
     expect(game.lineHeight).toBe(22);
     expect(game.gameColumns).toBe(124);
     expect(game.fontName).toBe('ＭＳ ゴシック');
+    expect(game.defaultTextColor).toBe('#C0C0C0');
 
     // undefined 不覆盖
     game.setGameLayout({});
@@ -93,6 +99,7 @@ describe('useGameStore - Issue 12 窗口布局元信息', () => {
     expect(game.lineHeight).toBe(22);
     expect(game.gameColumns).toBe(124);
     expect(game.fontName).toBe('ＭＳ ゴシック');
+    expect(game.defaultTextColor).toBe('#C0C0C0');
   });
 });
 
@@ -172,6 +179,7 @@ describe('useGameStore.loadGame - Issue 12 layout 字段更新', () => {
           lineHeight: 22,
           gameColumns: 124,
           fontName: 'ＭＳ ゴシック',
+          foreColor: '#7F0000',
         },
       },
     );
@@ -185,6 +193,7 @@ describe('useGameStore.loadGame - Issue 12 layout 字段更新', () => {
     expect(game.lineHeight).toBe(22);
     expect(game.gameColumns).toBe(124);
     expect(game.fontName).toBe('ＭＳ ゴシック');
+    expect(game.defaultTextColor).toBe('#7F0000');
   });
 
   it('GET /state 失败：layout 字段保持原值（不阻塞游戏切换）', async () => {

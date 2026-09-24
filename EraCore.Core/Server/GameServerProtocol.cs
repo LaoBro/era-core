@@ -208,6 +208,9 @@ internal sealed class GameServerProtocol
         payload["lineHeight"] = m.LineHeight;
         payload["gameColumns"] = m.GameColumns;
         payload["fontName"] = m.FontName;
+        // 默认文字色——turn 协议只带「非默认色」的 segment 颜色，前端拿它当普通文字色
+        // （否则落回主题默认色，与 CLI/原版 Emuera 的 Config.ForeColor 不一致）。
+        payload["foreColor"] = m.ForeColor;
         payload["visibleRows"] = m.VisibleRows;
         return Json(payload);
     }

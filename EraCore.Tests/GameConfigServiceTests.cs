@@ -63,6 +63,30 @@ public class GameConfigServiceTests
         Assert.Equal(84, m.GameColumns);
         Assert.Equal("ＭＳ ゴシック", m.FontName);
         Assert.Equal(25, m.VisibleRows);
+        // 默认文字色（文字色 = LIGHTGRAY）——渲染端靠它画「color 为 null」的普通文字段
+        Assert.Equal("#C0C0C0", m.ForeColor);
+    }
+
+    /// <summary>
+    /// 游戏 emuera.config 改「文字色」时 foreColor 随之变化——前端因而能画出游戏
+    /// 自定义的默认文字色（原版 Emuera / CLI 一直如此，Web/MAUI 此前落回主题色）。
+    /// </summary>
+    [Fact]
+    public void Window_metrics_fore_color_follows_game_config()
+    {
+        WithTempGameDir(gameDir =>
+        {
+            // 颜色三源格式：R, G, B（见 ConfigItem.tryStringsToColor）
+            File.WriteAllText(
+                Path.Combine(gameDir, "emuera.config"),
+                "; test\n文字色 : 127, 0, 0\n",
+                System.Text.Encoding.UTF8);
+
+            var svc = CreateService();
+            svc.Reload(gameDir);
+
+            Assert.Equal("#7F0000", svc.GetWindowMetrics().ForeColor);
+        });
     }
 
     [Fact]

@@ -503,7 +503,7 @@ export const useGameStore = defineStore('game', () => {
 
   // ---------- Issue 12：游戏窗口布局元信息 ----------
   //
-  // 这五个字段从 C# `GET /state` 响应读取——驱动 TerminalDisplay 的固定宽度布局：
+  // 这些字段从 C# `GET /state`（浏览器模式）或 MAUI `layout` 消息读取——驱动 TerminalDisplay 布局与配色：
   // - windowWidth：游戏 emuera.config 设定的窗口像素宽度（ConfigCode.WindowX，默认 760）
   // - fontSize：字体像素大小（ConfigCode.FontSize，默认 18）
   // - lineHeight：行距像素（ConfigCode.LineHeight，默认 19；绝对像素，非比例）
@@ -529,6 +529,14 @@ export const useGameStore = defineStore('game', () => {
   const gameColumns = ref<number | null>(null);
   /** 游戏字体名（来自 ConfigCode.FontName，默认 "ＭＳ ゴシック"）。null 表示尚未读取。 */
   const fontName = ref<string | null>(null);
+  /**
+   * 默认文字色（来自 ConfigCode.ForeColor，hex 形如 "#C0C0C0"）。null 表示尚未读取。
+   *
+   * turn 协议只在「与默认色不同」的 segment 上带 `color`（C# 侧 ColorChanged 判断），
+   * 普通文字段的 color 为 null——渲染端必须拿这个默认色才能画对（否则落回主题
+   * `--term-color-text`，与原版 Emuera / CLI 的画面不一致）。
+   */
+  const defaultTextColor = ref<string | null>(null);
   /** 履歴ログの行数（来自 ConfigCode.MaxLog，默认 5000）。null 表示尚未读取。 */
   const maxLog = ref<number | null>(null);
   /**
@@ -1389,6 +1397,7 @@ export const useGameStore = defineStore('game', () => {
         lineHeight: typeof body?.lineHeight === 'number' ? body.lineHeight : null,
         gameColumns: typeof body?.gameColumns === 'number' ? body.gameColumns : null,
         fontName: typeof body?.fontName === 'string' ? body.fontName : null,
+        foreColor: typeof body?.foreColor === 'string' ? body.foreColor : null,
       });
       return { gameDir: gameDirVal, state: stateVal };
     } catch {
@@ -1521,12 +1530,14 @@ export const useGameStore = defineStore('game', () => {
     lineHeight?: number | null;
     gameColumns?: number | null;
     fontName?: string | null;
+    foreColor?: string | null;
   }): void {
     if (typeof opts.windowWidth === 'number') windowWidth.value = opts.windowWidth;
     if (typeof opts.fontSize === 'number') fontSize.value = opts.fontSize;
     if (typeof opts.lineHeight === 'number') lineHeight.value = opts.lineHeight;
     if (typeof opts.gameColumns === 'number') gameColumns.value = opts.gameColumns;
     if (typeof opts.fontName === 'string') fontName.value = opts.fontName;
+    if (typeof opts.foreColor === 'string') defaultTextColor.value = opts.foreColor;
   }
 
   async function fetchConfig(httpBase: string): Promise<void> {
@@ -1698,6 +1709,7 @@ export const useGameStore = defineStore('game', () => {
     lineHeight,
     gameColumns,
     fontName,
+    defaultTextColor,
     maxLog,
     agentLogEnabled,
     displayReportOverride,

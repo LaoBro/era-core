@@ -25,8 +25,10 @@
   --color-focus: #38bdf8;         /* 键盘 / 指针焦点环（2px outline），与 indicator 同色 */
 
   /* ---------- 终端颜色（固定不随主题变化——游戏脚本控制的内容） ---------- */
-  --term-color-text: #e8eaed;     /* 默认文字颜色 */
-  --term-color-bg: #171717;       /* 终端背景 */
+  /* 下面两个是**默认值/兜底**：读到游戏配置后由 .terminal 内联覆盖
+     （--term-color-text ← ConfigCode.ForeColor，背景 ← DisplayState.bgColor）。 */
+  --term-color-text: #e8eaed;     /* 默认文字颜色（游戏「文字色」） */
+  --term-color-bg: #171717;       /* 终端背景（游戏「背景色」） */
   --term-btn-hover-bg: #2a2b2e;   /* 按钮 hover 背景 */
   --term-btn-hover-line: #a8c7fa; /* 按钮 hover 下划线 */
   --term-btn-active: #a8c7fa;     /* 按钮 active 背景 */

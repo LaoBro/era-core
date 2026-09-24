@@ -159,6 +159,8 @@ function handleMauiMessage(msg: unknown, game: ReturnType<typeof useGameStore>):
       lineHeight: typeof m.lineHeight === 'number' ? m.lineHeight : null,
       gameColumns: typeof m.gameColumns === 'number' ? m.gameColumns : null,
       fontName: typeof m.fontName === 'string' ? m.fontName : null,
+      // 默认文字色——普通文字段在 turn 协议里 color 为 null，靠它画对（见 game store defaultTextColor）
+      foreColor: typeof m.foreColor === 'string' ? m.foreColor : null,
     });
     // layout 消息携带 state——同步 serverState，避免首帧到达前误显"请点击快速重开"
     if (typeof m.state === 'string' && m.state !== 'Idle') {

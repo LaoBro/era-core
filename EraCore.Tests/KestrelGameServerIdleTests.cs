@@ -131,6 +131,8 @@ public class KestrelGameServerIdleTests
         Assert.True(root.TryGetProperty("lineHeight", out _), "lineHeight present");
         Assert.True(root.TryGetProperty("gameColumns", out _), "gameColumns present");
         Assert.True(root.TryGetProperty("fontName", out _), "fontName present");
+        // foreColor：turn 协议只带「非默认色」的 segment 颜色，前端靠它画普通文字
+        Assert.True(root.TryGetProperty("foreColor", out _), "foreColor present");
         Assert.True(root.TryGetProperty("visibleRows", out _), "visibleRows present");
     }
 

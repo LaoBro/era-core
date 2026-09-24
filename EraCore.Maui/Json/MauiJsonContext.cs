@@ -114,7 +114,9 @@ internal sealed record AgentLogMessage(string Type, string Content, bool Truncat
 
 /// <summary>
 /// {"type":"layout","state":"Loading","gameDir":...,"windowWidth":...,"fontSize":...,
-///  "lineHeight":...,"gameColumns":...,"fontName":...}
+///  "lineHeight":...,"gameColumns":...,"fontName":...,"foreColor":"#RRGGBB"}
+/// foreColor = 游戏 emuera.config 的默认文字色（ConfigCode.ForeColor）——turn 协议只带
+/// 「非默认色」的 segment 颜色，前端需靠它画普通文字。
 /// </summary>
 internal sealed record LayoutMessage(
     string Type,
@@ -124,7 +126,8 @@ internal sealed record LayoutMessage(
     int FontSize,
     int LineHeight,
     int GameColumns,
-    string? FontName);
+    string? FontName,
+    string? ForeColor);
 
 /// <summary>
 /// {"type":"config","maxLog":...,"agentLogEnabled":...,"displayReportOverride":"auto"|"off"|"on",

@@ -1,4 +1,5 @@
 using System;
+using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime.Config;
 
 namespace MinorShift.Emuera.Server;
@@ -47,6 +48,10 @@ internal sealed class GameConfigService
         var fontSize = _configData.GetConfigValue<int>(ConfigCode.FontSize);
         var lineHeight = _configData.GetConfigValue<int>(ConfigCode.LineHeight);
         var fontName = _configData.GetConfigValue<string>(ConfigCode.FontName);
+        // 默认文字色（文字色）——turn 协议只在「与默认色不同」的 segment 上带 color
+        // （ConsolePrintManager.BuildPrintOpsForLine 的 ColorChanged 判断），故渲染端必须
+        // 拿到默认色才能画对普通文字；CLI 靠 ANSI 首段显式发一次 Config.ForeColor 免疫此问题。
+        var foreColor = _configData.GetConfigValue<EmuColor>(ConfigCode.ForeColor);
         int charWidth = Math.Max(fontSize / 2, 1);
         int shapeShift = Math.Max(2, fontSize / 6);
         int drawableWidth = windowWidth - shapeShift;
@@ -54,7 +59,7 @@ internal sealed class GameConfigService
         // 一屏可见行数：headless 的 ClientHeight 即 WindowY（HeadlessConsole 构造时快照），
         // 除以 LineHeight 换算——era 游戏的 emuera.config 各自定义，无通用常量。
         int visibleRows = Math.Max(1, windowHeight / lineHeight);
-        return new WindowMetrics(windowWidth, fontSize, lineHeight, gameColumns, fontName, visibleRows);
+        return new WindowMetrics(windowWidth, fontSize, lineHeight, gameColumns, fontName, visibleRows, foreColor.ToHex());
     }
 
     /// <summary>
@@ -80,5 +85,7 @@ internal sealed class GameConfigService
     }
 }
 
-/// <summary>窗口布局元信息（issue 12），供 GET /state 返回。visibleRows = WindowY / LineHeight（agent 紧凑视图的页高）。</summary>
-internal sealed record WindowMetrics(int WindowWidth, int FontSize, int LineHeight, int GameColumns, string FontName, int VisibleRows);
+/// <summary>窗口布局元信息（issue 12），供 GET /state 返回。visibleRows = WindowY / LineHeight（agent 紧凑视图的页高）。
+/// foreColor = ConfigCode.ForeColor（"#RRGGBB"）——turn 协议只带「非默认色」的 segment 颜色，
+/// 渲染端（Web/MAUI）需靠此值画普通文字，否则落回主题默认色。</summary>
+internal sealed record WindowMetrics(int WindowWidth, int FontSize, int LineHeight, int GameColumns, string FontName, int VisibleRows, string ForeColor);

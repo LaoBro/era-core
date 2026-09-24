@@ -15,6 +15,7 @@ using EraCore.Maui.Services;
 using Microsoft.Maui.Storage;
 using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Script.Loader;
 using MinorShift.Emuera.Runtime.Utils;
@@ -1750,7 +1751,7 @@ internal sealed class BridgeHost : IDisposable
     /// 按无头模式 <c>DrawingParam_ShapePositionShift = Max(2, FontSize/6)</c> 算 <c>gameColumns</c>。
     /// </para>
     /// <para>
-    /// 消息格式：<c>{"type":"layout","state":"Loading","gameDir":"D:/game","windowWidth":760,"fontSize":18,"lineHeight":19,"gameColumns":84,"fontName":"ＭＳ ゴシック"}</c>
+    /// 消息格式：<c>{"type":"layout","state":"Loading","gameDir":"D:/game","windowWidth":760,"fontSize":18,"lineHeight":19,"gameColumns":84,"fontName":"ＭＳ ゴシック","foreColor":"#C0C0C0"}</c>
     /// </para>
     /// </summary>
     private void PushLayoutMessage()
@@ -1759,6 +1760,10 @@ internal sealed class BridgeHost : IDisposable
         var fs = _configData.GetConfigValue<int>(ConfigCode.FontSize);
         var lh = _configData.GetConfigValue<int>(ConfigCode.LineHeight);
         var fn = _configData.GetConfigValue<string>(ConfigCode.FontName) ?? "";
+        // 默认文字色——turn 协议只在「与默认色不同」的 segment 上带 color
+        // （ConsolePrintManager.BuildPrintOpsForLine 的 ColorChanged 判断），前端必须拿到
+        // 此值才能画对普通文字；与浏览器模式的 GET /state foreColor（WindowMetrics）同源同义。
+        var foreColor = _configData.GetConfigValue<EmuColor>(ConfigCode.ForeColor).ToHex();
 
         int charWidth = Math.Max(fs / 2, 1);
         int marginOffset = Math.Max(2, fs / 6);
@@ -1773,7 +1778,8 @@ internal sealed class BridgeHost : IDisposable
                 FontSize: fs,
                 LineHeight: lh,
                 GameColumns: gameColumns,
-                FontName: fn),
+                FontName: fn,
+                ForeColor: foreColor),
             MauiJsonContext.Default.LayoutMessage);
         _dispatcher.Dispatch(() => _jsBridge.PostMessage(msg));
     }

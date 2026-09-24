@@ -494,6 +494,38 @@ describe('TerminalDisplay: 背景图层', () => {
   });
 });
 
+// ---------- 默认文字色（ConfigCode.ForeColor） ----------
+//
+// turn 协议只在「与默认色不同」的 segment 上带 color，普通文字段 color 为 null；
+// 渲染端靠 store 的 defaultTextColor（来自 GET /state / MAUI layout 的 foreColor）
+// 覆盖 .terminal 的 --term-color-text，否则落回主题默认色（与原版 Emuera/CLI 不符）。
+describe('TerminalDisplay: 默认文字色', () => {
+  /** 挂载前写入 layout 默认文字色（mountWith 内部自建 store，故此处自行挂载）。 */
+  function mountWithForeColor(foreColor: string | null) {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const game = useGameStore();
+    if (foreColor !== null) game.setGameLayout({ foreColor });
+    const conn = useConnectionStore();
+    conn.status = 'connected';
+    conn.sendInput = vi.fn();
+    game.displayState = { ...game.displayState, lines: [line([{ text: 'こんにちは' }])], state: 'WaitInput' };
+    return mount(TerminalDisplay, { global: { plugins: [pinia] } });
+  }
+
+  it('读到默认文字色时覆盖 --term-color-text（.term-btn 也引用该变量）', () => {
+    const wrapper = mountWithForeColor('#7F0000');
+    const style = wrapper.find('.terminal').attributes('style') ?? '';
+    expect(style).toContain('--term-color-text: #7F0000');
+  });
+
+  it('未读到默认文字色时不覆盖（保留主题令牌作 fallback）', () => {
+    const wrapper = mountWithForeColor(null);
+    const style = wrapper.find('.terminal').attributes('style') ?? '';
+    expect(style).not.toContain('--term-color-text');
+  });
+});
+
 // ---------- 触控排版（按钮盒 ≥48px + 横向按需外扩 + 纵向条件抬高） ----------
 //
 // 判定规则与虚拟滚动加高表同源（inputRouting.isLiveButton）：

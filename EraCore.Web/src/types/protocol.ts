@@ -34,6 +34,11 @@ export type ButtonValue = number | string;
  */
 export interface PrintSegment {
   text: string;
+  /**
+   * 文字色 hex（"#RRGGBB"）。null = 默认文字色——C# 只在「与 `ConfigCode.ForeColor`
+   * 不同」时写入（ColorChanged 判断），故 null 时渲染端须用游戏默认色
+   * （game store `defaultTextColor`，来自 GET /state / MAUI layout 的 `foreColor`）。
+   */
   color?: string | null;
   bold?: boolean | null;
   italic?: boolean | null;
