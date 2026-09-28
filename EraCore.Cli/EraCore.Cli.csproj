@@ -40,6 +40,9 @@
          （HeadlessRunner 调 GameLoopComposer.RunAsync / ServerRunner 调 KestrelGameServer 等）-->
     <ProjectReference Include="..\EraCore.Core\EraCore.Core.csproj" />
     <ProjectReference Include="..\EraCore.Server\EraCore.Server.csproj" Condition="'$(RuntimeIdentifier)' != 'android-arm64' and '$(RuntimeIdentifier)' != 'android-x64'" />
+    <!-- legacy-plugin-compat：facade（AssemblyName=Emuera）随宿主输出，进入 deps.json/TPA，
+         使存量插件引用的 `Emuera` 程序集可被 Default ALC 解析。android RID 交叉编译形态排除（非产品形态）。 -->
+    <ProjectReference Include="..\EraCore.Compat.Emuera\EraCore.Compat.Emuera.csproj" Condition="'$(RuntimeIdentifier)' != 'android-arm64' and '$(RuntimeIdentifier)' != 'android-x64'" />
   </ItemGroup>
 
   <!-- ===== issue 05 / spec ID13：Vue 前端构建 + 静态资源服务 =====

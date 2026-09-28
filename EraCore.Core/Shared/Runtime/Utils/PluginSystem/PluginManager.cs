@@ -1,5 +1,6 @@
 using MinorShift.Emuera.GameProc;
 using MinorShift.Emuera.GameProc.Function;
+using MinorShift.Emuera.Compat;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime.Script;
 using MinorShift.Emuera.Runtime.Script.Parser;
@@ -269,30 +270,37 @@ namespace MinorShift.Emuera.Runtime.Utils.PluginSystem
 		/// </summary>
 		// NativeAOT 豁免（已登记：nativeaot-verify-report.md §5.2）：插件加载依赖
 		// Assembly.LoadFrom/GetTypes/Activator.CreateInstance（IL2026/IL2072）。
-		// Android/SAF 路径在上方已显式禁用（抛 ExeEE，L272-280）——本方法仅桌面路径可达，
-		// NativeAOT 桌面形态（win-x64）已验证插件语义等价（nativeaot-verify-report.md §3）。
-		[UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "插件加载仅桌面路径；Android/SAF 已禁用（抛 ExeEE）")]
-		[UnconditionalSuppressMessage("Trimming", "IL2072", Justification = "插件加载仅桌面路径；Android/SAF 已禁用（抛 ExeEE）")]
+		// 仅「真实路径 + 支持动态代码」的形态走本方法；纯 AOT（含 NativeAOT）与 SAF content-URI
+		// 由 LegacyPluginCompat.CanLoadPluginsHere 拦截并抛 ExeEE（见该类型注释）。
+		[UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "插件加载仅真实路径 + JIT 形态；纯 AOT 由 CanLoadPluginsHere 拦截")]
+		[UnconditionalSuppressMessage("Trimming", "IL2072", Justification = "插件加载仅真实路径 + JIT 形态；纯 AOT 由 CanLoadPluginsHere 拦截")]
 		public void LoadPlugins()
 		{
-			var pluginDir = SafCompat.ResolveSubPath(Program.ExeDir, "Plugins");
-			if (OperatingSystem.IsAndroid() || SafPath.IsContentUri(Program.ExeDir))
+			var accessor = GamePaths.Current.DirAccessor;
+			// 大小写不敏感定位插件目录：eraTW 用小写 plugins/，Android/Linux 真实路径大小写敏感；
+			// 目录枚举统一走 accessor（与 SAF 语义一致，对齐 CLAUDE.md 通配约定）。
+			var pluginDir = ResolvePluginsDir(accessor);
+
+			if (!LegacyPluginCompat.CanLoadPluginsHere())
 			{
-				if (!SafCompat.DirectoryExists(pluginDir))
+				if (!accessor.DirectoryExists(pluginDir))
 					return;
-				var pluginFiles = GamePaths.Current.DirAccessor.GetFiles(pluginDir, "*.dll", SearchOption.TopDirectoryOnly);
-				if (pluginFiles.Length > 0)
-					throw new ExeEE("Android/SAF does not support loading game DLL plugins. Remove the Plugins/*.dll files or run this game on Windows.");
+				if (accessor.GetFiles(pluginDir, "*.dll", SearchOption.TopDirectoryOnly).Length > 0)
+					throw new ExeEE(LegacyPluginCompat.UnsupportedReason);
 				return;
 			}
-			if (!Directory.Exists(Path.Combine(Program.ExeDir, "Plugins")))
+
+			if (!accessor.DirectoryExists(pluginDir))
 			{
 				//フォルダを作らないようにする
 				return;
 				//Directory.CreateDirectory("Plugins");
 			}
-			string[] plugins = Directory.GetFiles(Path.Combine(Program.ExeDir, "Plugins"), "*.dll");
+
+			string[] plugins = accessor.GetFiles(pluginDir, "*.dll", SearchOption.TopDirectoryOnly);
 			bool pluginsAware = File.Exists(Program.ExeDir + "pluginsAware.txt");
+			// legacy-plugin-compat：解析插件自带的兄弟依赖（.NET Core LoadFrom 不探测自身目录）。
+			LegacyPluginCompat.Prepare(pluginDir);
 			ClearMethods();
 			foreach (var pluginPath in plugins)
 			{
@@ -303,7 +311,7 @@ namespace MinorShift.Emuera.Runtime.Utils.PluginSystem
 					//TODO: throw warning
 					continue;
 				}
-				if (!pluginsAware)
+				if (LegacyPluginCompat.IsAwareGateEnforced && !pluginsAware)
 				{
 					throw new ExeEE("This game comes prepackaged with plugins. This is a security check to make sure you're aware of that: Never run your EE under Administrator rights, Always get your games and Plugins from verified sources and If you're maintainer of the build and it should NOT come with plugins, Investigate immediately. If everything is okay, create file pluginsAware.txt at the root of the game distributive and restart");
 				}
@@ -323,6 +331,25 @@ namespace MinorShift.Emuera.Runtime.Utils.PluginSystem
 					AddMethod(method);
 				}
 			}
+		}
+
+		/// <summary>
+		/// 大小写不敏感解析插件目录，返回磁盘真实路径。优先枚举 ExeDir 子目录按 "Plugins" 通配匹配
+		/// （托管通配大小写不敏感，Windows/Android 真实路径语义一致）；枚举不可用/未命中时回退按名拼接。
+		/// </summary>
+		private static string ResolvePluginsDir(IGameDirAccessor accessor)
+		{
+			try
+			{
+				var dirs = accessor.GetDirectories(Program.ExeDir, "Plugins", SearchOption.TopDirectoryOnly);
+				if (dirs.Length > 0)
+					return dirs[0];
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+			{
+				// 目录不可达/不可枚举：回退按名解析（随后由 DirectoryExists 决定去留）
+			}
+			return SafCompat.ResolveSubPath(Program.ExeDir, "Plugins");
 		}
 
 		public IPluginMethod GetMethod(string name)

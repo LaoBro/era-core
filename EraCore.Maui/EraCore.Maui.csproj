@@ -81,6 +81,15 @@
      MAUI 不引 Headless.Server / Cli（避免 AspNetCore 框架在 Android target 不可用）。-->
 	<ItemGroup>
 		<ProjectReference Include="..\EraCore.Core\EraCore.Core.csproj" />
+		<!-- legacy-plugin-compat：facade（AssemblyName=Emuera）随 APK/exe 分发，使存量插件引用的
+		     `Emuera` 程序集可被解析（仅转发，不含实现）。Android 在「真实路径 + 非 NativeAOT」下加载。 -->
+		<ProjectReference Include="..\EraCore.Compat.Emuera\EraCore.Compat.Emuera.csproj" />
+	</ItemGroup>
+
+	<!-- legacy-plugin-compat：Android 裁剪下保住 facade 的 ExportedType 转发表（否则转发类型被剪）。
+	     桌面无裁剪，不受影响。 -->
+	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+		<TrimmerRootAssembly Include="Emuera" />
 	</ItemGroup>
 
 	<!-- ===== Issue 07 / spec ID6：MauiAsset 打包 =====

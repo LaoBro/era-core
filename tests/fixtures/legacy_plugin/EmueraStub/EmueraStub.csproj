@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 测试夹具（仅编译期使用，绝不部署）：
+       以程序集名 `Emuera` + 版本 1.824.0.0 复刻原版 Emuera.dll 的**契约类型定义**，
+       使 RefLegacyPlugin 编译出与真实存量插件一致的 AssemblyRef：
+       `Emuera, Version=1.824.0.0, PublicKeyToken=null`。
+       运行时不使用本桩——由产品 facade（EraCore.Compat.Emuera）经 TypeForwardedTo 提供。 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Emuera</AssemblyName>
+    <Version>1.824.0.0</Version>
+    <AssemblyVersion>1.824.0.0</AssemblyVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

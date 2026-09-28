@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <!-- 程序集身份必须是 legacy emuera.em 插件所引用的 `Emuera`。
+         旧插件 AssemblyRef = Emuera, Version=1.824.0.0, PublicKeyToken=null（非强命名），
+         故此处版本对齐 1.824.0.0 且绝不强签名（SignAssembly 保持 false）。 -->
+    <AssemblyName>Emuera</AssemblyName>
+    <RootNamespace>MinorShift.Emuera</RootNamespace>
+    <Version>1.824.0.0</Version>
+    <AssemblyVersion>1.824.0.0</AssemblyVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 依赖方向单向：Emuera(facade) -> EraCore.Core。Core 不引用本程序集。 -->
+    <ProjectReference Include="..\EraCore.Core\EraCore.Core.csproj" />
+  </ItemGroup>
+
+</Project>

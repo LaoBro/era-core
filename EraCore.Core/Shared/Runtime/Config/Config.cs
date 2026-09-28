@@ -63,6 +63,8 @@ internal sealed class Config
 	public static bool UseMenu => Current!._data.GetConfigValue<bool>(ConfigCode.UseMenu);
 	public static bool UseDebugCommand => Current!._data.GetConfigValue<bool>(ConfigCode.UseDebugCommand);
 	public static bool AllowMultipleInstances => Current!._data.GetConfigValue<bool>(ConfigCode.AllowMultipleInstances);
+	/// <summary>legacy-plugin-compat：DLL 插件安全门禁是否强制（默认 false = 兼容优先）。</summary>
+	public static bool PluginsAwareRequired => Current!._data.GetConfigValue<bool>(ConfigCode.PluginsAwareRequired);
 	public static bool AutoSave => Current!._data.GetConfigValue<bool>(ConfigCode.AutoSave);
 	public static bool UseKeyMacro => Current!._data.GetConfigValue<bool>(ConfigCode.UseKeyMacro);
 	public static bool SizableWindow => Current!._data.GetConfigValue<bool>(ConfigCode.SizableWindow);

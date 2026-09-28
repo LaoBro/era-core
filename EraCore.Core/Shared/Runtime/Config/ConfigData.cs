@@ -189,6 +189,8 @@ internal sealed class ConfigData
 		configArray.Add(new ConfigItem<bool>(ConfigCode.IrFileListCache, "命中ラウンドでIR保存のファイルリストを使う", "Use IR-stored file list on hit rounds", true));
 		// issues/10 10-B：CSV/ERH 源内容缓存开关（默认 true，仅 content-URI 游戏生效）；FALSE = 命中轮回到懒读现状，写侧不受影响。
 		configArray.Add(new ConfigItem<bool>(ConfigCode.SrcContentCache, "命中ラウンドでCSV/ERH内容キャッシュを使う", "Use CSV/ERH content cache on hit rounds", true));
+		// legacy-plugin-compat：DLL 插件安全门禁是否强制（默认 false = 兼容优先）。详见 ConfigCode.PluginsAwareRequired。
+		configArray.Add(new ConfigItem<bool>(ConfigCode.PluginsAwareRequired, "プラグインの安全確認を必須にする", "Require plugins security check", false));
 
 
 		configArray.Add(new ConfigItem<bool>(ConfigCode.ChangeMasterNameIfDebug, "デバッグコマンドを使用した時にMASTERの名前を変更する", "Change MASTER mame in debug", true));

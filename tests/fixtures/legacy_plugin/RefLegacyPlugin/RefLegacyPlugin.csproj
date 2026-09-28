@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 测试夹具：模拟“已编译的存量 emuera.em 插件”。
+       仅引用定义型 Emuera 桩（编译期）——产出的 AssemblyRef = `Emuera, 1.824.0.0`，
+       与真实插件一致；Private=false 保证不给插件输出目录带上 Emuera.dll
+       （运行时由产品 facade 提供，若此处泄漏会污染 Plugins/ 解析）。 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>RefLegacyPlugin</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EmueraStub\EmueraStub.csproj" Private="false" />
+    <ProjectReference Include="..\RefLegacyDep\RefLegacyDep.csproj" />
+  </ItemGroup>
+
+</Project>

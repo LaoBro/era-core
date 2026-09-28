@@ -244,6 +244,25 @@ def main():
 
     results.append(
         (
+            "legacy plugin compat",
+            _run_script(
+                "legacy plugin compat",
+                [
+                    sys.executable,
+                    str(TESTS_DIR / "test_plugin_compat.py"),
+                    "--binary",
+                    str(binary_path),
+                    "--game-dir",
+                    str(game_dir),
+                ],
+                env=env,
+                timeout=420,
+            ),
+        )
+    )
+
+    results.append(
+        (
             "preload readback",
             _run_script(
                 "preload readback",

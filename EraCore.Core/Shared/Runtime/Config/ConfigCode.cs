@@ -88,6 +88,10 @@ internal enum ConfigCode
 	// 命中轮免 SAF 逐文件懒读（真机读窗 13.3s），重水化前逐目录元数据校验（修改/删除/已知目录
 	// 内新增可检）。FALSE = 命中轮回到懒读现状；建库轮写侧不受影响。
 	SrcContentCache = 304,
+	// legacy-plugin-compat：DLL 插件安全门禁（pluginsAware.txt）是否强制。默认 false = 兼容优先——
+	// eraTW 等社区游戏不自带 pluginsAware.txt，其可在原版引擎运行的 Skia 亦无此门禁；
+	// 开启后行为回到严格模式（发现带 PluginManifest 的 DLL 且无该文件即抛 ExeEE）。
+	PluginsAwareRequired = 305,
 	ChangeMasterNameIfDebug = 34,
 	// 35 曾为 LastKey（最終更新コード）——已移除：ONCE 的变更判据改寄生到 IR 指纹，
 	// 本引擎不再读写该键（见 ConfigData.ApplyReduceArgumentOnLoad / LoadConfigCore 的写回策略）。

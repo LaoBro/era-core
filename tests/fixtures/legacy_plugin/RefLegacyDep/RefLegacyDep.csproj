@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 测试夹具：插件自带的兄弟依赖（模拟 eraTW 的 MathParser.org-mXparser.dll）。
+       运行时只放进游戏 `plugins/` 目录（不在宿主输出目录），
+       用于验证 PluginManager 的 Plugins-dir 解析处理器（.NET Core LoadFrom 不探测自身目录）。 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>RefLegacyDep</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>
