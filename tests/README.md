@@ -75,6 +75,25 @@ python tests/run_all.py --binary EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe -
 D:/LaoBro/era-core/EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe
 ```
 
+## 大小写敏感关卡（WSL2 Ubuntu）
+
+Windows 的文件系统与 .NET 托管 glob 都不区分大小写，「文件名大小写 / 通配 pattern / 路径分隔符」类缺陷在本地 `dotnet test` 里**不可能复现**（曾出现 Windows 1065/1065 全绿、真机 legacy 一进新游戏就崩）。命中下列任一改动时，必须把同一套单测再跑一次真大小写敏感环境（WSL2 Ubuntu + ext4）：
+
+```bash
+# 把 /mnt/d/<repo> 换成仓库在 WSL 下的路径；命令里不要出现 $（外层 shell 会先展开 $PATH）
+# SDK 装在 ~/.dotnet
+wsl -d Ubuntu -- bash -lc "cd /mnt/d/<repo> && ~/.dotnet/dotnet test EraCore.Tests/EraCore.Tests.csproj"
+```
+
+触发清单：
+
+- `FileSystemGameDirAccessor` / `SafGameDirAccessor` / `IGameDirAccessor`
+- `Config.GetFiles` 或任何 `GetFiles(..., searchPattern, ...)` 调用点
+- `SafPath`（相对名 ↔ 物理路径、分隔符）
+- `Wildcard` / `Preload` 树枚举
+
+判读口径：WSL 下**基线固定 5 个既有失败 + 时序/并发类偶发 flaky**，只有不在名单里、且单跑也不通过的失败才算回归。失败名单与成因见 [`docs/LESSONS/testing-and-ci.md`](../docs/LESSONS/testing-and-ci.md) #12。
+
 ## JSONL 协议测试
 
 `test_jsonl.py` 通过 `tests/emuera_server.py` 的 `start_server` 启动 server 模式：

@@ -150,7 +150,7 @@ cd EraCore.Web && npm test
 python tests/run_all.py --binary EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe --game-dir test_game
 ```
 
-碰「文件名大小写 / 通配 pattern / 路径分隔符」的改动，必须额外跑一次真大小写敏感环境（WSL2 Ubuntu）——这类缺陷在 Windows 本地 `dotnet test` 里不可能复现。触发清单与判读口径见 [docs/LESSONS/testing-and-ci.md](docs/LESSONS/testing-and-ci.md) #12；套件与单项运行方式见 [tests/README.md](tests/README.md)。
+碰「文件名大小写 / 通配 pattern / 路径分隔符」的改动，必须额外跑一次真大小写敏感环境（WSL2 Ubuntu）——这类缺陷在 Windows 本地 `dotnet test` 里不可能复现。触发清单、判读口径与套件运行方式见 [tests/README.md](tests/README.md)。
 
 ***
 

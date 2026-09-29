@@ -65,7 +65,7 @@ dotnet test EraCore.Tests/EraCore.Tests.csproj
 wsl -d Ubuntu -- bash -lc "cd /mnt/d/<repo> && ~/.dotnet/dotnet test EraCore.Tests/EraCore.Tests.csproj"
 ```
 
-Windows 测不出「文件名大小写 / 通配 pattern / 路径分隔符」类缺陷。WSL 下**基线固定 5 个既有失败 + 时序/并发类偶发 flaky**，只有不在名单里、且单跑也不通过的失败才算回归；触发清单与判读口径见 [`docs/LESSONS/testing-and-ci.md`](docs/LESSONS/testing-and-ci.md) #12。
+Windows 测不出「文件名大小写 / 通配 pattern / 路径分隔符」类缺陷。WSL 下**基线固定 5 个既有失败 + 时序/并发类偶发 flaky**，只有不在名单里、且单跑也不通过的失败才算回归；触发清单与判读口径见 [`tests/README.md`](tests/README.md)「大小写敏感关卡」。
 
 ### 全量回归
 
@@ -131,14 +131,19 @@ python -m eracore_agent stop
 ## 文档索引
 
 - 架构总览：[`ARCHITECTURE.md`](ARCHITECTURE.md)
-- 控制权术语：根目录 `CONTEXT.md`「控制权交接」
+- 使用与运维指南：[`docs/guides/README.md`](docs/guides/README.md)（构建与发布 / 性能与加载开关 / Agent 集成）
 - Web 前端：[`EraCore.Web/README.md`](EraCore.Web/README.md)
 - 测试：[`tests/README.md`](tests/README.md)
 - 终端行为教训：[`docs/LESSONS/terminal-windows.md`](docs/LESSONS/terminal-windows.md)
 - 全部教训索引：[`docs/LESSONS/README.md`](docs/LESSONS/README.md)
-- Issue tracker：[`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md)
-- Triage labels：[`docs/agents/triage-labels.md`](docs/agents/triage-labels.md)
-- Domain docs：[`docs/agents/domain.md`](docs/agents/domain.md)
+
+以下仅存在于本地工作区、**不入库**（仓库克隆后不存在，不要写成 markdown 链接）：
+
+- 控制权术语：根 `CONTEXT.md`「控制权交接」
+- Issue tracker：`docs/agents/issue-tracker.md`
+- Triage labels：`docs/agents/triage-labels.md`
+- Domain docs：`docs/agents/domain.md`
+- 进行中的规划与决策记录：`docs/adr/`、`.scratch/<feature>/`
 
 ## Agent skills
 

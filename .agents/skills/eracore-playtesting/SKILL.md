@@ -7,7 +7,7 @@ description: Playtest Emuera games via eracore_agent. Use when driving test_game
 
 用 `python -m eracore_agent <subcommand>` 操控本仓库的 Headless 游戏，也支持连到正在跑的 MAUI 应用会话。一次调用 = 一个回合；stdout 只有 JSON，错误在 stderr + 非零退出码。本文档自包含：**只凭下述命令与判据即可完成操控，无需再检索代码库**。
 
-术语（Controller / Spectator / Acquire / Release / Steal / Lease / Control Event / Controller Kind）以根目录 [`CONTEXT.md`](../../../CONTEXT.md)「控制权交接」为准。回合/按钮字段由 `AgentJsonlProtocol` / `TurnRecord` / `DisplaySnapshot` 决定，本文不复述协议结构。
+术语（Controller / Spectator / Acquire / Release / Steal / Lease / Control Event / Controller Kind）以根目录 `CONTEXT.md`「控制权交接」为准（该文件仅存在于本地工作区、不入库）。回合/按钮字段由 `AgentJsonlProtocol` / `TurnRecord` / `DisplaySnapshot` 决定，本文不复述协议结构。
 
 ## 0. 连接目标（谁被操控）
 
