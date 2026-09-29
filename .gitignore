@@ -8,6 +8,7 @@ EraCore.Maui/Properties/
 .workbuddy/*
 .zcode/*
 .agents/*
+.trae/*
 !.agents/skills/
 .agents/skills/*
 !.agents/skills/eracore-playtesting/
