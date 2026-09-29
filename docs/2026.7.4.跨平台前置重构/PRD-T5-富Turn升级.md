@@ -1,7 +1,7 @@
 # PRD: 富 Turn 升级（v2 操作序列模型）
 
 > 对应 [TODO.md](./TODO.md) "富 turn 升级整体推迟" 章节、
-> [ADR-0002](../../adr/0002-turn-v2-operation-sequence.md)。
+> ADR-0002。
 > 本 PRD 严格遵循 grilling 阶段达成的共识。
 
 ## Problem Statement
@@ -34,7 +34,7 @@ v2 turn 删除 `text` 与 `buttons` 顶层字段，新增 `ops[]` 数组——**
 `protocolVersion` 升到 `2`。**不保留 v1 字段作降级**——v2 是干净替换。
 
 op 种类与 wire format 见下文"Op Schema"章节。术语定义见
-[CONTEXT.md Operation Sequence Model](../../CONTEXT.md)。
+CONTEXT.md Operation Sequence Model。
 
 ## User Stories
 
@@ -61,8 +61,8 @@ op 种类与 wire format 见下文"Op Schema"章节。术语定义见
     测试能验证 v2 wire format 的正确性。
 11. 作为未来读者，我希望有 ADR 记录"为何用 op 序列而非快照"、"为何不保留 v1
     降级"、"为何 CLI 双写 `_agentBuffer`"——这些决策点对应
-    [ADR-0002](../../adr/0002-turn-v2-operation-sequence.md)。
-12. 作为未来读者，我希望 [CONTEXT.md](../../CONTEXT.md) 提供 Op / Print Op /
+    ADR-0002。
+12. 作为未来读者，我希望 `CONTEXT.md` 提供 Op / Print Op /
     NewLine Op / ClearLine Op / Clear Op / Set BG Op / Display State /
     Operation Sequence / Generation 等术语，这样我能在统一词汇下阅读代码与文档。
 
@@ -483,12 +483,12 @@ v2 不在 turn 中输出 `generation` 字段。**turn 边界隐式标记前一�
 
 ### Prior Art
 
-- [test_jsonl.py](../../../tests/test_jsonl.py)：v1 turn schema 断言，重写为 v2。
-- [test_server_single_session.py](../../../tests/test_server_single_session.py)：
+- [test_jsonl.py](../../tests/test_jsonl.py)：v1 turn schema 断言，重写为 v2。
+- [test_server_single_session.py](../../tests/test_server_single_session.py)：
   HTTP 单会话生命周期断言，应同步检查是否依赖 v1 字段。
-- [test_tinput_timeout.py](../../../tests/test_tinput_timeout.py)：TINPUT 超时
+- [test_tinput_timeout.py](../../tests/test_tinput_timeout.py)：TINPUT 超时
   场景，应同步检查是否依赖 v1 字段。
-- [run_all.py](../../../tests/run_all.py)：回归套件入口。
+- [run_all.py](../../tests/run_all.py)：回归套件入口。
 
 ## Out of Scope
 
@@ -511,14 +511,14 @@ v2 不在 turn 中输出 `generation` 字段。**turn 边界隐式标记前一�
 
 ### 与既有 ADR 的关系
 
-[ADR-0002](../../adr/0002-turn-v2-operation-sequence.md) 已在 grilling 阶段落地，
+ADR-0002 已在 grilling 阶段落地，
 记录"v2 采用 op 序列模型、不保留 v1 降级、CLI 双写 `_agentBuffer`"的核心决策
 与 3 条被拒绝的替代方案（v1+v2 双字段、2× 窗口快照、op 序列+text 降级）。
-[ADR-0001](../../adr/0001-turn-protocol-versioning.md) 的"wire format 字节级不变"
+ADR-0001 的"wire format 字节级不变"
 约束被 v2 显式 supersede，但 ADR-0001 的其他决策（版本字段仅在 initial turn、
 fatal 路径独立构造、版本常量位置）仍然有效。
 
-### 与 [CONTEXT.md](../../CONTEXT.md) 的关系
+### 与 `CONTEXT.md` 的关系
 
 grilling 阶段已更新仓库根 `CONTEXT.md`：
 - 更新 Turn / Fatal Turn / protocolVersion 为版本无关描述。

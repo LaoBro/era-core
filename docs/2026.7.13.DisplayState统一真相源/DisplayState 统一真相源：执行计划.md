@@ -57,7 +57,7 @@ After:   DisplayLineList ──→ DisplayState (唯一入口)
 
 **目标**：确保升级过程中不破坏任何现有行为。
 
-> **范围修正（grilling 2026-07-13）**：已确认推翻 ADR-0013 决策四（CLI 不迁移），DisplayState 将成为 CLI 与 Web 的统一真相源（见 [ADR-0014](../../docs/adr/0014-displaystate-unified-source-cli-consumes.md)）。Phase 0 只建护栏、不改代码；CLI 的实际迁移在 Phase 4。护栏遵循「简单高效」原则——Web 用合成 C# golden，CLI 不录字节 golden，全部固定 **MS Gothic** 字体以保证 `width` 确定。
+> **范围修正（grilling 2026-07-13）**：已确认推翻 ADR-0013 决策四（CLI 不迁移），DisplayState 将成为 CLI 与 Web 的统一真相源（见 ADR-0014）。Phase 0 只建护栏、不改代码；CLI 的实际迁移在 Phase 4。护栏遵循「简单高效」原则——Web 用合成 C# golden，CLI 不录字节 golden，全部固定 **MS Gothic** 字体以保证 `width` 确定。
 
 | 任务 | 说明 |
 |------|------|
@@ -80,7 +80,7 @@ After:   DisplayLineList ──→ DisplayState (唯一入口)
 > - `BuildTurn` 必须在 `TakePendingOps()` **之前**调 `TryUpdate()`，否则 pendingOps 已空，检测永远 false。
 > - 单个 `DisplayState` 实例由 `Session` 持有并注入 `AgentJsonlProtocol`；`GET /snapshot` 走该实例，需 `_gate` 锁保护跨线程读写。
 
-当前 [DisplayState](Emuera.Headless/Agent/DisplayState.cs#L51-L70) 每次调用 `GetSnapshot()` 都重新遍历整个 `DisplayLineList`，不持有任何状态。这是升级的起点。
+当前 [DisplayState](../../EraCore.Core/Agent/DisplayState.cs#L51-L70) 每次调用 `GetSnapshot()` 都重新遍历整个 `DisplayLineList`，不持有任何状态。这是升级的起点。
 
 #### 1-0 前置：EmueraConsole 暴露 PendingOpCount
 

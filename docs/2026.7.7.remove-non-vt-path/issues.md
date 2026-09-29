@@ -1,7 +1,7 @@
 # Issues: 移除 CLI 非 VT 降级路径
 
 **Parent PRD**: [PRD.md](./PRD.md)
-**Parent ADR**: [ADR-0005](../adr/0005-remove-non-vt-path.md)
+**Parent ADR**: ADR-0005
 **Triage Label**: `ready-for-agent`
 
 按依赖顺序发布 4 个垂直切片。每个 issue 完成后可独立验证。

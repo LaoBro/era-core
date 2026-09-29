@@ -4,7 +4,7 @@
 
 ### 问题本质
 
-当前 ERB 脚本通过 `ExpressionMediator` 直接持有 [Process](Emuera.Headless/Shared/Runtime/Script/Process.cs#L26-L67)、[VariableEvaluator](Emuera.Headless/Shared/Runtime/Script/Statements/Variable/VariableEvaluator.cs#L21-L40)、[EmueraConsole](Emuera.Headless/Shared/Runtime/Script/Statements/ExpressionMediator.cs#L14-L24) 三个对象——脚本想做什么就做什么，没有边界。C# 脚本进来后会面临同样的情况：直接拿到引擎内部对象，要么全部暴露要么全部不可用。
+当前 ERB 脚本通过 `ExpressionMediator` 直接持有 [Process](../../EraCore.Core/Shared/Runtime/Script/Process.cs#L26-L67)、[VariableEvaluator](../../EraCore.Core/Shared/Runtime/Script/Statements/Variable/VariableEvaluator.cs#L21-L40)、[EmueraConsole](../../EraCore.Core/Shared/Runtime/Script/Statements/ExpressionMediator.cs#L14-L24) 三个对象——脚本想做什么就做什么，没有边界。C# 脚本进来后会面临同样的情况：直接拿到引擎内部对象，要么全部暴露要么全部不可用。
 
 `IScriptHost` 的目标：**定义脚本"能做什么"的契约，把"怎么做"藏在实现后面**。
 
@@ -16,7 +16,7 @@
 
 #### 0-1 指令级审计
 
-[Instraction.Child.cs](Emuera.Headless/Shared/Runtime/Script/Statements/Instraction.Child.cs) 有 3824 行，是所有 ERB 指令的实现。每条指令的 `DoInstruction(exm, func, state)` 签名中，`exm` 是脚本访问引擎的唯一入口。逐条梳理它调用了 `exm` 的哪些成员：
+[Instraction.Child.cs](../../EraCore.Core/Shared/Runtime/Script/Statements/Instraction.Child.cs) 有 3824 行，是所有 ERB 指令的实现。每条指令的 `DoInstruction(exm, func, state)` 签名中，`exm` 是脚本访问引擎的唯一入口。逐条梳理它调用了 `exm` 的哪些成员：
 
 | 分类 | 典型指令 | 访问的 exm 成员 |
 |------|---------|----------------|
@@ -29,7 +29,7 @@
 
 #### 0-2 SystemProc 审计
 
-[SystemProc](Emuera.Headless/Shared/Runtime/Script/SystemProc.cs#L17-L49) 持有 `process` / `console` / `vEvaluator` / `gamebase` / `trainName` / `executionState`——这是系统流程（标题→训练→商店→升级→回合结束）的调度器。C# 脚本是否能控制系统流程？这是一个产品决策，需要先回答。
+[SystemProc](../../EraCore.Core/Shared/Runtime/Script/SystemProc.cs#L17-L49) 持有 `process` / `console` / `vEvaluator` / `gamebase` / `trainName` / `executionState`——这是系统流程（标题→训练→商店→升级→回合结束）的调度器。C# 脚本是否能控制系统流程？这是一个产品决策，需要先回答。
 
 #### 0-3 产出物
 
@@ -210,7 +210,7 @@ internal sealed class EmueraScriptHost : IScriptHost
 
 #### 2-2 EmueraScriptHost 的构造时机
 
-当前 [Session.GameLoopAsync()](Emuera.Headless/Server/Session.cs#L71-L81) 中构造顺序：
+当前 [Session.GameLoopAsync()](../../EraCore.Core/Server/Session.cs#L71-L81) 中构造顺序：
 
 ```csharp
 using var scope = GlobalStatic.OpenScope(_configData);

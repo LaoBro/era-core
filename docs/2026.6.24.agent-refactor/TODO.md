@@ -153,7 +153,7 @@
 
 **待办**：
 
-- [x] `s_log` 静态字段改为 `Log`（[AgentCliVtInput.cs](file:///d:/LaoBro/Emuera.MCP/Emuera.Headless/Agent/AgentCliVtInput.cs)）
+- [x] `s_log` 静态字段改为 `Log`（`AgentCliVtInput.cs`）
 - [x] `ButtonListEquals` 重命名为 `ButtonInputKeysEqual`（当前仅比较 `InputKey`，命名误导）
 - [x] 统一 `record struct` 命名风格（已一致，无需调整）
 

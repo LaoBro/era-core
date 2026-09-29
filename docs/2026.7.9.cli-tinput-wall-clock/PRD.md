@@ -1,8 +1,8 @@
 # PRD: CLI 模式 TINPUT 超时挂钟计时修复
 
 - **日期**: 2026-07-09
-- **关联 ADR**: [ADR-0007](../adr/0007-cli-tinput-wall-clock.md)、[ADR-0006](../adr/0006-cli-vt-scroll-viewport.md)
-- **关联 Glossary**: [CONTEXT.md](../../CONTEXT.md) — WaitInputEnteredAt、auto-follow、Scroll Mode
+- **关联 ADR**: ADR-0007、ADR-0006
+- **关联 Glossary**: `CONTEXT.md` — WaitInputEnteredAt、auto-follow、Scroll Mode
 
 ## Problem Statement
 

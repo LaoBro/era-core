@@ -1,7 +1,7 @@
 # T-022 阶段 4：Shared/ 历史代码非 nullable 警告清理（精简工作备忘）
 
 **创建**：2026-07-04
-**范围**：[`Emuera.Headless/Shared/**`](../../Emuera.Headless/Shared/) 子树
+**范围**：`Emuera.Headless/Shared/**` 子树
 **前置**：T-022 阶段 3 已完成所有 CS86xx（nullable 引用类型）抑制规则撤销
 **目标**：逐步撤销 `.editorconfig` 中 `[Emuera.Headless/Shared/**]` 段剩余的 CS/CA/SYSLIB 抑制规则，使历史代码尽量通过 `TreatWarningsAsErrors=true` 构建。无法机械清理的规则需明确保留理由。
 

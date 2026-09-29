@@ -1,6 +1,6 @@
 # T-022 阶段 3：Shared/ 历史代码 nullable 警告清理（精简工作备忘）
 **创建**：2026-07-03  
-**范围**：[`Emuera.Headless/Shared/**`](../../Emuera.Headless/Shared/) 子树  
+**范围**：`Emuera.Headless/Shared/**` 子树  
 **目标**：逐步撤销 `.editorconfig` 中的 CS86xx 抑制规则，使历史代码 nullable-clean，最终全量通过 `TreatWarningsAsErrors=true` 构建。
 ## 1. 背景与约束
 - **构建环境**：项目已启用 `<Nullable>enable</Nullable>` + `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>`。

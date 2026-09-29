@@ -1,6 +1,6 @@
 # CLI ↔ Web 差异表（Phase 0-3）
 
-> 轻量文档：重述 [ADR-0013](../adr/0013-displaystate-snapshot-routing.md) 的 4 缺口，标注各缺口由哪个 Phase 消化。不重做调研。
+> 轻量文档：重述 ADR-0013 的 4 缺口，标注各缺口由哪个 Phase 消化。不重做调研。
 >
 > 详见执行计划：[DisplayState 统一真相源：执行计划.md](./DisplayState%20统一真相源：执行计划.md)
 

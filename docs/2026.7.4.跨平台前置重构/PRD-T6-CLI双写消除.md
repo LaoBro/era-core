@@ -1,7 +1,7 @@
 # PRD: CLI 双写技术债消除（displayLineList delta）
 
 > 对应 [TODO.md](./TODO.md) "CLI 双写技术债消除（PRD-T6，待立项）" 章节、
-> [ADR-0003](../../adr/0003-cli-rendering-displayline-delta.md)。
+> ADR-0003。
 > 本 PRD 严格遵循 grilling 阶段达成的共识（Q1-Q7）。
 
 ## Problem Statement
@@ -28,7 +28,7 @@
    基类里，调用面被无谓放大。
 
 5. **VT 模式无背景色能力**：`SetBgOp` 已在 v2 落地，但 CLI 路径完全不消费它——VT 终端有
-   `ESC[48;2;r;g;bm` 能力却没被使用，是 v2 留下的能力红利未兑现。
+   `ESC48;2;r;g;bm` 能力却没被使用，是 v2 留下的能力红利未兑现。
 
 ## Solution
 
@@ -37,8 +37,8 @@ CLI 的 `TerminalRenderer.FlushBuffer` 改为读 `displayLineList` delta（canon
 acted on（它们没有 `displayLineList` 等价物）。`PrintOp` / `NewLineOp` / `ClearLineOp` 的
 语义全部由 `displayLineList` delta 捕获。
 
-详见 [ADR-0003](../../adr/0003-cli-rendering-displayline-delta.md)。术语定义沿用
-[CONTEXT.md Operation Sequence Model](../../CONTEXT.md)。
+详见 ADR-0003。术语定义沿用
+[CONTEXT.md Operation Sequence Model。
 
 ## User Stories
 
@@ -64,7 +64,7 @@ acted on（它们没有 `displayLineList` 等价物）。`PrintOp` / `NewLineOp`
 
 7. 作为未来读者，我希望有 ADR-0003 记录"为何 CLI 用 displayLineList delta 而非
    op 消费"、"为何 `_agentBuffer` 链路被删除而非迁移到 op 消费"——这些决策点对应
-   [ADR-0003](../../adr/0003-cli-rendering-displayline-delta.md)。
+   ADR-0003。
 
 8. 作为未来 P0-1 实施者，我希望 `FlushBuffer` 已是稳定的 `displayLineList` delta
    结构，这样提取 `ITerminalOutput` 是机械替换，不会再次重写渲染逻辑。
@@ -270,7 +270,7 @@ internal void FullRefresh()
 
 以下代码全部删除：
 
-**`ConsoleStateData`**（[ConsoleStateData.cs L127-L131](../../../Emuera.Headless/UI/Game/Console/ConsoleStateData.cs#L127-L131)）：
+**`ConsoleStateData`**（[ConsoleStateData.cs L127-L131](../../EraCore.Core/UI/Game/Console/ConsoleStateData.cs#L127-L131)）：
 ```csharp
 // 删除：
 internal readonly StringBuilder _agentBuffer = new();
@@ -281,7 +281,7 @@ internal readonly List<TurnOp> _pendingOps = [];
 internal bool _needFullRefresh;
 ```
 
-**`EmueraConsole`**（[EmueraConsole.cs L441-L497](../../../Emuera.Headless/UI/Game/EmueraConsole.cs#L441-L497)）：
+**`EmueraConsole`**（[EmueraConsole.cs L441-L497](../../EraCore.Core/UI/Game/EmueraConsole.cs#L441-L497)）：
 ```csharp
 // 删除：
 public int ConsumePendingEraseRows() { ... }
@@ -299,20 +299,20 @@ internal string FormatLineForTerminal(ConsoleDisplayLine line) { ... }  // FullR
 private static string BuildTerminalLine(...) { ... }  // FormatLineForTerminal 内部用
 ```
 
-**`ConsolePrintManager.AddDisplayLine`**（[ConsolePrintManager.cs L151](../../../Emuera.Headless/UI/Game/Console/ConsolePrintManager.cs#L151)）：
+**`ConsolePrintManager.AddDisplayLine`**（[ConsolePrintManager.cs L151](../../EraCore.Core/UI/Game/Console/ConsolePrintManager.cs#L151)）：
 ```csharp
 // 删除这一行：
 _console.WriteAlignedLine(line);
 ```
 
-**`ConsolePrintManager.DeleteLine`**（[ConsolePrintManager.cs L219-L220](../../../Emuera.Headless/UI/Game/Console/ConsolePrintManager.cs#L219-L220)）：
+**`ConsolePrintManager.DeleteLine`**（[ConsolePrintManager.cs L219-L220](../../EraCore.Core/UI/Game/Console/ConsolePrintManager.cs#L219-L220)）：
 ```csharp
 // 删除这两行：
 if (!_console.RemoveLastLineFromAgentBuffer())
     _state._pendingEraseRows++;
 ```
 
-**`IConsoleStateView`**（[IConsoleStateView.cs](../../../Emuera.Headless/Agent/IConsoleStateView.cs)）：
+**`IConsoleStateView`**（[IConsoleStateView.cs](../../EraCore.Core/Agent/IConsoleStateView.cs)）：
 ```csharp
 internal interface IConsoleStateView
 {
@@ -323,7 +323,7 @@ internal interface IConsoleStateView
 
 ### `WriteOutput` 迁移：input echo 改直接 `Console.Write`
 
-**`AgentProtocolBase`**（[AgentProtocolBase.cs L50-L53](../../../Emuera.Headless/Agent/AgentProtocolBase.cs#L50-L53)）：
+**`AgentProtocolBase`**（[AgentProtocolBase.cs L50-L53](../../EraCore.Core/Agent/AgentProtocolBase.cs#L50-L53)）：
 ```csharp
 // 删除：
 internal virtual void WriteOutput(string text, bool newLine = true)
@@ -341,7 +341,7 @@ private void WriteOutput(string text, bool newLine = true)
 }
 ```
 
-调用点不变（[AgentCliProtocol.cs L351, L362, L436](../../../Emuera.Headless/Agent/AgentCliProtocol.cs)），
+调用点不变（[AgentCliProtocol.cs L351, L362, L436](../../EraCore.Core/Agent/AgentCliProtocol.cs)），
 从基类虚方法降级为本类私有方法。`EraseInputLine` / `ProcessChar` 内的 `WriteOutput` 调用
 语义保持——echo 与 display line 时序分析见下方"Input echo 时序安全性"。
 
@@ -491,13 +491,13 @@ CLI 只是要 drain 队列并对 `ClearOp` / `SetBgOp` 做动作。callback 形�
 
 ### Prior Art
 
-- [test_cli_basic.py](../../../tests/test_cli_basic.py)：既有 ConPTY smoke test，
+- [test_cli_basic.py](../../tests/test_cli_basic.py)：既有 ConPTY smoke test，
   扩展为多路径覆盖。
-- [test_tinput_timeout.py](../../../tests/test_tinput_timeout.py)：复制 `test_game`
+- [test_tinput_timeout.py](../../tests/test_tinput_timeout.py)：复制 `test_game`
   到临时目录注入 ERB 的夹具模式，本次扩展复用此模式。
-- [tests/emuera_server.py](../../../tests/emuera_server.py)：`find_binary` 工具函数，
+- [tests/emuera_server.py](../../tests/emuera_server.py)：`find_binary` 工具函数，
   CLI 测试复用。
-- [tests/README.md](../../../tests/README.md)：测试权威文档，本次扩展应同步更新。
+- [tests/README.md](../../tests/README.md)：测试权威文档，本次扩展应同步更新。
 
 ## Rollout
 
@@ -512,7 +512,7 @@ PR 顺序：
 3. 迁移 `WriteOutput`（`AgentProtocolBase` → `AgentCliProtocol`）。
 4. 扩展 `test_cli_basic.py` 为多路径 ConPTY smoke test。
 5. 运行全套回归测试。
-6. 同步更新 [TODO.md](./TODO.md) 标记 PRD-T6 完成、[tests/README.md](../../../tests/README.md)
+6. 同步更新 [TODO.md](./TODO.md) 标记 PRD-T6 完成、[tests/README.md](../../tests/README.md)
    新增测试条目。
 
 ## Out of Scope
@@ -534,10 +534,10 @@ PR 顺序：
 
 ### 与既有 ADR 的关系
 
-[ADR-0003](../../adr/0003-cli-rendering-displayline-delta.md) 已在 grilling 阶段落地，
+ADR-0003 已在 grilling 阶段落地，
 记录"CLI 用 displayLineList delta 而非 op 消费"的核心决策与 3 条被拒绝的替代方案
 （逐行缓冲消费 ops / 混合 ops+displayLineList / TODO 原方向"消费 ops"）。
-[ADR-0002](../../adr/0002-turn-v2-operation-sequence.md) 的"CLI 双写技术债" consequence
+ADR-0002 的"CLI 双写技术债" consequence
 条目被 ADR-0003 显式 supersede。
 
 ### 与 [PRD-T5](./PRD-T5-富Turn升级.md) 的关系

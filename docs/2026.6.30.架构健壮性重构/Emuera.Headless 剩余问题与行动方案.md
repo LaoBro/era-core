@@ -1,6 +1,6 @@
 # Emuera.Headless 剩余问题与行动方案
 
-> 基准：[Emuera.Headless 架构健壮性复评报告.md](file:///d:/LaoBro/Emuera.MCP/docs/2026.6.30.架构健壮性重构/Emuera.Headless%20架构健壮性复评报告.md)（2026-07-01）
+> 基准：[Emuera.Headless 架构健壮性复评报告.md](Emuera.Headless%20架构健壮性复评报告.md)（2026-07-01）
 > 复核日期：2026-07-02
 > 定位：本文档汇总**尚未解决或仅部分解决**的问题与对应行动方案，作为后续重构的执行清单。已解决问题不在此列。
 
@@ -25,15 +25,15 @@ I-03、I-04、I-05、I-06、I-07、I-08、I-13、I-15（JSONL + HTTP 500）、I-
 
 **状态**：部分解决（重大进展，仍是单会话约束）
 
-**已做**：[Emuera.Headless/GlobalStatic.cs](file:///d:/LaoBro/Emuera.MCP/Emuera.Headless/GlobalStatic.cs) 是 Headless 专用实现，核心字段改为 `property + internal set`，setter 加锁 + 严格断言；新增幂等 `Reset()` 方法，由 `Session.GameLoopAsync` finally 块调用。
+**已做**：[Emuera.Headless/GlobalStatic.cs](../../EraCore.Core/GlobalStatic.cs) 是 Headless 专用实现，核心字段改为 `property + internal set`，setter 加锁 + 严格断言；新增幂等 `Reset()` 方法，由 `Session.GameLoopAsync` finally 块调用。
 
-**未做**：字段仍是进程级 `static`，**无法支持并发多会话**。原报告建议的"`IGameRuntime` 上下文接口"未实施——**单会话契约已确认**（server 模式只支持单会话，见 [CLAUDE.md](file:///d:/LaoBro/Emuera.MCP/CLAUDE.md) 与 [SPEC_SINGLE_THREAD.md §5.2](file:///d:/LaoBro/Emuera.MCP/docs/old/3.single-thread/SPEC_SINGLE_THREAD.md)），现有硬约束（`HttpGameServer` 单 `_session` + 409、`GlobalStatic` 锁 + 断言 + 幂等 `Reset`）足以防误用，无需再引入上下文接口。
+**未做**：字段仍是进程级 `static`，**无法支持并发多会话**。原报告建议的"`IGameRuntime` 上下文接口"未实施——**单会话契约已确认**（server 模式只支持单会话，见 [CLAUDE.md](../../CLAUDE.md) 与 [SPEC_SINGLE_THREAD.md §5.2](../old/3.single-thread/SPEC_SINGLE_THREAD.md)），现有硬约束（`HttpGameServer` 单 `_session` + 409、`GlobalStatic` 锁 + 断言 + 幂等 `Reset`）足以防误用，无需再引入上下文接口。
 
 #### I-10 — AgentLog 单例
 
 **状态**：部分解决
 
-**已做**：[AgentLog.cs](file:///d:/LaoBro/Emuera.MCP/Emuera.Headless/Agent/AgentLog.cs) 默认开启，加 `lock` 保护写入，注册 `ProcessExit` 钩子确保 flush。
+**已做**：[AgentLog.cs](../../EraCore.Core/Agent/AgentLog.cs) 默认开启，加 `lock` 保护写入，注册 `ProcessExit` 钩子确保 flush。
 
 **未做**：仍是 `Lazy<>` 单例 + 文件路径依赖 `Program.ExeDir` 静态。未引入 `Microsoft.Extensions.Logging` 抽象。Server 多会话共享同一文件句柄（与单会话约束叠加，目前不构成实际问题）。
 
@@ -41,9 +41,9 @@ I-03、I-04、I-05、I-06、I-07、I-08、I-13、I-15（JSONL + HTTP 500）、I-
 
 **状态**：部分解决
 
-**已做**：`EmueraConsole.AgentBridge.cs` 已合并入 [EmueraConsole.cs](file:///d:/LaoBro/Emuera.MCP/Emuera.Headless/UI/Game/EmueraConsole.cs)。
+**已做**：`EmueraConsole.AgentBridge.cs` 已合并入 [EmueraConsole.cs](../../EraCore.Core/UI/Game/EmueraConsole.cs)。
 
-**未做**：`partial` 修饰符仍保留（[EmueraConsole.cs:20](file:///d:/LaoBro/Emuera.MCP/Emuera.Headless/UI/Game/EmueraConsole.cs#L20)），且 `Emuera/Emuera.sln` 仍存在。详见下文 I-17 未解决部分。
+**未做**：`partial` 修饰符仍保留（[EmueraConsole.cs:20](../../EraCore.Core/UI/Game/EmueraConsole.cs#L20)），且 `Emuera/Emuera.sln` 仍存在。详见下文 I-17 未解决部分。
 
 ***
 
@@ -53,13 +53,13 @@ I-03、I-04、I-05、I-06、I-07、I-08、I-13、I-15（JSONL + HTTP 500）、I-
 
 **状态**：已解决（T-023 物理迁移完成）
 
-[Emuera.Headless.csproj](file:///d:/LaoBro/Emuera.MCP/Emuera.Headless/Emuera.Headless.csproj) 不再有 `<Compile Include="..\Emuera\...">` glob。T-023 已将共享源码物理迁移到 `Emuera.Headless/Shared/`，由 SDK 默认 glob 自动包含。
+`Emuera.Headless.csproj` 不再有 `<Compile Include="..\Emuera\...">` glob。T-023 已将共享源码物理迁移到 `Emuera.Headless/Shared/`，由 SDK 默认 glob 自动包含。
 
 #### I-11 — HeadlessConsole.Environment.Exit 绕过 Dispose
 
 **状态**：已解决
 
-[HeadlessConsole.cs](file:///d:/LaoBro/Emuera.MCP/Emuera.Headless/Headless/HeadlessConsole.cs) 的 `Close()` / `ExitApplication()` 已改为抛 `GameExitException`。`GameExitException` 类已创建，异常处理链完整：
+[HeadlessConsole.cs](../../EraCore.Core/Headless/HeadlessConsole.cs) 的 `Close()` / `ExitApplication()` 已改为抛 `GameExitException`。`GameExitException` 类已创建，异常处理链完整：
 - `HeadlessRunner.cs:71-74`：catch 后静默退出
 - `Session.cs:52`：Server 模式正确 catch
 - `Process.cs:351-395`：脚本层特殊处理，避免被当作错误
@@ -68,7 +68,7 @@ I-03、I-04、I-05、I-06、I-07、I-08、I-13、I-15（JSONL + HTTP 500）、I-
 
 **状态**：已解决
 
-[Emuera.Headless.csproj](file:///d:/LaoBro/Emuera.MCP/Emuera.Headless/Emuera.Headless.csproj) 已启用：
+`Emuera.Headless.csproj` 已启用：
 - `<Nullable>enable</Nullable>`（第 9 行）
 - `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>`（第 10 行）
 - `.editorconfig` 按路径分级抑制历史警告，Headless 自有源码警告可见
@@ -77,8 +77,8 @@ I-03、I-04、I-05、I-06、I-07、I-08、I-13、I-15（JSONL + HTTP 500）、I-
 
 **状态**：已解决
 
-- `Emuera/Emuera.sln` 已删除，只保留根目录 [Emuera.sln](file:///d:/LaoBro/Emuera.MCP/Emuera.sln)
-- [EmueraConsole.cs:20](file:///d:/LaoBro/Emuera.MCP/Emuera.Headless/UI/Game/EmueraConsole.cs#L20) `partial` 修饰符已移除
+- `Emuera/Emuera.sln` 已删除，只保留根目录 `Emuera.sln`
+- [EmueraConsole.cs:20](../../EraCore.Core/UI/Game/EmueraConsole.cs#L20) `partial` 修饰符已移除
 
 ### ❌ 未解决
 
@@ -102,7 +102,7 @@ I-03、I-04、I-05、I-06、I-07、I-08、I-13、I-15（JSONL + HTTP 500）、I-
 - 渐进式移除 37 个文件的 `using System.Drawing`（可逐文件进行）
 - 从 csproj 移除 `System.Drawing.Common` 依赖
 
-详见 [I-14阶段2-自定义值类型实施方案.md](file:///d:/LaoBro/Emuera.MCP/docs/2026.6.30.架构健壮性重构/I-14阶段2-自定义值类型实施方案.md)
+详见 [I-14阶段2-自定义值类型实施方案.md](I-14阶段2-自定义值类型实施方案.md)
 
 ***
 
@@ -115,10 +115,10 @@ I-03、I-04、I-05、I-06、I-07、I-08、I-13、I-15（JSONL + HTTP 500）、I-
 | 步骤 | 操作 |
 |---|---|
 | 1 | `git mv Emuera/Runtime/ Emuera.Headless/Runtime/`（排除 `Sound.WMP.cs`/`Sound.NAudio.cs`/`NAudio_LoopStream.cs`/`WinInput.cs`/`Clipboard.cs`，留在 `Emuera/` 原处） |
-| 2 | `git mv` `Emuera/UI/Game/` 下被共享的文件到 `Emuera.Headless/UI/Game/`（**不可覆盖**已有的 [EmueraConsole.cs](file:///d:/LaoBro/Emuera.MCP/Emuera.Headless/UI/Game/EmueraConsole.cs)；`EmueraConsole.Print.cs` 不迁移） |
+| 2 | `git mv` `Emuera/UI/Game/` 下被共享的文件到 `Emuera.Headless/UI/Game/`（**不可覆盖**已有的 [EmueraConsole.cs](../../EraCore.Core/UI/Game/EmueraConsole.cs)；`EmueraConsole.Print.cs` 不迁移） |
 | 3 | `git mv Emuera/UI/FontFactory.cs Emuera.Headless/UI/FontFactory.cs` |
 | 4 | `git mv Emuera/Properties/lang/ Emuera.Headless/Properties/lang/` |
-| 5 | 简化 [Emuera.Headless.csproj](file:///d:/LaoBro/Emuera.MCP/Emuera.Headless/Emuera.Headless.csproj)：删除所有 `<Compile Include="..\Emuera\...">` glob 与 `<Compile Remove="...">` 排除项，改由 SDK 默认 glob 包含；`<EmbeddedResource>` 路径同步更新 |
+| 5 | 简化 `Emuera.Headless.csproj`：删除所有 `<Compile Include="..\Emuera\...">` glob 与 `<Compile Remove="...">` 排除项，改由 SDK 默认 glob 包含；`<EmbeddedResource>` 路径同步更新 |
 | 6 | 删除 `Emuera/Emuera.csproj`、`Emuera/Emuera.sln`；仓库根 `Emuera.sln` 移除 Emuera 项目引用，只保留 `Emuera.Headless` |
 
 **解锁**：T-022（I-12 阶段 2）、I-11、I-14、I-17
@@ -136,11 +136,11 @@ I-03、I-04、I-05、I-06、I-07、I-08、I-13、I-15（JSONL + HTTP 500）、I-
 
 | 步骤 | 操作 |
 |---|---|
-| 1 | 删除 [ConsoleOutIO.cs](file:///d:/LaoBro/Emuera.MCP/Emuera.Headless/Server/ConsoleOutIO.cs)（stdin/stdout 封装，仅管道模式使用） |
-| 2 | [HeadlessOptions.cs](file:///d:/LaoBro/Emuera.MCP/Emuera.Headless/HeadlessOptions.cs) / [HeadlessRunner.cs](file:///d:/LaoBro/Emuera.MCP/Emuera.Headless/HeadlessRunner.cs) 移除 `--protocol cli`/`--protocol jsonl` 的 stdin 管道分支；`--protocol` 参数保留以兼容交互 CLI |
-| 3 | [AgentCliProtocol](file:///d:/LaoBro/Emuera.MCP/Emuera.Headless/Agent/AgentCliProtocol.cs) 改为只支持交互式终端（移除 stdin pipe 读路径） |
-| 4 | [AgentJsonlProtocol](file:///d:/LaoBro/Emuera.MCP/Emuera.Headless/Agent/AgentJsonlProtocol.cs) **保留**（Server 模式通过 `HttpSessionIO` 仍依赖它，不改动） |
-| 5 | 精简 `tests/test_cli.py`、`tests/test_jsonl.py` 中针对 stdin 管道的用例；更新 [tests/README.md](file:///d:/LaoBro/Emuera.MCP/tests/README.md) 测试矩阵与 [CLAUDE.md](file:///d:/LaoBro/Emuera.MCP/CLAUDE.md) 运行命令 |
+| 1 | 删除 `ConsoleOutIO.cs`（stdin/stdout 封装，仅管道模式使用） |
+| 2 | [HeadlessOptions.cs](../../EraCore.Cli/HeadlessOptions.cs) / [HeadlessRunner.cs](../../EraCore.Cli/HeadlessRunner.cs) 移除 `--protocol cli`/`--protocol jsonl` 的 stdin 管道分支；`--protocol` 参数保留以兼容交互 CLI |
+| 3 | [AgentCliProtocol](../../EraCore.Core/Agent/AgentCliProtocol.cs) 改为只支持交互式终端（移除 stdin pipe 读路径） |
+| 4 | [AgentJsonlProtocol](../../EraCore.Core/Agent/AgentJsonlProtocol.cs) **保留**（Server 模式通过 `HttpSessionIO` 仍依赖它，不改动） |
+| 5 | 精简 `tests/test_cli.py`、`tests/test_jsonl.py` 中针对 stdin 管道的用例；更新 [tests/README.md](../../tests/README.md) 测试矩阵与 [CLAUDE.md](../../CLAUDE.md) 运行命令 |
 
 **验收**：
 

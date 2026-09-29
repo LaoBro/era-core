@@ -81,7 +81,7 @@ READ 4 bytes: 1B 5B 35 7E
 
 1. **A1/A2**: pywinpty 两个 backend（ConPTY + winpty）都拦截 SGR mouse，说明与 backend 无关。
 2. **B2**: 用最小 EchoMouse（设 `ENABLE_VIRTUAL_TERMINAL_INPUT` + raw `ReadFile`）排除应用逻辑干扰——键盘字节到达，SGR mouse 字节不到达。说明拦截发生在 PTY host 层，不是应用端 VtParser。
-3. **VtParser 无 ?1000h 检查**: [VtParser.cs](../../Emuera.Headless/Terminal/VtParser.cs) 在 CSI 状态下遇到 `<` 就无条件切到 `SGR_MOUSE` 状态——如果字节到达，必然解析。B2 证明字节没到达。
+3. **VtParser 无 ?1000h 检查**: [VtParser.cs](../../EraCore.Core/Terminal/VtParser.cs) 在 CSI 状态下遇到 `<` 就无条件切到 `SGR_MOUSE` 状态——如果字节到达，必然解析。B2 证明字节没到达。
 4. **同质 CSI 序列已透传**: `ESC[5~`/`ESC[H`/`ESC[F` 等 CSI 序列已通过 PTY 注入并被 VtParser 解析成功，`ESC[<0;1;1M` 是同质字节流，但被 PTY host 特殊处理。
 
 ### 拦截机制推测
@@ -99,7 +99,7 @@ ConPTY host 在输入侧对 SGR mouse 做特殊处理（可能是 VT→Win32 INP
 ## 参考资料
 
 - [test_cli_scroll.py:11-12](../../tests/test_cli_scroll.py#L11-L12) — 原注释
-- [VtParser.cs](../../Emuera.Headless/Terminal/VtParser.cs) — SGR mouse 解析状态机（无条件解析 `ESC[<`）
-- [WindowsTerminalInput.cs](../../Emuera.Headless/Terminal/Platform/WindowsTerminalInput.cs) — `EnableSgrMouse`（`?1000h` + `?1006h`）、raw VT 输入模式
+- [VtParser.cs](../../EraCore.Core/Terminal/VtParser.cs) — SGR mouse 解析状态机（无条件解析 `ESC[<`）
+- [WindowsTerminalInput.cs](../../EraCore.Core/Terminal/Platform/WindowsTerminalInput.cs) — `EnableSgrMouse`（`?1000h` + `?1006h`）、raw VT 输入模式
 - [docs/2026.6.23.vt-input/spike-results.md](../2026.6.23.vt-input/spike-results.md) — 真实终端下 SGR mouse 验证通过（Windows Terminal 7.6.3 + conhost）
 - [docs/2026.6.16.mouse-input/validation-results.md](../2026.6.16.mouse-input/validation-results.md) — raw stdin SGR mouse 验证通过

@@ -1,6 +1,6 @@
 # PRD: Turn 协议版本化与 Schema 定义
 
-> 对应 [架构评估报告.md](./架构评估报告.md) 任务 3、[ADR-0001](../../adr/0001-turn-protocol-versioning.md)。
+> 对应 [架构评估报告.md](./架构评估报告.md) 任务 3、ADR-0001。
 > 本 PRD 严格遵循 grilling 阶段达成的共识。
 
 ## Problem Statement
@@ -46,7 +46,7 @@
     这样 fatal 路径的 wire format 不会因未来重构而漂移——此项见 [TODO.md](./TODO.md)。
 11. 作为未来读者，我希望有 ADR 记录"为何不引入握手"、"为何 fatal 路径不调
     `BuildTurn()`"、"为何版本字段仅出现在 initial turn"——这些决策点对应
-    [ADR-0001](../../adr/0001-turn-protocol-versioning.md)。
+    ADR-0001。
 12. 作为未来读者，我希望 `CONTEXT.md` 提供 turn 协议术语表（Turn / Initial Turn /
     Step Turn / Final Turn / Fatal Turn / protocolVersion / Input Rejection /
     Fatal Exception），这样我能在统一词汇下阅读代码与文档。
@@ -57,7 +57,7 @@
 
 - **采用 A + B 范围**：record 重构（A）+ initial turn 加 `protocolVersion` 字段（B）。
 - **明确排除握手协议（C）**：不引入 `POST /session` 后的版本协商往返。理由见
-  [ADR-0001 Rejected Alternatives](../../adr/0001-turn-protocol-versioning.md)。
+  ADR-0001 Rejected Alternatives。
 - **input 方向不加版本字段**：`JsonlCommand` record 保持
   `(string type, string value)` 不变。
 
@@ -228,11 +228,11 @@ fatal turn 路径的结构断言本次不交付，记入 [TODO.md](./TODO.md) �
 
 ### Prior Art
 
-- [test_jsonl.py](../../../tests/test_jsonl.py)：JSONL turn schema 断言
+- [test_jsonl.py](../../tests/test_jsonl.py)：JSONL turn schema 断言
   （buttons label/value、generation 过滤、stale button 排除）。
-- [test_server_single_session.py](../../../tests/test_server_single_session.py)：
+- [test_server_single_session.py](../../tests/test_server_single_session.py)：
   HTTP 单会话生命周期断言。
-- [test_tinput_timeout.py](../../../tests/test_tinput_timeout.py)：
+- [test_tinput_timeout.py](../../tests/test_tinput_timeout.py)：
   复制 `test_game` + 覆盖 ERB 构造特定场景的模式——未来的 fatal turn 测试
   应参照此模式。
 
@@ -258,11 +258,11 @@ fatal turn 路径的结构断言本次不交付，记入 [TODO.md](./TODO.md) �
 
 ### 与既有 ADR 的关系
 
-[ADR-0001](../../adr/0001-turn-protocol-versioning.md) 已在 grilling 阶段落地，
+ADR-0001 已在 grilling 阶段落地，
 记录"A + B 范围、排除握手"的核心决策与 4 条被拒绝的替代方案。本 PRD 是该 ADR
 的实现规格。
 
-### 与 [CONTEXT.md](../../../CONTEXT.md) 的关系
+### 与 `CONTEXT.md` 的关系
 
 grilling 阶段已建立仓库根 `CONTEXT.md`，定义 Turn / Initial Turn / Step Turn /
 Final Turn / Fatal Turn / protocolVersion / Input Rejection / Fatal Exception

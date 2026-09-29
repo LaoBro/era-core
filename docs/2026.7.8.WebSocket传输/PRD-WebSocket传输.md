@@ -40,7 +40,7 @@ HTTP 长轮询：
 - 线协议采用**裸 JSON 文本帧**：每个 turn 直接发一帧，内容就是现有
   `TurnRecord` v2 JSON（`ops[]` 操作序列模型，initial turn 带 `protocolVersion:2`，
   见 [PRD-T5 富 Turn 升级](../2026.7.4.跨平台前置重构/PRD-T5-富Turn升级.md) 与
-  [ADR-0002](../../adr/0002-turn-v2-operation-sequence.md)），与 `GET /turn` 响应体
+  ADR-0002），与 `GET /turn` 响应体
   **字节一致**；输入帧复用 `{"type":"input","value":"..."}`。不包 envelope。
 
 ## User Stories
@@ -83,7 +83,7 @@ HTTP 长轮询：
 - **线协议 = 裸 JSON 文本帧**：每 turn 一帧，内容 = `TurnRecord` v2 JSON；输入帧 =
   `{"type":"input","value":"..."}`。不引入 envelope（`{"kind":...}` 包装）。理由：
   主流前端框架无需 envelope；版本协商已由 initial turn 的 `protocolVersion` 承载
-  （[ADR-0001](../../adr/0001-turn-protocol-versioning.md)），WS 客户端连上即拿到。
+  （ADR-0001），WS 客户端连上即拿到。
 
 ### 模块与接口变化
 
@@ -203,13 +203,13 @@ Fatal turn：`ops: []` + `error`（与 PRD-T5 fatal 路径一致）。Session �
   Kestrel "为 WebSocket 支持铺路" 的落地项；报告 2.3 的"只需实现 `SessionIO` 4 个
   方法"预设已被本设计证伪（改为 Hub 旁路）。
 - [PRD-T5 富 Turn 升级](../2026.7.4.跨平台前置重构/PRD-T5-富Turn升级.md) /
-  [ADR-0002](../../adr/0002-turn-v2-operation-sequence.md)：WS 帧直接复用其
+  ADR-0002：WS 帧直接复用其
   `TurnRecord` v2 `ops[]` 模型——WS 是传输封装层，不重新定义载荷。
-- [ADR-0001](../../adr/0001-turn-protocol-versioning.md)：`protocolVersion` 仅
+- ADR-0001：`protocolVersion` 仅
   initial turn 的约束，WS 客户端连上即获得，无需 WS 专属版本协商。
 - 落地后建议补 **ADR-0003**：记录"Hub 旁路 vs 平行 SessionIO""裸帧 vs envelope"
   "WS/HTTP 并存" 三项决策与被拒绝的替代方案。已落地，见
-  [ADR-0003](../../adr/0003-websocket-hub-bypass.md)。
+  ADR-0003。
 
 ### 与 grill-me 设计审查关系
 

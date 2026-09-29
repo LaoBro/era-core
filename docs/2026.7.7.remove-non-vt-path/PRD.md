@@ -1,8 +1,8 @@
 # PRD: 移除 CLI 非 VT 降级路径
 
 **Triage Label**: `ready-for-agent`
-**相关 ADR**: [ADR-0005 移除非 VT 路径](../adr/0005-remove-non-vt-path.md)
-**相关上下文**: [CONTEXT.md CLI Terminal Path](../../CONTEXT.md)
+**相关 ADR**: ADR-0005 移除非 VT 路径
+**相关上下文**: CONTEXT.md CLI Terminal Path
 
 ## Problem Statement
 
@@ -52,7 +52,7 @@ VT 可用），却在 6 个文件中留下约 150-200 行分支代码 + 20+ 处 
 7. 作为 ConPTY 自动化测试运行者，我希望 CLI 在 ConPTY 下仍能正常工作，
    所有现有测试持续通过。
 8. 作为现代 SSH 客户端用户，我希望在远程会话中使用 CLI 时 VT 能力正常启用。
-9. 作为 CLI 用户，我希望 SETBGCOLOR 仍然在 VT 路径下发出 `ESC[48;2;R;G;Bm`
+9. 作为 CLI 用户，我希望 SETBGCOLOR 仍然在 VT 路径下发出 `ESC48;2;R;G;Bm`
    转义序列。
 10. 作为 CLI 用户，我希望 CLEARLINE、PRINTN 合并、PRINTC 对齐等渲染行为
     与移除降级路径前一致。
@@ -243,12 +243,12 @@ VT 可用），却在 6 个文件中留下约 150-200 行分支代码 + 20+ 处 
 
 ### 相关 ADR
 
-- [ADR-0005 移除非 VT 路径](../adr/0005-remove-non-vt-path.md) —— 本次 PRD 的
+- [ADR-0005 移除非 VT 路径 —— 本次 PRD 的
   架构决策记录
-- [ADR-0003 CLI 渲染层消除双写](../adr/0003-cli-rendering-displayline-delta.md)
+- ADR-0003 CLI 渲染层消除双写
   —— 确立了 CLI 读 `displayLineList` delta 的方向，本次移除降级路径是该方向
   的延续
-- [ADR-0004 EmueraConsole 门面收缩](../adr/0004-emueraconsole-facade-shrink.md)
+- ADR-0004 EmueraConsole 门面收缩
   —— 确立了"先收缩再评估接口"的原则，本次遵循该原则不引入新接口
 
 ### 风险与缓解

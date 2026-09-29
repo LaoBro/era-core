@@ -1,6 +1,6 @@
 # PRD — GlobalStatic 会话作用域深化（候选 1）
 
-**关联**：[ADR-0008](../../adr/0008-globalstatic-session-scope.md) · [架构深化候选报告](架构深化候选报告.md) · 仓库 [LaoBro/Emuera.MCP](https://github.com/LaoBro/Emuera.MCP)
+**关联**：ADR-0008 · [架构深化候选报告](架构深化候选报告.md) · 仓库 [LaoBro/Emuera.MCP](https://github.com/LaoBro/Emuera.MCP)
 
 ## Problem Statement
 
@@ -54,7 +54,7 @@
 - **测试基建**：新建 `Emuera.Headless.Tests/`（仓库根，平级主项目，加入 `Emuera.sln`），`net10.0`，xUnit，`InternalsVisibleTo("Emuera.Headless.Tests")`，`TreatWarningsAsErrors=false`。
 - **垂直切片**：prefactor（测试项目脚手架）先行；GlobalStatic 深化作为原子 tracer-bullet 跟进（static→instance + 两入口接线 + 删 Reset 必须同提交，否则 build 断）。
 
-详细决策与拒绝的替代方案见 [ADR-0008](../../adr/0008-globalstatic-session-scope.md)。
+详细决策与拒绝的替代方案见 ADR-0008。
 
 ## Testing Decisions
 

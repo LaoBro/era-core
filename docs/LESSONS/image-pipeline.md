@@ -16,7 +16,7 @@
 
 **表象**：标题屏每个 `<img src='TW_titleNNN'>` 变成图片 segment，但 `width=0, height=16`（无 crop）。前端 SegmentRenderer 对无 crop 图片段渲 `width: scaled(0)=0px` → 完全不可见。
 
-**根因**：尺寸来源是 [ImageSizeProbe.TryGetPixelSize](file:///d:/LaoBro/era-core/EraCore.Core/Shared/UI/Game/Image/ImageSizeProbe.cs)，**只识别 PNG/JPEG**，对 `.webp` 返回 false → [AppContents.GetSprite](file:///d:/LaoBro/era-core/EraCore.Core/Shared/UI/Game/Image/AppContents.cs) 走 sprite 名表分支时 `ProbeFile` 尺寸为 0，建不出替身 → `ConsoleImagePart` 源尺寸 0 → 缺省宽度推算失效回退 0。
+**根因**：尺寸来源是 [ImageSizeProbe.TryGetPixelSize](../../EraCore.Core/Shared/UI/Game/Image/ImageSizeProbe.cs)，**只识别 PNG/JPEG**，对 `.webp` 返回 false → [AppContents.GetSprite](../../EraCore.Core/Shared/UI/Game/Image/AppContents.cs) 走 sprite 名表分支时 `ProbeFile` 尺寸为 0，建不出替身 → `ConsoleImagePart` 源尺寸 0 → 缺省宽度推算失效回退 0。
 
 **为什么旧实现（emoera.em）没问题**：上游 `ConsoleImagePart` 直接读 `cImage.DestBaseSize`，而 `cImage` 来自 `AppContents.GetSprite`——上游**解码整张位图**（System.Drawing + libwebp，专门处理 webp），任意格式尺寸天然正确。本仓库 Core 的 HEADLESS 路径为便携/Android（无 System.Drawing、无新依赖）改为**纯 C# 头探针**，初版只覆盖 png/jpeg，**漏了 webp**。
 

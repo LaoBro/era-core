@@ -40,7 +40,7 @@
 
 ### T-004a：server TINPUT timer metadata（ADR-0016）
 
-- 状态：已落地（[ADR-0016](./adr/0016-tinput-timer-metadata-v6.md)，2026-07-18 落地，T-004a 范围）
+- 状态：已落地（ADR-0016，2026-07-18 落地，T-004a 范围）
 - 范围：`TurnRecord`、`DisplaySnapshot`、`AgentJsonlProtocol.BuildTurn`、`DisplayState.BuildSnapshot`、`SubmitTimeoutAsync`（`_pendingTimeoutFlag`）
 - 说明：`InputRequest` 早已持有 `Timelimit` / `DisplayTime` / `TimeUpMes`，`ConsoleTimerManager` 已算好剩余时间，但 `TurnRecord` / `DisplaySnapshot` 不携带，导致 issue 04 前端 TINPUT 实时倒计时只能降级为启发式检测。本项把 timer 数据以结构化字段暴露给前端。
 - 设计（ADR-0016）：
@@ -130,7 +130,7 @@
 - 状态：已实现（spec: `.scratch/web-frontend/spec-t025-idle-start.md`）
 - 范围：`KestrelGameServer`、`Program.Main`、`GamePaths`、`App.vue`、`GamePicker.vue`、`game.ts`
 - 说明：让 server 支持空闲启动——不带 `--ExeDir`（或默认目录非法）时，server 正常监听、浏览器可打开游戏选择器；真正的游戏加载推迟到玩家在选择器里 `POST /load-game`。CLI 模式目录非法时改为打印提示 + 等回车再退出（不再静默关窗）。
-- 设计决策（推翻旧设计纪要，详见 [spec-t025-idle-start.md](../.scratch/web-frontend/spec-t025-idle-start.md) 决策树 D1–D17）：
+- 设计决策（推翻旧设计纪要，详见 `spec-t025-idle-start.md` 决策树 D1–D17）：
   - `Program.Main` 中 `Validate()` 失败按模式分流：server 模式降级 warn 继续（空闲启动）；CLI 模式打印提示 + `Console.ReadLine()` 等回车再退出（D1/D2/D17）
   - **不引入** `_gameLoaded` 标志——空闲/已加载判定复用 `KestrelGameServer` 现有 `_session == null` 不变量（D4/D10）
   - `GamePaths.Current` 保持默认目录、`/load-game` 成功时覆盖（D3/D12，推翻旧「允许 null + 读取点加守卫」）

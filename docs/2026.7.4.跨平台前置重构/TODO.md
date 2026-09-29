@@ -55,7 +55,7 @@
 ### P1-3 Turn 协议版本化（v1）
 
 详见 [PRD-T3-Turn协议版本化.md](./PRD-T3-Turn协议版本化.md)、
-[ADR-0001](../../adr/0001-turn-protocol-versioning.md)。
+ADR-0001。
 
 - `TurnRecord` + `ButtonEntry` record 落地
 - `protocolVersion: 1` 仅出现在 initial turn
@@ -73,7 +73,7 @@
 ### P1-5 富 Turn 升级（v2 操作序列模型）
 
 详见 [PRD-T5-富Turn升级.md](./PRD-T5-富Turn升级.md)、
-[ADR-0002](../../adr/0002-turn-v2-operation-sequence.md)。
+ADR-0002。
 对应 issue #4 / #5 / #6（均已关闭）。
 
 完成范围：
@@ -95,7 +95,7 @@
 ### PRD-T6 CLI 双写技术债消除（displayLineList delta）
 
 详见 [PRD-T6-CLI双写消除.md](./PRD-T6-CLI双写消除.md)、
-[ADR-0003](../../adr/0003-cli-rendering-displayline-delta.md)。
+ADR-0003。
 对应 issue #7 / #8 / #9（均已关闭）。
 
 完成范围：
@@ -126,7 +126,7 @@
 
 #### P2-5：EmueraConsole 门面瘦身（按 ADR-0004 收缩路线已完成）
 
-详见 [架构评估报告.md](./架构评估报告.md) 第四章 P2-5、[ADR-0004](../../adr/0004-emueraconsole-facade-shrink.md)。
+详见 [架构评估报告.md](./架构评估报告.md) 第四章 P2-5、ADR-0004。
 
 - 原方向（`IConsoleState`/`IConsoleInput`/`IConsolePrint` 接口提取）被 ADR-0004
   supersede，改为"先收缩后评估"
@@ -216,8 +216,8 @@ PRD-T5 grilling 阶段明确排除以下三项，待条件成熟后独立立项�
 - [PRD-T4](./PRD-T4-FatalTurn测试.md)：fatal turn 测试
 - [PRD-T5](./PRD-T5-富Turn升级.md)：v2 操作序列模型
 - [PRD-T6](./PRD-T6-CLI双写消除.md)：CLI 双写技术债消除（displayLineList delta）
-- [ADR-0001](../../adr/0001-turn-protocol-versioning.md)：v1 版本字段策略
-- [ADR-0002](../../adr/0002-turn-v2-operation-sequence.md)：v2 操作序列模型决策
-- [ADR-0003](../../adr/0003-cli-rendering-displayline-delta.md)：CLI 渲染层 displayLineList delta 决策
-- [CONTEXT.md](../../CONTEXT.md)：领域术语表（含 Operation Sequence Model 子章节）
+- ADR-0001：v1 版本字段策略
+- ADR-0002：v2 操作序列模型决策
+- ADR-0003：CLI 渲染层 displayLineList delta 决策
+- `CONTEXT.md`：领域术语表（含 Operation Sequence Model 子章节）
 - [架构评估报告.md](./架构评估报告.md)：P0/P1/P2 全局任务清单
