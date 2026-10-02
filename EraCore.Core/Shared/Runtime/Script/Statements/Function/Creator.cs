@@ -347,6 +347,9 @@ internal static partial class FunctionMethodCreator
 		};
 
 
+		//声明式登记接缝（实现票 15）：增量收编的新增函数一律走 descriptor（需在 SetMethodName 前）。
+		AddMethodDescriptors(methodList, BuiltInMethodDescriptors);
+
 		//1823 自分の関数名を知っていた方が何かと便利なので覚えさせることにした
 		foreach (var pair in methodList)
 			pair.Value.SetMethodName(pair.Key);

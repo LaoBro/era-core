@@ -40,7 +40,7 @@ internal sealed partial class FunctionIdentifier
 
 	#region static
 	//元BuiltInFunctionManager部分
-	readonly static Dictionary<string, FunctionIdentifier> funcDic = Config.IgnoreCase ? new(StringComparer.OrdinalIgnoreCase) : new();
+	readonly static Dictionary<string, FunctionIdentifier> funcDic = CreateInstructionDictionary();
 	readonly static Dictionary<FunctionCode, string> funcMatch = [];
 	readonly static Dictionary<FunctionCode, FunctionCode> funcParent = [];
 	readonly static AInstruction methodInstruction;
@@ -61,6 +61,22 @@ internal sealed partial class FunctionIdentifier
 	{
 		string key = code.ToString();
 		funcDic.Add(key, new FunctionIdentifier(key, code, arg, flag));
+	}
+
+	/// <summary>funcDic 的比较器（随 <see cref="Config.IgnoreCase"/>）。静态构造器与测试共用。</summary>
+	internal static Dictionary<string, FunctionIdentifier> CreateInstructionDictionary()
+	{
+		return Config.IgnoreCase ? new(StringComparer.OrdinalIgnoreCase) : new();
+	}
+
+	/// <summary>
+	/// descriptor → 注册项（实现票 15）。descriptor 是唯一的登记来源，静态构造器与测试共用同一路径，
+	/// 因此「新增一条指令只写一条 descriptor」即可被解析器识别。
+	/// </summary>
+	internal static void AddInstructionDescriptors(Dictionary<string, FunctionIdentifier> dic, IReadOnlyList<InstructionDescriptor> descriptors)
+	{
+		foreach (InstructionDescriptor descriptor in descriptors)
+			dic.Add(descriptor.Name, new FunctionIdentifier(descriptor.Name, descriptor.Code, descriptor.CreateInstruction(), descriptor.AdditionalFlag));
 	}
 
 	public static Dictionary<string, FunctionIdentifier> GetInstructionNameDic()
@@ -448,6 +464,9 @@ internal sealed partial class FunctionIdentifier
 		addPrintFunction(FunctionCode.PRINTFORMN);
 		addPrintFunction(FunctionCode.PRINTFORMSN);
 		#endregion
+
+		//声明式登记接缝（实现票 15）：增量收编的新增指令一律走 descriptor。
+		AddInstructionDescriptors(funcDic, BuiltInInstructionDescriptors);
 
 		IReadOnlyDictionary<string, FunctionMethod> methodList = FunctionMethodCreator.GetMethodList();
 		foreach (KeyValuePair<string, FunctionMethod> pair in methodList)
