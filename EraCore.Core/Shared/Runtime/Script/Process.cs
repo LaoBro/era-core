@@ -40,6 +40,17 @@ internal sealed partial class Process(EmueraConsole view)
 	internal ErbLoader? RuntimeLoader { get; set; }
 
 	/// <summary>
+	/// 会话级方言 profile（实现票 16）：自 scope 捕获一次，供 <see cref="IdentifierDictionary"/>
+	/// 构造期投影可见面。会话内不变。
+	///
+	/// 刻意**不在 <see cref="Initialize"/> 前置段**读取——那里在 <c>try</c> 保护圈之外，
+	/// 而注册表构建失败必须走既有 <c>CodeEE(DoNotInstallWMP)</c> 守卫（原始故障模式见
+	/// <c>IdentifierDictionary</c> 构造器的同款 try/catch）。捕获点落在 composition root
+	/// <see cref="Loader.LoadEngineData"/> 内、<c>IdentifierDictionary</c> 构造之前。
+	/// </summary>
+	internal DialectProfile DialectProfile { get; private set; } = null!;
+
+	/// <summary>
 	/// 変数全部。スクリプト中で必要になる変数は（ユーザーが直接触れないものも含め）この中にいれる
 	/// </summary>
 	private VariableEvaluator vEvaluator = null!;
@@ -625,7 +636,9 @@ internal sealed partial class Process(EmueraConsole view)
 
 			process.TrainName = process.constantData.GetCsvNameList(VariableCode.TRAINNAME);
 			process.vEvaluator = new VariableEvaluator(process.gamebase, process.constantData);
-			process.idDic = new IdentifierDictionary(process.vEvaluator.VariableData);
+			// 方言 profile 捕获点（实现票 16）：已在 Initialize 的 try 保护圈内，且晚于注册表守卫。
+			process.DialectProfile = GlobalStatic.DialectProfile;
+			process.idDic = new IdentifierDictionary(process.vEvaluator.VariableData, process.DialectProfile);
 			StrForm.Initialize();
 			VariableParser.Initialize();
 			process.exm = new ExpressionMediator(process, process.vEvaluator, console);

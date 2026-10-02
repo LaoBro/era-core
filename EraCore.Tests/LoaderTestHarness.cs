@@ -55,7 +55,10 @@ internal sealed class LoaderTestHarness : IDisposable
 	/// 传 null（既有全部调用点）= 原来的行为：临时目录 + 自建空 csv/erb + Dispose 时删除。
 	/// 传真实目录时**不创建也不删除**任何东西（只读使用）。
 	/// </param>
-	public LoaderTestHarness(string? gameDir = null)
+	/// <param name="dialectProfile">
+	/// 可选：会话级方言 profile（实现票 16）。null（既有全部调用点）= <c>v24pure</c>，行为与今天逐位一致。
+	/// </param>
+	public LoaderTestHarness(string? gameDir = null, DialectProfile? dialectProfile = null)
 	{
 		_ownsTempRoot = gameDir == null;
 		TempRoot = gameDir ?? Path.Combine(Path.GetTempPath(), "emuera-loader-test-" + Guid.NewGuid().ToString("N"));
@@ -73,7 +76,7 @@ internal sealed class LoaderTestHarness : IDisposable
 		GamePaths.Resolve(TempRoot, new FileSystemGameDirAccessor());
 
 		// Config scope 在测试方法的 async 流内开启——AsyncLocal 才能下渗到后续 await Task.Run。
-		_scope = GlobalStatic.OpenScope(new ConfigData());
+		_scope = GlobalStatic.OpenScope(new ConfigData(), dialectProfile);
 		EnsureEnginePreInit();
 
 		var ui = new HeadlessConsole();

@@ -136,12 +136,16 @@ internal partial class IdentifierDictionary
 	readonly Dictionary<string, VariableToken> varTokenDic;
 	readonly Dictionary<string, VariableLocal> localvarTokenDic;
 	readonly Dictionary<string, FunctionIdentifier> instructionDic;
-	readonly IReadOnlyDictionary<string, FunctionMethod> methodDic;
+	readonly Dictionary<string, FunctionMethod> methodDic;
 	readonly Dictionary<string, UserDefinedRefMethod> refmethodDic;
 	public List<UserDefinedCharaVariableToken> CharaDimList = [];
 
 	#region initialize
-	public IdentifierDictionary(VariableData varData)
+	/// <param name="dialectProfile">
+	/// 会话级方言可见面（实现票 16）。null = <c>v24pure</c>（移植前行为）。
+	/// 本构造期一次性把静态注册表投影成 per-session 表——解析/执行热路径不再做任何 profile 判断。
+	/// </param>
+	public IdentifierDictionary(VariableData varData, DialectProfile? dialectProfile = null)
 	{
 		this.varData = varData;
 		nameDic.Clear();
@@ -162,19 +166,25 @@ internal partial class IdentifierDictionary
 		nameDic.Add("__DEBUG__", DefinedNameType.Reserved);
 		nameDic.Add("__SKIP__", DefinedNameType.Reserved);
 		nameDic.Add("_", DefinedNameType.Reserved);
+		IReadOnlyDictionary<string, FunctionIdentifier> registeredInstructions;
 		try
 		{
-			instructionDic = FunctionIdentifier.GetInstructionNameDic();
+			registeredInstructions = FunctionIdentifier.GetInstructionNameDic();
 		}
 		catch
 		{
 			throw new CodeEE(treer.DoNotInstallWMP.Text);
 		}
 
+		// 方言投影（实现票 16）：注册表 → per-session 可见面。未选中模块的键在此即被剔除，
+		// 解析期命中既有「識別できない識別子」错误路径。
+		DialectProfile profile = dialectProfile ?? DialectRegistry.Default;
+		instructionDic = DialectProjection.Filter(registeredInstructions, profile);
 
 		varTokenDic = varData.GetVarTokenDicClone();
 		localvarTokenDic = varData.GetLocalvarTokenDic();
-		methodDic = FunctionMethodCreator.GetMethodList();
+		// methodDic 与 instructionDic 用同一 profile 过滤 → nameDic（下由二者生成）自动一致。
+		methodDic = DialectProjection.Filter(FunctionMethodCreator.GetMethodList(), profile);
 		refmethodDic = new(Config.StrComper);
 
 		foreach (KeyValuePair<string, FunctionMethod> pair in methodDic)

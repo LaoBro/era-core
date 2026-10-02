@@ -48,6 +48,9 @@ internal sealed class GlobalStatic
     private Process _process = null!;
     private VariableData _variableData = null!;
 
+    /// <summary>会话级方言 profile（实现票 16）。null = 未显式绑定，读时按 v24pure 解析。</summary>
+    private DialectProfile? _dialectProfile;
+
     // ===== 辅助字段（实例成员，随 scope 生灭）=====
 
     /// <summary>ERB loader に引数解析の結果を渡すための橋渡し変数（AnalysisMode 用）。</summary>
@@ -127,6 +130,13 @@ internal sealed class GlobalStatic
 
     // ===== static 转发属性：辅助字段 =====
 
+    /// <summary>
+    /// 会话级方言 profile（实现票 16）。由 <see cref="OpenScope"/> 绑定；未绑定时按 <c>v24pure</c>
+    /// （= era-core 移植前行为）解析。解析/执行热路径**不读**本属性——只读投影后的注册表。
+    /// </summary>
+    public static DialectProfile DialectProfile =>
+        Current!._dialectProfile ??= DialectRegistry.Default;
+
     /// <summary>ERB loader に引数解析の結果を渡すための橋渡し変数（AnalysisMode 用）。</summary>
     public static Dictionary<string, long> tempDic => Current!._tempDic;
 
@@ -156,12 +166,16 @@ internal sealed class GlobalStatic
     /// （候选 2 / ADR-0009：配置仅经 scope 注入，再无静态单例）。Dispose 时 <see cref="Pfc"/>.Dispose +
     /// 三处 Current 归 null。
     /// </summary>
-    public static IDisposable OpenScope(ConfigData configData)
+    /// <param name="dialectProfile">
+    /// 可选：会话级方言 profile（实现票 16）。null = <c>v24pure</c>（移植前行为），
+    /// 使既有调用方零改动。profile 必须在构造 <see cref="Process"/> 之前绑定。
+    /// </param>
+    public static IDisposable OpenScope(ConfigData configData, DialectProfile? dialectProfile = null)
     {
         if (_current.Value != null)
             throw new InvalidOperationException(
                 "GlobalStatic scope 已在此 async 上下文中打开。请先 Dispose 现有 scope。");
-        var instance = new GlobalStatic();
+        var instance = new GlobalStatic { _dialectProfile = dialectProfile };
         _current.Value = instance;
         ConfigData.SetCurrent(configData);
         Config.SetCurrent(configData);
