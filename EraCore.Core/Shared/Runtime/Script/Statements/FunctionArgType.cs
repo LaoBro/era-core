@@ -1,4 +1,4 @@
-﻿namespace MinorShift.Emuera.Runtime.Script.Statements;
+namespace MinorShift.Emuera.Runtime.Script.Statements;
 
 /// <summary>
 /// 命令の引数タイプ
@@ -84,5 +84,9 @@ enum FunctionArgType
 	#endregion
 	#region EM_私家版_HTML_PRINT拡張
 	SP_HTML_PRINT,
+	#endregion
+	#region Skia 方言 图像层（实现票 22）
+	SP_SETIMAGELAYER,//<文字列>,<数値>(,<数値>×5,<配列>,<数値>) //前2引数のみ必須
+	SP_SETIMAGELAYERL,//同形だが followScroll 恒成立（行相对定位）
 	#endregion
 }

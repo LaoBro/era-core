@@ -237,6 +237,19 @@ internal sealed class EmueraConsole : IDisposable, IConsoleStateView, IButtonDis
     internal void SetBgImage(string name, long depth, float opacity) => _printManager.SetBgImage(name, depth, opacity);
     internal void RemoveBgImage(string name) => _printManager.RemoveBgImage(name);
     internal void ClearBgImage() => _printManager.ClearBgImage();
+    // --- 图像层（实现票 22，语义接受） ---
+    // Skia 上游的 SETIMAGELAYER 族落到独立图层管线（ImageLayerManager）。era-core 无 ImageLayer 抽象
+    // （只有上面的 CBG* 精灵管线），故此处只做**语义接缝**：参数已完整解析并校验，交由 era-core 渲染路线
+    // 日后消费；当前实现为 no-op。观感差异属「已知差异清单」（spec §5），不在本 effort 追平。
+    internal void SetImageLayer(string spriteName, long depth, int x, int y, int width, int height, int opacity, float[][]? colorMatrix, bool followScroll)
+    {
+    }
+    internal void ClearImageLayer(long depth)
+    {
+    }
+    internal void ClearImageLayerAll()
+    {
+    }
     internal ConsoleDisplayLine[]? GetDisplayLines(long lineNo) => _printManager.GetDisplayLines(lineNo);
     internal ConsoleDisplayLine[]? PopDisplayingLines() => _printManager.PopDisplayingLines();
     internal ConsoleDisplayLine? PrintPlainwithSingleLine(string str) => _printManager.PrintPlainwithSingleLine(str);

@@ -73,5 +73,30 @@ internal sealed partial class FunctionIdentifier
 			AdditionalFlag = EXTENDED,
 			Dialect = Dialect.Snake,
 		},
+		// Skia 方言 P0：图像层（实现票 22）。参数完整解析 + ColorMatrix 5×5 校验；执行体走 EmueraConsole 语义接缝（no-op，实测 eraTW 引用见 Flan_UI.ERB）。
+		new InstructionDescriptor
+		{
+			Name = "SETIMAGELAYER",
+			CreateInstruction = () => new SETIMAGELAYER_Instruction(false),
+			Dialect = Dialect.Snake,
+		},
+		new InstructionDescriptor
+		{
+			Name = "SETIMAGELAYERL",
+			CreateInstruction = () => new SETIMAGELAYER_Instruction(true),
+			Dialect = Dialect.Snake,
+		},
+		new InstructionDescriptor
+		{
+			Name = "CLEARIMAGELAYER",
+			CreateInstruction = () => new CLEARIMAGELAYER_Instruction(),
+			Dialect = Dialect.Snake,
+		},
+		new InstructionDescriptor
+		{
+			Name = "CLEARIMAGELAYER_ALL",
+			CreateInstruction = () => new CLEARIMAGELAYER_ALL_Instruction(),
+			Dialect = Dialect.Snake,
+		},
 	];
 }

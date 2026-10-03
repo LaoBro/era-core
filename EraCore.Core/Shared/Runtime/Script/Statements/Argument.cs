@@ -83,6 +83,37 @@ internal sealed class SpHtmlPrint : Argument
 	readonly public AExpression Opt;
 }
 #endregion
+#region Skia 方言 图像层（实现票 22）
+/// <summary>
+/// SETIMAGELAYER / SETIMAGELAYERL 的实参。与 Skia 上游同形：spriteName/depth 必填，
+/// x/y/width/height/opacity/colorMatrix/followScroll 可省略（缺省在指令体里补）。
+/// </summary>
+internal sealed class SpSetImageLayerArgument : Argument
+{
+	public SpSetImageLayerArgument(AExpression spriteName, AExpression depth, AExpression x, AExpression y,
+		AExpression width, AExpression height, AExpression opacity, AExpression cmArray, AExpression followScroll)
+	{
+		SpriteName = spriteName;
+		Depth = depth;
+		X = x;
+		Y = y;
+		Width = width;
+		Height = height;
+		Opacity = opacity;
+		CMArray = cmArray;
+		FollowScroll = followScroll;
+	}
+	readonly public AExpression SpriteName;
+	readonly public AExpression Depth;
+	readonly public AExpression X;
+	readonly public AExpression Y;
+	readonly public AExpression Width;
+	readonly public AExpression Height;
+	readonly public AExpression Opacity;
+	readonly public AExpression CMArray;
+	readonly public AExpression FollowScroll;
+}
+#endregion
 internal abstract class Argument
 {
 	public bool IsConst;

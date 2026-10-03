@@ -57,6 +57,8 @@ CHKDATA	function
 CHKFONT	function
 CLEARBGIMAGE	directive
 CLEARBIT	directive
+CLEARIMAGELAYER	directive
+CLEARIMAGELAYER_ALL	directive
 CLEARLINE	directive
 CLEARMEMORY	function
 CLEARTEXTBOX	directive
@@ -474,6 +476,8 @@ SETBIT	directive
 SETCOLOR	directive
 SETCOLORBYNAME	directive
 SETFONT	directive
+SETIMAGELAYER	directive
+SETIMAGELAYERL	directive
 SETSOUNDVOLUME	directive
 SETTEXTBOX	function
 SETVAR	function

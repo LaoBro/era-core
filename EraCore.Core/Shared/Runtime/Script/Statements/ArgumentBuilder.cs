@@ -245,6 +245,10 @@ internal static partial class ArgumentParser
 		#region EM_私家版_HTML_PRINT拡張
 		argb[FunctionArgType.SP_HTML_PRINT] = new SP_HTML_PRINT_ArgumentBuilder();
 		#endregion
+		#region Skia 方言 图像层（实现票 22）
+		argb[FunctionArgType.SP_SETIMAGELAYER] = new SP_SETIMAGELAYER_ArgumentBuilder(false);
+		argb[FunctionArgType.SP_SETIMAGELAYERL] = new SP_SETIMAGELAYER_ArgumentBuilder(true);
+		#endregion
 	}
 
 	#region EM_私家版_HTMLパラメータ拡張
@@ -2482,6 +2486,47 @@ internal static partial class ArgumentParser
 			return new StrDoubleArgument(term, d);
 		}
 
+	}
+	#endregion
+
+	#region Skia 方言 图像层（实现票 22）
+	/// <summary>
+	/// SETIMAGELAYER / SETIMAGELAYERL の引数。
+	/// 形は Skia 上游に同じ：spriteName(文字列), depth(long), x, y, width, height, opacity(int),
+	/// colorMatrix(配列項), followScroll(int)。前 2 引数のみ必須、以降は省略可。
+	/// colorMatrix は 2D/3D 整数配列変数を指すため、解析期に型を確定せず typeof(void) で通し、
+	/// 実行期に <see cref="ColorMatrixReader"/> が 5×5 を検証する。
+	/// L 変体は行相対定位で followScroll 恒成立（引数では受け取らない）。
+	/// </summary>
+	private sealed class SP_SETIMAGELAYER_ArgumentBuilder : ArgumentBuilder
+	{
+		public SP_SETIMAGELAYER_ArgumentBuilder(bool lineRelative)
+		{
+			this.lineRelative = lineRelative;
+			argumentTypeArray = lineRelative
+				? [typeof(string), typeof(long), typeof(long), typeof(long), typeof(long), typeof(long), typeof(long), typeof(void)]
+				: [typeof(string), typeof(long), typeof(long), typeof(long), typeof(long), typeof(long), typeof(long), typeof(void), typeof(long)];
+			minArg = 2;
+		}
+		readonly bool lineRelative;
+
+		public override Argument CreateArgument(InstructionLine line, ExpressionMediator exm)
+		{
+			var terms = popTerms(line);
+			if (!checkArgumentType(line, exm, terms))
+				return null!;
+
+			return new SpSetImageLayerArgument(
+				terms[0],
+				terms[1],
+				terms.Count > 2 ? terms[2] : null!,
+				terms.Count > 3 ? terms[3] : null!,
+				terms.Count > 4 ? terms[4] : null!,
+				terms.Count > 5 ? terms[5] : null!,
+				terms.Count > 6 ? terms[6] : null!,
+				terms.Count > 7 ? terms[7] : null!,
+				!lineRelative && terms.Count > 8 ? terms[8] : null!);
+		}
 	}
 	#endregion
 }

@@ -3996,4 +3996,70 @@ internal sealed partial class FunctionIdentifier
 		}
 	}
 	#endregion
+
+	#region Skia 方言 图像层（实现票 22）
+	// SETIMAGELAYER / SETIMAGELAYERL：完整解析参数（depth 用 long，允许 0 与 -1 并存；x/y/w/h/opacity 为 int；
+	// ColorMatrix 走 ColorMatrixReader 的 5×5 校验；L 变体 followScroll 恒 true），随后交 EmueraConsole
+	// 语义接缝——era-core 无 ImageLayer 抽象，接缝当前为 no-op（观感归 era-core 渲染路线，spec §5）。
+	// 与 Skia 上游同形；不引入 SkiaSharp。
+	private sealed class SETIMAGELAYER_Instruction : AInstruction
+	{
+		public SETIMAGELAYER_Instruction(bool lineRelative)
+		{
+			ArgBuilder = ArgumentParser.GetArgumentBuilder(
+				lineRelative ? FunctionArgType.SP_SETIMAGELAYERL : FunctionArgType.SP_SETIMAGELAYER);
+			flag = METHOD_SAFE | EXTENDED;
+			this.lineRelative = lineRelative;
+		}
+		readonly bool lineRelative;
+
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		{
+			var arg = (SpSetImageLayerArgument)func.Argument;
+			string spriteName = arg.SpriteName.GetStrValue(exm);
+			long depth = arg.Depth.GetIntValue(exm);
+			int x = arg.X != null ? (int)arg.X.GetIntValue(exm) : 0;
+			int y = arg.Y != null ? (int)arg.Y.GetIntValue(exm) : 0;
+			int width = arg.Width != null ? (int)arg.Width.GetIntValue(exm) : 0;
+			int height = arg.Height != null ? (int)arg.Height.GetIntValue(exm) : 0;
+			int opacity = arg.Opacity != null ? (int)arg.Opacity.GetIntValue(exm) : 255;
+			// colorMatrix 为第 8 实参（1 起算）；越界/不足 5×5 时 ColorMatrixReader 抛明确错误。
+			float[][]? colorMatrix = arg.CMArray != null
+				? ColorMatrixReader.Read(lineRelative ? "SETIMAGELAYERL" : "SETIMAGELAYER", 8, arg.CMArray, exm)
+				: null;
+			// SETIMAGELAYERL 恒 followScroll；SETIMAGELAYER 缺省 false（与 Skia 一致）。
+			bool followScroll = lineRelative || (arg.FollowScroll != null && arg.FollowScroll.GetIntValue(exm) != 0);
+			exm.Console.SetImageLayer(spriteName, depth, x, y, width, height, opacity, colorMatrix, followScroll);
+		}
+	}
+
+	private sealed class CLEARIMAGELAYER_Instruction : AInstruction
+	{
+		public CLEARIMAGELAYER_Instruction()
+		{
+			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.INT_EXPRESSION);
+			flag = METHOD_SAFE | EXTENDED;
+		}
+
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		{
+			long depth = ((ExpressionArgument)func.Argument).Term.GetIntValue(exm);
+			exm.Console.ClearImageLayer(depth);
+		}
+	}
+
+	private sealed class CLEARIMAGELAYER_ALL_Instruction : AInstruction
+	{
+		public CLEARIMAGELAYER_ALL_Instruction()
+		{
+			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.VOID);
+			flag = METHOD_SAFE | EXTENDED;
+		}
+
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		{
+			exm.Console.ClearImageLayerAll();
+		}
+	}
+	#endregion
 }

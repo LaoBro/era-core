@@ -98,70 +98,10 @@ internal static partial class FunctionMethodCreator
 		return new EmuRectangle((int)x64, (int)y64, (int)w64, (int)h64);
 	}
 
+	// 读取逻辑提取到 ColorMatrixReader 深模块（实现票 22），Graphics 与 SETIMAGELAYER 族共用，
+	// 数组维度判定 / 5×5 边界校验 / 错误消息单点维护。
 	private static float[][] ReadColormatrix(string Name, ExpressionMediator exm, List<AExpression> arguments, int argNo)
-	{
-		//数値型二次元以上配列変数のはず
-		FixedVariableTerm p = ((VariableTerm)arguments[argNo]).GetFixedVariableTerm(exm);
-		if (!p.Identifier.IsArray2D && !p.Identifier.IsArray3D)
-			throw new CodeEE(string.Format(trerror.ArgIsNotNDArray.Text, Name, argNo + 1, "2または3"));
-
-		long e1, e2;
-		float[][] cm = new float[5][];
-		if (p.Identifier.IsArray2D)
-		{
-			long[,] array;
-			if (p.Identifier.IsCharacterData)
-			{
-				array = (p.Identifier.GetArrayChara((int)p.Index1) as long[,])!;
-				e1 = p.Index2;
-				e2 = p.Index3;
-			}
-			else
-			{
-				array = (p.Identifier.GetArray() as long[,])!;
-				e1 = p.Index1;
-				e2 = p.Index2;
-			}
-			if (e1 < 0 || e2 < 0 || e1 + 5 > array.GetLength(0) || e2 + 5 > array.GetLength(1))
-				throw new CodeEE(string.Format(trerror.InvalidColorMatrix.Text, Name, e1, e2));
-			for (int x = 0; x < 5; x++)
-			{
-				cm[x] = new float[5];
-				for (int y = 0; y < 5; y++)
-				{
-					cm[x][y] = array[e1 + x, e2 + y] / 256f;
-				}
-			}
-		}
-		if (p.Identifier.IsArray3D)
-		{
-			long[,,] array; long e3;
-			if (p.Identifier.IsCharacterData)
-			{
-				throw new NotImplCodeEE();
-			}
-			else
-			{
-				array = (p.Identifier.GetArray() as long[,,])!;
-				e1 = p.Index1;
-				e2 = p.Index2;
-				e3 = p.Index3;
-			}
-			if (e1 < 0 || e1 >= array.GetLength(0))
-				throw new CodeEE(string.Format(trerror.InvalidColorMatrix.Text, Name, e2, e3));
-			if (e2 < 0 || e3 < 0 || e2 + 5 > array.GetLength(1) || e3 + 5 > array.GetLength(2))
-				throw new CodeEE(string.Format(trerror.InvalidColorMatrix.Text, Name, e2, e3));
-			for (int x = 0; x < 5; x++)
-			{
-				cm[x] = new float[5];
-				for (int y = 0; y < 5; y++)
-				{
-					cm[x][y] = array[e1, e2 + x, e3 + y] / 256f;
-				}
-			}
-		}
-		return cm;
-	}
+		=> ColorMatrixReader.Read(Name, argNo + 1, arguments[argNo], exm);
 
 	public sealed class GraphicsStateMethod : FunctionMethod
 	{
