@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using MinorShift.Emuera.GameData.Function;
 using MinorShift.Emuera.GameProc.Function;
 using MinorShift.Emuera.Runtime.Config;
@@ -11,12 +11,11 @@ namespace MinorShift.Emuera.Tests;
 /// <summary>
 /// 声明式登记接缝（实现票 15）：
 /// - 新增一条指令/函数 = 只写一条 descriptor（一处），funcDic / methodList 由其生成。
-/// - 默认声明为空 → 注册层是 no-op，既有面逐位不变。
+/// - descriptor 经**生产同一转换函数**（AddInstructionDescriptors / AddMethodDescriptors）产出可解析注册项。
 /// 沿用既有回归套件的「内部 API 直调」模式（InternalsVisibleTo）。
 ///
-/// 证据边界：本套件证明 descriptor 经**生产同一转换函数**（AddInstructionDescriptors /
-/// AddMethodDescriptors）产出可解析的注册项，且既有面未被接缝改动。端到端「真实 ERB 解析全绿」
-/// 与逐位 surface 快照由实现票 17（面快照门禁）与票 25（一致性套件）承担，不在此重复。
+/// 证据边界：端到端「真实 ERB 解析全绿」与逐位 surface 快照由实现票 17（面快照门禁）与票 25
+/// 承担，不在此重复。此处只证明接缝本身是声明项的登记来源。
 /// </summary>
 public sealed class BuiltInRegistrySeamTests
 {
@@ -40,12 +39,19 @@ public sealed class BuiltInRegistrySeamTests
 	}
 
 	[Fact]
-	public void Default_declarations_are_empty_so_registry_is_a_noop()
+	public void Declared_entries_are_registered_by_the_seam()
 	{
 		using var scope = GlobalStatic.OpenScope(new ConfigData());
 
+		// P0 指令尚未落地（票 20–23），指令声明此刻为空；函数声明已含 Skia P0 数学/位/求值 19 项（票 18）。
 		Assert.Empty(BuiltInRegistry.Instructions);
-		Assert.Empty(BuiltInRegistry.Methods);
+		Assert.NotEmpty(BuiltInRegistry.Methods);
+		var methodList = FunctionMethodCreator.GetMethodList();
+		foreach (FunctionMethodDescriptor descriptor in BuiltInRegistry.Methods)
+		{
+			Assert.Equal(Dialect.Snake, descriptor.Dialect);
+			Assert.True(methodList.ContainsKey(descriptor.Name), descriptor.Name);
+		}
 	}
 
 	[Fact]

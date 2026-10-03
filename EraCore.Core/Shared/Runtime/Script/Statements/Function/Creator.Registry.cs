@@ -1,4 +1,4 @@
-﻿using MinorShift.Emuera.Runtime.Script.Statements;
+using MinorShift.Emuera.Runtime.Script.Statements;
 using MinorShift.Emuera.Runtime.Script.Statements.Function;
 using System.Collections.Generic;
 
@@ -13,13 +13,28 @@ internal static partial class FunctionMethodCreator
 	/// </summary>
 	internal static IReadOnlyList<FunctionMethodDescriptor> BuiltInMethodDescriptors { get; } =
 	[
-		// 例：
-		// new FunctionMethodDescriptor
-		// {
-		//     Name = "EVAL",
-		//     CreateMethod = () => new EvalMethod(),
-		//     Dialect = Dialect.Snake,
-		// },
+		// Skia 方言 P0：数学 / 取整 / 无检查算术（实现票 18）。
+		new() { Name = "SIN", CreateMethod = () => new SinMethod(), Dialect = Dialect.Snake },
+		new() { Name = "COS", CreateMethod = () => new CosMethod(), Dialect = Dialect.Snake },
+		new() { Name = "TAN", CreateMethod = () => new TanMethod(), Dialect = Dialect.Snake },
+		new() { Name = "ASIN", CreateMethod = () => new AsinMethod(), Dialect = Dialect.Snake },
+		new() { Name = "ACOS", CreateMethod = () => new AcosMethod(), Dialect = Dialect.Snake },
+		new() { Name = "ATAN", CreateMethod = () => new AtanMethod(), Dialect = Dialect.Snake },
+		new() { Name = "FLOOR", CreateMethod = () => new FloorMethod(), Dialect = Dialect.Snake },
+		new() { Name = "CEIL", CreateMethod = () => new CeilMethod(), Dialect = Dialect.Snake },
+		new() { Name = "ROUND", CreateMethod = () => new RoundMethod(), Dialect = Dialect.Snake },
+		new() { Name = "UNCHECKED_ADD", CreateMethod = () => new UncheckedAddMethod(), Dialect = Dialect.Snake },
+		new() { Name = "UNCHECKED_SUB", CreateMethod = () => new UncheckedSubtractMethod(), Dialect = Dialect.Snake },
+		new() { Name = "UNCHECKED_MUL", CreateMethod = () => new UncheckedMultiplyMethod(), Dialect = Dialect.Snake },
+		new() { Name = "UNCHECKED_NEG", CreateMethod = () => new UncheckedNegateMethod(), Dialect = Dialect.Snake },
+		// Skia 方言 P0：数组位运算（实现票 18）。
+		new() { Name = "BITSET", CreateMethod = () => new BitSetMethod(), Dialect = Dialect.Snake },
+		new() { Name = "BITGET", CreateMethod = () => new BitGetMethod(), Dialect = Dialect.Snake },
+		new() { Name = "BITTOGGLE", CreateMethod = () => new BitToggleMethod(), Dialect = Dialect.Snake },
+		new() { Name = "BITINDEXOFFIRST", CreateMethod = () => new BitIndexOfFirstMethod(), Dialect = Dialect.Snake },
+		// Skia 方言 P0：字符串动态求值（实现票 18）。
+		new() { Name = "EVAL", CreateMethod = () => new EvalMethod(), Dialect = Dialect.Snake },
+		new() { Name = "EVALS", CreateMethod = () => new EvalSMethod(), Dialect = Dialect.Snake },
 	];
 
 	/// <summary>

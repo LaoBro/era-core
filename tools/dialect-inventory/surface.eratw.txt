@@ -1,4 +1,5 @@
 ABS	function
+ACOS	function
 ADDCHARA	directive
 ADDCOPYCHARA	directive
 ADDDEFCHARA	directive
@@ -12,7 +13,9 @@ ARRAYMSORTEX	function
 ARRAYREMOVE	directive
 ARRAYSHIFT	directive
 ARRAYSORT	directive
+ASIN	function
 ASSERT	directive
+ATAN	function
 AWAIT	directive
 BAR	directive
 BARL	directive
@@ -20,7 +23,11 @@ BARSTR	function
 BEGIN	directive
 BINPUT	directive
 BINPUTS	directive
+BITGET	function
+BITINDEXOFFIRST	function
 BITMAP_CACHE_ENABLE	function
+BITSET	function
+BITTOGGLE	function
 BREAK	directive
 BREAKBUTTON	directive
 CALL	directive
@@ -42,6 +49,7 @@ CBGSETBUTTONSPRITE	function
 CBGSETG	function
 CBGSETSPRITE	function
 CBRT	function
+CEIL	function
 CHARATU	function
 CHKCHARADATA	function
 CHKDATA	function
@@ -59,6 +67,7 @@ COLOR_FROMRGB	function
 CONTINUE	directive
 CONVERT	function
 COPYCHARA	directive
+COS	function
 CSVABL	function
 CSVBASE	function
 CSVCALLNAME	function
@@ -139,6 +148,8 @@ ENUMVARENDSWITH	function
 ENUMVARWITH	function
 ERDNAME	function
 ESCAPE	function
+EVAL	function
+EVALS	function
 EXISTCSV	function
 EXISTFILE	function
 EXISTFUNCTION	function
@@ -151,6 +162,7 @@ FINDELEMENT	function
 FINDLASTCHARA	function
 FINDLASTELEMENT	function
 FIND_CHARADATA	function
+FLOOR	function
 FLOWINPUT	function
 FLOWINPUTS	function
 FONTBOLD	directive
@@ -435,6 +447,7 @@ RETURN	directive
 RETURNF	directive
 RETURNFORM	directive
 REUSELASTLINE	directive
+ROUND	function
 SAVECHARA	directive
 SAVEDATA	directive
 SAVEGAME	directive
@@ -458,6 +471,7 @@ SETTEXTBOX	function
 SETVAR	function
 SIF	directive
 SIGN	function
+SIN	function
 SKIPDISP	directive
 SKIPLOG	directive
 SORTCHARA	directive
@@ -497,6 +511,7 @@ SUMARRAY	function
 SUMCARRAY	function
 SWAP	directive
 SWAPCHARA	directive
+TAN	function
 THROW	directive
 TIMES	directive
 TINPUT	directive
@@ -535,6 +550,10 @@ TRYJUMP	directive
 TRYJUMPFORM	directive
 TRYJUMPLIST	directive
 TWAIT	directive
+UNCHECKED_ADD	function
+UNCHECKED_MUL	function
+UNCHECKED_NEG	function
+UNCHECKED_SUB	function
 UNICODE	function
 UNICODEBYTE	function
 UPCHECK	directive

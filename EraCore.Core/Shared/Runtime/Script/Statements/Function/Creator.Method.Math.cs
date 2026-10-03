@@ -367,4 +367,227 @@ internal static partial class FunctionMethodCreator
 			return ret;
 		}
 	}
+
+	// ======== Skia 方言 P0：三角函数 / 取整 / 无检查算术（实现票 18，spec §5） ========
+	// 语义逐项对齐 Skia 参照（Creator.Method.cs）；era-core 无 Float 类型，
+	// 故只保留 Integer 分支（Skia 的 ToDouble 对整型实参即 GetIntValue）。
+
+	private sealed class SinMethod : FunctionMethod
+	{
+		public SinMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Any } }];
+			CanRestructure = true;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			double dret = Math.Sin(arguments[0].GetIntValue(exm));
+			if (double.IsNaN(dret))
+				throw new CodeEE(string.Format(trerror.ResultIsNaN.Text, Name));
+			if (double.IsInfinity(dret))
+				throw new CodeEE(string.Format(trerror.ResultIsInfinity.Text, Name));
+			if ((dret >= long.MaxValue) || (dret <= long.MinValue))
+				throw new CodeEE(string.Format(trerror.ResultIsOutOfTheRangeOfInt64.Text, Name, dret));
+			return (long)dret;
+		}
+	}
+
+	private sealed class CosMethod : FunctionMethod
+	{
+		public CosMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Any } }];
+			CanRestructure = true;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			double dret = Math.Cos(arguments[0].GetIntValue(exm));
+			if (double.IsNaN(dret))
+				throw new CodeEE(string.Format(trerror.ResultIsNaN.Text, Name));
+			if (double.IsInfinity(dret))
+				throw new CodeEE(string.Format(trerror.ResultIsInfinity.Text, Name));
+			if ((dret >= long.MaxValue) || (dret <= long.MinValue))
+				throw new CodeEE(string.Format(trerror.ResultIsOutOfTheRangeOfInt64.Text, Name, dret));
+			return (long)dret;
+		}
+	}
+
+	private sealed class TanMethod : FunctionMethod
+	{
+		public TanMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Any } }];
+			CanRestructure = true;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			double dret = Math.Tan(arguments[0].GetIntValue(exm));
+			if (double.IsNaN(dret))
+				throw new CodeEE(string.Format(trerror.ResultIsNaN.Text, Name));
+			if (double.IsInfinity(dret))
+				throw new CodeEE(string.Format(trerror.ResultIsInfinity.Text, Name));
+			if ((dret >= long.MaxValue) || (dret <= long.MinValue))
+				throw new CodeEE(string.Format(trerror.ResultIsOutOfTheRangeOfInt64.Text, Name, dret));
+			return (long)dret;
+		}
+	}
+
+	private sealed class AsinMethod : FunctionMethod
+	{
+		public AsinMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Any } }];
+			CanRestructure = true;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			double raw = arguments[0].GetIntValue(exm);
+			if (raw < -1.0 || raw > 1.0)
+				throw new CodeEE(string.Format(trerror.ArgIsOutOfRange.Text, Name, 1, raw, -1, 1));
+			double dret = Math.Asin(raw);
+			if (double.IsNaN(dret))
+				throw new CodeEE(string.Format(trerror.ResultIsNaN.Text, Name));
+			return (long)dret;
+		}
+	}
+
+	private sealed class AcosMethod : FunctionMethod
+	{
+		public AcosMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Any } }];
+			CanRestructure = true;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			double raw = arguments[0].GetIntValue(exm);
+			if (raw < -1.0 || raw > 1.0)
+				throw new CodeEE(string.Format(trerror.ArgIsOutOfRange.Text, Name, 1, raw, -1, 1));
+			double dret = Math.Acos(raw);
+			if (double.IsNaN(dret))
+				throw new CodeEE(string.Format(trerror.ResultIsNaN.Text, Name));
+			return (long)dret;
+		}
+	}
+
+	private sealed class AtanMethod : FunctionMethod
+	{
+		public AtanMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Any } }];
+			CanRestructure = true;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			double dret = Math.Atan(arguments[0].GetIntValue(exm));
+			if (double.IsNaN(dret))
+				throw new CodeEE(string.Format(trerror.ResultIsNaN.Text, Name));
+			return (long)dret;
+		}
+	}
+
+	private sealed class FloorMethod : FunctionMethod
+	{
+		public FloorMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Any } }];
+			CanRestructure = true;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			double dret = Math.Floor((double)arguments[0].GetIntValue(exm));
+			if ((dret >= long.MaxValue) || (dret <= long.MinValue))
+				throw new CodeEE(string.Format(trerror.ResultIsOutOfTheRangeOfInt64.Text, Name, dret));
+			return (long)dret;
+		}
+	}
+
+	private sealed class CeilMethod : FunctionMethod
+	{
+		public CeilMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Any } }];
+			CanRestructure = true;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			double dret = Math.Ceiling((double)arguments[0].GetIntValue(exm));
+			if ((dret >= long.MaxValue) || (dret <= long.MinValue))
+				throw new CodeEE(string.Format(trerror.ResultIsOutOfTheRangeOfInt64.Text, Name, dret));
+			return (long)dret;
+		}
+	}
+
+	private sealed class RoundMethod : FunctionMethod
+	{
+		public RoundMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Any } }];
+			CanRestructure = true;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			double dret = Math.Round((double)arguments[0].GetIntValue(exm), MidpointRounding.AwayFromZero);
+			if ((dret >= long.MaxValue) || (dret <= long.MinValue))
+				throw new CodeEE(string.Format(trerror.ResultIsOutOfTheRangeOfInt64.Text, Name, dret));
+			return (long)dret;
+		}
+	}
+
+	private sealed class UncheckedAddMethod : FunctionMethod
+	{
+		public UncheckedAddMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Int, ArgType.Int } }];
+			CanRestructure = true;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+			=> unchecked(arguments[0].GetIntValue(exm) + arguments[1].GetIntValue(exm));
+	}
+
+	private sealed class UncheckedSubtractMethod : FunctionMethod
+	{
+		public UncheckedSubtractMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Int, ArgType.Int } }];
+			CanRestructure = true;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+			=> unchecked(arguments[0].GetIntValue(exm) - arguments[1].GetIntValue(exm));
+	}
+
+	private sealed class UncheckedMultiplyMethod : FunctionMethod
+	{
+		public UncheckedMultiplyMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Int, ArgType.Int } }];
+			CanRestructure = true;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+			=> unchecked(arguments[0].GetIntValue(exm) * arguments[1].GetIntValue(exm));
+	}
+
+	private sealed class UncheckedNegateMethod : FunctionMethod
+	{
+		public UncheckedNegateMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Int } }];
+			CanRestructure = true;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+			=> unchecked(-arguments[0].GetIntValue(exm));
+	}
 }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using System.Threading.Tasks;
 using MinorShift.Emuera;
@@ -13,9 +13,9 @@ namespace MinorShift.Emuera.Tests;
 /// <summary>
 /// 方言 profile + 模块闭包 + 投影（实现票 16）。
 ///
-/// 证据边界：P0 方言键（实现票 18–24）尚未落地，注册表里 snake/eratw 的 descriptor 声明此刻为空，
-/// 故「v24pure 隐藏 P0 键、snake/eratw 显示」用**替身方言键**（把真实基线键 PRINT 挪进方言模块）
-/// 表达同一条语义；真实三 profile 只断言当前状态与闭包单调性。逐位面快照门禁由实现票 17 承担。
+/// 证据边界：P0 数学/位/求值函数（实现票 18）已作为 snake 声明落地，其余 P0 键（票 19–24）尚未；
+/// 「v24pure 隐藏方言键、snake 显示」既用真实 P0 键（SIN 等）也用**替身方言键**（把真实基线键 PRINT
+/// 挪进方言模块）表达，前者见 <see cref="P0MathBitEvalFunctionTests"/>。逐位面快照门禁由实现票 17 承担。
 /// </summary>
 public sealed class DialectProfileTests
 {
@@ -131,12 +131,15 @@ public sealed class DialectProfileTests
 	{
 		using var scope = GlobalStatic.OpenScope(new ConfigData());
 
-		// 方言声明此刻为空 → baseline = 注册表全键；v24pure 因此与今天逐位一致。
-		Assert.Equal(
-			FunctionIdentifier.GetInstructionNameDic().Count,
-			DialectRegistry.Baseline.DeclaredKeys.Count);
-		Assert.Empty(DialectRegistry.Snake.DeclaredKeys);
+		// 方言声明：snake 已登记 Skia P0 数学/取整/无检查/位/求值 19 键（实现票 18）；eratw 暂无游戏适配键。
+		Assert.Equal(19, DialectRegistry.Snake.DeclaredKeys.Count);
 		Assert.Empty(DialectRegistry.Eratw.DeclaredKeys);
+
+		// baseline = 注册表全键 − 方言声明键：方言键不落入 v24pure，既有键仍在。
+		Assert.Contains("SIN", DialectRegistry.Snake.DeclaredKeys);
+		Assert.DoesNotContain("SIN", DialectRegistry.Baseline.DeclaredKeys);
+		Assert.Contains("PRINT", DialectRegistry.Baseline.DeclaredKeys);
+		Assert.DoesNotContain("PRINT", DialectRegistry.Snake.DeclaredKeys);
 	}
 
 	// ---------- 投影 ----------

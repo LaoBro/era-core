@@ -631,4 +631,70 @@ internal static partial class FunctionMethodCreator
 			return Config.PrintCPerLine;
 		}
 	}
+
+	// ======== Skia 方言 P0：字符串动态求值（实现票 18，spec §5） ========
+	// 对齐 Skia 语义：运行时解析表达式（CanRestructure=false，绝不能编译期折叠），
+	// 解析/求值失败一律返回缺省值（第二参）。era-core 无 Float 类型，故只处理 Integer / String 分支。
+
+	private sealed class EvalMethod : FunctionMethod
+	{
+		public EvalMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.String, ArgType.Int }, OmitStart = 1 }];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			string expressionStr = arguments[0].GetStrValue(exm);
+			long defaultValue = arguments.Count > 1 && arguments[1] != null ? arguments[1].GetIntValue(exm) : 0;
+			if (string.IsNullOrWhiteSpace(expressionStr))
+				return defaultValue;
+			try
+			{
+				CharStream st = new CharStream(expressionStr);
+				WordCollection wc = LexicalAnalyzer.Analyse(st, LexEndWith.EoL, LexAnalyzeFlag.None);
+				AExpression term = ExpressionParser.ReduceExpressionTerm(wc, TermEndWith.EoL);
+				if (term == null)
+					return defaultValue;
+				term = term.Restructure(exm);
+				return term.GetOperandType() == typeof(long) ? term.GetIntValue(exm) : defaultValue;
+			}
+			catch (EmueraException)
+			{
+				return defaultValue;
+			}
+		}
+	}
+
+	private sealed class EvalSMethod : FunctionMethod
+	{
+		public EvalSMethod()
+		{
+			ReturnType = typeof(string);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.String, ArgType.String }, OmitStart = 1 }];
+			CanRestructure = false;
+		}
+		public override string GetStrValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			string expressionStr = arguments[0].GetStrValue(exm);
+			string defaultValue = arguments.Count > 1 && arguments[1] != null ? arguments[1].GetStrValue(exm) : "";
+			if (string.IsNullOrWhiteSpace(expressionStr))
+				return defaultValue;
+			try
+			{
+				CharStream st = new CharStream(expressionStr);
+				WordCollection wc = LexicalAnalyzer.Analyse(st, LexEndWith.EoL, LexAnalyzeFlag.None);
+				AExpression term = ExpressionParser.ReduceExpressionTerm(wc, TermEndWith.EoL);
+				if (term == null)
+					return defaultValue;
+				term = term.Restructure(exm);
+				return term.GetOperandType() == typeof(string) ? term.GetStrValue(exm) : defaultValue;
+			}
+			catch (EmueraException)
+			{
+				return defaultValue;
+			}
+		}
+	}
 }
