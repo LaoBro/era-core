@@ -1845,8 +1845,16 @@ internal sealed class ConstantData
 					ParserMediator.Warn(trerror.FirstValueCanNotConvertToInt.Text, position, 1);
 					continue;
 				}
+				// `.als` 别名表：多个名字映射到同一 index 是**合法且常见**的用法
+				// （eraTW 系翻译包同时登记 日文/简体/繁体 名 → 同一索引）。故 index 重复只提示，
+				// 且格式串参数必须与 Lang.VarKeyAreadyDefined 的两个占位符一致——此前只传一个参数
+				// 会让 string.Format 抛 FormatException，被外层 catch 吞掉并 return，
+				// 导致该 .als 剩余别名全部丢失（整包中文关键字失解析）。
 				if (!defined.Add(index))
-					ParserMediator.Warn(string.Format(trerror.VarKeyAreadyDefined.Text, index.ToString()), position, 1);
+					ParserMediator.Warn(string.Format(trerror.VarKeyAreadyDefined.Text, tokens[1], index.ToString()), position, 1);
+				// 名字重复才会让 Dictionary.Add 抛 ArgumentException——跳过并提示，避免中断整文件。
+				if (target.ContainsKey(tokens[1]))
+					continue;
 				target.Add(tokens[1], index);
 			}
 		}
