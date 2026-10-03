@@ -523,13 +523,17 @@ TAN	function
 THROW	directive
 TIMES	directive
 TINPUT	directive
+TINPUTNF	directive
 TINPUTS	directive
+TINPUTSNF	directive
 TOFULL	function
 TOHALF	function
 TOINT	function
 TOLOWER	function
 TONEINPUT	directive
+TONEINPUTNF	directive
 TONEINPUTS	directive
+TONEINPUTSNF	directive
 TOOLTIP_CUSTOM	directive
 TOOLTIP_FORMAT	directive
 TOOLTIP_IMG	directive

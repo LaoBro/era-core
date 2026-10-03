@@ -184,6 +184,12 @@ internal sealed class EmueraConsole : IDisposable, IConsoleStateView, IButtonDis
     // ========================================
 
     internal void WaitInput(InputRequest req) => _inputHandler.WaitInput(req);
+
+    /// <summary>
+    /// NF 变体等待（实现票 21，TINPUTNF 族）。Skia 上游此处跳过「强制滚动到底」一步；
+    /// era-core 的等待本就不含该步，故 NF 与标准等待等价——语义接缝保留，观感差异归渲染路线。
+    /// </summary>
+    internal void WaitInputNoFocus(InputRequest req) => _inputHandler.WaitInput(req);
     internal void ReadAnyKey(bool anykey = false, bool stopMesskip = false) => _inputHandler.ReadAnyKey(anykey, stopMesskip);
     internal void PressEnterKey(bool keySkip, string input, bool changedByMouse) => _inputHandler.PressEnterKey(keySkip, input, changedByMouse);
     internal void InputMouseKey(int type, int result1, int result2, int result3, int result4, long result5) => _inputHandler.InputMouseKey(type, result1, result2, result3, result4, result5);

@@ -14,6 +14,31 @@ internal sealed partial class FunctionIdentifier
 	/// </summary>
 	internal static IReadOnlyList<InstructionDescriptor> BuiltInInstructionDescriptors { get; } =
 	[
+		// Skia 方言 P0：NF 输入变体（实现票 21）。参数与 TINPUT/TINPUTS 同形，NoFocus 语义接缝见指令类。
+		new InstructionDescriptor
+		{
+			Name = "TINPUTNF",
+			CreateInstruction = () => new TINPUT_Instruction(false, noFocus: true),
+			Dialect = Dialect.Snake,
+		},
+		new InstructionDescriptor
+		{
+			Name = "TINPUTSNF",
+			CreateInstruction = () => new TINPUTS_Instruction(false, noFocus: true),
+			Dialect = Dialect.Snake,
+		},
+		new InstructionDescriptor
+		{
+			Name = "TONEINPUTNF",
+			CreateInstruction = () => new TINPUT_Instruction(true, noFocus: true),
+			Dialect = Dialect.Snake,
+		},
+		new InstructionDescriptor
+		{
+			Name = "TONEINPUTSNF",
+			CreateInstruction = () => new TINPUTS_Instruction(true, noFocus: true),
+			Dialect = Dialect.Snake,
+		},
 		// Skia 方言 P0：动态调用（实现票 20）。CALLS_Instruction 运行时解析字符串调用串。
 		new InstructionDescriptor
 		{

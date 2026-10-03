@@ -1048,13 +1048,17 @@ internal sealed partial class FunctionIdentifier
 
 	private sealed class TINPUT_Instruction : AInstruction
 	{
-		public TINPUT_Instruction(bool oneInput)
+		// noFocus（实现票 21）：NF 变体（TINPUTNF/TONEINPUTNF）。语义接缝保留；era-core 无强制滚动步，
+		// 故当前与普通等待等价（见 EmueraConsole.WaitInputNoFocus）。
+		public TINPUT_Instruction(bool oneInput, bool noFocus = false)
 		{
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.SP_TINPUT);
 			flag = IS_PRINT | IS_INPUT | EXTENDED;
 			isOne = oneInput;
+			_noFocus = noFocus;
 		}
-		bool isOne;
+		readonly bool isOne;
+		readonly bool _noFocus;
 		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
 		{
 			SpTInputsArgument tinputarg = (SpTInputsArgument)func.Argument;
@@ -1097,6 +1101,8 @@ internal sealed partial class FunctionIdentifier
 				else
 					GlobalStatic.VEvaluator.RESULT_ARRAY[1] = tinputarg.Def!.GetIntValue(exm);
 			}
+			else if (_noFocus)
+				exm.Console.WaitInputNoFocus(req);
 			else
 				exm.Console.WaitInput(req);
 			#endregion
@@ -1105,13 +1111,16 @@ internal sealed partial class FunctionIdentifier
 
 	private sealed class TINPUTS_Instruction : AInstruction
 	{
-		public TINPUTS_Instruction(bool oneInput)
+		// noFocus（实现票 21）：NF 变体（TINPUTSNF/TONEINPUTSNF）。语义接缝保留；era-core 无强制滚动步。
+		public TINPUTS_Instruction(bool oneInput, bool noFocus = false)
 		{
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.SP_TINPUTS);
 			flag = IS_PRINT | IS_INPUT | EXTENDED;
 			isOne = oneInput;
+			_noFocus = noFocus;
 		}
-		bool isOne;
+		readonly bool isOne;
+		readonly bool _noFocus;
 		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
 		{
 			SpTInputsArgument tinputarg = (SpTInputsArgument)func.Argument;
@@ -1147,6 +1156,8 @@ internal sealed partial class FunctionIdentifier
 				else
 					GlobalStatic.VEvaluator.RESULTS_ARRAY[1] = tinputarg.Def!.GetStrValue(exm);
 			}
+			else if (_noFocus)
+				exm.Console.WaitInputNoFocus(req);
 			else
 				exm.Console.WaitInput(req);
 			#endregion
