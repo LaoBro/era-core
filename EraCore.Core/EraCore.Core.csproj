@@ -31,6 +31,14 @@
 
   <!-- System.CommandLine 已随 HeadlessOptions 迁至 Cli 项目——Core 不再需要此引用（code-review 发现的死依赖） -->
 
+  <!-- ===== Skia 方言 P0：SQL_* 函数族（实现票 28）=====
+       唯一原生依赖（SQLitePCLRaw.bundle_e_sqlite3 随包传递）。约束：全部 SQLite 引用必须收口在
+       Runtime/Utils/Sql/SqlManager.cs 单一文件，包装器/注册层不得直接 using Microsoft.Data.Sqlite。
+       桌面优先；Android/MAUI/NativeAOT 的原生库定位形态单开后续 issue（spec §9）。 -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+  </ItemGroup>
+
   <!-- ===== 共享源码：Shared/ 子树（T-023 物理迁移自 Emuera/） ===== -->
   <!-- 历史 Runtime/UI/Game 源码由 SDK 默认 glob（**\*.cs）自动包含 -->
   <!-- .editorconfig [EraCore.Core/Shared/**] 抑制历史警告；T-022 后逐步清零并启用 nullable -->

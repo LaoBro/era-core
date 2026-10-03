@@ -247,6 +247,9 @@ internal sealed class GlobalStatic
                 // mem-leak-fix：FontFactory 静态字体字典（fontname,size,style→EmuFont 值类型，
                 // 不持 GDI 资源，量级极小）——挂清理链图彻底，随会话结束清空，下次加载自动重建。
                 FontFactory.ClearFont();
+                // 实现票 28：SQL 连接/reader 为跨会话静态存活资源，必须随 scope 结束关闭，
+                // 否则下一个 session 复用同名 dbName 时命中陈旧连接（对齐 gEmuera GlobalStatic.Reset）。
+                Runtime.Utils.SqlManager.CloseAll();
             }
             finally
             {

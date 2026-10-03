@@ -100,6 +100,10 @@ internal sealed class ConsoleTimerManager
         _state.redrawTimer.Enabled = true;
     }
 
+    /// <summary>当前重绘定时器周期；未启用返回 0（对齐 Skia 的 <c>EmueraConsole.AnimeTimer</c>，票 28）。</summary>
+    internal int GetRedrawTimer()
+        => _state.redrawTimer.Enabled ? (int)_state.redrawTimer.Interval : 0;
+
     internal void ForceStopTimer()
     {
         if (_state.genericTimer.Enabled)

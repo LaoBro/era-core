@@ -42,6 +42,32 @@ internal static partial class FunctionMethodCreator
 		new() { Name = "MAP_FINDKEY", CreateMethod = () => new MapFindKeyMethod(), Dialect = Dialect.Snake },
 		new() { Name = "MAP_TOSTRING", CreateMethod = () => new MapToStringMethod(), Dialect = Dialect.Snake },
 		new() { Name = "MAP_FROMSTRING", CreateMethod = () => new MapFromStringMethod(), Dialect = Dialect.Snake },
+		// Skia 方言 P0：平台 / 动画定时器（实现票 28，spec §5 追加 2）。
+		new() { Name = "GETPLATFORM", CreateMethod = () => new GetPlatformMethod(), Dialect = Dialect.Snake },
+		new() { Name = "GETANIMETIMER", CreateMethod = () => new GetAnimeTimerMethod(), Dialect = Dialect.Snake },
+		// Skia 方言 P0：SQL_* 函数族（实现票 28）。22 个非 Float 键；3 个 Float 变体待票 27。
+		new() { Name = "SQL_CONNECTION_OPEN", CreateMethod = () => new SqlConnectionOpenMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_CONNECT", CreateMethod = () => new SqlConnectMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_DISCONNECT", CreateMethod = () => new SqlDisconnectMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_ESCAPE", CreateMethod = () => new SqlEscapeMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_EXECUTE_NONQUERY", CreateMethod = () => new SqlExecuteNonQueryMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_EXECUTE_READER", CreateMethod = () => new SqlExecuteReaderMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_EXECUTE_SCALAR_LONG", CreateMethod = () => new SqlExecuteScalarLongMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_EXECUTE_SCALAR_STRING", CreateMethod = () => new SqlExecuteScalarStringMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_P_EXECUTE_NONQUERY", CreateMethod = () => new SqlPExecuteNonQueryMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_P_EXECUTE_READER", CreateMethod = () => new SqlPExecuteReaderMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_P_EXECUTE_SCALAR_LONG", CreateMethod = () => new SqlPExecuteScalarLongMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_P_EXECUTE_SCALAR_STRING", CreateMethod = () => new SqlPExecuteScalarStringMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_READER_READ", CreateMethod = () => new SqlReaderReadMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_READER_GET_LONG", CreateMethod = () => new SqlReaderGetLongMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_READER_GET_STRING", CreateMethod = () => new SqlReaderGetStringMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_READER_ISNULL", CreateMethod = () => new SqlReaderIsNullMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_READER_CLOSE", CreateMethod = () => new SqlReaderCloseMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_IMPORT_MAP_XML", CreateMethod = () => new SqlImportMapXmlMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_IMPORT_DT_XML", CreateMethod = () => new SqlImportDtXmlMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_EXPORT_MAP_XML", CreateMethod = () => new SqlExportMapXmlMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_EXPORT_DT_XML", CreateMethod = () => new SqlExportDtXmlMethod(), Dialect = Dialect.Snake },
+		new() { Name = "SQL_IMPORT_XML_CUSTOM", CreateMethod = () => new SqlImportXmlCustomMethod(), Dialect = Dialect.Snake },
 	];
 
 	/// <summary>

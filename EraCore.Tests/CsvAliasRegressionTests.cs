@@ -6,7 +6,8 @@ using Xunit;
 namespace MinorShift.Emuera.Tests;
 
 /// <summary>
-/// CSV <c>.als</c> 别名表回归（29 号票）。
+/// CSV <c>.als</c> 别名表回归（29 号票）。走 <see cref="LoaderTestHarness"/>（真实引擎 + 静态 GamePaths/GlobalStatic），
+/// 必须与其它 harness 测试同 Collection 串行，避免并行互踩静态游戏目录状态。
 ///
 /// 背景：eraTW 画蛇添足版把中文关键字放在 <c>CSV/&lt;VAR&gt;.als</c> 里，且大量使用
 /// **多个名字映射到同一索引**（日文/简体/繁体三名一索引）。此前 <c>ConstantData.loadAliases</c>
@@ -16,6 +17,7 @@ namespace MinorShift.Emuera.Tests;
 ///
 /// 本测试锁定：含重复索引、且重复索引出现在文件前部的 .als，其**后续**别名仍必须全部生效。
 /// </summary>
+[Collection("LoaderTests")]
 public sealed class CsvAliasRegressionTests
 {
 	[Fact]

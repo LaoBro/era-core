@@ -398,6 +398,45 @@ internal static partial class FunctionMethodCreator
 		}
 	}
 
+	/// <summary>
+	/// Skia 方言 P0：GETANIMETIMER（实现票 28，spec §5 追加 2）。返回当前重绘定时器周期（毫秒），
+	/// 未启用为 0——与既有 <see cref="SetAnimeTimerMethod"/> 读写成对（对齐 Skia <c>EmueraConsole.AnimeTimer</c>）。
+	/// </summary>
+	private sealed class GetAnimeTimerMethod : FunctionMethod
+	{
+		public GetAnimeTimerMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList()];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+			=> exm.Console.getRedrawTimer();
+	}
+
+	/// <summary>
+	/// Skia 方言 P0：GETPLATFORM（实现票 28，spec §5 追加 2）。纯函数，平台编码：
+	/// 0=Windows / 1=Android / 2=iOS / 3=macOS / 4=Linux / 5=Unknown，可常量折叠。
+	/// </summary>
+	private sealed class GetPlatformMethod : FunctionMethod
+	{
+		public GetPlatformMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList()];
+			CanRestructure = true;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			if (OperatingSystem.IsWindows()) return 0;
+			if (OperatingSystem.IsAndroid()) return 1;
+			if (OperatingSystem.IsIOS()) return 2;
+			if (OperatingSystem.IsMacOS()) return 3;
+			if (OperatingSystem.IsLinux()) return 4;
+			return 5;
+		}
+	}
+
 	private sealed class ExistSoundMethod : FunctionMethod
 	{
 		public ExistSoundMethod()
