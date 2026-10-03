@@ -1,0 +1,13 @@
+{
+  "id": "era-core-baseline",
+  "displayName": "era-core 移植前冻结面（三 fork 共享的 v24 祖先）",
+  "sourceRoot": ".",
+  "registryFiles": {
+    "instructions": "EraCore.Core/Shared/Runtime/Script/Statements/BuiltInFunctionCode.cs",
+    "methods": "EraCore.Core/Shared/Runtime/Script/Statements/Function/Creator.cs",
+    "argBuilders": null
+  },
+  "additions": [],
+  "exclusions": [],
+  "ownerNotes": "所有 fork 的共享 base。冻结产物 tools/dialect-inventory/base.era-core-baseline.txt，仅经 extract.py --update-base 重写；fork 的 delta 一律对它求。"
+}

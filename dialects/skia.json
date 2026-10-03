@@ -1,0 +1,555 @@
+{
+  "id": "skia",
+  "displayName": "Emuera Skia（lazyloading self-modified）",
+  "sourceRoot": "$EMUERA_SKIA_REF",
+  "base": "era-core-baseline",
+  "registryFiles": {
+    "instructions": "Emuera/Runtime/Script/Statements/BuiltInFunctionCode.cs",
+    "methods": "Emuera/Runtime/Script/Statements/Function/Creator.cs",
+    "argBuilders": null
+  },
+  "additions": [
+    {
+      "name": "BITMAP_CACHE_ENABLE",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "CALLSTR",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "CLEARIMAGELAYER",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "CLEARIMAGELAYER_ALL",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "HTML_PRINTC",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "HTML_PRINTLC",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "JUMPSTR",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "SETANIMETIMER",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "SETIMAGELAYER",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "SETIMAGELAYERL",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "SET_SKIA_QUALITY",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "SET_TEXT_DRAWING_MODE",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "STRICT_FONT_FALLBACK",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "TEXT_BGC_OFF",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "TEXT_BGC_ON",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "TINPUTNF",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "TINPUTSNF",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "TONEINPUTNF",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "TONEINPUTSNF",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "TRYCALLSTR",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "TRYCCALLSTR",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "TRYCJUMPSTR",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "TRYJUMPSTR",
+      "kind": "directive",
+      "owner": "skia"
+    },
+    {
+      "name": "ACOS",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "ARGLEN",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "ASIN",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "ATAN",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "BGMCONTROL",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "BITGET",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "BITINDEXOFFIRST",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "BITSET",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "BITTOGGLE",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "CEIL",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "COS",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "DISABLE_INPUT_MACRO",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "DT_CELL_GETF",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "ENABLE_INPUT_MACRO",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "EVAL",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "EVALF",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "EVALS",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "EXISTSIMAGELAYER",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "EXIST_IN_CSV",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "EXIST_IN_ERD",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "FLOOR",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "GETANIMETIMER",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "GETCSVNOBYCALLNAME",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "GETCSVNOBYMASTERNAME",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "GETCSVNOBYNAME",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "GETCSVNOBYNICKNAME",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "GETLINEY",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "GETMETHF",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "GETPLATFORM",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "GETSOUNDORBGMINFO",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "GETVARF",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "GET_SKIA_QUALITY",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "GET_TEXT_DRAWING_MODE",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "G_POLYGON_DRAW",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "G_POLYGON_FILL",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "G_POLYGON_POINT_ADD",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "G_POLYGON_POINT_CLEAR",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "ISPLAYINGBGM",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "ISPLAYINGSOUND",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "MAP_FINDKEY",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "MAP_FROMSTRING",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "MAP_MERGE",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "MAP_REMOVEIF",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "MAP_TOSTRING",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "MAP_VALUES",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "MATCHALL",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "MATCHALLEX",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "ROUND",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SEQUENCEINPUT",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SIN",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SOUNDCONTROL",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SPRITECREATEFROMFILE",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_CONNECT",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_CONNECTION_OPEN",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_DISCONNECT",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_ESCAPE",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_EXECUTE_NONQUERY",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_EXECUTE_READER",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_EXECUTE_SCALAR_FLOAT",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_EXECUTE_SCALAR_LONG",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_EXECUTE_SCALAR_STRING",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_EXPORT_DT_XML",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_EXPORT_MAP_XML",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_IMPORT_DT_XML",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_IMPORT_MAP_XML",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_IMPORT_XML_CUSTOM",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_P_EXECUTE_NONQUERY",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_P_EXECUTE_READER",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_P_EXECUTE_SCALAR_FLOAT",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_P_EXECUTE_SCALAR_LONG",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_P_EXECUTE_SCALAR_STRING",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_READER_CLOSE",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_READER_GET_FLOAT",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_READER_GET_LONG",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_READER_GET_STRING",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_READER_ISNULL",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "SQL_READER_READ",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "STRFORMCHECK",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "TAN",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "TOFLOAT",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "TOSTRF",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "UNCHECKED_ADD",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "UNCHECKED_MUL",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "UNCHECKED_NEG",
+      "kind": "function",
+      "owner": "skia"
+    },
+    {
+      "name": "UNCHECKED_SUB",
+      "kind": "function",
+      "owner": "skia"
+    }
+  ],
+  "exclusions": [],
+  "ownerNotes": "Skia fork 的公开键面。C# 侧对应方言模块 / profile「snake」（P0 语义键，见 spec §4.2）。渲染层 / 性能层键不属本 fork 的移植范围，见 spec §2.2；其仍会出现在 delta 里，由 additions / exclusions 评审口径区分。"
+}
