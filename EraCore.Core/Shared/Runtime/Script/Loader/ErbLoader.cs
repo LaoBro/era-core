@@ -2455,6 +2455,11 @@ internal sealed class ErbLoader
 		/// <summary>最近一次返回行的行号（对齐 EraStreamReader.LineNo 语义）。</summary>
 		int LineNo { get; }
 		string Filename { get; }
+		/// <summary>
+		/// 该流是否只含单个函数（blob 源 = 单函数块）。true 时「@名」在本流内唯一，定位无需行号消歧
+		/// （IR 索引行的行号与 blob 首行行号可能不一致，见实现票 31）。源文件流 = false，需按行号区分同名多定义。
+		/// </summary>
+		bool SingleFunction { get; }
 	}
 
 	/// <summary>源回读后端：包一层 <see cref="EraStreamReader"/>（Preload 缓存 / DirAccessor / EncodingHandler，ADR-0023 决策二回读通道）。</summary>
@@ -2464,6 +2469,7 @@ internal sealed class ErbLoader
 		public SourceLineSource(EraStreamReader reader) => _reader = reader;
 		public string Filename => _reader.Filename;
 		public int LineNo => _reader.LineNo;
+		public bool SingleFunction => false;
 		public CharStream? ReadEnabledLine(bool disabled) => _reader.ReadEnabledLine(disabled);
 	}
 
@@ -2477,6 +2483,7 @@ internal sealed class ErbLoader
 		public BlobLineSource(IrLine[] lines, string filename) { _lines = lines; _filename = filename; }
 		public string Filename => _filename;
 		public int LineNo => _lineNo;
+		public bool SingleFunction => true;
 		public CharStream? ReadEnabledLine(bool disabled)
 		{
 			if (_index >= _lines.Length)
@@ -2510,7 +2517,11 @@ internal sealed class ErbLoader
 		}
 		// 签名是否还需重建：IR 桩（或签名已由 EnsureCalleeSignature 预计算则 Arg!=null 跳过），源后背桩 Arg 已就位。
 		bool needSignature = stub.Arg == null;
-		// 以「@标签名」定位本函数（不依赖行号——重开户下 LineNo 语义漂移；函数名在单文件内唯一）。
+		// 定位本函数：**源文件流**按「@标签名 + 行号」双匹配——名字在单文件内可能重复（eraTW 在同一文件
+		// 二次定义 @EVENTLOAD，是事件函数的合法叠加写法），只按名字会命中首个同名定义的 body → 该桩因物化期
+		// 跳过 `#` 行而缺私有变量 → `FOR 索引` 等语句级解析报「この関数中では定義されていません」（实现票 31）。
+		// **blob 流**（SingleFunction）只含单函数、@ 名唯一，按名即可（IR 索引行的行号与 blob 首行行号可能不一致，
+		// 不能拿来做行号消歧）；源文件流唯一名时行号恒等于旧行为，故对既有路径逐位无影响。
 		StringComparer nameEq = Config.Config.StrComper;
 		// 直接以「桩」作为重解析目标（不新建瞬态标签）：body 绑定桩的私有变量 token，与参数赋值（写桩私有变量）
 		// 一致（Issue 06：此前新建标签导致 ReduceArgumentOnLoad=NO 运行期解析读空、YES 解析期绑错 token）。
@@ -2585,7 +2596,9 @@ internal sealed class ErbLoader
 						mdiag.LabelLines++;
 					}
 					if (atLine is FunctionLabelLine lbl
-						&& nameEq.Equals(lbl.LabelName, stub.LabelName))
+						&& nameEq.Equals(lbl.LabelName, stub.LabelName)
+						&& (src.SingleFunction
+							|| (lbl.Position != null && lbl.Position.Value.LineNo == stub.Position.Value.LineNo)))
 					{
 						label = stub;
 						// IR 命中桩：从 @ 行重建 wc（否则 parseLabel 的 PopRowArgs 得空）。B1 桩 wc 生成期已有。

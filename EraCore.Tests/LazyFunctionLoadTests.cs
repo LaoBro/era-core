@@ -322,6 +322,54 @@ public class LazyFunctionLoadTests
 	}
 
 	/// <summary>
+	/// 票 31 回归：同一文件内**重复定义**的事件函数其首个定义的 `#DIM` 私有变量须在物化后仍可解析。
+	/// eraTW `SYSTEM.ERB` 在 32/99 行二次定义 `@EVENTLOAD`（事件函数的合法叠加写法）；物化按
+	/// 「@名 + 行号」双匹配定位本函数——此前只按名字会命中首个同名定义的 body，第二个定义的桩因物化期
+	/// 跳过 `#` 行而缺私有变量 → `FOR chara/index` 报「この関数中では定義されていません」+ `NEXT` 级联。
+	/// </summary>
+	[Fact]
+	public async Task Lazy_materialization_disambiguates_duplicate_labels_by_line()
+	{
+		const string dupCorpus = """
+@EVENTLOAD
+#DIM DYNAMIC chara
+#DIM DYNAMIC index
+#DIM DYNAMIC L_Time
+L_Time = 1
+FOR chara, 0, 2
+	FOR index, 0, 3
+		index = L_Time
+	NEXT
+NEXT
+RETURN
+
+@EVENTLOAD
+#LATER
+RETURN
+""";
+		foreach (bool lazy in new[] { false, true })
+		{
+			using var h = new LoaderTestHarness();
+			await h.InitializeAsync();
+			if (lazy)
+			{
+				ConfigData.Current!.GetConfigItem(ConfigCode.LazyFunctionLoad).SetValue(true);
+				ConfigData.Current!.GetConfigItem(ConfigCode.ParallelErbLoad).SetValue(false);
+				ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
+			}
+			await h.PreloadAsync();
+			h.WriteErb("LAZYDUP.ERB", dupCorpus);
+			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+			var ok = await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+			Assert.True(ok, "LoadErbDir failed (lazy=" + lazy + ")");
+
+			var lines = h.Console.DisplayLineList.Select(l => l?.ToString() ?? "").ToList();
+			Assert.DoesNotContain(lines, s => s.Contains("この関数中では定義されていません"));
+			Assert.DoesNotContain(lines, s => s.Contains("対応する") && s.Contains("NEXT"));
+		}
+	}
+
+	/// <summary>
 	/// 物化期 $ 标签注册回归（Issue 05b）：惰性下桩跳过函数体（含 $ 标签），加载期不注册；物化
 	/// （ReparseFunction）解析出 $ 标签但此前未补注册 labelDic → GOTO 的 SetJumpTo 经 GetLabelDollar
 	/// 解析失败 → 误报「指定されたラベル名"$X"は現在の関数内に存在しません」。修复后 eager/lazy 零误报。
