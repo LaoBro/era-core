@@ -131,8 +131,8 @@ public sealed class DialectProfileTests
 	{
 		using var scope = GlobalStatic.OpenScope(new ConfigData());
 
-		// 方言声明：snake 已登记 Skia P0 数学/取整/无检查/位/求值 19 键（实现票 18）；eratw 暂无游戏适配键。
-		Assert.Equal(19, DialectRegistry.Snake.DeclaredKeys.Count);
+		// 方言声明：snake 已登记 Skia P0 数学/取整/无检查/位/求值 19 键（实现票 18）+ 集合 MAP_* 6 键（实现票 19）；eratw 暂无游戏适配键。
+		Assert.Equal(25, DialectRegistry.Snake.DeclaredKeys.Count);
 		Assert.Empty(DialectRegistry.Eratw.DeclaredKeys);
 
 		// baseline = 注册表全键 − 方言声明键：方言键不落入 v24pure，既有键仍在。

@@ -35,6 +35,13 @@ internal static partial class FunctionMethodCreator
 		// Skia 方言 P0：字符串动态求值（实现票 18）。
 		new() { Name = "EVAL", CreateMethod = () => new EvalMethod(), Dialect = Dialect.Snake },
 		new() { Name = "EVALS", CreateMethod = () => new EvalSMethod(), Dialect = Dialect.Snake },
+		// Skia 方言 P0：集合 MAP_*（实现票 19）。复用既有 DataStringMaps 数据模型。
+		new() { Name = "MAP_VALUES", CreateMethod = () => new MapValuesMethod(), Dialect = Dialect.Snake },
+		new() { Name = "MAP_MERGE", CreateMethod = () => new MapMergeMethod(), Dialect = Dialect.Snake },
+		new() { Name = "MAP_REMOVEIF", CreateMethod = () => new MapRemoveIfMethod(), Dialect = Dialect.Snake },
+		new() { Name = "MAP_FINDKEY", CreateMethod = () => new MapFindKeyMethod(), Dialect = Dialect.Snake },
+		new() { Name = "MAP_TOSTRING", CreateMethod = () => new MapToStringMethod(), Dialect = Dialect.Snake },
+		new() { Name = "MAP_FROMSTRING", CreateMethod = () => new MapFromStringMethod(), Dialect = Dialect.Snake },
 	];
 
 	/// <summary>
