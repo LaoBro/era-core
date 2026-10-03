@@ -84,13 +84,36 @@ internal static partial class FunctionMethodCreator
 		public ExistVarMethod()
 		{
 			ReturnType = typeof(long);
-			argumentTypeArrayEx = [new ArgTypeList{ ArgTypes = { ArgType.String | ArgType.DisallowVoid } }];
+			// 实跑回填票 30：Skia/gEmuera 把 EXISTVAR 扩为 (String, Int=0)。向后兼容签名增量，并入 baseline：
+			// 1 参调用逐位不变；键可见面不变（EXISTVAR 本就在 v24pure）→ 面快照不动。
+			argumentTypeArrayEx = [new ArgTypeList{ ArgTypes = { ArgType.String, ArgType.Int }, OmitStart = 1 }];
 			CanRestructure = true;
 		}
 
 		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
 		{
-			VariableToken token = GlobalStatic.IdentifierDictionary.GetVariableToken(arguments[0].GetStrValue(exm), null!, true);
+			string name = arguments[0].GetStrValue(exm);
+			long mode = arguments.Count > 1 && arguments[1] != null ? arguments[1].GetIntValue(exm) : 0;
+
+			// mode != 0：把 name 当表达式解析，成功返回 1、失败返回 0（对齐 Skia/gEmuera；解析范式同 EVAL）。
+			if (mode != 0)
+			{
+				if (string.IsNullOrWhiteSpace(name))
+					return 0;
+				try
+				{
+					CharStream st = new CharStream(name);
+					WordCollection wc = LexicalAnalyzer.Analyse(st, LexEndWith.EoL, LexAnalyzeFlag.None);
+					AExpression term = ExpressionParser.ReduceExpressionTerm(wc, TermEndWith.EoL);
+					return term != null ? 1 : 0;
+				}
+				catch (EmueraException)
+				{
+					return 0;
+				}
+			}
+
+			VariableToken token = GlobalStatic.IdentifierDictionary.GetVariableToken(name, null!, true);
 			if (token != null)
 			{
 				long res = 0;
