@@ -9,15 +9,19 @@ using System.Text;
 
 namespace MinorShift.Emuera.Runtime.Script.Loader;
 
-/// <summary>b2-irdiskcache：(逻辑文件名, 标签名) 索引键比较器——文件名 OrdinalIgnoreCase（对齐 SCIgnoreCase）+ 标签名按 StrComper（对齐 labelDic）。</summary>
-internal sealed class IrIndexKeyComparer : IEqualityComparer<(string File, string Label)>
+/// <summary>b2-irdiskcache：(逻辑文件名, 标签名, 行号) 索引键比较器——文件名 OrdinalIgnoreCase（对齐 SCIgnoreCase）+ 标签名按 StrComper（对齐 labelDic）+ 行号精确。
+/// 行号入键以消歧同文件同名多定义（如 eraTW 同文件二次定义 @EVENTLOAD）：旧实现仅 (File, Label) 键，索引器赋值令后者覆盖前者，
+/// IR 命中轮同名定义整体丢失。与票 31「名 + 行号」消歧口径一致。</summary>
+internal sealed class IrIndexKeyComparer : IEqualityComparer<(string File, string Label, int LineNo)>
 {
 	public static readonly IrIndexKeyComparer Instance = new();
 	private IrIndexKeyComparer() { }
-	public bool Equals((string File, string Label) x, (string File, string Label) y) =>
-		string.Equals(x.File, y.File, Config.Config.SCIgnoreCase) && Config.Config.StrComper.Equals(x.Label, y.Label);
-	public int GetHashCode((string File, string Label) obj) =>
-		HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(obj.File), Config.Config.StrComper.GetHashCode(obj.Label));
+	public bool Equals((string File, string Label, int LineNo) x, (string File, string Label, int LineNo) y) =>
+		x.LineNo == y.LineNo
+		&& string.Equals(x.File, y.File, Config.Config.SCIgnoreCase)
+		&& Config.Config.StrComper.Equals(x.Label, y.Label);
+	public int GetHashCode((string File, string Label, int LineNo) obj) =>
+		HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(obj.File), Config.Config.StrComper.GetHashCode(obj.Label), obj.LineNo);
 }
 
 /// <summary>
@@ -484,7 +488,7 @@ internal static class ErbIrCache
 	/// <summary>
 	/// 校验 IR 并建索引。任一校验失败返回 false（回退 B1 源路径，整轮回退）。启动只读「头 + 索引区」，blob 区不读。
 	/// </summary>
-	internal static bool TryLoad(string path, long contentFingerprint, out Dictionary<(string File, string Label), IrIndexEntry> index)
+	internal static bool TryLoad(string path, long contentFingerprint, out Dictionary<(string File, string Label, int LineNo), IrIndexEntry> index)
 	{
 		index = [];
 		long engineKey = EngineVersionKey;
@@ -507,11 +511,11 @@ internal static class ErbIrCache
 			stream.Seek(indexOffset, SeekOrigin.Begin);
 			if (r.ReadInt32() != functionCount)
 				return false;
-			var entries = new Dictionary<(string, string), IrIndexEntry>(functionCount, IrIndexKeyComparer.Instance);
+			var entries = new Dictionary<(string, string, int), IrIndexEntry>(functionCount, IrIndexKeyComparer.Instance);
 			for (int i = 0; i < functionCount; i++)
 			{
 				var e = ReadIndexEntry(r);
-				entries[(e.File, e.Label)] = e;
+				entries[(e.File, e.Label, e.LineNo)] = e;
 			}
 			if (stream.Position != indexOffset + indexLength)
 				return false;

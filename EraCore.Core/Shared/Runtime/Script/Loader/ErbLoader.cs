@@ -107,8 +107,8 @@ internal sealed class ErbLoader
 		/// 自愈且非致命；同会话内 reload 的锁冲突已由 ResetIrState 先关后建消除。
 		/// </summary>
 		public Stream? ReadStream;
-		/// <summary>（逻辑文件名, 标签名）→ 索引条目。驻留（几 MB 量级），等价 labelDic。</summary>
-		public Dictionary<(string File, string Label), IrIndexEntry> Index = null!;
+		/// <summary>（逻辑文件名, 标签名, 行号）→ 索引条目。行号消歧同文件同名多定义。驻留（几 MB 量级），等价 labelDic。</summary>
+		public Dictionary<(string File, string Label, int LineNo), IrIndexEntry> Index = null!;
 		/// <summary>逻辑文件名 → 该文件内按 @ 出现序的索引条目（TryGenerateFromIr 用，免 O(n·files) 逐文件扫全表）。</summary>
 		public Dictionary<string, List<IrIndexEntry>> ByFile = new(StringComparer.OrdinalIgnoreCase);
 
@@ -1287,7 +1287,7 @@ internal sealed class ErbLoader
 	{
 		foreach (var e in entries)
 		{
-			var pos = new ScriptPosition(e.File, e.LineNo);
+			var pos = new ScriptPosition(e.File, e.LineNo - 1);
 			if (e.Invalid)
 			{
 				art.FunctionLabels.Add(new InvalidLabelLine(pos, e.Label, e.ErrMes ?? ""));
@@ -2803,8 +2803,8 @@ internal sealed class ErbLoader
 		string logical = stub.Position?.Filename ?? "";
 		if (logical.Length == 0)
 			return;
-		// IR 优先（blob 后台）；blob 读失败 / 未命中回落到源。
-		if (_ir is { Available: true } ir && ir.Index.TryGetValue((logical, stub.LabelName), out var entry))
+		// IR 优先（blob 后台）；blob 读失败 / 未命中回落到源。行号入键以消歧同文件同名多定义。
+		if (_ir is { Available: true } ir && ir.Index.TryGetValue((logical, stub.LabelName, stub.Position!.Value.LineNo), out var entry))
 		{
 			try
 			{
@@ -2983,9 +2983,9 @@ internal sealed class ErbLoader
 		if (logical.Length > 0)
 			_filePathByLogical.TryGetValue(logical, out physical);
 
-		// 1) blob 优先
+		// 1) blob 优先（行号入键以消歧同文件同名多定义）
 		if (_ir is { Available: true } ir && logical.Length > 0
-			&& ir.Index.TryGetValue((logical, stub.LabelName), out var entry))
+			&& ir.Index.TryGetValue((logical, stub.LabelName, stub.Position!.Value.LineNo), out var entry))
 		{
 			FunctionLabelLine? viaIr = null;
 			try

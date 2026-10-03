@@ -639,4 +639,69 @@ RETURNF 42
 		Assert.Equal(42L, Assert.IsType<SingleLongTerm>(value).Int);
 	}
 
+	/// <summary>
+	/// 票 32 回归：同文件同名多定义（eraTW `SYSTEM.ERB` 二次定义 `@EVENTLOAD`）在 IR 命中轮不得被索引覆盖丢失。
+	/// 旧实现索引键仅 (File, Label)，读侧索引器赋值令后者覆盖前者 → 命中轮只剩 1 个定义（连桩都没有）；
+	/// 修复后键为 (File, Label, LineNo)，两个 blob 各自建桩并物化到自身私有变量。
+	/// </summary>
+	[Fact]
+	public async Task Ir_hit_keeps_duplicate_labels_in_same_file()
+	{
+		const string corpus = """
+@EVENTLOAD
+#DIM DYNAMIC chara
+#DIM DYNAMIC index
+#DIM DYNAMIC L_Time
+L_Time = 1
+FOR chara, 0, 2
+	FOR index, 0, 3
+		index = L_Time
+	NEXT
+NEXT
+RETURN
+
+@EVENTLOAD
+#LATER
+RETURN
+""";
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		EnableLazy(h);
+		await h.PreloadAsync();
+		h.WriteErb("IRDUP.ERB", corpus);
+		var irFile = FullIrPath(h.TempRoot);
+
+		// round1：miss → 写 IR（两个同名 blob 均落盘），两个定义都注册到 labelDic。
+		{
+			var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+			var ok = await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+			Assert.True(ok, "round1 failed\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+			Assert.True(File.Exists(irFile), "round1 should build IR cache file");
+			var dup1 = h.LabelDic.GetAllLabels(false).Where(l => l.LabelName == "EVENTLOAD").ToList();
+			Assert.Equal(2, dup1.Count);
+		}
+
+		// round2：IR 命中 → 两个同名定义仍都建桩并物化（旧实现只剩 1 个）。
+		{
+			var loader2 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+			var ok2 = await loader2.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+			Assert.True(ok2, "round2 failed\n" + string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+			Assert.Equal(0, h.Console.DisplayLineList.Count(l => (l?.ToString() ?? "").Contains("この関数中では定義されていません")));
+
+			var dup2 = h.LabelDic.GetAllLabels(false).Where(l => l.LabelName == "EVENTLOAD").ToList();
+			Assert.Equal(2, dup2.Count);
+			Assert.Equal(2, dup2.Select(l => l.Position!.Value.LineNo).Distinct().Count());
+
+			// 两个桩各自经 blob 物化，带私有变量者不得误报「未在此函数中定义」。
+			foreach (var l in dup2)
+				if (l.IsStub)
+					ErbLoader.MaterializeOnRuntime(l);
+
+			var falsePositives = h.Console.DisplayLineList
+				.Select(l => l?.ToString() ?? "")
+				.Where(s => s.Contains("この関数中では定義されていません") || s.Contains("対応する") && s.Contains("NEXT")).ToList();
+			Assert.Empty(falsePositives);
+		}
+	}
+
 }
