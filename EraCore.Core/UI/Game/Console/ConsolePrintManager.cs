@@ -445,6 +445,55 @@ internal sealed class ConsolePrintManager
         _console.RefreshStrings(false);
     }
 
+    /// <summary>
+    /// HTML_PRINTC / HTML_PRINTLC（实现票 23）：复用既有 HTML 管线渲染，再按单元格宽度补空白——
+    /// <paramref name="alignmentRight"/> = true（HTML_PRINTC）在内容前补空白（右对齐），
+    /// false（HTML_PRINTLC）在内容后补空白（左对齐）。<paramref name="cellWidthPx"/> ≤ 0 时取
+    /// <c>PrintCLength * FontSize / 2</c> 默认单元格宽度（对齐 Skia 上游）。
+    /// </summary>
+    public void PrintHtmlC(string str, bool alignmentRight, int cellWidthPx)
+    {
+        if (string.IsNullOrEmpty(str) || !Enabled) return;
+        if (cellWidthPx <= 0)
+            cellWidthPx = Config.PrintCLength * Config.FontSize / 2;
+
+        ConsoleButtonString[] buttons = HtmlManager.Html2ButtonList(str, _console.stringMeasure, _console);
+        if (buttons.Length == 0) return;
+
+        int contentWidth = 0;
+        foreach (ConsoleButtonString btn in buttons)
+        {
+            btn.CalcWidth(_console.stringMeasure, 0);
+            contentWidth += btn.Width;
+        }
+
+        int padPx = cellWidthPx - contentWidth;
+        if (padPx > 0 && alignmentRight)
+            _console.printBuffer.AppendButton(CreateSpaceButton(padPx));
+
+        foreach (ConsoleButtonString btn in buttons)
+            _console.printBuffer.AppendButton(btn);
+
+        if (padPx > 0 && !alignmentRight)
+            _console.printBuffer.AppendButton(CreateSpaceButton(padPx));
+
+        _console.RefreshStrings(false);
+    }
+
+    /// <summary>构造一个宽度为 <paramref name="padPx"/> 像素的空白按钮（供 PrintHtmlC 单元格对齐）。</summary>
+    private ConsoleButtonString CreateSpaceButton(int padPx)
+    {
+        ConsoleShapePart spacePart = ConsoleShapePart.CreateShape(
+            "space",
+            [new MixedNum { num = padPx, isPx = true }],
+            _state.userStyle.Color,
+            _state.userStyle.ButtonColor,
+            false);
+        var spaceBtn = new ConsoleButtonString(_console, [spacePart]);
+        spaceBtn.CalcWidth(_console.stringMeasure, 0);
+        return spaceBtn;
+    }
+
     public void PrintHTMLIsland(string html)
     {
         _state._htmlElementList.AddRange(HtmlManager.Html2DisplayLine(html, _console.stringMeasure, _console));

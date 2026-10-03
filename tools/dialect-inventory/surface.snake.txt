@@ -249,6 +249,8 @@ HTML_ESCAPE	function
 HTML_GETPRINTEDSTR	function
 HTML_POPPRINTINGSTR	function
 HTML_PRINT	directive
+HTML_PRINTC	directive
+HTML_PRINTLC	directive
 HTML_PRINT_ISLAND	directive
 HTML_PRINT_ISLAND_CLEAR	directive
 HTML_STRINGLEN	function
@@ -524,6 +526,8 @@ SUMCARRAY	function
 SWAP	directive
 SWAPCHARA	directive
 TAN	function
+TEXT_BGC_OFF	directive
+TEXT_BGC_ON	directive
 THROW	directive
 TIMES	directive
 TINPUT	directive

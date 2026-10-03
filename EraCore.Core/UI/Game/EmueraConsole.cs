@@ -228,6 +228,7 @@ internal sealed class EmueraConsole : IDisposable, IConsoleStateView, IButtonDis
     internal void PrintButtonC(string str, long p, bool isRight) => _printManager.PrintButtonC(str, p, isRight);
     internal void PrintPlain(string str) => _printManager.PrintPlain(str);
     internal void PrintHtml(string str, bool toPrintBuffer) => _printManager.PrintHtml(str, toPrintBuffer);
+    internal void PrintHtmlC(string str, bool alignRight, int cellWidth) => _printManager.PrintHtmlC(str, alignRight, cellWidth);
     internal void PrintHTMLIsland(string html) => _printManager.PrintHTMLIsland(html);
     internal void ClearHTMLIsland() => _printManager.ClearHTMLIsland();
     internal void PrintImg(string name, string? nameb, string? namem, Utils.MixedNum? height, Utils.MixedNum? width, Utils.MixedNum? ypos) => _printManager.PrintImg(name, nameb, namem, height, width, ypos);
@@ -249,6 +250,16 @@ internal sealed class EmueraConsole : IDisposable, IConsoleStateView, IButtonDis
     }
     internal void ClearImageLayerAll()
     {
+    }
+    // --- 文本背景色（实现票 23，语义接受） ---
+    /// <summary>
+    /// TEXT_BGC_ON/OFF 的语义状态（RGB + 透明度）。era-core 渲染线暂未消费 → 「已知差异」（spec §5）；
+    /// 语义开关在此接缝落地，供未来渲染路线 / 快照消费。
+    /// </summary>
+    internal EmuColor? TextBackgroundColor
+    {
+        get => _state.textBackgroundColor;
+        set => _state.textBackgroundColor = value;
     }
     internal ConsoleDisplayLine[]? GetDisplayLines(long lineNo) => _printManager.GetDisplayLines(lineNo);
     internal ConsoleDisplayLine[]? PopDisplayingLines() => _printManager.PopDisplayingLines();

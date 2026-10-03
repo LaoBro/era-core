@@ -89,4 +89,8 @@ enum FunctionArgType
 	SP_SETIMAGELAYER,//<文字列>,<数値>(,<数値>×5,<配列>,<数値>) //前2引数のみ必須
 	SP_SETIMAGELAYERL,//同形だが followScroll 恒成立（行相对定位）
 	#endregion
+	#region Skia 方言 HTML/文本（实现票 23）
+	SP_HTML_PRINTC,//<文字列>(,<数値>) //HTML をセル幅で左/右寄せ
+	SP_COLOR_ALPHA,//<数値>,<数値> //RGB + 透明度(%)
+	#endregion
 }

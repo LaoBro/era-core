@@ -92,6 +92,11 @@ internal sealed class ConsoleStateData
 	internal DisplayLineAlignment alignment = DisplayLineAlignment.LEFT;
 	internal EmuColor bgColor = Config.BackColor;
 	/// <summary>
+	/// issue 23：文本背景色（TEXT_BGC_ON/OFF 语义接受）。null = 关闭。era-core 渲染线暂未消费，
+	/// 记「已知差异」（spec §5）；此处仅保留语义状态供未来渲染路线/快照消费。
+	/// </summary>
+	internal EmuColor? textBackgroundColor;
+	/// <summary>
 	/// issue 02：背景图列表（SETBGIMAGE 落地）。WinForms 追加语义——同 src 可多份，
 	/// depth 决定 z 序（前端按 depth 排序渲染），opacity 0.0-1.0。状态由 DisplayState 读入快照/diff。
 	/// </summary>

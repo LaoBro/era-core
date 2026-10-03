@@ -4062,4 +4062,71 @@ internal sealed partial class FunctionIdentifier
 		}
 	}
 	#endregion
+
+	#region Skia 方言 HTML/文本（实现票 23）
+	// HTML_PRINTC / HTML_PRINTLC：复用 era-core 既有 HTML 管线渲染，仅补单元格对齐（左/右）变体语义——真语义。
+	// alignRight=true（HTML_PRINTC，空白在前/右对齐）；false（HTML_PRINTLC，空白在后/左对齐）。
+	private sealed class HTML_PRINTC_Instruction : AInstruction
+	{
+		public HTML_PRINTC_Instruction(bool isRight)
+		{
+			alignRight = isRight;
+			flag = EXTENDED | METHOD_SAFE;
+			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.SP_HTML_PRINTC);
+		}
+		readonly bool alignRight;
+
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		{
+			if (GlobalStatic.Process.SkipPrint)
+				return;
+			var arg = (SpHtmlPrintC)func.Argument;
+			string html = arg.Str.GetStrValue(exm);
+			int cellWidth = arg.CellWidth == null ? 0 : (int)arg.CellWidth.GetIntValue(exm);
+			exm.Console.PrintHtmlC(html, alignRight, cellWidth);
+		}
+	}
+
+	// TEXT_BGC_ON / TEXT_BGC_OFF：文本背景色开关。era-core 渲染线暂未消费 → 语义接缝（已知差异，spec §5）。
+	private sealed class TEXT_BGC_ON_Instruction : AInstruction
+	{
+		public TEXT_BGC_ON_Instruction()
+		{
+			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.SP_COLOR_ALPHA);
+			flag = METHOD_SAFE | EXTENDED;
+		}
+
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		{
+			var arg = (SpColorAlphaArgument)func.Argument;
+			long rgb, alpha;
+			if (arg.IsConst)
+			{
+				rgb = arg.ConstInt >> 8;
+				alpha = arg.ConstInt & 0xFF;
+			}
+			else
+			{
+				rgb = arg.RGB.GetIntValue(exm);
+				alpha = arg.Alpha.GetIntValue(exm);
+			}
+			int a = (int)(alpha * 255 / 100);
+			exm.Console.TextBackgroundColor = EmuColor.FromArgb(a, (int)(rgb >> 16) & 0xFF, (int)(rgb >> 8) & 0xFF, (int)rgb & 0xFF);
+		}
+	}
+
+	private sealed class TEXT_BGC_OFF_Instruction : AInstruction
+	{
+		public TEXT_BGC_OFF_Instruction()
+		{
+			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.VOID);
+			flag = METHOD_SAFE | EXTENDED;
+		}
+
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		{
+			exm.Console.TextBackgroundColor = null;
+		}
+	}
+	#endregion
 }

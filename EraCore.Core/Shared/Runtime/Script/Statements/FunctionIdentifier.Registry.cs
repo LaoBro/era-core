@@ -98,5 +98,33 @@ internal sealed partial class FunctionIdentifier
 			CreateInstruction = () => new CLEARIMAGELAYER_ALL_Instruction(),
 			Dialect = Dialect.Snake,
 		},
+		// Skia 方言 P0：HTML/文本（实现票 23）。HTML_PRINTC/LC 复用既有 HTML 管线 + 单元格对齐（IS_PRINT，与 Skia 同）；
+		// TEXT_BGC_ON/OFF 为文本背景色开关（era-core 渲染线未消费 → 已知差异，spec §5）。
+		new InstructionDescriptor
+		{
+			Name = "HTML_PRINTC",
+			CreateInstruction = () => new HTML_PRINTC_Instruction(true),
+			AdditionalFlag = IS_PRINT,
+			Dialect = Dialect.Snake,
+		},
+		new InstructionDescriptor
+		{
+			Name = "HTML_PRINTLC",
+			CreateInstruction = () => new HTML_PRINTC_Instruction(false),
+			AdditionalFlag = IS_PRINT,
+			Dialect = Dialect.Snake,
+		},
+		new InstructionDescriptor
+		{
+			Name = "TEXT_BGC_ON",
+			CreateInstruction = () => new TEXT_BGC_ON_Instruction(),
+			Dialect = Dialect.Snake,
+		},
+		new InstructionDescriptor
+		{
+			Name = "TEXT_BGC_OFF",
+			CreateInstruction = () => new TEXT_BGC_OFF_Instruction(),
+			Dialect = Dialect.Snake,
+		},
 	];
 }

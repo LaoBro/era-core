@@ -114,6 +114,34 @@ internal sealed class SpSetImageLayerArgument : Argument
 	readonly public AExpression FollowScroll;
 }
 #endregion
+#region Skia 方言 HTML/文本（实现票 23）
+/// <summary>
+/// HTML_PRINTC / HTML_PRINTLC の実引数。CellWidth は省略可（省略時は <c>PrintCLength</c> 既定セル幅）。
+/// </summary>
+internal sealed class SpHtmlPrintC : Argument
+{
+	public SpHtmlPrintC(AExpression str, AExpression cellWidth)
+	{
+		Str = str;
+		CellWidth = cellWidth;
+	}
+	readonly public AExpression Str;
+	readonly public AExpression CellWidth;
+}
+/// <summary>
+/// TEXT_BGC_ON の実引数：RGB(0xRRGGBB) と透明度(%)。両方必須。
+/// </summary>
+internal sealed class SpColorAlphaArgument : Argument
+{
+	public SpColorAlphaArgument(AExpression rgb, AExpression alpha)
+	{
+		RGB = rgb;
+		Alpha = alpha;
+	}
+	readonly public AExpression RGB;
+	readonly public AExpression Alpha;
+}
+#endregion
 internal abstract class Argument
 {
 	public bool IsConst;

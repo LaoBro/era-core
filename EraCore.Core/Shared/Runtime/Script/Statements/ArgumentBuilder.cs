@@ -249,6 +249,10 @@ internal static partial class ArgumentParser
 		argb[FunctionArgType.SP_SETIMAGELAYER] = new SP_SETIMAGELAYER_ArgumentBuilder(false);
 		argb[FunctionArgType.SP_SETIMAGELAYERL] = new SP_SETIMAGELAYER_ArgumentBuilder(true);
 		#endregion
+		#region Skia 方言 HTML/文本（实现票 23）
+		argb[FunctionArgType.SP_HTML_PRINTC] = new SP_HTML_PRINTC_ArgumentBuilder();
+		argb[FunctionArgType.SP_COLOR_ALPHA] = new SP_COLOR_ALPHA_ArgumentBuilder();
+		#endregion
 	}
 
 	#region EM_私家版_HTMLパラメータ拡張
@@ -2526,6 +2530,61 @@ internal static partial class ArgumentParser
 				terms.Count > 6 ? terms[6] : null!,
 				terms.Count > 7 ? terms[7] : null!,
 				!lineRelative && terms.Count > 8 ? terms[8] : null!);
+		}
+	}
+	#endregion
+
+	#region Skia 方言 HTML/文本（实现票 23）
+	/// <summary>
+	/// HTML_PRINTC / HTML_PRINTLC の引数：(&lt;文字列&gt;[, &lt;セル幅(px)&gt;])。
+	/// 第 1 引数（HTML 文字列）必須、第 2 引数（セル幅 int）省略可。
+	/// </summary>
+	private sealed class SP_HTML_PRINTC_ArgumentBuilder : ArgumentBuilder
+	{
+		public SP_HTML_PRINTC_ArgumentBuilder()
+		{
+			argumentTypeArray = [typeof(string), typeof(long)];
+			minArg = 1;
+		}
+		public override Argument CreateArgument(InstructionLine line, ExpressionMediator exm)
+		{
+			var terms = popTerms(line);
+			if (terms == null)
+			{ warn(trerror.MissingArg.Text, line, 2, false); return null!; }
+			if (terms.Count > 2)
+			{ warn(trerror.TooManyArg.Text, line, 2, false); return null!; }
+			if (!checkArgumentType(line, exm, terms))
+				return null!;
+			return new SpHtmlPrintC(terms[0], terms.Count > 1 ? terms[1] : null!);
+		}
+	}
+
+	/// <summary>
+	/// TEXT_BGC_ON の引数：(&lt;RGB 0xRRGGBB&gt;, &lt;透明度%&gt;)。両方必須（数値）。
+	/// </summary>
+	private sealed class SP_COLOR_ALPHA_ArgumentBuilder : ArgumentBuilder
+	{
+		public SP_COLOR_ALPHA_ArgumentBuilder()
+		{
+			argumentTypeArray = [typeof(long), typeof(long)];
+			minArg = 2;
+		}
+		public override Argument CreateArgument(InstructionLine line, ExpressionMediator exm)
+		{
+			var terms = popTerms(line);
+			if (terms == null)
+			{ warn(trerror.MissingArg.Text, line, 2, false); return null!; }
+			if (terms.Count != 2)
+			{ warn(trerror.InvalidSetcolorArgCount.Text, line, 2, false); return null!; }
+			if (!checkArgumentType(line, exm, terms))
+				return null!;
+			var arg = new SpColorAlphaArgument(terms[0], terms[1]);
+			if (terms[0] is SingleTerm && terms[1] is SingleTerm)
+			{
+				arg.ConstInt = (terms[0].GetIntValue(exm) << 8) + (terms[1].GetIntValue(exm) & 0xFF);
+				arg.IsConst = true;
+			}
+			return arg;
 		}
 	}
 	#endregion
