@@ -64,6 +64,8 @@ internal sealed class Session : IDisposable
     private readonly ConfigData _configData;
     private readonly ITerminalSetup _terminalSetup;
     private readonly bool _fullDiffOnFirstTurn;
+    /// <summary>会话级方言 profile id（实现票 25）。null = v24pure（移植前行为）。</summary>
+    private readonly string? _dialectProfileId;
     private EmueraConsole? _console;
     private DisplayState? _displayState;
     private AgentJsonlProtocol? _protocol;
@@ -78,11 +80,12 @@ internal sealed class Session : IDisposable
     /// </summary>
     private volatile bool _loading;
 
-    public Session(HttpSessionIO io, ITerminalSetup terminalSetup, ConfigData configData, TimeSpan? agentLease = null, bool fullDiffOnFirstTurn = false)
+    public Session(HttpSessionIO io, ITerminalSetup terminalSetup, ConfigData configData, TimeSpan? agentLease = null, bool fullDiffOnFirstTurn = false, string? dialectProfileId = null)
     {
         _io = io;
         _configData = configData;
         _terminalSetup = terminalSetup;
+        _dialectProfileId = dialectProfileId;
         Controller = new Controller(agentLease);
         _delivery = new TurnDelivery(io, Controller);
         _fullDiffOnFirstTurn = fullDiffOnFirstTurn;
@@ -159,7 +162,8 @@ internal sealed class Session : IDisposable
                     {
                         FinalizeEndedLoop();
                     }
-                });
+                },
+                _dialectProfileId);
         }
         catch (OperationCanceledException) when (_cts.IsCancellationRequested || _disposed)
         {

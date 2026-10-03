@@ -13,12 +13,14 @@ namespace MinorShift.Emuera;
 
 internal static class HeadlessRunner
 {
-    public static async Task RunAsync(GamePaths paths, string protocolArg, string termWidthHint, ITerminalSetup terminalSetup, ConfigData configData)
+    public static async Task RunAsync(GamePaths paths, string protocolArg, string termWidthHint, ITerminalSetup terminalSetup, ConfigData configData, string? dialectProfileId = null)
     {
         EmueraLog.Info("headless", $"Emuera {AssemblyData.EmueraVersionText} 无头模式启动");
         EmueraLog.Info("headless", $"工作目录: {paths.ExeDir}");
         EmueraLog.Info("headless", $"协议模式: {protocolArg}");
         EmueraLog.Info("headless", $"字符宽度提示: {termWidthHint}");
+        if (dialectProfileId != null)
+            EmueraLog.Info("headless", $"方言 profile: {dialectProfileId}");
 
         try
         {
@@ -68,7 +70,8 @@ internal static class HeadlessRunner
                     {
                         ((AgentCliProtocol)p).RunCliLoop();
                         return Task.CompletedTask;
-                    });
+                    },
+                    dialectProfileId);
 
                 if (result == GameLoopResult.Aborted)
                 {

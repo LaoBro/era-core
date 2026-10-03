@@ -20,8 +20,10 @@ internal sealed class HeadlessOptions
     public bool PortExplicit { get; }
     /// <summary>ADR-0030：--setting key=value 列表（仅 --server 模式生效；headless 内存 store 种子，不持久化）。</summary>
     public IReadOnlyList<string> Settings { get; }
+    /// <summary>会话级方言 profile id（实现票 25）。null = 默认 v24pure（移植前行为）。</summary>
+    public string? DialectProfile { get; }
 
-    private HeadlessOptions(string? exeDir, string protocol, bool server, int port, string termWidthHint, bool noLoadingReport, bool loadingReport, bool openBrowser, bool portExplicit, IReadOnlyList<string> settings)
+    private HeadlessOptions(string? exeDir, string protocol, bool server, int port, string termWidthHint, bool noLoadingReport, bool loadingReport, bool openBrowser, bool portExplicit, IReadOnlyList<string> settings, string? dialectProfile)
     {
         ExeDir = exeDir;
         Protocol = protocol;
@@ -33,6 +35,7 @@ internal sealed class HeadlessOptions
         OpenBrowser = openBrowser;
         PortExplicit = portExplicit;
         Settings = settings;
+        DialectProfile = dialectProfile;
     }
 
     /// <summary>DisplayReport 三态覆盖：null=随游戏配置；false=--no-loading-report 强制关；true=--loading-report 强制开。</summary>
@@ -90,6 +93,12 @@ internal sealed class HeadlessOptions
         Description = "server 启动后自动打开默认浏览器（配合 --server 使用；未显式 --port 时自动挑空闲端口）"
     };
 
+    internal static readonly Option<string> DialectProfileOption = new(
+        "--profile", "-profile", "-PROFILE")
+    {
+        Description = "会话级方言 profile id（实现票 25）：v24pure(默认)/snake/eratw。控制哪些方言指令/函数对本次会话可见"
+    };
+
     internal static readonly Option<string[]> SettingOption = new("--setting")
     {
         Description = "全局设置（ADR-0030）：key=value，可重复，仅 --server 模式生效（进程内存种子，不持久化）。" +
@@ -109,6 +118,7 @@ internal sealed class HeadlessOptions
         rootCommand.Options.Add(NoLoadingReportOption);
         rootCommand.Options.Add(LoadingReportOption);
         rootCommand.Options.Add(OpenBrowserOption);
+        rootCommand.Options.Add(DialectProfileOption);
         rootCommand.Options.Add(SettingOption);
 
         var result = rootCommand.Parse(args);
@@ -139,6 +149,7 @@ internal sealed class HeadlessOptions
         var noLoadingReport = result.GetValue(NoLoadingReportOption);
         var loadingReport = result.GetValue(LoadingReportOption);
         var openBrowser = result.GetValue(OpenBrowserOption);
+        var dialectProfile = result.GetValue(DialectProfileOption);
         var settings = result.GetValue(SettingOption) ?? Array.Empty<string>();
 
         // 互斥：强制开/关同时给出时无意义，直接报错退出（对齐解析错误的既有处理）。
@@ -163,7 +174,7 @@ internal sealed class HeadlessOptions
             settings = Array.Empty<string>();
         }
 
-        return new HeadlessOptions(exeDir, protocol, server, port, termWidthHint, noLoadingReport, loadingReport, openBrowser, portExplicit, settings);
+        return new HeadlessOptions(exeDir, protocol, server, port, termWidthHint, noLoadingReport, loadingReport, openBrowser, portExplicit, settings, dialectProfile);
     }
 
     private static bool ArgsContainPort(string[] args)

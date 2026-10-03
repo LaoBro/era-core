@@ -20,9 +20,10 @@ internal static class GameLoopComposer
         ConfigData configData,
         ITerminalSetup terminalSetup,
         Func<EmueraConsole, IConsoleUI, ITerminalSetup, AgentProtocolBase?> buildProtocol,
-        Func<AgentProtocolBase, Task> runLoop)
+        Func<AgentProtocolBase, Task> runLoop,
+        string? dialectProfileId = null)
     {
-        using (var scope = GlobalStatic.OpenScope(configData))
+        using (var scope = GlobalStatic.OpenScope(configData, dialectProfileId))
         {
             var ui = new HeadlessConsole();
             var console = new EmueraConsole(ui, terminalSetup);

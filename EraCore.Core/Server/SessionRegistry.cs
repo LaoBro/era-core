@@ -28,12 +28,15 @@ internal sealed class SessionRegistry
     private readonly ITerminalSetup _terminalSetup;
     private readonly GameConfigService _configService;
     private readonly TimeSpan? _agentLease;
+    /// <summary>会话级方言 profile id（实现票 25）——本 server 新建的所有会话共用。null = v24pure。</summary>
+    private readonly string? _dialectProfileId;
 
-    public SessionRegistry(ITerminalSetup terminalSetup, GameConfigService configService, TimeSpan? agentLease = null)
+    public SessionRegistry(ITerminalSetup terminalSetup, GameConfigService configService, TimeSpan? agentLease = null, string? dialectProfileId = null)
     {
         _terminalSetup = terminalSetup ?? throw new ArgumentNullException(nameof(terminalSetup));
         _configService = configService ?? throw new ArgumentNullException(nameof(configService));
         _agentLease = agentLease;
+        _dialectProfileId = dialectProfileId;
     }
 
     /// <summary>当前 session 引用（volatile 读）——仅供只读端点（/turn /input /snapshot）使用。</summary>
@@ -298,7 +301,7 @@ internal sealed class SessionRegistry
         var hub = new OutputHub();
         var io = new HttpSessionIO(hub);
         _sessionHub = hub;
-        var session = new Session(io, _terminalSetup, configData, _agentLease, fullDiffOnFirstTurn);
+        var session = new Session(io, _terminalSetup, configData, _agentLease, fullDiffOnFirstTurn, _dialectProfileId);
         session.Start();
         _session = session;
         return session;

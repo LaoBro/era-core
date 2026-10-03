@@ -1,5 +1,6 @@
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Runtime.Script.Statements;
 using MinorShift.Emuera.Terminal.Platform;
 using System;
 using System.Threading.Tasks;
@@ -32,6 +33,16 @@ internal static class HeadlessEntry
 
         var options = HeadlessOptions.Parse(args);
         if (options == null) return;
+
+        // 实现票 25：--profile 启动期 fail-fast 校验（不构建 surface，无 Config ambient 依赖）。
+        // 未知 id 不静默降级——否则会以错误可见面加载游戏，误导排查。
+        if (options.DialectProfile is { } profileId && !DialectRegistry.IsKnownProfile(profileId))
+        {
+            EmueraLog.Error("options",
+                $"未知的方言 profile「{profileId}」——已知：{string.Join(", ", DialectRegistry.KnownProfileIds)}");
+            Environment.Exit(1);
+            return;
+        }
 
         var paths = GamePaths.Resolve(options.ExeDir, new FileSystemGameDirAccessor());
 
@@ -85,19 +96,19 @@ internal static class HeadlessEntry
 #if !ANDROID_NO_SERVER
             // --open-browser 便捷模式且未显式 --port → 传 0，由 ServerRunner 自动挑空闲端口。
             var port = options.OpenBrowser && !options.PortExplicit ? 0 : options.Port;
-            await ServerRunner.RunAsync(port, terminalSetup, configData, options.DisplayReportOverride, options.OpenBrowser, BuildAppSettings(options));
+            await ServerRunner.RunAsync(port, terminalSetup, configData, options.DisplayReportOverride, options.OpenBrowser, BuildAppSettings(options), options.DialectProfile);
 #else
             // android 交叉产物（3.2 验证）：无 Kestrel（AspNetCore 无 android runtime pack），
             // server 模式不可用——明确提示后走 CLI 模式，避免静默忽略 --server。
             EmueraLog.Error("server", "server 模式在 Android 上不可用（无 Kestrel），已忽略 --server 参数");
-            await HeadlessRunner.RunAsync(paths, options.Protocol, options.TermWidthHint, terminalSetup, configData);
+            await HeadlessRunner.RunAsync(paths, options.Protocol, options.TermWidthHint, terminalSetup, configData, options.DialectProfile);
 #endif
         }
         else
         {
             // ITerminalInput 在 HeadlessRunner 内创建：CLI 模式专属，stdin 重定向
             // 等环境错误由 HeadlessRunner 的 HeadlessFatalException 捕获块统一处理。
-            await HeadlessRunner.RunAsync(paths, options.Protocol, options.TermWidthHint, terminalSetup, configData);
+            await HeadlessRunner.RunAsync(paths, options.Protocol, options.TermWidthHint, terminalSetup, configData, options.DialectProfile);
         }
     }
 

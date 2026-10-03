@@ -1,4 +1,4 @@
-﻿using MinorShift.Emuera.GameData.Function;
+using MinorShift.Emuera.GameData.Function;
 using MinorShift.Emuera.GameProc.Function;
 using MinorShift.Emuera.Runtime.Script.Statements.Function;
 using MinorShift.Emuera.Runtime.Utils;
@@ -47,6 +47,15 @@ internal static class DialectRegistry
 
 	/// <summary>未显式绑定 profile 时的默认 surface（<c>v24pure</c>）。</summary>
 	internal static DialectProfile Default => Resolve(DefaultProfileId);
+
+	/// <summary>
+	/// 已知 profile id 集合（实现票 25）。**不构建 surface**，故无 Config ambient 依赖，
+	/// 可在 scope 之外用于启动期 fail-fast 校验（<c>--profile</c> 参数合法性）。
+	/// </summary>
+	internal static IReadOnlyCollection<string> KnownProfileIds => closures.Keys;
+
+	/// <summary>profile id 是否已注册（实现票 25，启动期校验用；不触发 surface 构建）。</summary>
+	internal static bool IsKnownProfile(string profileId) => closures.ContainsKey(profileId);
 
 	/// <summary>
 	/// 解析 profileId → 不可变 surface（按 id 缓存）。未知 id → <see cref="CodeEE"/>（构造期 fail-fast）。

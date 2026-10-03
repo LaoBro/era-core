@@ -51,6 +51,14 @@ internal sealed class GlobalStatic
     /// <summary>会话级方言 profile（实现票 16）。null = 未显式绑定，读时按 v24pure 解析。</summary>
     private DialectProfile? _dialectProfile;
 
+    /// <summary>
+    /// 会话级方言 profile **id**（实现票 25）。与 <see cref="_dialectProfile"/> 二选一：
+    /// 产品路径只传 id，首次读取时在 scope 内延迟 <see cref="DialectRegistry.Resolve"/>——
+    /// surface 构建依赖 Config ambient（FunctionIdentifier/FunctionMethodCreator 静态构造），
+    /// 故不能在 <see cref="OpenScope"/> 之前解析。
+    /// </summary>
+    private string? _dialectProfileId;
+
     // ===== 辅助字段（实例成员，随 scope 生灭）=====
 
     /// <summary>ERB loader に引数解析の結果を渡すための橋渡し変数（AnalysisMode 用）。</summary>
@@ -135,7 +143,9 @@ internal sealed class GlobalStatic
     /// （= era-core 移植前行为）解析。解析/执行热路径**不读**本属性——只读投影后的注册表。
     /// </summary>
     public static DialectProfile DialectProfile =>
-        Current!._dialectProfile ??= DialectRegistry.Default;
+        Current!._dialectProfile ??= Current!._dialectProfileId is null
+            ? DialectRegistry.Default
+            : DialectRegistry.Resolve(Current!._dialectProfileId);
 
     /// <summary>ERB loader に引数解析の結果を渡すための橋渡し変数（AnalysisMode 用）。</summary>
     public static Dictionary<string, long> tempDic => Current!._tempDic;
@@ -171,11 +181,23 @@ internal sealed class GlobalStatic
     /// 使既有调用方零改动。profile 必须在构造 <see cref="Process"/> 之前绑定。
     /// </param>
     public static IDisposable OpenScope(ConfigData configData, DialectProfile? dialectProfile = null)
+        => OpenScopeCore(configData, dialectProfile, null);
+
+    /// <summary>
+    /// 按 profile id 绑定会话级方言（实现票 25，产品路径）。与 <see cref="OpenScope(ConfigData, DialectProfile?)"/>
+    /// 的区别：只登记 id，首次读取 <see cref="DialectProfile"/> 时才在 scope 内解析 surface
+    /// （surface 构建依赖 Config ambient，不能在 OpenScope 之前解析）。未知 id 在首访时抛
+    /// <see cref="CodeEE"/>；产品侧另经 <see cref="DialectRegistry.IsKnownProfile"/> 做启动期 fail-fast。
+    /// </summary>
+    public static IDisposable OpenScope(ConfigData configData, string? dialectProfileId)
+        => OpenScopeCore(configData, null, dialectProfileId);
+
+    private static Scope OpenScopeCore(ConfigData configData, DialectProfile? dialectProfile, string? dialectProfileId)
     {
         if (_current.Value != null)
             throw new InvalidOperationException(
                 "GlobalStatic scope 已在此 async 上下文中打开。请先 Dispose 现有 scope。");
-        var instance = new GlobalStatic { _dialectProfile = dialectProfile };
+        var instance = new GlobalStatic { _dialectProfile = dialectProfile, _dialectProfileId = dialectProfileId };
         _current.Value = instance;
         ConfigData.SetCurrent(configData);
         Config.SetCurrent(configData);

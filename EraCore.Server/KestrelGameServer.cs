@@ -40,10 +40,10 @@ internal sealed class KestrelGameServer : IDisposable
     /// <summary>测试接缝：端点测试经此访问当前 session（如注入 turn）。</summary>
     internal SessionRegistry Sessions => _sessions;
 
-    public KestrelGameServer(int port, ITerminalSetup terminalSetup, ConfigData configData, bool? displayReportOverride = null, AppSettings? appSettings = null)
+    public KestrelGameServer(int port, ITerminalSetup terminalSetup, ConfigData configData, bool? displayReportOverride = null, AppSettings? appSettings = null, string? dialectProfileId = null)
     {
         _config = new GameConfigService(configData, displayReportOverride, appSettings);
-        _sessions = new SessionRegistry(terminalSetup, _config, GameServerProtocol.ReadAgentLease());
+        _sessions = new SessionRegistry(terminalSetup, _config, GameServerProtocol.ReadAgentLease(), dialectProfileId);
         _protocol = new GameServerProtocol(_sessions, _config);
         _dispatcher = new HttpRouteDispatcher(_protocol, ServerJsonContext.Default);
         _ws = new WsConnectionHandler(_sessions);

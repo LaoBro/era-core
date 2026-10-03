@@ -144,7 +144,8 @@ def _display_report_flags(value: str) -> list[str]:
 
 
 def _start_eracore_server(binary_path: str, game_dir: str | None, port: int,
-                          display_report: str = "off", settings: list[str] | None = None) -> subprocess.Popen:
+                          display_report: str = "off", settings: list[str] | None = None,
+                          profile: str | None = None) -> subprocess.Popen:
     """Launch Emuera.Headless.Cli --server in the background."""
     if binary_path.lower().endswith(".dll"):
         cmd = ["dotnet", "exec", binary_path]
@@ -153,6 +154,10 @@ def _start_eracore_server(binary_path: str, game_dir: str | None, port: int,
     cmd.extend(["--server", "--port", str(port)])
     if game_dir:
         cmd.extend(["--ExeDir", game_dir])
+    # 实现票 25：会话级方言 profile——仅对本 CLI 新拉起的 server 生效（复用已运行 server 时
+    # 以该 server 启动参数为准，见 cmd_start 的 profile 一致性守卫）。
+    if profile:
+        cmd.extend(["--profile", profile])
     # 加载报告覆盖：见 spec「启动日志覆盖」。仅对 agent 自己拉起的 server 生效；
     # 复用已运行 server 时以该 server 自己的启动参数为准。
     cmd.extend(_display_report_flags(display_report))
@@ -224,12 +229,16 @@ def cmd_start(args) -> int:
         configured = config.get("gameDir")
         game_dir = resolve_path(configured) if configured else os.path.join(PROJECT_DIR, "test_game")
 
+    profile = args.profile
     existing = load_server_record()
     reused = False
     started_by_agent = False
     maui_hosted = False
     token = None
     pid = None
+    # 实现票 25：复用已有 server 时，其方言 profile 由该 server 启动参数决定（无法改）。
+    # 记录已知 profile 供一致性守卫——None = 未知（探测到但无记录）。
+    reused_profile = None
 
     # issue 05（H 缺陷修复）：MAUI 托管 server 发现**优先于**本地记录。
     # MAUI 是用户正在玩的那一局的权威单实例——它重开时端口/token 都会变，本地 .eracore-server.json
@@ -250,6 +259,7 @@ def cmd_start(args) -> int:
             maui_hosted = True
             pid = None
             game_dir = maui_record.get("gameDir") or game_dir
+            reused_profile = maui_record.get("profile")
 
     if not reused and existing and existing.get("port"):
         token = existing.get("token")
@@ -261,6 +271,7 @@ def cmd_start(args) -> int:
             pid = existing.get("pid")
             started_by_agent = bool(existing.get("startedByAgent"))
             maui_hosted = bool(existing.get("mauiHosted"))
+            reused_profile = existing.get("profile")
             if not token:
                 token = secrets.token_urlsafe(24)
 
@@ -278,11 +289,21 @@ def cmd_start(args) -> int:
             if not os.path.isdir(game_dir):
                 _die(f"游戏目录不存在: {game_dir}")
             token = secrets.token_urlsafe(24)
-            proc = _start_eracore_server(binary, game_dir, port, args.display_report, args.setting)
+            proc = _start_eracore_server(binary, game_dir, port, args.display_report, args.setting, profile)
             if proc.poll() is not None:
                 _die("Emuera server 启动后立即退出")
             pid = proc.pid
             started_by_agent = True
+            reused_profile = profile
+
+    # 实现票 25：profile 一致性守卫——复用已有 server 时，其 profile 由该 server 启动参数决定，
+    # 无法按本次请求更改。已知不一致 → 显式报错（禁止静默用错误可见面加载游戏）。
+    if reused and profile and reused_profile != profile:
+        if reused_profile is None:
+            _die(f"复用中的 server 未记录 profile，无法确认是否为您请求的「{profile}」；"
+                 f"先 `eracore_agent stop` 再以 --profile {profile} 重新 start")
+        _die(f"复用中的 server 使用 profile「{reused_profile}」，与请求的「{profile}」不一致；"
+             f"先 `eracore_agent stop` 再以 --profile {profile} 重新 start")
 
     record = {
         "host": host,
@@ -292,6 +313,7 @@ def cmd_start(args) -> int:
         "gameDir": game_dir,
         "startedByAgent": started_by_agent,
         "mauiHosted": maui_hosted,
+        "profile": profile if not reused else reused_profile,
     }
     save_server_record(record)
 
@@ -626,6 +648,9 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--port", type=int, default=8080, help="server 端口（默认 8080）")
     start.add_argument("--host", default="127.0.0.1", help="server 主机（默认 127.0.0.1）")
     start.add_argument("--game-dir", default=None, help="游戏目录")
+    start.add_argument("--profile", default=None,
+                       help="会话级方言 profile id（实现票 25）：v24pure/snake/eratw；"
+                            "仅对本次新拉起的 server 生效（复用已运行 server 时以其启动参数为准）")
     start.add_argument("--eracore-path", default=None, help="EraCore.Cli 二进制路径")
     start.add_argument("--display-report", choices=["auto", "off", "on"], default="off",
                        help="加载报告覆盖（仅对本次新拉起的 server 生效）：off=强制关（默认，隐藏启动读取日志）；"
