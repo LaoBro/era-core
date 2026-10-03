@@ -36,6 +36,7 @@ CALLF	directive
 CALLFORM	directive
 CALLFORMF	directive
 CALLSHARP	directive
+CALLSTR	directive
 CALLTRAIN	directive
 CASE	directive
 CASEELSE	directive
@@ -269,6 +270,7 @@ ISNUMERIC	function
 ISSKIP	function
 JUMP	directive
 JUMPFORM	directive
+JUMPSTR	directive
 LIMIT	function
 LINEISEMPTY	function
 LOADCHARA	directive
@@ -543,12 +545,15 @@ TRYCALLF	directive
 TRYCALLFORM	directive
 TRYCALLFORMF	directive
 TRYCALLLIST	directive
+TRYCALLSTR	directive
 TRYCCALL	directive
 TRYCCALLFORM	directive
+TRYCCALLSTR	directive
 TRYCGOTO	directive
 TRYCGOTOFORM	directive
 TRYCJUMP	directive
 TRYCJUMPFORM	directive
+TRYCJUMPSTR	directive
 TRYGOTO	directive
 TRYGOTOFORM	directive
 TRYGOTOLIST	directive

@@ -43,9 +43,15 @@ public sealed class BuiltInRegistrySeamTests
 	{
 		using var scope = GlobalStatic.OpenScope(new ConfigData());
 
-		// P0 指令尚未落地（票 20–23），指令声明此刻为空；函数声明已含 Skia P0 数学/位/求值 19 项（票 18）。
-		Assert.Empty(BuiltInRegistry.Instructions);
+		// 指令声明已含 Skia P0 动态调用 5 项（票 20）；函数声明已含数学/位/求值 19（票 18）+ MAP 6（票 19）。
+		Assert.NotEmpty(BuiltInRegistry.Instructions);
 		Assert.NotEmpty(BuiltInRegistry.Methods);
+		var instructionDic = FunctionIdentifier.GetInstructionNameDic();
+		foreach (InstructionDescriptor descriptor in BuiltInRegistry.Instructions)
+		{
+			Assert.Equal(Dialect.Snake, descriptor.Dialect);
+			Assert.True(instructionDic.ContainsKey(descriptor.Name), descriptor.Name);
+		}
 		var methodList = FunctionMethodCreator.GetMethodList();
 		foreach (FunctionMethodDescriptor descriptor in BuiltInRegistry.Methods)
 		{

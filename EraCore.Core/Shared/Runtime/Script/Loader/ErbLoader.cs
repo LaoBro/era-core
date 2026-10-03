@@ -3260,6 +3260,13 @@ internal sealed class ErbLoader
 					}
 				}
 			}
+			// 方言结构化 TRYC 指令（FunctionCode.__NULL__，如 TRYCJUMPSTR/TRYCCALLSTR）按 flag 参与
+			// CATCH 嵌套配对（实现票 20）。原生 TRYC* 有真实 FunctionCode，仍由下面的 switch 处理。
+			if (func!.FunctionCode == FunctionCode.__NULL__ && func.Function.IsTryC())
+			{
+				nestStack.Push(func);
+				continue;
+			}
 			switch (func!.FunctionCode)
 			{
 				case FunctionCode.REPEAT:
@@ -3487,13 +3494,9 @@ internal sealed class ErbLoader
 					break;
 				case FunctionCode.CATCH:
 					pairLine = (nestStack.Count == 0 ? null : nestStack.Peek())!;
+					// 按 flag 判定（实现票 20）：同时覆盖原生 TRYC* 与方言 __NULL__ TRYC 指令（TRYCJUMPSTR/TRYCCALLSTR）。
 					if (pairLine == null
-						|| pairLine.FunctionCode != FunctionCode.TRYCGOTO
-						&& pairLine.FunctionCode != FunctionCode.TRYCCALL
-						&& pairLine.FunctionCode != FunctionCode.TRYCJUMP
-						&& pairLine.FunctionCode != FunctionCode.TRYCGOTOFORM
-						&& pairLine.FunctionCode != FunctionCode.TRYCCALLFORM
-						&& pairLine.FunctionCode != FunctionCode.TRYCJUMPFORM)
+						|| !pairLine.Function.IsTryC())
 					{
 						ParserMediator.Warn(trerror.MissingTryc.Text, func, 2, true, false);
 						break;

@@ -3793,6 +3793,97 @@ internal sealed partial class FunctionIdentifier
 		}
 	}
 
+	/// <summary>
+	/// 方言动态调用（实现票 20）：把字符串表达式求值成「函数名(参数,...)」调用串，运行时解析出
+	/// 目标函数名与实参并构造 <see cref="CalledFunction"/>。对应 Skia <c>CALLS_Instruction</c>。
+	/// <c>isJump</c> 区分 JUMPSTR（移动）与 CALLSTR（可 RETURN）；<c>isTry</c> 失败不抛；
+	/// <c>isTryCatch</c>（TRYCJUMPSTR/TRYCCALLSTR）额外参与 CATCH 嵌套配对。
+	/// </summary>
+	private sealed class CALLS_Instruction : AInstruction
+	{
+		public CALLS_Instruction(bool isJump, bool isTry, bool isTryCatch)
+		{
+			// STR_EXPRESSION：整串作为一个字符串表达式解析（运行时才确定目标）。
+			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.STR_EXPRESSION);
+			flag = FLOW_CONTROL | FORCE_SETARG;
+			if (isJump)
+				flag |= IS_JUMP;
+			if (isTry)
+				flag |= IS_TRY;
+			if (isTryCatch)
+				flag |= IS_TRYC | PARTIAL;
+			this.isJump = isJump;
+			this.isTry = isTry;
+		}
+		readonly bool isJump;
+		readonly bool isTry;
+
+		// 动态目标只能在运行时确定 → 标记「用到 callform 系」，使加载期跳过未调用函数告警。
+		public override bool SetJumpTo(InstructionLine func, int currentDepth, ref string FunctionoNotFoundName) => true;
+
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		{
+			string scriptLine = func.Argument.IsConst
+				? func.Argument.ConstStr
+				: ((ExpressionArgument)func.Argument).Term.GetStrValue(exm);
+			if (string.IsNullOrWhiteSpace(scriptLine))
+				return;
+
+			var st = new CharStream(scriptLine);
+			string labelName = LexicalAnalyzer.ReadString(st, StrEndWith.LeftParenthesis_Bracket_Comma_Semicolon).Trim();
+			char cur = st.Current;
+			var wc = LexicalAnalyzer.Analyse(st, LexEndWith.EoL, LexAnalyzeFlag.None);
+			if (!wc.EOL)
+				wc.ShiftNext();
+
+			List<AExpression> parsedArgs;
+			try
+			{
+				parsedArgs = cur == '('
+					? ExpressionParser.ReduceArguments(wc, ArgsEndWith.RightParenthesis, false)
+					: ExpressionParser.ReduceArguments(wc, ArgsEndWith.EoL, false);
+			}
+			catch (EmueraException)
+			{
+				if (!isTry) throw;
+				if (func.JumpToEndCatch != null)
+					state.JumpTo(func.JumpToEndCatch);
+				return;
+			}
+
+			CalledFunction call = CalledFunction.CallFunction(GlobalStatic.LabelDictionary, labelName, func);
+			if (call == null)
+			{
+				if (!isTry)
+					throw new CodeEE(string.Format(trerror.NotDefinedFunc.Text, labelName));
+				if (func.JumpToEndCatch != null)
+					state.JumpTo(func.JumpToEndCatch);
+				return;
+			}
+
+			call.IsJump = isJump;
+
+			List<AExpression> realArgs = parsedArgs ?? [];
+			for (int i = 0; i < realArgs.Count; i++)
+			{
+				if (realArgs[i] != null)
+					realArgs[i] = realArgs[i].Restructure(exm);
+			}
+
+			UserDefinedFunctionArgument arg = call.ConvertArg(realArgs, out string errMes);
+			if (arg == null)
+			{
+				if (!isTry)
+					throw new CodeEE(errMes);
+				if (func.JumpToEndCatch != null)
+					state.JumpTo(func.JumpToEndCatch);
+				return;
+			}
+
+			state.IntoFunction(call, arg, exm);
+		}
+	}
+
 	private sealed class CALLEVENT_Instruction : AInstruction
 	{
 		public CALLEVENT_Instruction()

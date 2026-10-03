@@ -1,4 +1,4 @@
-﻿using MinorShift.Emuera.Runtime.Script.Statements;
+using MinorShift.Emuera.Runtime.Script.Statements;
 using System.Collections.Generic;
 
 namespace MinorShift.Emuera.GameProc.Function;
@@ -14,12 +14,39 @@ internal sealed partial class FunctionIdentifier
 	/// </summary>
 	internal static IReadOnlyList<InstructionDescriptor> BuiltInInstructionDescriptors { get; } =
 	[
-		// 例：
-		// new InstructionDescriptor
-		// {
-		//     Name = "TINPUTNF",
-		//     CreateInstruction = () => new TINPUT_Instruction(false),
-		//     Dialect = Dialect.Snake,
-		// },
+		// Skia 方言 P0：动态调用（实现票 20）。CALLS_Instruction 运行时解析字符串调用串。
+		new InstructionDescriptor
+		{
+			Name = "JUMPSTR",
+			CreateInstruction = () => new CALLS_Instruction(true, false, false),
+			Dialect = Dialect.Snake,
+		},
+		new InstructionDescriptor
+		{
+			Name = "CALLSTR",
+			CreateInstruction = () => new CALLS_Instruction(false, false, false),
+			Dialect = Dialect.Snake,
+		},
+		new InstructionDescriptor
+		{
+			Name = "TRYCALLSTR",
+			CreateInstruction = () => new CALLS_Instruction(false, true, false),
+			AdditionalFlag = EXTENDED,
+			Dialect = Dialect.Snake,
+		},
+		new InstructionDescriptor
+		{
+			Name = "TRYCJUMPSTR",
+			CreateInstruction = () => new CALLS_Instruction(true, true, true),
+			AdditionalFlag = EXTENDED,
+			Dialect = Dialect.Snake,
+		},
+		new InstructionDescriptor
+		{
+			Name = "TRYCCALLSTR",
+			CreateInstruction = () => new CALLS_Instruction(false, true, true),
+			AdditionalFlag = EXTENDED,
+			Dialect = Dialect.Snake,
+		},
 	];
 }

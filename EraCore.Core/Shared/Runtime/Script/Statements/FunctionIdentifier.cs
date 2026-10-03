@@ -652,6 +652,11 @@ internal sealed partial class FunctionIdentifier
 	{
 		return (flag & IS_TRY) == IS_TRY;
 	}
+	/// <summary>TRY 系中带 CATCH 的结构化指令（实现票 20）：用于 CATCH 嵌套配对，按 flag 判定而非 <see cref="FunctionCode"/>。</summary>
+	internal bool IsTryC()
+	{
+		return (flag & IS_TRYC) == IS_TRYC;
+	}
 	internal bool IsJump()
 	{
 		return (flag & IS_JUMP) == IS_JUMP;
