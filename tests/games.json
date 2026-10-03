@@ -1,0 +1,26 @@
+{
+  "_comment": "实现票 25：显式 game→profile 映射（不建 resolver）。参数化一致性套件用 --game-dir 匹配 matchHints 取 profile；新增游戏只加一条 fixture，不改 harness 代码。anchors 是可选内容锚点冒烟（防 profile 误配）；knownLv2 是经参考引擎判定为「游戏数据缺陷」的已知 Lv2 子串，逐条排除于 DoD（见 spec §3/§9 与 issues/33）。",
+  "games": [
+    {
+      "id": "test_game",
+      "profile": "v24pure",
+      "matchHints": ["test_game"],
+      "anchors": [
+        { "path": "erb/TEST.ERB", "contains": "@SYSTEM_TITLE" }
+      ],
+      "knownLv2": [],
+      "expectState": "WaitInput"
+    },
+    {
+      "id": "eratw-sub-modding-develop",
+      "profile": "eratw",
+      "matchHints": ["eratw"],
+      "anchors": [
+        { "path": "ERB/TITLE.ERB", "contains": "@SYSTEM_TITLE" },
+        { "path": "ERB/SYSTEM.ERB", "contains": "@EVENTFIRST" }
+      ],
+      "knownLv2": ["TEMP_CHARA_LIST_BY_DT.ERB:第931行"],
+      "expectState": "WaitInput"
+    }
+  ]
+}

@@ -469,6 +469,26 @@ def main():
         )
     )
 
+    results.append(
+        (
+            "conformance kit (test_game)",
+            _run_script(
+                "conformance kit (test_game)",
+                [
+                    sys.executable,
+                    str(TESTS_DIR / "test_conformance_kit.py"),
+                    "--binary",
+                    str(binary_path),
+                    "--game-dir",
+                    str(game_dir),
+                    # 面快照由本套件上方的 dotnet test 步骤覆盖，避免重复跑
+                    "--no-surface",
+                ],
+                timeout=180,
+            ),
+        )
+    )
+
     print("\n=== Summary ===")
     all_passed = True
     for name, (passed, code, skipped) in results:

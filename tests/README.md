@@ -68,12 +68,33 @@ python tests/run_all.py --binary EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe -
 8. `/assets` 资源通道测试（issue 03）。
 9. ERB 加载并行/串行等价性测试（issue 04，`test_erbloader_equivalence.py`）。
 10. CLI 交互模式基础测试（happy path + ConPTY smoke tests）。
+11. 一致性套件（`test_conformance_kit.py`，用 `test_game` 自检，见下）。
 
 在 Windows 命令行中，如果相对路径启动失败，请使用绝对路径，例如：
 
 ```bash
 D:/LaoBro/era-core/EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe
 ```
+
+## 一致性套件 + DoD 单入口（实现票 25）
+
+参数化 `--game-dir <dir> [--profile <id>]` 的可机械执行验收，含三层：**解析 smoke**（零「无法解析的标识符/行」+
+零未定义函数警告 + 无未预期 `warnLevel≥2`）、**面快照**（复用票 17 `DialectSurfaceSnapshotTests`）、
+**playtest 冒烟**（以目标 profile 加载并进入输入循环）。game→profile 为**显式映射**（`tests/games.json`
+的 `matchHints → profile`，不建 resolver）；`anchors` 为内容锚点冒烟（防误配），`knownLv2` 为经参考引擎
+判定为「游戏数据缺陷」的已知 Lv2 子串，逐条排除于 DoD。
+
+```bash
+# 仓库内自检（test_game → v24pure）
+python tests/test_conformance_kit.py --game-dir test_game --no-surface
+
+# DoD 单入口（eraTW 画蛇添足版：自带 build + 面快照）
+python tests/test_conformance_kit.py --game-dir D:/era/eratw-sub-modding-develop --build
+```
+
+**新增一个游戏只加一条 `tests/games.json` fixture，不改 harness 代码**（`conformance_kit.py` /
+`test_conformance_kit.py`）。误配 profile 时 `--profile` 覆盖 fixture 会打印 WARN，且解析 smoke 会因
+大量未识别标识符而 RED。
 
 ## 大小写敏感关卡（WSL2 Ubuntu）
 
