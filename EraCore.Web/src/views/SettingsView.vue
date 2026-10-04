@@ -3,7 +3,7 @@ import { ref, watch, computed, onMounted, onUnmounted } from 'vue';
 import { useGameStore } from '../stores/game';
 import { useUiStore, TOUCH_TARGET_COLS_CHOICES } from '../stores/ui';
 import { useConnectionStore } from '../stores/connection';
-import { isMauiEnvironment, setAgentLogEnabled, setDimLockPolicy, setDisplayReportOverride, setMaxParallelErbFiles, setPerfOverride, setSafReadDegree, setSweepGatePolicy, settingsReset, setSettingsOpen, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
+import { isMauiEnvironment, setAgentLogEnabled, setDialectProfile, setDimLockPolicy, setDisplayReportOverride, setMaxParallelErbFiles, setPerfOverride, setSafReadDegree, setSweepGatePolicy, settingsReset, setSettingsOpen, getAgentLog, exportAgentLog } from '../lib/mauiBridge';
 import type { DimLockPolicyValue, DisplayReportOverride, MaxParallelErbFilesValue, PerfOverrideKey, SafReadDegreeValue, SweepGatePolicyValue } from '../lib/mauiBridge';
 
 const game = useGameStore();
@@ -202,6 +202,33 @@ function chooseDimLockPolicy(value: DimLockPolicyValue): void {
 }
 
 /**
+ * 方言兼容（MAUI 接入）：profile id → 显示文案（v24pure = 默认；eratw = eraTW 画蛇添足版）。
+ * 选项来自 C# 权威的 game.dialectProfiles（DialectRegistry.KnownProfileIds）。
+ */
+function dialectLabel(id: string): string {
+  if (id === 'v24pure') return '默认（v24pure）';
+  if (id === 'eratw') return 'eraTW 画蛇添足版';
+  return id;
+}
+
+/** 方言兼容（MAUI 接入）：当前是否选中该 profile——C# 权威值 '' 表示 v24pure。 */
+function dialectSelected(id: string): boolean {
+  return id === 'v24pure' ? game.dialectProfile === '' : game.dialectProfile === id;
+}
+
+/**
+ * 方言兼容（MAUI 接入）：选择 profile——投递 setDialectProfile 请求 C# 写 Preferences，
+ * 本地乐观更新；C# 处理完推回 config 消息（含 dialectProfile 字段）再次同步——最终以 C# 权威状态为准。
+ * 注意：profile 在建会话前绑定，本局不受影响，**重载游戏后生效**（用现成的「同目录一键重载」即可）。
+ */
+function chooseDialectProfile(id: string): void {
+  if (!isMauiEnvironment()) return;
+  const value = id === 'v24pure' ? '' : id;
+  setDialectProfile(value);
+  game.dialectProfile = value;
+}
+
+/**
  * A0 补充（真机无 adb）：请求 C# 读取 agent.log 内容——回复异步到达（agentLog 消息
  * → useAppInit 写入 store），展示区由 store 驱动自动渲染。
  */
@@ -263,6 +290,32 @@ const logCopied = ref(false);
           <span class="setting-label">历史日志行数</span>
           <span class="setting-value">{{ game.maxLog ?? '—' }}</span>
         </div>
+      </div>
+      <!-- 方言兼容（MAUI 接入）：仅 MAUI bridge 宿主渲染——profile 按会话经 Preferences 绑定，
+           与 CLI 的 --profile 启动参数分工，纯 server/浏览器模式无此入口（避免打架）。 -->
+      <div v-if="isMauiEnvironment()" class="section">
+        <h3>方言兼容</h3>
+        <div class="setting-row">
+          <span class="setting-label">方言 profile</span>
+          <div class="segmented" role="radiogroup" aria-label="方言 profile">
+            <button
+              v-for="id in game.dialectProfiles"
+              :key="id"
+              class="segmented-item"
+              :class="{ active: dialectSelected(id) }"
+              role="radio"
+              :aria-checked="dialectSelected(id)"
+              @click="chooseDialectProfile(id)"
+            >
+              {{ dialectLabel(id) }}
+            </button>
+          </div>
+        </div>
+        <p class="hint-text">
+          eraTW 画蛇添足版请选 eratw；普通游戏请保持 v24pure（默认）。图像层 / 文本背景观感尚未追平
+          （已知差异）：SETIMAGELAYER* / CLEARIMAGELAYER* 仍是语义 no-op，TEXT_BGC_ON/OFF 只存状态不渲染。
+          改动需重载游戏后生效——用游戏列表里现成的「同目录一键重载」重新打开当前游戏即可，无需另设按钮。
+        </p>
       </div>
       <div class="section">
         <h3>外观</h3>

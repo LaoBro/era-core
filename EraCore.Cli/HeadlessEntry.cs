@@ -44,6 +44,13 @@ internal static class HeadlessEntry
             return;
         }
 
+        // MAUI 接入票 01 / Q20：会话启动恒定标注方言 profile 与来源——CLI/Server 侧来源只有 --profile 或缺省
+        // （MAUI 侧在 BridgeHost.StartHostedSessionAsync 打 (source: setting|default)，两侧同款文案）。
+        EmueraLog.Info("options",
+            options.DialectProfile is { } effectiveProfile
+                ? $"dialect profile = {effectiveProfile} (source: --profile)"
+                : "dialect profile = v24pure (source: default)");
+
         var paths = GamePaths.Resolve(options.ExeDir, new FileSystemGameDirAccessor());
 
         // Initialize 完成所有共享 bootstrap（encoding/culture/ConfigData/Lang 等）但不调 paths.Validate——

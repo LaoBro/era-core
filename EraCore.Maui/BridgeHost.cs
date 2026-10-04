@@ -18,6 +18,7 @@ using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Script.Loader;
+using MinorShift.Emuera.Runtime.Script.Statements;
 using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.Server;
 using MinorShift.Emuera.Terminal.Platform;
@@ -36,7 +37,7 @@ namespace EraCore.Maui;
 /// <para>
 /// <b>启动时序（spec ID7 + issue 05）</b>：构造不启动托管 server。Vue 启动后 <c>postMessage({"type":"ready"})</c>，
 /// <see cref="OnInputFromJs"/> 识别 ready 后调 <see cref="Start"/>；Start 建 <see cref="HttpListenerHost"/> +
-/// <see cref="SessionRegistry.CreateMauiSessionAsync(MinorShift.Emuera.Runtime.Config.ConfigData, bool)"/> 建共享会话 + 起 turn/control 泵 + 写 agent 发现记录。
+/// <see cref="SessionRegistry.CreateMauiSessionAsync(MinorShift.Emuera.Runtime.Config.ConfigData, bool, string)"/> 建共享会话 + 起 turn/control 泵 + 写 agent 发现记录。
 /// Vue ready 是会话启动的前置条件，第一帧 turn（全量 diff）自然推给已 ready 的 Vue。
 /// </para>
 /// <para>
@@ -64,6 +65,14 @@ internal sealed class BridgeHost : IDisposable
 {
     /// <summary>Preferences key——主目录路径持久化（spec ID5）。</summary>
     private const string MainGameDirKey = "app.mainGameDir";
+
+    /// <summary>
+    /// Preferences key——方言兼容 profile（MAUI 接入）。
+    /// 值域 = <c>""</c>（未设置 = v24pure）| <c>"v24pure"</c> | <c>"snake"</c> | <c>"eratw"</c>
+    /// （动态取 <c>DialectRegistry.KnownProfileIds</c>）。建会话前（<see cref="StartHostedSessionAsync"/>）
+    /// 读此 key 按会话传入 <c>SessionRegistry</c>；设置页经 <see cref="HandleSetDialectProfile"/> 写此 key。
+    /// </summary>
+    internal const string DialectProfileKey = "app.dialectProfile";
 
     /// <summary>
     /// Preferences key——文件日志（AgentLog）开关（A0，saf-accel 计划）。
@@ -518,6 +527,12 @@ internal sealed class BridgeHost : IDisposable
                 if (type == "setAgentLogEnabled")
                 {
                     HandleSetAgentLogEnabled(doc.RootElement);
+                    return;
+                }
+                // 方言兼容（MAUI 接入）：设置页选择 dialect profile——写 Preferences，建会话时生效
+                if (type == "setDialectProfile")
+                {
+                    HandleSetDialectProfile(doc.RootElement);
                     return;
                 }
                 // 设置页启动日志覆盖三态——写 Preferences + 切换 ConfigData.OverrideDisplayReport
@@ -1250,6 +1265,74 @@ internal sealed class BridgeHost : IDisposable
     }
 
     /// <summary>
+    /// 方言 profile 设置值的校验与规范化（纯函数，单测覆盖）：
+    /// <c>""</c> = 未设置/清除（语义 = v24pure，对齐 <c>SessionRegistry</c> 的 <c>null</c>）；
+    /// 已知 profile id 原样返回；其它（含 <c>null</c>）返回 <c>null</c> = 非法，拒绝写入。
+    /// </summary>
+    internal static string? NormalizeDialectProfileSetting(string? value)
+    {
+        if (value == "")
+            return "";
+        return value != null && DialectRegistry.IsKnownProfile(value) ? value : null;
+    }
+
+    /// <summary>
+    /// 读 Preferences 的方言 profile 原始设置——未设置 / Preferences 不可用返回 <c>null</c>（= v24pure）。
+    /// 不做合法性判断（非法残留值由调用点决定：建会话前 fail-fast / config 消息回落空串）。
+    /// </summary>
+    private static string? LoadDialectProfileSetting()
+    {
+        try
+        {
+            var stored = Preferences.Get(DialectProfileKey, null);
+            return string.IsNullOrEmpty(stored) ? null : stored;
+        }
+        catch
+        {
+            return null; // Preferences 不可用（极少见）——回退未设置语义
+        }
+    }
+
+    /// <summary>
+    /// 方言兼容（MAUI 接入）：设置页选择 dialect profile——写 Preferences。
+    /// <para>
+    /// 接收 <c>{"type":"setDialectProfile","value":""|"v24pure"|"snake"|"eratw"}</c>；
+    /// 值域校验（<see cref="NormalizeDialectProfileSetting"/>）：<c>""</c> 清除（= v24pure），已知 id 写入，
+    /// 非法值拒绝写入并打日志（同时推回 config 让 UI 与 C# 权威状态对齐）。写入的 key 由
+    /// <see cref="StartHostedSessionAsync"/> 在建会话前读取，故本局不受影响，**重载游戏后生效**。
+    /// </para>
+    /// </summary>
+    private void HandleSetDialectProfile(JsonElement root)
+    {
+        if (!root.TryGetProperty("value", out var el) || el.ValueKind != JsonValueKind.String)
+        {
+            Console.WriteLine("[bridge] HandleSetDialectProfile: missing or non-string 'value' field");
+            return;
+        }
+        var value = el.GetString();
+        var normalized = NormalizeDialectProfileSetting(value);
+        if (normalized == null)
+        {
+            Console.WriteLine($"[bridge] HandleSetDialectProfile: invalid value '{value}'");
+            PushConfigMessage();
+            return;
+        }
+        try
+        {
+            if (normalized.Length == 0)
+                Preferences.Remove(DialectProfileKey);
+            else
+                Preferences.Set(DialectProfileKey, normalized);
+        }
+        catch
+        {
+            // Preferences 不可用（极少见）——不持久化，仍推 config 同步 UI
+        }
+        Console.WriteLine($"[bridge] dialectProfile set to '{normalized}'");
+        PushConfigMessage();
+    }
+
+    /// <summary>
     /// 接收 <c>{"type":"setDisplayReportOverride","value":"auto"|"off"|"on"}</c>；持久化到
     /// Preferences（游戏加载时 OnReloadGame → Initialize 读同一 key 前置位），并即时切换
     /// <see cref="ConfigData.OverrideDisplayReport"/>——off/on 直接压 DisplayReport；
@@ -1789,15 +1872,21 @@ internal sealed class BridgeHost : IDisposable
     /// <para>
     /// 消息格式：<c>{"type":"config","maxLog":5000,"agentLogEnabled":false,"displayReportOverride":"auto",
     /// "lazyFunctionLoad":"auto",...,"sweepGatePolicy":"auto","safReadDegree":"auto",
-    /// "maxParallelErbFiles":"auto","dimLockPolicy":"auto"}</c>（性能覆盖四字段
-    /// 为对应 Preferences 三态权威值 auto/off/on，sweepGatePolicy 为 ADR-0026 诊断旋钮一权威值
+    /// "maxParallelErbFiles":"auto","dimLockPolicy":"auto","dialectProfile":"","dialectProfiles":["v24pure","snake","eratw"]}</c>
+    /// （性能覆盖四字段为对应 Preferences 三态权威值 auto/off/on，sweepGatePolicy 为 ADR-0026 诊断旋钮一权威值
     /// auto/forceon/forceoff，safReadDegree 为旋钮二权威值 auto/&lt;1-64&gt;，maxParallelErbFiles 为
-    /// 旋钮三权威值 auto/4/8/16，dimLockPolicy 为旋钮四权威值 auto/nolock——切换后对应 Handle* 推回同步）。
+    /// 旋钮三权威值 auto/4/8/16，dimLockPolicy 为旋钮四权威值 auto/nolock——切换后对应 Handle* 推回同步；
+    /// dialectProfile 为 MAUI 方言兼容权威值，空串 = v24pure，dialectProfiles 为可选 profile 顺序副本）。
     /// </para>
     /// </summary>
     private void PushConfigMessage()
     {
         var maxLog = _configData.GetConfigValue<int>(ConfigCode.MaxLog);
+        // 方言兼容（MAUI 接入）：读 Preferences 原始值；非法残留值（外部改动 / 版本回退）
+        // 回落空串（= v24pure），与建会话前的 fail-fast 口径一致。
+        var dialectProfile = LoadDialectProfileSetting();
+        if (dialectProfile != null && !DialectRegistry.IsKnownProfile(dialectProfile))
+            dialectProfile = null;
         var msg = JsonSerializer.Serialize(
             new ConfigMessage("config", maxLog, AgentLog.Instance.Enabled,
                 _appSettings.Get(AppSettings.DisplayReportOverrideKey),
@@ -1811,7 +1900,9 @@ internal sealed class BridgeHost : IDisposable
                 _appSettings.Get(AppSettings.SweepGatePolicyKey),
                 _appSettings.Get(AppSettings.SafReadDegreeKey),
                 _appSettings.Get(AppSettings.MaxParallelErbFilesKey),
-                _appSettings.Get(AppSettings.DimLockPolicyKey)),
+                _appSettings.Get(AppSettings.DimLockPolicyKey),
+                dialectProfile ?? "",
+                DialectRegistry.KnownProfileIds.ToArray()),
             MauiJsonContext.Default.ConfigMessage);
         _dispatcher.Dispatch(() => _jsBridge.PostMessage(msg));
     }
@@ -1822,7 +1913,7 @@ internal sealed class BridgeHost : IDisposable
     /// <b>步骤</b>：
     /// <list type="number">
     ///   <item>建 <see cref="HttpListenerHost"/>（port=0 自动选空闲端口）——agent 经 localhost HTTP+WS 连接</item>
-    ///   <item><see cref="SessionRegistry.CreateMauiSessionAsync(MinorShift.Emuera.Runtime.Config.ConfigData, bool)"/> 建共享会话（游戏已由 OnReloadGame 初始化）</item>
+    ///   <item><see cref="SessionRegistry.CreateMauiSessionAsync(MinorShift.Emuera.Runtime.Config.ConfigData, bool, string)"/> 建共享会话（游戏已由 OnReloadGame 初始化）</item>
     ///   <item>订阅 OutputHub turn 广播 → <see cref="TurnPumpAsync"/> 转发 WebView；起 <see cref="ControlPumpAsync"/> 同步控制状态</item>
     ///   <item>写 agent 发现记录（端口 + token + gameDir）</item>
     /// </list>
@@ -1852,7 +1943,7 @@ internal sealed class BridgeHost : IDisposable
     /// 后台初始化托管 server + 共享会话（issue 05）——<see cref="Start"/> 的异步主体，UI 线程不阻塞。
     /// <para>
     /// 顺序：建 <see cref="HttpListenerHost"/>（port=0 自动选空闲端口）→
-    /// <see cref="SessionRegistry.CreateMauiSessionAsync(MinorShift.Emuera.Runtime.Config.ConfigData, bool)"/> 建共享会话 →
+    /// <see cref="SessionRegistry.CreateMauiSessionAsync(MinorShift.Emuera.Runtime.Config.ConfigData, bool, string)"/> 建共享会话 →
     /// 订阅 OutputHub turn 广播（<see cref="TurnPumpAsync"/>）+ 起 <see cref="ControlPumpAsync"/> →
     /// 写 agent 发现记录。
     /// </para>
@@ -1883,7 +1974,28 @@ internal sealed class BridgeHost : IDisposable
             if (_disposed)
                 return;
 
-            // 2. 先销毁可能残留的旧会话，再建新的——hot-swap 竞态守卫。
+            // 2. 方言 profile（MAUI 接入）：必须在建会话前读 Preferences 并校验——null（未设置/空）= v24pure；
+            //    非法残留值 fail-fast（不静默回落，提示去设置页重选）。profile 只在此处按会话绑定，
+            //    故设置页改动不影响本局，重载游戏（重建 BridgeHost 再走本方法）后生效。
+            var dialectSetting = LoadDialectProfileSetting();
+            string? dialectProfileId;
+            if (dialectSetting == null)
+            {
+                dialectProfileId = null;
+                EmueraLog.Info("config", "dialect profile = v24pure (source: default)");
+            }
+            else if (DialectRegistry.IsKnownProfile(dialectSetting))
+            {
+                dialectProfileId = dialectSetting;
+                EmueraLog.Info("config", $"dialect profile = {dialectSetting} (source: setting)");
+            }
+            else
+            {
+                ShowError($"方言兼容设置非法：'{dialectSetting}' 不是已知的 profile。请到设置页「方言兼容」重新选择后再打开游戏。");
+                return;
+            }
+
+            // 3. 先销毁可能残留的旧会话，再建新的——hot-swap 竞态守卫。
             //    共享 SessionRegistry 后（issues/13 M6），旧 BridgeHost.Dispose 的
             //    DeleteSessionAsync 跑在后台线程，可能与本次 Create 抢锁：
             //    CreateMauiSessionAsync 见到「已有未结束会话」会直接返 Conflict 而不重建。
@@ -1894,11 +2006,12 @@ internal sealed class BridgeHost : IDisposable
             if (_disposed)
                 return;
 
-            // 3. 建共享 session——游戏已由 OnReloadGame 初始化（GamePaths.Current 已 Resolve + ConfigData 已加载），
+            // 4. 建共享 session——游戏已由 OnReloadGame 初始化（GamePaths.Current 已 Resolve + ConfigData 已加载），
             //    fullDiffOnFirstTurn=true：MAUI WebView 桥接无 GET /snapshot 入口，首帧 diff 须全量。
             //    显式传 _configData：共享 server 构造时绑的是启动期占位配置，会话必须用真实配置
             //    （含 OnReloadGame 应用的性能覆盖旋钮），否则 ErbLoader 读到的是占位值。
-            var createResult = await serverHost.Sessions.CreateMauiSessionAsync(_configData, fullDiffOnFirstTurn: true);
+            //    dialectProfileId：按会话传入方言 profile（null = v24pure）。
+            var createResult = await serverHost.Sessions.CreateMauiSessionAsync(_configData, fullDiffOnFirstTurn: true, dialectProfileId);
             if (_disposed)
                 return;
             if (createResult.Status != SessionCreateStatus.Created)
@@ -1907,7 +2020,7 @@ internal sealed class BridgeHost : IDisposable
                 return;
             }
 
-            // 4. 订阅 turn 广播 → WebView。订阅发生在 session 首帧之前（Initialize 在后台 Task 跑），
+            // 5. 订阅 turn 广播 → WebView。订阅发生在 session 首帧之前（Initialize 在后台 Task 跑），
             //    首帧全量 diff 不会丢。同时起控制事件泵同步前端控制状态（旁观/可操作切换）。
             var subscription = await serverHost.Sessions.TryGetWsSubscriptionAsync();
             if (_disposed)
@@ -1922,7 +2035,7 @@ internal sealed class BridgeHost : IDisposable
             _turnPump = Task.Run(() => TurnPumpAsync(subscription.Reader, subscription.Hub));
             _controlPump = Task.Run(() => ControlPumpAsync(_session));
 
-            // 5. 更新 agent 发现记录（端口 + token + gameDir）——eracore_agent start 侦测后复用本会话。
+            // 6. 更新 agent 发现记录（端口 + token + gameDir）——eracore_agent start 侦测后复用本会话。
             //    记录的所有权在 MauiControlServer（app 级）：此处只补充 gameDir，不负责创建/删除。
             MauiControlServer.Instance?.NotifySessionStarted(GamePaths.Current?.ExeDir);
 

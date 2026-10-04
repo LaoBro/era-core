@@ -98,7 +98,12 @@ internal sealed class SessionRegistry
     /// 必须由此重载注入，否则会话会用占位配置加载 ERB。
     /// </para>
     /// </summary>
-    public async Task<SessionCreateResult> CreateMauiSessionAsync(ConfigData configData, bool fullDiffOnFirstTurn = true)
+    /// <param name="dialectProfileId">
+    /// 本会话的方言 profile 覆盖（MAUI 设置项 <c>app.dialectProfile</c>）。<c>null</c> = 用注册表构造时绑定的
+    /// <c>_dialectProfileId</c>（Kestrel 的 <c>--profile</c> / 缺省 v24pure）。MAUI 托管的 server 是 app 级单例、
+    /// 注册表只构造一次，故 profile 必须按会话传入才能做到「重载游戏即生效」。
+    /// </param>
+    public async Task<SessionCreateResult> CreateMauiSessionAsync(ConfigData configData, bool fullDiffOnFirstTurn = true, string? dialectProfileId = null)
     {
         await _sessionLock.WaitAsync();
         try
@@ -108,7 +113,7 @@ internal sealed class SessionRegistry
 
             DestroySession("session_replaced");
 
-            var session = CreateSessionCore(configData, fullDiffOnFirstTurn);
+            var session = CreateSessionCore(configData, fullDiffOnFirstTurn, dialectProfileId);
             return new SessionCreateResult(SessionCreateStatus.Created, session.Id, session.CreatedAt, session.StateString);
         }
         finally
@@ -295,13 +300,14 @@ internal sealed class SessionRegistry
     /// </summary>
     /// <param name="configData">会话使用的 ConfigData（HTTP /load-game 用重载后的 newConfig，其余用 <c>_configService.Current</c>）。</param>
     /// <param name="fullDiffOnFirstTurn">首帧 diff 是否返回全量（MAUI 托管 true）。</param>
-    private Session CreateSessionCore(ConfigData configData, bool fullDiffOnFirstTurn = false)
+    /// <param name="dialectProfileId">本会话的方言 profile 覆盖；<c>null</c> = 用注册表构造时的 <c>_dialectProfileId</c>。</param>
+    private Session CreateSessionCore(ConfigData configData, bool fullDiffOnFirstTurn = false, string? dialectProfileId = null)
     {
         // issue 03：SessionRegistry 自持 OutputHub 引用，HttpSessionIO 只接 IOutputBroadcaster 抽象。
         var hub = new OutputHub();
         var io = new HttpSessionIO(hub);
         _sessionHub = hub;
-        var session = new Session(io, _terminalSetup, configData, _agentLease, fullDiffOnFirstTurn, _dialectProfileId);
+        var session = new Session(io, _terminalSetup, configData, _agentLease, fullDiffOnFirstTurn, dialectProfileId ?? _dialectProfileId);
         session.Start();
         _session = session;
         return session;

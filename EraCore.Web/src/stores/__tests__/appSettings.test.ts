@@ -85,6 +85,26 @@ describe('全局设置 store（ADR-0030）', () => {
     expect(game.dimLockPolicy).toBe('auto');
   });
 
+  it('applySettingsUpdate 应用 dialectProfile / dialectProfiles（MAUI 方言兼容）', () => {
+    const game = useGameStore();
+    game.applySettingsUpdate({
+      dialectProfile: 'eratw',
+      dialectProfiles: ['v24pure', 'snake', 'eratw'],
+    });
+    expect(game.dialectProfile).toBe('eratw');
+    expect(game.dialectProfiles).toEqual(['v24pure', 'snake', 'eratw']);
+  });
+
+  it('applySettingsUpdate 忽略非法 dialectProfile / dialectProfiles', () => {
+    const game = useGameStore();
+    game.applySettingsUpdate({
+      dialectProfile: 123, // 非字符串忽略（'' 是合法值）
+      dialectProfiles: ['v24pure', 7], // 非字符串数组忽略
+    } as Record<string, unknown>);
+    expect(game.dialectProfile).toBe('');
+    expect(game.dialectProfiles).toEqual([]);
+  });
+
   it('fetchSettings GET /settings 写入权威值', async () => {
     const game = useGameStore();
     const fetchMock = vi.fn().mockResolvedValue({

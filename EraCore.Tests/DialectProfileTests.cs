@@ -254,3 +254,44 @@ public class DialectProfileProjectionIntegrationTests
 		Assert.NotNull(full.GetFunctionIdentifier("PRINT"));
 	}
 }
+
+/// <summary>
+/// 会话级方言 profile 贯通回归（MAUI 接入票 01）：入口（CLI <c>--profile</c> / MAUI 设置 / 缺省）把
+/// profile id 落到会话 scope 后，构造出的 <see cref="Process"/> 可见面必须真的按该 profile 收窄/放宽——
+/// eraTW 画蛇添足版依赖的 snake 键（<c>TEXT_BGC_OFF</c> / <c>SQL_CONNECT</c>）只在 eratw 下可见，
+/// <c>v24pure</c> / 缺省下不可见（id 没在 Process 构造链上被吞）。
+/// </summary>
+[Collection("LoaderTests")]
+public class DialectProfilePipelineTests
+{
+	[Fact]
+	public async Task Eratw_profile_exposes_snake_keys_in_the_process_surface()
+	{
+		using var harness = new LoaderTestHarness(
+			dialectProfile: DialectRegistry.Resolve(DialectRegistry.EratwId));
+		await harness.InitializeAsync();
+
+		Assert.NotNull(harness.IdDic.GetFunctionIdentifier("TEXT_BGC_OFF"));
+		Assert.NotNull(harness.IdDic.GetFunctionIdentifier("SQL_CONNECT"));
+	}
+
+	[Fact]
+	public async Task V24Pure_profile_hides_snake_keys_in_the_process_surface()
+	{
+		using var harness = new LoaderTestHarness(
+			dialectProfile: DialectRegistry.Resolve(DialectRegistry.V24PureId));
+		await harness.InitializeAsync();
+
+		Assert.Null(harness.IdDic.GetFunctionIdentifier("TEXT_BGC_OFF"));
+		Assert.Null(harness.IdDic.GetFunctionIdentifier("SQL_CONNECT"));
+	}
+
+	[Fact]
+	public async Task Unbound_profile_falls_back_to_v24pure()
+	{
+		using var harness = new LoaderTestHarness(); // null → v24pure
+		await harness.InitializeAsync();
+
+		Assert.Null(harness.IdDic.GetFunctionIdentifier("TEXT_BGC_OFF"));
+	}
+}

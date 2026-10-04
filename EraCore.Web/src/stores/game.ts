@@ -597,6 +597,18 @@ export const useGameStore = defineStore('game', () => {
    */
   const dimLockPolicy = ref<DimLockPolicyValue>('auto');
   /**
+   * 方言兼容（MAUI 接入）：当前选中的 dialect profile——C# 权威状态（来自 config 消息的 dialectProfile 字段）。
+   * '' = 默认 v24pure（与 C# Preferences 未设置语义一致）；其余为已知 profile id（snake / eratw）。
+   * 设置页据此渲染；切换时投递 setDialectProfile 请求 C# 写 Preferences，C# 推回 config 消息后同步回此值。
+   * 仅 MAUI bridge 宿主有值；纯 server/浏览器模式恒 ''（该分组不渲染）。
+   */
+  const dialectProfile = ref<string>('');
+  /**
+   * 方言兼容（MAUI 接入）：可选 profile id 列表——C# 权威数据（来自 config 消息的 dialectProfiles 字段，
+   * 由 C# 侧 DialectRegistry.KnownProfileIds 顺序给出，新增 fork 免改 UI）。设置页下拉选项源。
+   */
+  const dialectProfiles = ref<string[]>([]);
+  /**
    * A0 补充（真机无 adb）：app 内日志查看器——agent.log 内容（来自 getAgentLog 回复的 agentLog 消息）。
    * 设置页「查看日志」按钮触发读取；truncated 表示内容因超过 200K 字符被截断为尾部。
    */
@@ -1584,6 +1596,14 @@ export const useGameStore = defineStore('game', () => {
     if (payload.dimLockPolicy === 'auto' || payload.dimLockPolicy === 'nolock') {
       dimLockPolicy.value = payload.dimLockPolicy;
     }
+    // 方言兼容（MAUI 接入）：dialectProfile 仅接受字符串（'' = v24pure 也合法）；
+    // dialectProfiles 仅接受字符串数组——非法值忽略，与上方字段同款口径。
+    if (typeof payload.dialectProfile === 'string') {
+      dialectProfile.value = payload.dialectProfile;
+    }
+    if (Array.isArray(payload.dialectProfiles) && payload.dialectProfiles.every((p) => typeof p === 'string')) {
+      dialectProfiles.value = payload.dialectProfiles as string[];
+    }
   }
 
   /** HTTP 模式（ADR-0030）：GET /settings 拉全局设置权威值。失败静默（保持 fallback）。 */
@@ -1718,6 +1738,8 @@ export const useGameStore = defineStore('game', () => {
     safReadDegree,
     maxParallelErbFiles,
     dimLockPolicy,
+    dialectProfile,
+    dialectProfiles,
     agentLogContent,
     agentLogTruncated,
     fetchConfig,
