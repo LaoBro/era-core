@@ -40,6 +40,8 @@ vi.mock('../../composables/useVirtualScroll', () => ({
     endIndex: { value: 200 },
     totalHeight: { value: 1900 },
     offsetY: { value: 0 },
+    // 渲染窗口扩展后窗口位移改用 offsetOf(新 start)——mock 按 rowHeight 19 线性给出即可。
+    offsetOf: (i: number) => i * 19,
     isStickyToBottom: { value: true },
     adjustScrollTop: vi.fn(),
     scrollToBottom: vi.fn(),

@@ -14,6 +14,7 @@ import {
 } from '../lib/touchLayout';
 import { resolveResource } from '../lib/resourceResolver';
 import { clickToImagePixel, loadImageAndReadPixel, sortBgImages } from '../lib/imageLayout';
+import { neighborCover } from '../lib/imageCover';
 import SegmentRenderer from './SegmentRenderer.vue';
 import type { ButtonValue, SegmentImage, DisplayLine, DisplayEntry } from '../types/protocol';
 
@@ -290,19 +291,67 @@ usePinchZoom({
 });
 
 /**
- * 虚拟滚动可见行的切片——`game.displayState.lines.slice(startIndex, endIndex)`。
+ * 渲染窗口两端需为跨行图片扩展的行数——**只扫视口邻域**（lib/imageCover.ts 的 `neighborCover`）。
+ *
+ * 为什么需要它：图片 DOM 挂在锚定行 `.term-line` 内，靠 `overflow: visible` 把超出 1 行高的
+ * 部分画到相邻行上（SegmentRenderer 的 maskStyle/imageStyle）。虚拟滚动只渲染
+ * `lines.slice(start, end)`——锚定行一旦离开窗口，图片节点就被卸载，即使图片箱体
+ * 仍与视口相交也会整体消失。故按「窗口邻域里真实存在的图」把两端各扩若干行，
+ * 保证锚定行不因滚出 slice 范围而被卸载。
+ *
+ * 为什么不用「全局最大覆盖量」：全局口径下，几千行之外的一张大图会**恒定**把每一帧的窗口
+ * 两端各撑开 R 行（R = 最大图高 / 行高），即使视口附近一张图都没有；且维持它要每回合重扫
+ * 全量行（实测 5000 行 0.26ms / 20000 行 2.25ms）。邻域口径下无图邻域**零扩展**，
+ * 且每帧只扫邻域（约 0.02ms），O(N)/回合 归零。完备性论证与半径假设见 lib/imageCover.ts。
+ *
+ * 行数换算用**未缩放**的 `effectiveLineHeight`：图片几何与行高同乘 `effectiveScale`，
+ * 行数本就与缩放无关——用缩放后的 `effectiveRowHeight` 换算会在 scale>1 时少算行数（症状复现）。
+ */
+const coverSpan = computed(() =>
+  neighborCover(game.displayState.lines, {
+    start: vs.startIndex.value,
+    end: vs.endIndex.value,
+    rowHeightPx: effectiveLineHeight.value,
+    scale: game.effectiveScale,
+    offsetOf: vs.offsetOf,
+  }),
+);
+
+/** 扩展后的渲染起始行——在 useVirtualScroll 的 startIndex（含 overscan）基础上再上扩。 */
+const renderStart = computed(() =>
+  Math.max(0, vs.startIndex.value - coverSpan.value.backRows),
+);
+/** 扩展后的渲染结束行（不含）——下扩后钳制到 lines.length。 */
+const renderEnd = computed(() =>
+  Math.min(game.displayState.lines.length, vs.endIndex.value + coverSpan.value.fwdRows),
+);
+
+/**
+ * 虚拟滚动可见行的切片——`game.displayState.lines.slice(renderStart, renderEnd)`。
  *
  * v-for 渲染此切片而非全量 lines；每行 :key 用绝对索引 `startIndex + i`
  * （与原 lineIdx 语义一致——索引在两次全清之间稳定映射到"位置"，spec.md决策二）。
+ * 窗口两端按跨行图片覆盖量扩展（见上方 coverSpan），使锚定行留在窗口内。
  */
 const visibleLines = computed(() => {
-  const start = vs.startIndex.value;
-  const end = vs.endIndex.value;
+  const start = renderStart.value;
+  const end = renderEnd.value;
   return game.displayState.lines.slice(start, end).map((line, i) => ({
     line,
     absIdx: start + i,
   }));
 });
+
+/**
+ * 渲染窗口的 translateY——必须用**扩展后**起点 renderStart 的绝对偏移。
+ *
+ * 窗口是 `translateY(offsetY)` + 行在窗口内**自然流式**排布（每行高 = rowHeight + 该行
+ * 触控加高）。扩展起点上移了 coverSpan.backRows 行后，若仍用 `vs.offsetY`（= offsetOf(原 startIndex)）
+ * 定位，多出来的这些行会把可见行整体往下推——所以位移必须换成 `offsetOf(新 start)`：
+ * 多出来的行落在原窗口上方、可见行像素位置一格不动。无图 / 未扩展时 renderStart === vs.startIndex，
+ * `offsetOf` 与 `vs.offsetY` 严格相等，行为与扩展前逐字节一致。
+ */
+const windowOffsetY = computed(() => vs.offsetOf(renderStart.value));
 
 /**
  * 触控排版的横向热区外扩表——`绝对行号 → (entry 下标 → 左右外扩列数)`。
@@ -601,7 +650,7 @@ watch(() => game.inputInFlight, (inFlight) => {
     >
       <div
         class="term-virtual-window"
-        :style="{ transform: `translateY(${vs.offsetY.value}px)` }"
+        :style="{ transform: `translateY(${windowOffsetY}px)` }"
       >
         <div
           v-for="item in visibleLines"

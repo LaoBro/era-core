@@ -62,6 +62,14 @@ export interface VirtualScrollReturn {
   totalHeight: ComputedRef<number>;
   /** 可见区域 translateY 偏移（= startIndex * rowHeight） */
   offsetY: ComputedRef<number>;
+  /**
+   * 第 i 行顶部的绝对像素偏移（含其上方所有加高行的额外高度）。
+   *
+   * 供调用方在**自行扩展渲染窗口**（如跨行图片把窗口起点上扩若干行）后重新定位窗口：
+   * `translateY(offsetOf(新的 start))`，使可见行仍落在原像素位置。与内部 `offsetY` 同源，
+   * 不会因加高表 / 缩放而与账本失配。
+   */
+  offsetOf: (i: number) => number;
   /** 是否贴底——true 时新行自动跟随、点击推进允许；false 时翻看历史 */
   isStickyToBottom: Ref<boolean>;
   /** 程序化滚到底部 + 置 sticky=true */
@@ -398,6 +406,7 @@ export function useVirtualScroll(opts: VirtualScrollOptions): VirtualScrollRetur
     endIndex,
     totalHeight,
     offsetY,
+    offsetOf,
     isStickyToBottom,
     scrollToBottom,
     scrollToIndex,
