@@ -14,22 +14,68 @@ namespace MinorShift.Emuera.Server;
 /// 串行化 /session、/load-game、DELETE /session 三个会话变更操作与 WS 订阅的
 /// accept→re-check→subscribe 原子序列。
 ///
-/// 锁语义（与原 KestrelGameServer 一致）：
-/// - 本类内所有变更操作在 <c>_sessionLock</c>（SemaphoreSlim(1,1)）内完成；
-/// - <c>_session</c> 是 volatile，只读操作（/input、/snapshot 等）可无锁读；
-/// - <c>_sessionHub</c> 与 <c>_session</c> 同生命周期，仅在锁内赋值/置空；
-/// - 方法返回 outcome record 而非 IResult，测试可直接断言状态。
+/// <para><b>锁语义（issue-001 修正为双锁）</b>：</para>
+/// <list type="bullet">
+/// <item><c>_sessionLock</c>——只保护 <c>_session</c> / <c>_sessionHub</c> 两个字段的读写，
+/// 临界区为微秒级（发拆除请求 + 摘引用，不含任何等待）。</item>
+/// <item><c>_mutationGate</c>——串行化整个<b>变更操作</b>（拆除 → 有界等待旧循环 → 建会话），
+/// 跨秒级。<b>只读端点（/state /turn /input /snapshot /ws）不碰它</b>，
+/// 故拆除等待期间 server 仍可响应（spec 验收项）。</item>
+/// </list>
+///
+/// <para><b>为什么不一把锁走到底</b>：原实现把「同步 join 游戏循环」放在
+/// <c>_sessionLock</c> 内，而游戏循环可能正卡在长回合脚本里（无让路点），
+/// join 永不返回 → 锁永不释放 → 需该锁的端点全部无限阻塞，server 整体冻死。
+/// 拆成两把锁后：锁内只做原子摘除（立即让其他端点恢复），等待移到锁外并加上界。</para>
+///
+/// <para><b>新会话与旧循环仍保持串行</b>（spec 决策四）：进程内有 11 项全局静态在 scope
+/// 释放时被清（含非并发安全的普通字典），<c>GamePaths.Current</c> 亦为进程级单槽——
+/// 旧循环未退出就启动新循环会造成数据竞争。故超时后<b>不</b>建新会话，
+/// 而是把错误如实回给调用方，待旧循环自然退出后重试即可。</para>
+///
+/// <para><c>_session</c> 是 volatile，只读操作（/input、/snapshot 等）可无锁读；
+/// 方法返回 outcome record 而非 IResult，测试可直接断言状态。</para>
 /// </summary>
 internal sealed class SessionRegistry
 {
     private readonly SemaphoreSlim _sessionLock = new(1, 1);
+    private readonly SemaphoreSlim _mutationGate = new(1, 1);
     private volatile Session? _session;
     private OutputHub? _sessionHub;
+    /// <summary>
+    /// 已摘除但游戏循环尚未退出会话（issue-001）。
+    ///
+    /// 拆除超时后 <c>_session</c> 已是 null，但旧循环仍在运行且仍读 <see cref="GamePaths.Current"/>、
+    /// 仍持有 scope 静态。此字段让<b>后续</b>变更操作知道"还有个循环活着"——
+    /// 否则它们会看到 <c>_session == null</c> 以为无旧循环，直接建新会话，
+    /// 造成 spec 决策四禁止的静态竞争（新循环初始化清掉旧循环正在用的缓存）。
+    /// </summary>
+    private Session? _retiring;
     private readonly ITerminalSetup _terminalSetup;
     private readonly GameConfigService _configService;
     private readonly TimeSpan? _agentLease;
     /// <summary>会话级方言 profile id（实现票 25）——本 server 新建的所有会话共用。null = v24pure。</summary>
     private readonly string? _dialectProfileId;
+
+    /// <summary>
+    /// 拆除会话时等待游戏循环退出的上界。超时即返回明确失败（不再无限等待）。
+    /// 缺省读环境变量 <c>EMUERA_TEARDOWN_TIMEOUT_SECONDS</c>（同 <c>EMUERA_CONTROL_LEASE_SECONDS</c> 模式）。
+    /// 测试经构造参数注入更小的值。
+    /// </summary>
+    internal TimeSpan TeardownTimeout { get; init; } = ReadTeardownTimeout();
+
+    /// <summary>
+    /// 拆除等待上界的缺省值。取 5 秒：正常拆除（脚本停在等待输入）实测毫秒级，
+    /// 超时仅在脚本卡死时触发，故宁可宽松以免误伤正在慢退出的正常流程
+    /// （如启动期的数据库重建）。env 可覆盖。
+    /// </summary>
+    private static TimeSpan ReadTeardownTimeout()
+    {
+        var raw = Environment.GetEnvironmentVariable("EMUERA_TEARDOWN_TIMEOUT_SECONDS");
+        return int.TryParse(raw, out var seconds) && seconds > 0
+            ? TimeSpan.FromSeconds(seconds)
+            : TimeSpan.FromSeconds(5);
+    }
 
     public SessionRegistry(ITerminalSetup terminalSetup, GameConfigService configService, TimeSpan? agentLease = null, string? dialectProfileId = null)
     {
@@ -50,26 +96,52 @@ internal sealed class SessionRegistry
     /// </summary>
     public async Task<SessionCreateResult> CreateNewSessionAsync()
     {
-        await _sessionLock.WaitAsync();
+        await _mutationGate.WaitAsync();
         try
         {
-            // T-025 D4/D16：空闲态守卫——_session == null 表示尚未加载游戏（POST /load-game
-            // 成功才会建 session）。503 语义早于「已有活跃会话 409」判断。
-            if (_session == null)
-                return new SessionCreateResult(SessionCreateStatus.NoGameLoaded, null, default, null);
+            // 先确认上一轮拆除的旧循环已退出（拆除超时后 _session 已为 null，但循环可能仍活着）。
+            // 未退出则拒绝建会话——spec 决策四：静态隔离要求两者串行。
+            if (_retiring != null && !await AwaitTeardownAsync(null))
+                return new SessionCreateResult(SessionCreateStatus.PreviousSessionStillRunning, null, default, null);
 
-            if (!_session.HasEnded)
-                return new SessionCreateResult(SessionCreateStatus.Conflict, null, default, null);
+            Session? detached;
+            await _sessionLock.WaitAsync();
+            try
+            {
+                // T-025 D4/D16：空闲态守卫——_session == null 表示尚未加载游戏（POST /load-game
+                // 成功才会建 session）。503 语义早于「已有活跃会话 409」判断。
+                if (_session == null)
+                    return new SessionCreateResult(SessionCreateStatus.NoGameLoaded, null, default, null);
 
-            DestroySession("session_replaced");
+                if (!_session.HasEnded)
+                    return new SessionCreateResult(SessionCreateStatus.Conflict, null, default, null);
+
+                detached = DetachSessionLocked("session_replaced");
+            }
+            finally
+            {
+                _sessionLock.Release();
+            }
+
+            // 锁外有界等待：旧循环（此处应已结束）——超时则拒绝建新会话。
+            if (!await AwaitTeardownAsync(detached))
+                return new SessionCreateResult(SessionCreateStatus.PreviousSessionStillRunning, null, default, null);
 
             // issue 03：SessionRegistry 自持 OutputHub 引用，HttpSessionIO 只接 IOutputBroadcaster 抽象。
-            var session = CreateSessionCore(_configService.Current);
-            return new SessionCreateResult(SessionCreateStatus.Created, session.Id, session.CreatedAt, session.StateString);
+            await _sessionLock.WaitAsync();
+            try
+            {
+                var session = CreateSessionCore(_configService.Current);
+                return new SessionCreateResult(SessionCreateStatus.Created, session.Id, session.CreatedAt, session.StateString);
+            }
+            finally
+            {
+                _sessionLock.Release();
+            }
         }
         finally
         {
-            _sessionLock.Release();
+            _mutationGate.Release();
         }
     }
 
@@ -105,20 +177,44 @@ internal sealed class SessionRegistry
     /// </param>
     public async Task<SessionCreateResult> CreateMauiSessionAsync(ConfigData configData, bool fullDiffOnFirstTurn = true, string? dialectProfileId = null)
     {
-        await _sessionLock.WaitAsync();
+        await _mutationGate.WaitAsync();
         try
         {
-            if (_session is { HasEnded: false })
-                return new SessionCreateResult(SessionCreateStatus.Conflict, null, default, null);
+            // 同 CreateNewSessionAsync：旧循环未退出前不得建新会话。
+            if (_retiring != null && !await AwaitTeardownAsync(null))
+                return new SessionCreateResult(SessionCreateStatus.PreviousSessionStillRunning, null, default, null);
 
-            DestroySession("session_replaced");
+            Session? detached;
+            await _sessionLock.WaitAsync();
+            try
+            {
+                if (_session is { HasEnded: false })
+                    return new SessionCreateResult(SessionCreateStatus.Conflict, null, default, null);
 
-            var session = CreateSessionCore(configData, fullDiffOnFirstTurn, dialectProfileId);
-            return new SessionCreateResult(SessionCreateStatus.Created, session.Id, session.CreatedAt, session.StateString);
+                detached = DetachSessionLocked("session_replaced");
+            }
+            finally
+            {
+                _sessionLock.Release();
+            }
+
+            if (!await AwaitTeardownAsync(detached))
+                return new SessionCreateResult(SessionCreateStatus.PreviousSessionStillRunning, null, default, null);
+
+            await _sessionLock.WaitAsync();
+            try
+            {
+                var session = CreateSessionCore(configData, fullDiffOnFirstTurn, dialectProfileId);
+                return new SessionCreateResult(SessionCreateStatus.Created, session.Id, session.CreatedAt, session.StateString);
+            }
+            finally
+            {
+                _sessionLock.Release();
+            }
         }
         finally
         {
-            _sessionLock.Release();
+            _mutationGate.Release();
         }
     }
 
@@ -133,42 +229,65 @@ internal sealed class SessionRegistry
 
     public async Task<SessionDeleteResult> DeleteSessionAsync(ControlIdentity? identity)
     {
-        await _sessionLock.WaitAsync();
+        await _mutationGate.WaitAsync();
         try
         {
-            if (_session == null)
-                return new SessionDeleteResult(SessionDeleteStatus.NotFound);
-            if (identity.HasValue && !_session.HasEnded)
+            Session? detached;
+            await _sessionLock.WaitAsync();
+            try
             {
-                var gate = _session.Controller.CheckLifecycle(identity.Value, sessionEnded: false);
-                if (gate.Status != ControlGateStatus.Allowed)
-                    return new SessionDeleteResult(SessionDeleteStatus.ControlDenied, gate.Reason);
+                if (_session == null)
+                    return new SessionDeleteResult(SessionDeleteStatus.NotFound);
+                if (identity.HasValue && !_session.HasEnded)
+                {
+                    var gate = _session.Controller.CheckLifecycle(identity.Value, sessionEnded: false);
+                    if (gate.Status != ControlGateStatus.Allowed)
+                        return new SessionDeleteResult(SessionDeleteStatus.ControlDenied, gate.Reason);
+                }
+                detached = DetachSessionLocked("session_ended");
             }
-            DestroySession("session_ended");
+            finally
+            {
+                _sessionLock.Release();
+            }
+
+            // 锁外有界等待——issue-001 的核心：等待期间 server 仍可响应，
+            // 超时则回明确失败而非让调用方无限期等一个永不返回的 join。
+            if (!await AwaitTeardownAsync(detached))
+                return new SessionDeleteResult(SessionDeleteStatus.TeardownTimeout, "teardown_timeout");
+
             return new SessionDeleteResult(SessionDeleteStatus.Removed);
         }
         finally
         {
-            _sessionLock.Release();
+            _mutationGate.Release();
         }
     }
 
     /// <summary>
     /// POST /load-game（迁移自原 HandleLoadGameAsync）——原子重载游戏目录（issue 05）。
-    /// 全程序在 _sessionLock 内完成（spec L224-229）：
-    /// 1. 校验路径（拆旧前拦路径级错误）——GamePaths.Resolve + Validate，失败抛 GamePathValidationException
-    /// 2. dispose 旧 Session（若有）
-    /// 3. Preload.Clear()
-    /// 4. GamePaths.Resolve 已在步骤 1 完成——GamePaths.Current 指向新目录
-    /// 5. 重建 ConfigData：GameConfigService.Reload(exeDir)——LoadConfig + SetCurrent + 字段替换
-    /// 6. Preload.Load 由新 Session 的 ConsoleStateManager.Initialize 异步执行（issue 11 D2）
-    /// 7. 建新 Session（传入新 ConfigData）
-    /// 8. 返 Success(sessionId, state, gameDir)
     ///
-    /// 错误契约（spec L229）：
-    /// - 路径级错误（DIR_NOT_FOUND / MISSING_CSV / MISSING_ERB）→ <see cref="LoadGameStatus.PathError"/>
-    /// - 加载级失败（ConfigData.LoadConfig 等同步步骤异常、未预期异常）→ <see cref="LoadGameStatus.LoadFailed"/>
-    ///   异步阶段（Preload.Load / Process.Initialize）失败由 ConsoleStateManager 置 State=Error。
+    /// <para><b>issue-001 重排后的顺序</b>（关键：不让旧循环对着被改写的 <see cref="GamePaths.Current"/> 运行）：</para>
+    /// <list type="number">
+    /// <item>控制权门禁（锁内，微秒级）</item>
+    /// <item><see cref="GamePaths.ResolvePreview"/> + <c>Validate</c> —— <b>不写</b> <c>GamePaths.Current</c>，
+    /// 故校验失败时 server 状态零改动（原实现需回滚 Current，见下）</item>
+    /// <item>锁内发拆除请求 + 摘引用（微秒级）</item>
+    /// <item><b>锁外</b>有界等待旧游戏循环退出——等待期间其他端点可响应</li>
+    /// <item>超时 → 回 <see cref="LoadGameStatus.PreviousSessionStillRunning"/>，
+    /// <b>不</b>建新会话（守住静态隔离不变量）；此时才 <see cref="GamePaths.Resolve"/> 提交新路径</item>
+    /// <item><c>Preload.Clear()</c> + 重建 <c>ConfigData</c> + 建新 Session</li>
+    /// </list>
+    ///
+    /// <para>第2 步用预览式校验是必需的：若沿用 <c>Resolve</c>（会写 <c>Current</c>），
+    /// 第 4 步超时时旧循环仍在运行，而它读的正是 <c>Current</c>（<c>Program.ErbDir</c> /
+    /// <c>ConsoleStateManager</c> / <c>Process</c> / <c>SafCompat</c> 等）——
+    /// 会去新游戏目录找 ERB/CSV。原实现靠"join 永不返回所以走不到后面"侥幸躲过该形态。</para>
+    ///
+    /// <para>错误契约：路径级错误（DIR_NOT_FOUND / MISSING_CSV / MISSING_ERB）→
+    /// <see cref="LoadGameStatus.PathError"/>；加载级失败→ <see cref="LoadGameStatus.LoadFailed"/>；
+    /// 旧循环未退出 → <see cref="LoadGameStatus.PreviousSessionStillRunning"/>。
+    /// 异步阶段（Preload.Load / Process.Initialize）失败由 ConsoleStateManager 置 State=Error。</para>
     /// </summary>
     public Task<LoadGameResult> ReplaceForLoadGameAsync(string gameDir)
     {
@@ -177,59 +296,71 @@ internal sealed class SessionRegistry
 
     public async Task<LoadGameResult> ReplaceForLoadGameAsync(string gameDir, ControlIdentity? identity)
     {
-        await _sessionLock.WaitAsync();
+        await _mutationGate.WaitAsync();
         try
         {
-            if (_session is { HasEnded: false } activeSession && identity.HasValue)
-            {
-                var gate = activeSession.Controller.CheckLifecycle(identity.Value, sessionEnded: false);
-                if (gate.Status != ControlGateStatus.Allowed)
-                    return LoadGameResult.ControlDenied(gate.Reason);
-            }
-
-            // 1. 校验路径——GamePathValidationException 转 PathError。
-            //
-            // 注意：GamePaths.Resolve(gameDir) 内部会先把静态 Current 指向新 paths 再返回。
-            // 若 Validate 抛异常，Current 已被污染——spec L229 要求"拆旧前拦路径级错误"，
-            // 即 server 状态不应被失败的 /load-game 改动。故在 catch 内回滚 Current 到旧值
-            // （旧值 = 进入 /load-game 前的 GamePaths.Current，可能为 null 启动期场景）。
+            Session? detached;
+            // paths 需跨两个锁块使用（校验在锁内、提交在锁外），故声明在此处。
             GamePaths paths;
-            GamePaths? previousPaths = GamePaths.Current;
+            await _sessionLock.WaitAsync();
             try
             {
-                paths = GamePaths.Resolve(gameDir, new FileSystemGameDirAccessor());
-                paths.Validate();
-            }
-            catch (GamePathValidationException ex)
-            {
-                // 回滚 Current 到校验前的值——避免 GET /state 返回被拒绝的非法路径
-                if (previousPaths != null)
+                if (_session is { HasEnded: false } activeSession && identity.HasValue)
                 {
-                    GamePaths.SetCurrent(previousPaths);
+                    var gate = activeSession.Controller.CheckLifecycle(identity.Value, sessionEnded: false);
+                    if (gate.Status != ControlGateStatus.Allowed)
+                        return LoadGameResult.ControlDenied(gate.Reason);
                 }
-                return LoadGameResult.PathError(ex.Code, ex.Message);
+
+                // 1. 预览式路径校验——不污染 GamePaths.Current，失败无需回滚。
+                try
+                {
+                    paths = GamePaths.ResolvePreview(gameDir, new FileSystemGameDirAccessor());
+                    paths.Validate();
+                }
+                catch (GamePathValidationException ex)
+                {
+                    return LoadGameResult.PathError(ex.Code, ex.Message);
+                }
+
+                // 2. 锁内拆除：发请求 + 摘引用（微秒级，不等游戏循环）
+                detached = DetachSessionLocked("session_replaced");
+            }
+            finally
+            {
+                _sessionLock.Release();
             }
 
-            // 2. dispose 旧 Session（若有）——Dispose 等待旧 GameLoopAsync 退出，scope 自动清理
-            DestroySession("session_replaced");
+            // 3. 锁外有界等待旧循环退出——server 此刻仍可响应。
+            if (!await AwaitTeardownAsync(detached))
+                return LoadGameResult.PreviousStillRunning();
 
-            // 3. Preload.Clear —— 清空旧 ERB/CSV 文件缓存
-            Preload.Clear();
+            await _sessionLock.WaitAsync();
+            try
+            {
+                // 4. 旧循环确已退出，此刻才提交新路径（原 Resolve 的副作用）。
+                GamePaths.Resolve(gameDir, new FileSystemGameDirAccessor());
 
-            // 4. GamePaths.Resolve 已在步骤 1 完成——GamePaths.Current 指向新目录
+                // 5. 清空旧 ERB/CSV 文件缓存
+                Preload.Clear();
 
-            // 5. 重建 ConfigData 并 SetCurrent（HTTP 线程 AsyncLocal——主要供新 Session 异步
-            //    Preload.Load 间接读）。注意：SetCurrent 与下方 new Session 必须同一 async 流。
-            var newConfig = _configService.Reload(paths.ExeDir);
+                // 6. 重建 ConfigData 并 SetCurrent（HTTP 线程 AsyncLocal——主要供新 Session 异步
+                //    Preload.Load 间接读）。注意：SetCurrent 与下方 new Session 必须同一 async 流。
+                var newConfig = _configService.Reload(paths.ExeDir);
 
-            // 6. Preload.Load 已下沉到 ConsoleStateManager.Initialize（issue 11 D2）——
-            //    新 Session.Start() 排 GameLoopAsync 到独立 Task，_loading=true 让 StateString 返 "Loading"。
+                // 7. Preload.Load 已下沉到 ConsoleStateManager.Initialize（issue 11 D2）——
+                //    新 Session.Start() 排 GameLoopAsync 到独立 Task，_loading=true 让 StateString 返 "Loading"。
 
-            // 7. 建新 Session——GameLoopAsync 内 GameLoopComposer.OpenScope(_configData) 注入新配置
-            var newSession = CreateSessionCore(newConfig);
+                // 8. 建新 Session——GameLoopAsync 内 GameLoopComposer.OpenScope(_configData) 注入新配置
+                var newSession = CreateSessionCore(newConfig);
 
-            // 8. Success——state="Loading"（issue 11 D1 落地后自动生效）
-            return LoadGameResult.Success(newSession.Id, newSession.StateString, paths.ExeDir);
+                // 9. Success——state="Loading"（issue 11 D1 落地后自动生效）
+                return LoadGameResult.Success(newSession.Id, newSession.StateString, paths.ExeDir);
+            }
+            finally
+            {
+                _sessionLock.Release();
+            }
         }
         catch (Exception ex)
         {
@@ -240,7 +371,7 @@ internal sealed class SessionRegistry
         }
         finally
         {
-            _sessionLock.Release();
+            _mutationGate.Release();
         }
     }
 
@@ -278,17 +409,45 @@ internal sealed class SessionRegistry
         }
     }
 
-    /// <summary>整体释放（服务器关闭，迁移自原 Dispose 的 session 段）——先 join 游戏循环再释放。</summary>
+    /// <summary>
+    /// 整体释放（服务器关闭）——同 <see cref="DeleteSessionAsync"/> 的两段式拆除。
+    /// <para>
+    /// 关停路径上的等待<b>不设上界</b>：进程即将退出，截断等待只会留下未清理的
+    /// 全局静态与半初始化状态（spec 决策二：不硬杀、也不半途放弃清理）。
+    /// 真正的风险（server 带病存活、需继续服务）只出现在变更操作上，那些走有界路径。
+    /// </para>
+    /// </summary>
     public void DisposeAll()
     {
-        _sessionLock.Wait();
+        _mutationGate.Wait();
         try
         {
-            DestroySession("session_ended");
+            Session? detached;
+            _sessionLock.Wait();
+            try
+            {
+                detached = DetachSessionLocked("session_ended");
+            }
+            finally
+            {
+                _sessionLock.Release();
+            }
+            if (detached != null)
+            {
+                // 无上界：进程退出前必须让scope 清理完整跑完。
+                detached.Dispose();
+            }
+            // 上一轮拆除超时留下的旧循环同样要等干净——否则进程退出时它仍在读
+            // 已被 Clear 的静态，而 App 域卸载会与之竞争。
+            if (_retiring != null)
+            {
+                _retiring.Dispose();
+                _retiring = null;
+            }
         }
         finally
         {
-            _sessionLock.Release();
+            _mutationGate.Release();
         }
     }
 
@@ -314,16 +473,45 @@ internal sealed class SessionRegistry
     }
 
     /// <summary>
-    /// 销毁当前 session（若有）：Dispose（join 游戏循环，scope 自动清理）并置空 _session/_sessionHub。
-    /// 三态同生命周期，仅应在持 _sessionLock 时调用。
+    /// 锁内拆除：发拆除请求 + 摘除 <c>_session</c>/<c>_sessionHub</c>，返回被摘下的会话。
+    /// <b>不等待游戏循环</b>——调用方必须在锁外做有界等待（<see cref="AwaitTeardownAsync"/>）。
+    /// 临界区内不含任何阻塞，故其他端点立即恢复可响应。
     /// </summary>
-    private void DestroySession(string reason = "session_ended")
+    private Session? DetachSessionLocked(string reason = "session_ended")
     {
         if (_session is { HasEnded: false } session)
             session.Controller.End(reason);
-        _session?.Dispose();
+        var detached = _session;
+        // 顺序要点：先摘引用，后发拆除请求。反过来的话，摘引用与请求之间若有读端点
+        // 拿到 null，会漏掉"会话正在拆除"这一事实并误判为"未加载游戏"。
         _session = null;
         _sessionHub = null;
+        detached?.RequestTeardown();
+        // 循环仍活着才登记为 _retiring：已结束的会话（如刚 QUIT）不影响后续建会话。
+        if (detached is { HasEnded: false })
+            _retiring = detached;
+        return detached;
+    }
+
+    /// <summary>
+    /// 锁外有界等待被摘下的游戏循环退出。返回 <c>false</c> 表示超时（旧循环仍在跑）。
+    ///
+    /// 超时后调用方<b>不得</b>启动新会话——见类型注释的「串行」段。
+    /// 本方法可在已持有 <c>_mutationGate</c> 时调用（它不碰任何本类的锁）。
+    /// </summary>
+    private async Task<bool> AwaitTeardownAsync(Session? detached)
+    {
+        var target = detached ?? _retiring;
+        if (target == null)
+            return true;
+
+        if (!await target.WaitForLoopExitAsync(TeardownTimeout).ConfigureAwait(false))
+            return false;
+
+        // 确实退出了才清登记——后续变更操作可正常建会话。
+        if (ReferenceEquals(_retiring, target))
+            _retiring = null;
+        return true;
     }
 }
 
@@ -336,6 +524,8 @@ internal enum SessionCreateStatus
     Conflict,
     /// <summary>已结束 session 重建成功 → HTTP 201。</summary>
     Created,
+    /// <summary>上一局的游戏循环仍在运行（拆除超时）→ HTTP 503。待其退出后重试。</summary>
+    PreviousSessionStillRunning,
 }
 
 /// <summary>POST /session 结果。</summary>
@@ -350,6 +540,8 @@ internal enum SessionDeleteStatus
     NotFound,
     /// <summary>活跃会话由其他 Controller 持有 → HTTP 409。</summary>
     ControlDenied,
+    /// <summary>拆除超时：游戏循环仍在长回合中执行 → HTTP 503（issue-001）。</summary>
+    TeardownTimeout,
 }
 
 /// <summary>DELETE /session 结果。</summary>
@@ -366,6 +558,8 @@ internal enum LoadGameStatus
     Success,
     /// <summary>活跃会话由其他 Controller 持有 → HTTP 409。</summary>
     ControlDenied,
+    /// <summary>旧游戏循环仍在运行（拆除超时）→ HTTP 503（issue-001）。</summary>
+    PreviousSessionStillRunning,
 }
 
 /// <summary>POST /load-game 结果。</summary>
@@ -374,6 +568,8 @@ internal readonly record struct LoadGameResult(LoadGameStatus Status, string? Co
     public static LoadGameResult ControlDenied(string reason) => new(LoadGameStatus.ControlDenied, reason, "Control is held by another controller", null, null, null);
     public static LoadGameResult PathError(string code, string message) => new(LoadGameStatus.PathError, code, message, null, null, null);
     public static LoadGameResult LoadFailed(string message) => new(LoadGameStatus.LoadFailed, null, message, null, null, null);
+    /// <summary>旧循环未退出——不建新会话（spec 决策四：全局静态隔离要求两者串行）。</summary>
+    public static LoadGameResult PreviousStillRunning() => new(LoadGameStatus.PreviousSessionStillRunning, "SESSION_STILL_RUNNING", "The previous game loop is still running a long turn. Wait for it to finish, then retry.", null, null, null);
     public static LoadGameResult Success(string sessionId, string state, string gameDir) => new(LoadGameStatus.Success, null, null, sessionId, state, gameDir);
 }
 

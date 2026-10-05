@@ -5,8 +5,14 @@ HTML_PRINT "<img src='Face_1'>"
 HTML_PRINT "<img src='Face_2'>"
 PRINTL [0] Hello
 PRINTL [1] Quit
+PRINTL [2] Long loop
 INPUT
-IF RESULT == 0
+IF RESULT == 2
+	; issue-001：长回合入口（测试专用分支，既有测试只发 0/1，不受影响）。
+	; 8 秒：须显著长于测试注入的拆除超时（2s）+ 断言窗口，否则测不出挂起。
+	; 同时足够短，使测试能在有界时间内等旧循环自然退出完成清理。
+	CALL TEST_LONGLOOP(8000)
+ELSEIF RESULT == 0
 	PRINTFORML You entered: {RESULT}
 	PRINTL Select again:
 	PRINTL [0] World

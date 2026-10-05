@@ -74,6 +74,8 @@ internal sealed class Session : IDisposable
     /// <summary>turn 投递深模块：独占长轮询/抢占/final-turn-once 竞态不变式（含消费侧锁）。</summary>
     private readonly TurnDelivery _delivery;
     private bool _disposed;
+    /// <summary>Controller 已释放（<see cref="ReleaseController"/> 幂等守卫）。</summary>
+    private bool _controllerReleased;
     /// <summary>
     /// Issue 11 D1：加载中标志——Session.Start() 设 true，runLoop 回调首行设 false。
     /// volatile：HTTP 线程（/load-game / GET /state / GET /snapshot）读、游戏循环 Task 线程写。
@@ -253,6 +255,28 @@ internal sealed class Session : IDisposable
 
     public void Dispose()
     {
+        // 保留 IDisposable 契约：拆除请求 + 无上界等待。
+        // 内部复用有界等待的实现（Timeout.InfiniteTimeSpan 即无上界）。
+        RequestTeardown();
+        WaitForLoopExitAsync(Timeout.InfiniteTimeSpan).GetAwaiter().GetResult();
+        ReleaseController();
+    }
+
+    /// <summary>
+    /// 发出拆除请求并**立即返回**（不等待游戏循环）。
+    ///
+    /// issue-001：原 <see cref="Dispose"/> 内含同步 join（<c>_gameTask.GetAwaiter().GetResult()</c>），
+    /// 而 join 发生在 <c>SessionRegistry</c> 的会话锁内。游戏循环线程若正阻塞在长回合脚本里
+    /// （无 AWAIT 等让路点，见 test_game/erb/LONGLOOP.ERB），join 永不返回且锁一直被占——
+    /// 所有需要该锁的端点全部无限阻塞，server 整体失去响应。
+    ///
+    /// 拆成两段的意义：调用方先在锁内做「发拆除请求 + 摘引用」（本方法，微秒级），
+    /// 再在锁外做有界等待（<see cref="WaitForLoopExitAsync"/>），从而让其他端点恢复可响应。
+    ///
+    /// 幂等：重复调用只生效一次。
+    /// </summary>
+    public void RequestTeardown()
+    {
         if (_disposed)
             return;
 
@@ -262,18 +286,67 @@ internal sealed class Session : IDisposable
         _cts.Cancel();
         _protocol?.Stop();
         _console?.Dispose();
+    }
 
-        // 等待游戏循环（含其 finally 中的清理）彻底结束，避免旧 loop 仍在使用 scope 时
-        // 提前释放/复用。scope 在 GameLoopAsync 的 using 块退出时自动 Dispose，
-        // join 确保游戏循环一定先退出，scope 释放时无 dangling 读取。
-        try
+    /// <summary>
+    /// 有界等待游戏循环（含其 finally 中的清理与 scope 释放）彻底结束。
+    ///
+    /// 返回 <c>true</c> = 游戏循环已退出（<paramref name="timeout"/> 内）；
+    /// <c>false</c> = 超时，循环仍在运行 —— 调用方<b>不得</b>在此状态下启动新游戏循环
+    /// （旧循环仍会读 <see cref="GamePaths.Current"/> 等进程级静态，而新循环初始化会清掉它们）。
+    ///
+    /// 超时<b>不</b>抛异常也不硬杀线程：脚本层当前无中断检查点，唯一的收敛途径是让它自己跑完。
+    /// 失败以返回值表达，调用方据此回明确错误（spec 决策一/二）。
+    /// </summary>
+    public async Task<bool> WaitForLoopExitAsync(TimeSpan timeout)
+    {
+        var task = _gameTask;
+        if (task == null || task.IsCompleted)
+            return true;
+
+        if (timeout == Timeout.InfiniteTimeSpan)
         {
-            _gameTask?.GetAwaiter().GetResult();
+            // 无上界：保留原 Dispose 语义（含游戏循环的异常传播与记录）
+            try
+            {
+                await task.ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                AgentLog.Instance.Write("session game loop ended with error during dispose: " + ex);
+            }
+            return true;
         }
-        catch (Exception ex)
+
+        // 有上界：Task.WhenAny 而非 WaitAsync —— 后者在超时后抛
+        // OperationCanceledException/TimeoutException，前者只需一个 bool。
+        var finished = await Task.WhenAny(task, Task.Delay(timeout)).ConfigureAwait(false);
+        if (finished == task)
         {
-            AgentLog.Instance.Write("session game loop ended with error during dispose: " + ex);
+            // 已退出：观察其异常，避免未观察异常在 continuation 触发。
+            try
+            {
+                await task.ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                AgentLog.Instance.Write("session game loop ended with error during teardown: " + ex);
+            }
+            return true;
         }
+
+        AgentLog.Instance.Write(
+            $"session game loop did not exit within {timeout.TotalSeconds:F1}s; " +
+            "a long-running turn is still executing. New session creation is refused until it exits.");
+        return false;
+    }
+
+    /// <summary>游戏循环已确认退出后释放控制权。超时路径下不调用——控制器状态需留给仍存活的循环。</summary>
+    private void ReleaseController()
+    {
+        if (_controllerReleased)
+            return;
+        _controllerReleased = true;
         Controller.Dispose();
     }
 

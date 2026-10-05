@@ -48,10 +48,24 @@ internal sealed class GamePaths
 
     public static GamePaths Resolve(string? exeDirArg, IGameDirAccessor dirAccessor)
     {
+        var paths = ResolvePreview(exeDirArg, dirAccessor);
+        Current = paths;
+        return paths;
+    }
+
+    /// <summary>
+    /// 只构造并可随后 <see cref="Validate"/>，**不写** <see cref="Current"/>。
+    ///
+    /// issue-001：/load-game 需在「拆旧会话」之前完成路径校验（拆旧前拦路径级错误），
+    /// 而 <see cref="Resolve"/> 会把 <see cref="Current"/> 指向新目录。旧游戏循环仍在运行时
+    /// （拆除超时、尚未退出）读到被改写的 <see cref="Current"/> 会去新目录找 ERB/CSV——
+    /// 故校验阶段必须用本方法，<see cref="Resolve"/> 推迟到旧循环确实退出之后再提交。
+    /// </summary>
+    public static GamePaths ResolvePreview(string? exeDirArg, IGameDirAccessor dirAccessor)
+    {
         var baseDirectory = exeDirArg ?? DetectDefault();
         var paths = new GamePaths(baseDirectory, dirAccessor);
         paths.DirAccessor = dirAccessor;
-        Current = paths;
         return paths;
     }
 

@@ -58,6 +58,9 @@ internal sealed class GameServerProtocol
         {
             SessionCreateStatus.NoGameLoaded => NoGameLoaded(),
             SessionCreateStatus.Conflict => Json(new JsonObject { ["error"] = "A session is already active" }, 409),
+            // issue-001：旧循环仍在长回合中运行 → 503，待其退出后重试。
+            SessionCreateStatus.PreviousSessionStillRunning => ErrorResult("SESSION_STILL_RUNNING",
+                "The previous game loop is still running a long turn. Wait for it to finish, then retry.", 503),
             _ => Json(new JsonObject { ["sessionId"] = result.SessionId, ["createdAt"] = result.CreatedAt, ["state"] = result.State }, 201),
         };
     }
@@ -319,6 +322,10 @@ internal sealed class GameServerProtocol
         {
             SessionDeleteStatus.Removed => Json(new JsonObject { ["removed"] = true }, 200),
             SessionDeleteStatus.ControlDenied => ControlErrorResult(result.Reason ?? "CONTROL_NOT_CONTROLLER", "Only the current Controller may change the session", _sessions.CurrentSession),
+            // issue-001：游戏循环仍在长回合中执行，拆除未完成。回 503 而非挂死——
+            // 调用方待旧循环退出后重试即可（错误文案自带这一指引）。
+            SessionDeleteStatus.TeardownTimeout => ErrorResult("SESSION_STILL_RUNNING",
+                "The game loop is still running a long turn; the session was not torn down. Wait for it to finish, then retry.", 503),
             _ => Json(new JsonObject { ["removed"] = false }, 404),
         };
     }
@@ -336,6 +343,10 @@ internal sealed class GameServerProtocol
                 new JsonObject { ["error"] = new JsonObject { ["code"] = "LOAD_FAILED", ["message"] = result.Message } },
                 500),
             LoadGameStatus.ControlDenied => ControlErrorResult(result.Code ?? "CONTROL_NOT_CONTROLLER", result.Message ?? "Only the current Controller may change the session", _sessions.CurrentSession),
+            // issue-001：旧循环未退出 → 不建新会话（守住全局静态隔离），回 503 + 可操作文案。
+            LoadGameStatus.PreviousSessionStillRunning => Json(
+                new JsonObject { ["error"] = new JsonObject { ["code"] = result.Code, ["message"] = result.Message } },
+                503),
             _ => Json(new JsonObject
             {
                 ["sessionId"] = result.SessionId,
