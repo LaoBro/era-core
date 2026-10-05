@@ -11,34 +11,42 @@ namespace MinorShift.Emuera.Tests;
 /// issue-001：会话拆除的有界失败 —— 长回合进行中拆除/重建会话的行为。
 ///
 /// <para><b>构造（最高接缝：真实脚本 + 真实会话生命周期）</b>：
-/// test_game 的 @SYSTEM_TITLE 分支 [2] 进入 @TEST_LONGLOOP——一个墙钟有界的
-/// 纯计算循环，循环体内无 AWAIT / 无 PRINT。该形状等价于真实故障站点
-/// （eraTW TITLE.ERB @BADAPPLE：6573 轮 LOADTEXT + HTML_PRINT，同为单回合内
-/// 长时间同步执行），因此能踩中「游戏循环线程被长时间占用 → 拆除方等待永不返回」
-/// 这条路径。</para>
+/// 见本文件末尾的「构造口径变更（issue-002 之后）」——
+/// 现用 test_game 的 <c>@SYSTEM_TITLE</c> 分支 <c>[3]</c> 进入
+/// <c>@TEST_AWAITBLOCK</c>：等待发生在<b>单条指令内部</b>（依赖 Thread.Sleep 的等待），
+/// 脚本层的中断检查点无从生效，因此是唯一还能触发「拆除等待超时」的脚本。</para>
 ///
 /// <para><b>防假绿（spec Testing Decisions）</b>：本测试先于生产代码改动落地，
 /// 并已验证在改动前确实失败（拆除在 6s 窗口内不返回）。</para>
 ///
-/// <para><b>测量纪律</b>：所有拆除/重载调用都经 <c>Task.Run</c> 包裹。原因：
+/// <para><b>测量纪律</b>（略，见下方「构造口径变更」）：
+/// 所有拆除/重载调用都经 <c>Task.Run</c> 包裹。原因：
 /// <c>DeleteSessionAsync</c> 内首行<code>await _sessionLock.WaitAsync()</code>
 /// 在锁空闲时是已完成 task，await 不挂起 → 整个方法（含其后的所有等待）同步跑在
 /// 调用线程上。若直接在测试线程调用，耗时会消耗在「拿到 Task 之前」，
 /// 使 <c>Task.WhenAny</c> 拿到已完成 task 而假绿（实测已踩过一次）。</para>
+///
+/// <para><b>构造口径变更（issue-002 之后，改本文件前必读）</b>：本测试原本用菜单 <c>[2]</c>
+/// 的 <c>@TEST_LONGLOOP</c>（纯计算长循环）。issue-002 落地后脚本层有了每条指令前的中断
+/// 检查点，该枝能被立即中断，<b>不再触发超时路径</b> —— 三个用例会全部变绿但测的是另一件事。
+/// 因此改用菜单 <c>[3]</c> 的 <c>@TEST_AWAITBLOCK</c>：等待发生在单条指令内部
+/// （依赖 Thread.Sleep 的等待，见 <c>erb/AWAITBLOCK.ERB</c> 文件头），脚本层检查点无从生效，
+/// 是唯一还能触发拆除超时的脚本。可中断那一面的验收在
+/// <see cref="ScriptInterruptionTests"/>。</para>
 /// </summary>
 [Collection("ServerState")]
 public class SessionTeardownTimeoutTests
 {
-    /// <summary>测试注入的拆除超时。须显著小于 @TEST_LONGLOOP 的 8 秒，否则测不出超时。</summary>
+    /// <summary>测试注入的拆除超时。须显著小于 @TEST_AWAITBLOCK 的等待时长（6 秒），否则测不出超时。</summary>
     private static readonly TimeSpan TeardownTimeout = TimeSpan.FromSeconds(2);
 
     /// <summary>
     /// 拆除/重载的断言窗口。须大于 <see cref="TeardownTimeout"/>（超时路径要等满上界才返回）
-    /// 且小于 8 秒（否则旧循环自然结束，测不出超时）。
+    /// 且小于 @TEST_AWAITBLOCK 的等待时长（6 秒，否则旧循环自然结束，测不出超时）。
     /// </summary>
     private static readonly TimeSpan AssertWindow = TimeSpan.FromSeconds(6);
 
-    /// <summary>等旧循环自然退出（@TEST_LONGLOOP 墙钟 8 秒有界）——供测试清理，避免残留循环污染同 collection 的后续测试。</summary>
+    /// <summary>等旧循环自然退出（@TEST_AWAITBLOCK 墙钟有界）——供测试清理，避免残留循环污染同 collection 的后续测试。</summary>
     private static readonly TimeSpan LoopExitWindow = TimeSpan.FromSeconds(30);
 
     private static SessionRegistry CreateRegistry()
@@ -61,15 +69,21 @@ public class SessionTeardownTimeoutTests
         return session;
     }
 
-    /// <summary>注入输入 [2] 并等脚本进入 @TEST_LONGLOOP（State 由 WaitInput 回到 Running）。</summary>
-    private static async Task EnterLongLoopAsync(Session session)
+    /// <summary>
+    /// 注入输入 <c>3</c> 并等脚本进入 @TEST_AWAITBLOCK 的等待窗口。
+    ///
+    /// 判据是 <c>Sleep</c> 而非 <c>Running</c>：该等待把 State 置为 Sleep
+    /// （<c>ConsoleStateManager.Await</c>），这正是它「等待期间不触发回合边界」
+    /// 的表现，也是脚本层检查点无从插手的原因。
+    /// </summary>
+    private static async Task EnterAwaitBlockAsync(Session session)
     {
-        session.IO.EnqueueInput("{\"type\":\"input\",\"value\":\"2\"}");
+        session.IO.EnqueueInput("{\"type\":\"input\",\"value\":\"3\"}");
 
         var deadline = DateTime.UtcNow.AddSeconds(15);
-        while (DateTime.UtcNow < deadline && session.StateString != "Running")
+        while (DateTime.UtcNow < deadline && session.StateString != "Sleep")
             await Task.Delay(20);
-        Assert.Equal("Running", session.StateString);
+        Assert.Equal("Sleep", session.StateString);
     }
 
     /// <summary>
@@ -109,7 +123,7 @@ public class SessionTeardownTimeoutTests
         try
         {
             session = await StartAtTitleAsync(registry);
-            await EnterLongLoopAsync(session);
+            await EnterAwaitBlockAsync(session);
 
             var watch = Stopwatch.StartNew();
             var deleteTask = Task.Run(async () => await registry.DeleteSessionAsync());
@@ -143,7 +157,7 @@ public class SessionTeardownTimeoutTests
         try
         {
             session = await StartAtTitleAsync(registry);
-            await EnterLongLoopAsync(session);
+            await EnterAwaitBlockAsync(session);
 
             // 首次拆除：有界失败。
             var firstDelete = Task.Run(async () => await registry.DeleteSessionAsync());
@@ -186,7 +200,7 @@ public class SessionTeardownTimeoutTests
         try
         {
             session = await StartAtTitleAsync(registry);
-            await EnterLongLoopAsync(session);
+            await EnterAwaitBlockAsync(session);
 
             // 拆除在后台进行中（尚未返回）。
             var deleteTask = Task.Run(async () => await registry.DeleteSessionAsync());

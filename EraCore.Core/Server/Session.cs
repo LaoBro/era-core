@@ -283,6 +283,10 @@ internal sealed class Session : IDisposable
         _disposed = true;
         // 会话拆除交 TurnDelivery（内部 End(session_ended) + Close[即 _io.Close]，保留 Controller 归属权）
         _delivery.Dispose();
+        // issue-002：把停止信号送达脚本层 —— 此前没有任何一步触及脚本的运行判据，
+        // 脚本唯一的出口是它自己跑到 QUIT/ERROR，拆除只能干等。
+        // 发出后 IsRunning 恒假，脚本在下一个指令边界停下（ScriptProc.Run 的循环体首部）。
+        _console?.RequestStop();
         _cts.Cancel();
         _protocol?.Stop();
         _console?.Dispose();
@@ -295,7 +299,9 @@ internal sealed class Session : IDisposable
     /// <c>false</c> = 超时，循环仍在运行 —— 调用方<b>不得</b>在此状态下启动新游戏循环
     /// （旧循环仍会读 <see cref="GamePaths.Current"/> 等进程级静态，而新循环初始化会清掉它们）。
     ///
-    /// 超时<b>不</b>抛异常也不硬杀线程：脚本层当前无中断检查点，唯一的收敛途径是让它自己跑完。
+    /// 超时<b>不</b>抛异常也不硬杀线程：issue-002 之后脚本层已有中断检查点，绝大多数长回合
+    /// 会在下一个指令边界自行收敛；仍会超时的情形是等待发生在<b>单条指令内部</b>
+    /// （例如依赖 Thread.Sleep 的等待），此时除了让它跑完别无他法。
     /// 失败以返回值表达，调用方据此回明确错误（spec 决策一/二）。
     /// </summary>
     public async Task<bool> WaitForLoopExitAsync(TimeSpan timeout)

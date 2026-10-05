@@ -48,6 +48,24 @@ internal sealed class ConsoleStateData
     internal InputRequest? inputReq;
     internal GameProcProcess? process;
     internal bool isTimeout;
+    /// <summary>
+    /// issue-002：会话拆除请求下发到脚本层的「停止执行」标志。
+    ///
+    /// <b>为什么不直接把 <see cref="State"/> 置成 Quit</b>：ConsoleState 是显示/输入状态机，
+    /// Quit/Error/WaitInput/Sleep 各自都有既有语义与消费者；而「停止执行」是一条执行信号。
+    /// 混进 State 会被既有回填逻辑复活 —— <see cref="ConsoleStateManager.Await"/> 睡醒后无条件
+    /// 把 State 置回 Running，<c>EmueraConsole.RunEmueraProgram</c> 入口也无条件置 Running。
+    /// 与之分开后，停止是一次性的：一旦置位，<c>IsRunning</c> 恒假，直到下一次会话（新
+    /// <c>ConsoleStateData</c> 实例）为止。
+    ///
+    /// volatile：拆除方（HTTP 线程）写、游戏循环线程读。与既有 <see cref="KillMacro"/> 同手法。
+    /// 位于每次游戏循环新建的控制台状态对象上，故不构成新的进程级静态状态。
+    /// </summary>
+    internal volatile bool stopRequested;
+    /// <summary>是否已请求停止脚本执行。</summary>
+    internal bool StopRequested => stopRequested;
+    /// <summary>请求停止脚本执行（幂等，不可撤销——会话正在拆除，不存在恢复语义）。</summary>
+    internal void RequestStop() => stopRequested = true;
     internal long timerID = -1;
     internal long timer_endTime;
     internal bool need_settimer;

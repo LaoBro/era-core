@@ -117,6 +117,12 @@ internal sealed class ConsoleStateManager
         }
     }
 
+    /// <summary>
+    /// issue-002：请求停止脚本执行。这只是转落到共享状态上 —— <b>不</b>改动
+    /// <see cref="ConsoleState.State"/>，理由见 ConsoleStateData.stopRequested 的注释。
+    /// </summary>
+    public void RequestStop() => _state.RequestStop();
+
     public void Quit() => _state.State = ConsoleState.Quit;
 
     public void ForceQuit()

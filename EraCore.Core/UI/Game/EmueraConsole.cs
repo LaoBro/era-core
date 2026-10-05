@@ -90,10 +90,23 @@ internal sealed class EmueraConsole : IDisposable, IConsoleStateView, IButtonDis
     internal int NewButtonGeneration => (int)_state.newButtonGeneration;
     internal ConsoleRedraw Redraw => _state.redraw;
     internal StringMeasure StrMeasure => stringMeasure;
+    /// <summary>
+    /// 脚本层唯一的「是否还在运行」判据（被 <c>Process.DoScript</c> 与 <c>ScriptProc.Run</c> 消费）。
+    ///
+    /// 返回 false 的两类情形：
+    /// <list type="bullet">
+    /// <item><b>拆除请求</b>（issue-002，<see cref="RequestStop"/> 置位）—— 脚本应在下一个指令边界停下。</item>
+    /// <item><b>让路点</b>（等待输入 / 休眠）—— 脚本在同一次 DoScript 里先行返回，
+    /// 由下一次输入唤醒时再从断点续跑。此分支的返回值与改动前逐位相同，故既有的
+    /// 让路语义不受本次改动影响。</item>
+    /// </list>
+    /// </summary>
     internal bool IsRunning
     {
         get
         {
+            if (_state.StopRequested)
+                return false;
             if (_state.State == ConsoleState.Initializing) return true;
             return _state.State == ConsoleState.Running || _state.runningERBfromMemory;
         }
@@ -167,6 +180,12 @@ internal sealed class EmueraConsole : IDisposable, IConsoleStateView, IButtonDis
 
     internal System.Threading.Tasks.Task Initialize() => _stateManager.Initialize();
     internal void Quit() => _stateManager.Quit();
+    /// <summary>
+    /// issue-002：请求停止脚本执行 —— 把会话拆除信号送达脚本层的唯一入口。
+    /// 效果：<see cref="IsRunning"/> 从此返回 false，脚本在下一条指令边界停下。
+    /// 幂等、不等待、不触碰显示/输入状态机（见 ConsoleStateData.stopRequested 的注释）。
+    /// </summary>
+    internal void RequestStop() => _stateManager.RequestStop();
     internal void ForceQuit() => _stateManager.ForceQuit();
     internal void ThrowTitleError(bool error) => _stateManager.ThrowTitleError(error);
     internal void ThrowError(bool playSound) => _stateManager.ThrowError(playSound);
@@ -340,6 +359,12 @@ internal sealed class EmueraConsole : IDisposable, IConsoleStateView, IButtonDis
             if (_state.State == ConsoleState.Error)
                 return;
         }
+        // issue-002：拆除已请求停止 —— 不得再把 State 拉回 Running 去推进脚本。
+        // 少了这道守卫的话，DoScript 会空跑一趟立刻返回，而收尾的
+        // 「跑完仍是 Running ⇒ 判 Error」会把正常拆除染成错误终态
+        // （副作用：多打一行错误 + OutputSystemLog 往游戏目录写 emuera.log）。
+        if (_state.StopRequested)
+            return;
         _state.State = ConsoleState.Running;
         _state.process!.DoScript();
         if (_state.State == ConsoleState.Running)

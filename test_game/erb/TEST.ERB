@@ -6,12 +6,25 @@ HTML_PRINT "<img src='Face_2'>"
 PRINTL [0] Hello
 PRINTL [1] Quit
 PRINTL [2] Long loop
+PRINTL [3] Await block
+PRINTL [4] Flow check
 INPUT
 IF RESULT == 2
 	; issue-001：长回合入口（测试专用分支，既有测试只发 0/1，不受影响）。
 	; 8 秒：须显著长于测试注入的拆除超时（2s）+ 断言窗口，否则测不出挂起。
 	; 同时足够短，使测试能在有界时间内等旧循环自然退出完成清理。
 	CALL TEST_LONGLOOP(8000)
+ELSEIF RESULT == 3
+	; issue-002：不可中断窗口（见 erb/AWAITBLOCK.ERB 文件头）。
+	; 6 秒：须显著长于拆除超时（2s）+ 断言窗口，否则超时路径测不出来；
+	; 同时够短，使旧循环能在清理窗口内自然退出。
+	; 注意：一旦 AWAIT 语义改动（issue-003），此枝将失去不可中断性，
+	;      必须连同 AWAITBLOCK.ERB 一起换构造。
+	CALL TEST_AWAITBLOCK(6000)
+ELSEIF RESULT == 4
+	; issue-002：正常流程回归（见 erb/FLOWCHECK.ERB 文件头）。
+	; 用于证明「每条指令前的检查点」不会让正常流程少执行语句。
+	CALL TEST_FLOW
 ELSEIF RESULT == 0
 	PRINTFORML You entered: {RESULT}
 	PRINTL Select again:

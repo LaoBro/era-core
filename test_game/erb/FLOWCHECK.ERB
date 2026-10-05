@@ -1,0 +1,116 @@
+; ============================================================
+; 正常流程回归脚本（issue-002：「无静默截断」的钉子）
+; ============================================================
+;
+; 目的：issue-002 把脚本执行循环的运行检查点从「循环体尾部」移到「每条指令
+; 之前」。语义上二者等价，但若等价性论证有误（例如某条边界上 IsRunning 本就
+; 为假），表现为「正常游戏流程少执行几条语句」—— 静默截断。本文件把这类截断
+; 变成可见：每段语句都打印一个编号 marker，末端再打印一条含总次数的 SUMMARY
+; 行；任何一条语句被跳过都会在 marker 序列上断链。
+;
+; 覆盖面（对齐 issue-002 的回归要求）：
+;   - 等待输入：TEST_FLOW 中间的 INPUT（前后各有一条 marker）
+;   - 嵌套调用：TEST_FLOW → FC_OUTER → FC_INNER（两层 CALL）
+;   - 函数返回：显式 RETURN（带值）+ 落到下一个 @ 标签的隐式返回
+;   - 流程控制：IF/ELSEIF/ELSE/ENDIF、SIF（单语句形式）、WHILE/WEND、
+;               FOR/NEXT、SELECTCASE/CASE/ENDSELECT
+;
+; 计数口径：TOTAL 在每个 PRINTL/PRINTFORML 之前自增，因此 SUMMARY 行的
+; n 等于「SUMMARY 之前实际执行到的打印语句条数」。函数用 RESULT 把自己与
+; 其调用树上产生的 marker 条数回传给调用方。改脚本时必须同步改期望值。
+;
+; 预期 marker 序列与期望值见 EraCore.Tests/ScriptInterruptionTests.cs。
+; ============================================================
+
+@TEST_FLOW
+	#DIM TOTAL
+	TOTAL = 0
+
+	TOTAL = TOTAL + 1
+	PRINTL FC-01-START
+
+	CALL FC_BRANCH
+	TOTAL = TOTAL + RESULT
+
+	CALL FC_OUTER
+	TOTAL = TOTAL + RESULT
+
+	CALL FC_LOOPS
+	TOTAL = TOTAL + RESULT
+
+	CALL FC_SELECT
+	TOTAL = TOTAL + RESULT
+
+	TOTAL = TOTAL + 1
+	PRINTL FC-02-BEFORE-INPUT
+	INPUT
+	TOTAL = TOTAL + 1
+	PRINTFORML FC-03-AFTER-INPUT-{RESULT}
+
+	PRINTFORML FC-SUM n={TOTAL}
+	PRINTL FC-04-END
+	QUIT
+
+; ------------------------------------------------------------
+; 分支选择：命中 ELSEIF 分支（1 条）+ SIF 单语句（1 条）= 2 条 marker
+; ------------------------------------------------------------
+@FC_BRANCH
+	IF 1 == 2
+		PRINTL FC-10-IF-TAKEN
+	ELSEIF 1 == 1
+		PRINTL FC-11-ELSEIF-TAKEN
+	ELSE
+		PRINTL FC-12-ELSE-TAKEN
+	ENDIF
+	; SIF 是单语句形式（只管紧接其后的一条语句），无对应 ENDIF
+	SIF 5 == 5
+		PRINTL FC-13-SIF-TAKEN
+	RETURN 2
+
+; ------------------------------------------------------------
+; 嵌套调用外层：自身 1 条 + 内层 1 条 + 自身收尾 1 条 = 3 条 marker
+; ------------------------------------------------------------
+@FC_OUTER
+	PRINTL FC-20-OUTER-IN
+	CALL FC_INNER
+	PRINTL FC-21-OUTER-OUT
+	RETURN 3
+
+; ------------------------------------------------------------
+; 嵌套调用内层：1 条 marker，用显式带值 RETURN 回传条数
+; ------------------------------------------------------------
+@FC_INNER
+	PRINTL FC-22-INNER
+	RETURN 1
+
+; ------------------------------------------------------------
+; 循环：WHILE 2 轮 + FOR 3 轮 = 5 条 marker
+; ------------------------------------------------------------
+@FC_LOOPS
+	; 变量名不能取单个字母 —— "I" 会被判为 Emuera 保留变量名：冷加载（走源码解析）
+	; 时触发警告 Lv2，引擎的警告策略据此拒绝启动 → State=Error；IR 缓存命中跳过解析
+	; 时症状又消失，极易误判为偶发。故此处用长名。
+	#DIM LOOPIDX
+	LOOPIDX = 0
+	WHILE LOOPIDX < 2
+		PRINTFORML FC-30-WHILE-{LOOPIDX}
+		LOOPIDX = LOOPIDX + 1
+	WEND
+	FOR LOOPIDX, 0, 3
+		PRINTFORML FC-31-FOR-{LOOPIDX}
+	NEXT
+	RETURN 5
+
+; ------------------------------------------------------------
+; SELECTCASE：命中 CASE 2 = 1 条 marker
+; ------------------------------------------------------------
+@FC_SELECT
+	SELECTCASE 2
+		CASE 1
+			PRINTL FC-40-CASE1
+		CASE 2
+			PRINTL FC-41-CASE2
+		CASEELSE
+			PRINTL FC-42-CASEELSE
+	ENDSELECT
+	RETURN 1

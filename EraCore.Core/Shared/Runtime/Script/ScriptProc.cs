@@ -70,6 +70,20 @@ internal sealed class ScriptProc
 	{
 		while (true)
 		{
+			// issue-002：每条指令执行前的中断检查点 —— 会话拆除（RequestStop → IsRunning
+			// 变假）后脚本在此停下，而不是把剩余循环跑完。
+			//
+			// 位置为何必须是「每条指令之前」而不是循环体尾部：
+			//   1. 票面要求的语义，亦与参考实现同位置；
+			//   2. 尾部位置会被本方法内的三处 continue（Debug 指令跳过 / skipPrint 跳过 /
+			//      行标签）整体绕过 —— 那些路径下永远轮不到检查。
+			// 与旧的尾部检查落在同一组检查点上：稳定执行流里「下一行执行前」等价于
+			// 「本行执行后的下一次检查」，故既有的让路语义不变（由回归测试守住）。
+			//
+			// ScriptEnd 必须与 IsRunning 一并留在此判断里：函数全部返回后帧栈为空，
+			// 若推迟到 ShiftNextLine 之后再判，会对着空栈取下一行（NRE）。
+			if (!console.IsRunning || state.ScriptEnd)
+				return;
 			state.ShiftNextLine();
 			LogicalLine line = state.CurrentLine;
 			if (line.IsError)
@@ -118,8 +132,7 @@ internal sealed class ScriptProc
 				else
 					throw new CodeEE(line.ErrMes);
 			}
-			if (!console.IsRunning || state.ScriptEnd)
-				return;
+			// 运行检查已上移到循环体首部（issue-002），此处不再重复。
 		}
 	}
 
