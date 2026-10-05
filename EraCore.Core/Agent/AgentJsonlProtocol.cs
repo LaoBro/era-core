@@ -51,6 +51,16 @@ namespace MinorShift.Emuera.GameView
         /// </summary>
         private bool _pendingTimeoutFlag;
 
+        /// <summary>
+        /// issue-004（空转帧抑制）：上一个<b>已产出</b>回合的「状态 + 输入需求」指纹。
+        /// 回合 diff 为空且指纹未变 = 画面没变、客户端也没什么新东西要知道 → 不产出回合。
+        /// 仅在游戏循环线程（BuildTurn）访问，无并发。
+        /// </summary>
+        private bool _hasEmittedTurn;
+        private string? _emittedState;
+        private string? _emittedInputType;
+        private bool _emittedNeedValue;
+
         public AgentJsonlProtocol(EmueraConsole console, IConsoleUI ui, SessionIO io, DisplayState displayState)
             : base(console, ui)
         {
@@ -63,7 +73,8 @@ namespace MinorShift.Emuera.GameView
             if (!await WaitForInputAsync())
                 return null;
 
-            return BuildTurn(isInitial: true);
+            // 首帧：携带协议版本，永不抑制（isInitial 已保证，显式传参只为把意图写清楚）。
+            return BuildTurn(isInitial: true, allowSuppression: false);
         }
 
         internal async Task<string?> StepAsync(string input)
@@ -81,7 +92,8 @@ namespace MinorShift.Emuera.GameView
             {
                 ui.Invoke(() => DispatchInput(input));
 
-                return BuildTurn();
+                // 应答链路：客户端发了输入就必须有回音，不参与空转抑制。
+                return BuildTurn(allowSuppression: false);
             }
             catch (GameExitException)
             {
@@ -138,7 +150,8 @@ namespace MinorShift.Emuera.GameView
         /// 生成最终 turn（Quit/Error 状态），由 Session.GameLoop 结束时调用一次，
         /// 写入 SessionIO 供 GET /turn 取走。复用 BuildTurn 逻辑，保持 turn 结构一致。
         /// </summary>
-        internal string? BuildFinalTurn() => BuildTurn();
+        // 终帧：会话的最后一次交付（Quit/Error 状态转换），永不抑制。
+        internal string? BuildFinalTurn() => BuildTurn(allowSuppression: false);
 
         /// <summary>执行超时处理并将 turn 写入 IO，返回 true。</summary>
         private async Task<bool> HandleTimeoutAndWriteAsync()
@@ -260,7 +273,16 @@ namespace MinorShift.Emuera.GameView
             return false;
         }
 
-        private string BuildTurn(bool isInitial = false)
+        /// <param name="isInitial">
+        /// 首帧：携带协议版本，是客户端与服务端对齐的唯一机会，永不抑制。
+        /// </param>
+        /// <param name="allowSuppression">
+        /// 是否允许空转帧抑制。仅「等待超时 → 自动续跑」那条路径允许 ——
+        /// 空转帧<b>只</b>产自那里（客户端没发输入，是引擎自己推进的）；
+        /// 而「客户端输入 → 回合」是应答链路，抑制了会让客户端对一次输入收不到回应，
+        /// 且 StepAsync 的 null 返回在 RunLoopAsync 里被当作「退出循环」，语义冲突。
+        /// </param>
+        private string? BuildTurn(bool isInitial = false, bool allowSuppression = true)
         {
             // plan C（v5）：ComputeDiff 原子化刷新 _current 并 drain 分类权威清空信号，
             // 不再前置 TryUpdate（避免跨调用窗口 + 清空信号错配，见 DisplayState.ComputeDiff）。
@@ -275,6 +297,20 @@ namespace MinorShift.Emuera.GameView
             bool timedOut = _pendingTimeoutFlag;
             _pendingTimeoutFlag = false;
 
+            // issue-004：空转帧抑制。返回 null = 本回合不产出（调用方据此不写 IO）。
+            var state = console.State.ToString();
+            var inputType = req?.InputType.ToString();
+            bool needValue = req?.NeedValue ?? false;
+
+            if (allowSuppression && !isInitial && _hasEmittedTurn && IsEmptyDiff(diff)
+                && state == _emittedState && inputType == _emittedInputType && needValue == _emittedNeedValue)
+                return null;
+
+            _hasEmittedTurn = true;
+            _emittedState = state;
+            _emittedInputType = inputType;
+            _emittedNeedValue = needValue;
+
             // ADR-0016：TINPUT timer 字段——仅 TINPUT 期间（Timelimit > 0）填充。
             // displayTime 取 InputRequest.DisplayTime（ERB 可设 false 让前端不显示倒计时）。
             // timeUpMessage 仅在非空时携带。
@@ -286,9 +322,9 @@ namespace MinorShift.Emuera.GameView
                 : null;
 
             return SerializeTurn(new TurnRecord(
-                state: console.State.ToString(),
-                inputType: req?.InputType.ToString(),
-                needValue: req?.NeedValue ?? false,
+                state: state,
+                inputType: inputType,
+                needValue: needValue,
                 diff: diff,
                 error: error,
                 protocolVersion: isInitial ? TurnRecord.CurrentProtocolVersion : null,
@@ -299,6 +335,14 @@ namespace MinorShift.Emuera.GameView
                 generation: console.LastButtonGeneration
             ));
         }
+
+        /// <summary>
+        /// issue-004：diff 是否为空 —— 无行级操作、无背景色变更、无背景图变更。
+        /// <c>null</c>（画面完全未变）同样视为空。
+        /// </summary>
+        private static bool IsEmptyDiff(DisplayDiff? diff)
+            => diff == null
+               || (diff.lineOps.Count == 0 && diff.bgColor == null && diff.bgImages == null);
 
         #endregion
     }

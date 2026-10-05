@@ -117,6 +117,15 @@ internal sealed class DisplayState : IDisplayState
     private DisplaySnapshot? _previous;
 
     /// <summary>
+    /// issue-004（画面判据对齐）：上次构建 <c>_current</c> 时所用的引擎行列表（浅拷贝）与背景。
+    /// 变化判据据此比较<b>画面本身</b>，而非「操作队列是否为空」—— 见 <see cref="TryRefreshSnapshot"/>。
+    /// 仅 <c>_gate</c> 锁内访问。
+    /// </summary>
+    private List<ConsoleDisplayLine>? _builtLines;
+    private string? _builtBgHex;
+    private List<BgImageState>? _builtBgImages;
+
+    /// <summary>
     /// ADR-0022：权威清空事件累积器。语义 =「自上一回 <see cref="ComputeDiff"/> 以来、
     /// 未被取走的权威清空事件」。统一消费语义：谁 drain _pendingOps 谁累积（TryUpdate 与
     /// ComputeDiff 的 drain 都累进此字段），唯一 flush 方是 ComputeDiff（任一分支都取走+重置）。
@@ -231,22 +240,71 @@ internal sealed class DisplayState : IDisplayState
     }
 
     /// <summary>
-    /// Phase 5-3：peek _pendingOps 做变更检测，rebuild 后消费式清空（防无限增长）。
-    /// _pendingOps 非空 → 重建 _current + Clear → 返回 true；空且 _current 已存在 → 返回 false 且 _current 不变。
-    /// ConcurrentQueue 保证跨线程安全：游戏线程 Enqueue 与此处的 drain 可并发。
-    /// ADR-0022：消费方式由 ClearPendingOps（丢弃）改为 drain+累积进 <see cref="_pendingClearAccumulator"/>——
-    /// 被本帧抢占的清空信号不再丢失，之后 ComputeDiff 仍能取到（根治 Q11 race）。
+    /// 帧级变更检测 + 刷新：画面变了则重建 <c>_current</c> 并返回 true。
+    ///
+    /// <b>issue-004（画面判据对齐）</b>：判据是<b>画面本身</b>，不是「操作队列是否为空」：
+    /// <list type="bullet">
+    /// <item><b>行对象引用比较</b> —— 与 CLI 路径（<c>TerminalRenderer</c> 的 <c>SourceLine</c>
+    /// 引用比对）同一判据。行对象入列后内容不可变（见 <see cref="_lineCache"/> 的不变量说明），
+    /// 同引用必然同值，故无需深比较。</item>
+    /// <item><b>背景色 / 背景图比较</b> —— 不能只比行：<c>SETBG</c> 一个行对象都不换，
+    /// 只比行会让背景变更丢帧（操作队列判据之所以没暴露这个问题，是因为 SETBG 会 Enqueue
+    /// 一个 op；判据换成画面后必须显式把背景计入）。</item>
+    /// </list>
+    ///
+    /// 为什么不再用「<c>PendingOpCount == 0</c> → 无变化」：操作队列可能被<b>别人</b>排空
+    /// （帧级 <c>TryUpdate</c> 与回合级 <c>ComputeDiff</c> 都 drain，见 ADR-0022），
+    /// 一旦本回合的 op 在 ComputeDiff 之前被排空，画面明明变了却判定为无变化 → 跳帧。
+    ///
+    /// 无论是否重建都无条件 drain：<c>_pendingOps</c> 不得累积，且权威清空信号须进累积器。
     /// </summary>
     internal bool TryUpdate()
     {
         lock (_gate)
         {
-            if (_current != null && _console.PendingOpCount == 0)
-                return false; // 无变化
-            _current = Rebuild();
-            DrainIntoAccumulator();
-            return true;
+            return TryRefreshSnapshot();
         }
+    }
+
+    /// <summary>按画面判据刷新 <c>_current</c>；仅在 <c>_gate</c> 锁内调用。</summary>
+    private bool TryRefreshSnapshot()
+    {
+        var linesCopy = CopyDisplayLines();
+
+        bool changed = _current == null
+            || _builtLines == null
+            || !SameLineObjects(_builtLines, linesCopy)
+            || _builtBgHex != _console.bgColor.ToHex()
+            || !BgImagesEqual(_builtBgImages, _console.BgImages);
+
+        DrainIntoAccumulator();
+
+        if (!changed)
+            return false;
+
+        int maxLog = Config.Current != null ? Config.MaxLog : FallbackMaxLog;
+        if (_lineCache.Count > linesCopy.Count + maxLog)
+            _lineCache.Clear();
+
+        _builtLines = linesCopy;
+        _builtBgHex = _console.bgColor.ToHex();
+        _builtBgImages = NormalizeBgImages(_console.BgImages) is { } bg ? new List<BgImageState>(bg) : null;
+        _current = BuildSnapshotIncremental(_lineCache, linesCopy, _console.bgColor,
+            _console.State, _console.CurrentRequest, _defaultFontName, _console.LastButtonGeneration,
+            _console.BgImages);
+        return true;
+    }
+
+    /// <summary>
+    /// 行对象引用比较：同长度且逐项同引用即视为画面未变（行对象不可变 ⇒ 同引用同值）。
+    /// </summary>
+    private static bool SameLineObjects(List<ConsoleDisplayLine> a, List<ConsoleDisplayLine> b)
+    {
+        if (ReferenceEquals(a, b)) return true;
+        if (a.Count != b.Count) return false;
+        for (int i = 0; i < a.Count; i++)
+            if (!ReferenceEquals(a[i], b[i])) return false;
+        return true;
     }
 
     /// <summary>
@@ -269,14 +327,11 @@ internal sealed class DisplayState : IDisplayState
     {
         lock (_gate)
         {
-            // 1. 刷新 _current + drain+累积权威清空信号（有新增 op 时）。
-            //    ADR-0022：帧级 TryUpdate（GET /snapshot）可能已抢先 drain 进累积器（Q11），
-            //    故下面的 TakeSignalAndReset 必须无条件执行，不能被"有/无 pending"分支短路。
-            if (_current == null || _console.PendingOpCount > 0)
-            {
-                _current = Rebuild();
-                DrainIntoAccumulator();
-            }
+            // 1. 刷新 _current + drain+累积权威清空信号。
+            //    issue-004：判据是画面本身（而非「有/无 pending op」）—— op 可能被帧级
+            //    TryUpdate 抢先 drain 掉，只看 op 会让画面变了却判定为无变化（跳帧）。
+            //    ADR-0022：下面的 TakeSignalAndReset 仍须无条件执行（原因见原注释）。
+            TryRefreshSnapshot();
 
             // ADR-0022：统一 flush——无论上支是否 drain，都必须取走+重置累积器，
             // 否则被帧级 TryUpdate 抢先累积的清空信号会在无 pending 分支漏成 StructuralDiff。
@@ -465,40 +520,28 @@ internal sealed class DisplayState : IDisplayState
     }
 
     /// <summary>
-    /// 从当前 console 状态重建全量快照。
     /// 浅拷贝 displayLineList 防止 HTTP 线程并发遍历时游戏线程写入（Q5）。
     ///
     /// 注意：游戏线程（ConsolePrintManager）写 displayLineList 不持 _gate，故
     /// new List&lt;T&gt;(source) 的 CopyTo 可能与 Add 竞态（ArgumentException: array not long enough）。
-    /// 重试即可——竞态窗口极短，下一次拷贝时数组长度已匹配。Phase 2/3 评估是否需让游戏线程也持 _gate。
+    /// 重试即可——竞态窗口极短，下一次拷贝时数组长度已匹配。
     ///
-    /// 3.3（S0）：经 _lineCache 做增量构建——命中行复用已构建 DisplayLine（含 entries/几何/
-    /// LineNo/SourceLine/AlignOffset），仅新行走 BuildPrintOpsForLine；并把 O(总行数) 深比较
-    /// 降为 O(变更行数)（CommonPrefix 引用短路）。产物与全量重建值相等，diff/协议零改动。
-    /// 兜底清理：孤儿条目（CLEAR/CLEARLINE/ShiftHead/末行编辑移除的行）累积到 MaxLog 量级时
-    /// 全清，下一回合全量重建一次（O(n)）后恢复命中——每 MaxLog 行才触发一次，成本可忽略。
+    /// 重建（<see cref="TryRefreshSnapshot"/>）经 _lineCache 做增量构建——命中行复用已构建
+    /// DisplayLine（含 entries/几何/LineNo/SourceLine/AlignOffset），仅新行走 BuildPrintOpsForLine。
     /// </summary>
-    private DisplaySnapshot Rebuild()
+    private List<ConsoleDisplayLine> CopyDisplayLines()
     {
-        List<ConsoleDisplayLine> linesCopy;
         for (int attempt = 0; ; attempt++)
         {
             try
             {
-                linesCopy = new List<ConsoleDisplayLine>(_console.DisplayLineList);
-                break;
+                return new List<ConsoleDisplayLine>(_console.DisplayLineList);
             }
             catch (ArgumentException) when (attempt < 10)
             {
                 // displayLineList 在 CopyTo 期间被游戏线程修改，重试
             }
         }
-        int maxLog = Config.Current != null ? Config.MaxLog : FallbackMaxLog;
-        if (_lineCache.Count > linesCopy.Count + maxLog)
-            _lineCache.Clear();
-        return BuildSnapshotIncremental(_lineCache, linesCopy, _console.bgColor,
-            _console.State, _console.CurrentRequest, _defaultFontName, _console.LastButtonGeneration,
-            _console.BgImages);
     }
 
     /// <summary>
@@ -587,13 +630,25 @@ internal sealed class DisplayState : IDisplayState
         );
     }
 
-    /// <summary>issue 02：背景图列表值比较（null 与空列表视为等价的无背景）。</summary>
+    /// <summary>
+    /// issue 02：背景图列表值比较（null 与空列表视为等价的无背景）。
+    ///
+    /// issue-004：两侧都先归一再比较 —— 引擎侧的 <c>_console.BgImages</c> 是<b>非 null 的空列表</b>，
+    /// 而快照侧按「空即不进 JSON」归一成 <c>null</c>；不归一的话这两个「都没有背景」会被判成
+    /// 不相等，画面判据就会每帧误报「变了」（<c>DisplayDiffTests.Noop_turn_produces_null_diff</c>）。
+    /// </summary>
     private static bool BgImagesEqual(List<BgImageState>? a, List<BgImageState>? b)
     {
+        a = NormalizeBgImages(a);
+        b = NormalizeBgImages(b);
         if (a == null || b == null)
             return a == null && b == null;
         return a.SequenceEqual(b);
     }
+
+    /// <summary>背景图归一：空列表 → null（与快照「空即不进 JSON」同一口径）。</summary>
+    private static List<BgImageState>? NormalizeBgImages(List<BgImageState>? images)
+        => images is { Count: > 0 } ? images : null;
 
     /// <summary>
     /// 单个 ConsoleDisplayLine → DisplayLine 的完整映射（3.3 提取，供增量缓存复用）。

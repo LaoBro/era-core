@@ -7,11 +7,14 @@ PRINTL [0] Hello
 PRINTL [1] Quit
 PRINTL [2] Long loop
 ; 注：[3] 空缺。该编号原为「不可中断窗口」构造（issue-002 的 AWAITBLOCK.ERB），
-; issue-003 让 AWAIT 变为可中断后它失效，拆除超时用例改用「初始化期」窗口
-; （不需要脚本，见 SessionTeardownTimeoutTests），故本编号已删除。
+; issue-003 让 AWAIT 变为可中断后它失效。票面给的两个替代候选也已实测否掉
+; （单指令重计算受引擎数组尺寸硬上限约束；初始化期会被拆除本身竞态打断），
+; 引擎里已无脚本层可达的不可中断窗口 —— 拆除的有界失败分支改由窄接缝单测
+; BoundedLoopWaitTests 覆盖，不再需要脚本构造。故本编号已删除。
 ; 其余编号保持不变，避免动到既有测试投的输入值。
 PRINTL [4] Flow check
 PRINTL [5] Await frames
+PRINTL [6] Await idle
 PRINTL [7] Await skip
 INPUT
 IF RESULT == 2
@@ -29,6 +32,9 @@ ELSEIF RESULT == 4
 ELSEIF RESULT == 5
 	; issue-003：AWAIT 推帧（见 erb/AWAITFRAMES.ERB 文件头）。
 	CALL TEST_AWAITFRAMES
+ELSEIF RESULT == 6
+	; issue-004：零输出等待循环（见 erb/AWAITIDLE.ERB 文件头）。
+	CALL TEST_AWAITIDLE
 ELSEIF RESULT == 7
 	; issue-003：可打断性（见 erb/AWAITFRAMES.ERB 的 @TEST_AWAITSKIP）。
 	CALL TEST_AWAITSKIP
