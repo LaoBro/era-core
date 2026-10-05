@@ -59,5 +59,16 @@ internal sealed class InputRequest
 	public bool DisplayTime;
 	public string TimeUpMes = null!;
 
+	/// <summary>
+	/// issue-003：定时等待（<see cref="InputType.Void"/>）可否被客户端输入打断。
+	///
+	/// 参考实现里 Void 的语义是「入力不能、待つしかない」——<c>PressEnterKey</c> 对 Void
+	/// 直接 return，输入被吞掉。本移植保留该语义作为<b>默认</b>（<c>TWAIT t,1</c>），
+	/// 仅 <c>AWAIT</c> 置位：issue-003 的验收要求长动画期间按任意键可中断。
+	///
+	/// 未置位时输入仍会被安全吞掉（不会走到 <c>DispatchInput</c> 的 default 分支抛异常）。
+	/// </summary>
+	public bool Skippable;
+
 	static long LastRequestID;
 }

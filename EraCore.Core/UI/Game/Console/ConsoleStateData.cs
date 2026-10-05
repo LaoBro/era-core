@@ -24,7 +24,8 @@ internal enum ConsoleState
     Error = 6,
     Running = 7,
     WaitInput = 20,
-    Sleep = 21,
+    // issue-003：原 Sleep = 21（AWAIT 的线程休眠态）已删除 —— AWAIT 改走等待输入态后
+    // 无处再置该值，留着就是一段谁也到不了的死状态。
 }
 
 /// <summary>
@@ -52,9 +53,9 @@ internal sealed class ConsoleStateData
     /// issue-002：会话拆除请求下发到脚本层的「停止执行」标志。
     ///
     /// <b>为什么不直接把 <see cref="State"/> 置成 Quit</b>：ConsoleState 是显示/输入状态机，
-    /// Quit/Error/WaitInput/Sleep 各自都有既有语义与消费者；而「停止执行」是一条执行信号。
-    /// 混进 State 会被既有回填逻辑复活 —— <see cref="ConsoleStateManager.Await"/> 睡醒后无条件
-    /// 把 State 置回 Running，<c>EmueraConsole.RunEmueraProgram</c> 入口也无条件置 Running。
+    /// Quit/Error/WaitInput 各自都有既有语义与消费者；而「停止执行」是一条执行信号。
+    /// 混进 State 会被既有回填逻辑复活 —— <c>EmueraConsole.RunEmueraProgram</c> 入口无条件
+    /// 把 State 置回 Running。
     /// 与之分开后，停止是一次性的：一旦置位，<c>IsRunning</c> 恒假，直到下一次会话（新
     /// <c>ConsoleStateData</c> 实例）为止。
     ///

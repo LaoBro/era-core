@@ -419,6 +419,23 @@ internal sealed class ConsoleStateManager
         _console.RefreshStrings(true);
     }
 
+    /// <summary>
+    /// issue-003：<c>AWAIT</c> 的等待语义对齐 <c>TWAIT t,1</c>。
+    ///
+    /// 改动前这里走 <c>Thread.Sleep</c> 且把 State 置为「休眠」—— 休眠不触发回合边界，
+    /// AWAIT 期间画面完全不外送，背景色渐变 / 进度条因此表现为「卡住一阵然后突然跳变」。
+    /// （参考实现 <c>Emuera/UI/Game/EmueraConsole.cs:642</c> 同样是 Sleep + Sleep 态，
+    /// 但它是 WinForms 直绘：<c>RefreshStrings(true)</c> + <c>ProcessEvents()</c> 同步重绘
+    /// 窗口，玩家本就逐帧可见。无头移植里「重绘」的等价物是「交付一个回合」，
+    /// 故对齐到等待输入态才是原语义在本次移植中的正确落点。）
+    ///
+    /// 改后：等待期间进入 WaitInput（<see cref="InputType.Void"/> + 时限），回合边界触发 →
+    /// 画面能交付出去；时限到达后由宿主循环走<b>既有的</b>超时续跑路径继续脚本
+    /// （server：<c>RunLoopAsync</c> 的 CancelAfter → SubmitTimeout；
+    /// CLI：<c>CliGameLoop.HandleTimeout</c> 的挂钟比对）—— 不新建机制。
+    ///
+    /// 插件 API <c>PluginManager.Await</c> 也走这里，一并获得同一语义。
+    /// </summary>
     public void Await(int time)
     {
         if (!_ui.Created || _state.State != ConsoleState.Running)
@@ -427,11 +444,23 @@ internal sealed class ConsoleStateManager
             return;
         }
         _console.RefreshStrings(true);
-        _state.State = ConsoleState.Sleep;
-        _ui.ProcessEvents();
-        if (time > 0)
-            System.Threading.Thread.Sleep(time);
-        _state.State = ConsoleState.Running;
+        if (time <= 0)
+        {
+            // 无时长（AWAIT 不带参 / AWAIT 0）：新语义下 Timelimit<=0 会让宿主循环
+            // 在 ReadLineAsync 上无限等待（InputTimeoutMs 对 Timelimit<=0 返回 null，
+            // 即不设超时上界），故保留改动前「只刷新、不等待」的形态 —— 它本来就是
+            // 一个无时长的让路点。
+            return;
+        }
+        _console.WaitInput(new InputRequest
+        {
+            InputType = InputType.Void,
+            Timelimit = time,
+            // issue-003：与 TWAIT t,1 的唯一差别 —— AWAIT 建立的等待允许被输入打断
+            // （验收项「长动画期间按任意键可中断」）。TWAIT t,1 保持参考实现语义
+            // 「Void = 入力不能、待つしかない」（PressEnterKey 对 Void 直接 return）。
+            Skippable = true,
+        });
     }
 
     public void OpenErrorFile(ScriptPosition? pos)

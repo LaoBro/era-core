@@ -116,7 +116,6 @@ internal sealed class EmueraConsole : IDisposable, IConsoleStateView, IButtonDis
         get
         {
             if (_state.State == ConsoleState.Initializing) return true;
-            if (_state.State == ConsoleState.Sleep) return true;
             if (_state.inProcess) return true;
             return _state.State == ConsoleState.Running || _state.runningERBfromMemory;
         }

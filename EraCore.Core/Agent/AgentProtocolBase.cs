@@ -72,6 +72,21 @@ namespace MinorShift.Emuera.GameView
                 case InputType.PrimitiveMouseKey:
                     OnInputRejected("当前等待原始鼠标/键盘事件，请通过鼠标点击或键盘输入");
                     break;
+                case InputType.Void:
+                    // 定时等待（AWAIT / TWAIT t,1）。参考实现语义是「入力不能、待つしかない」
+                    // —— PressEnterKey 对 Void 直接 return，输入被吞掉。
+                    //
+                    // 但 Void 此前根本不在本 switch 里：落到 default 会抛
+                    // ArgumentOutOfRangeException —— server 侧被 StepAsync 的 catch-all
+                    // 判成 fatal 并杀掉会话，CLI 侧直接 fatal 退出。改动前只有 TWAIT t,1
+                    // 能踩到；issue-003 让 AWAIT 也进入该状态后，每个动画都是雷，故必补。
+                    //
+                    // Skippable（仅 AWAIT 置位）：走与超时续跑相同的 SubmitTimeout 路径
+                    // 提前结束等待 —— issue-003 验收项「长动画期间按任意键可中断」。
+                    // 未置位则吞掉输入，保持参考实现语义。
+                    if (req.Skippable && req.Timelimit > 0)
+                        console.SubmitTimeout();
+                    break;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(input), req.InputType, $"未处理的输入类型: {req.InputType}");
             }

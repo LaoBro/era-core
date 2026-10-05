@@ -300,51 +300,27 @@ internal sealed class Session : IDisposable
     /// （旧循环仍会读 <see cref="GamePaths.Current"/> 等进程级静态，而新循环初始化会清掉它们）。
     ///
     /// 超时<b>不</b>抛异常也不硬杀线程：issue-002 之后脚本层已有中断检查点，绝大多数长回合
-    /// 会在下一个指令边界自行收敛；仍会超时的情形是等待发生在<b>单条指令内部</b>
-    /// （例如依赖 Thread.Sleep 的等待），此时除了让它跑完别无他法。
+    /// 会在下一个指令边界自行收敛；issue-003 之后连 <c>AWAIT</c> 也走回合边界。
+    /// 换言之，脚本层已无「外部插不上手」的窗口 —— 本分支如今是<b>兜底</b>：
+    /// 进程级异常、单条指令内部的原生阻塞等仍可能撞上它，故机制必须保留。
     /// 失败以返回值表达，调用方据此回明确错误（spec 决策一/二）。
+    ///
+    /// 等待与异常观察本身收在 <see cref="BoundedLoopWait"/>（窄接缝 = 一个 Task），
+    /// 使「超时」分支可用永不完成的任务确定性覆盖 —— 集成层面已构造不出该窗口。
     /// </summary>
     public async Task<bool> WaitForLoopExitAsync(TimeSpan timeout)
     {
-        var task = _gameTask;
-        if (task == null || task.IsCompleted)
-            return true;
+        bool unbounded = timeout == Timeout.InfiniteTimeSpan;
+        var exited = await BoundedLoopWait.ForCompletionAsync(_gameTask, timeout, ex =>
+            AgentLog.Instance.Write(unbounded
+                ? "session game loop ended with error during dispose: " + ex
+                : "session game loop ended with error during teardown: " + ex)).ConfigureAwait(false);
 
-        if (timeout == Timeout.InfiniteTimeSpan)
-        {
-            // 无上界：保留原 Dispose 语义（含游戏循环的异常传播与记录）
-            try
-            {
-                await task.ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                AgentLog.Instance.Write("session game loop ended with error during dispose: " + ex);
-            }
-            return true;
-        }
-
-        // 有上界：Task.WhenAny 而非 WaitAsync —— 后者在超时后抛
-        // OperationCanceledException/TimeoutException，前者只需一个 bool。
-        var finished = await Task.WhenAny(task, Task.Delay(timeout)).ConfigureAwait(false);
-        if (finished == task)
-        {
-            // 已退出：观察其异常，避免未观察异常在 continuation 触发。
-            try
-            {
-                await task.ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                AgentLog.Instance.Write("session game loop ended with error during teardown: " + ex);
-            }
-            return true;
-        }
-
-        AgentLog.Instance.Write(
-            $"session game loop did not exit within {timeout.TotalSeconds:F1}s; " +
-            "a long-running turn is still executing. New session creation is refused until it exits.");
-        return false;
+        if (!exited)
+            AgentLog.Instance.Write(
+                $"session game loop did not exit within {timeout.TotalSeconds:F1}s; " +
+                "a long-running turn is still executing. New session creation is refused until it exits.");
+        return exited;
     }
 
     /// <summary>游戏循环已确认退出后释放控制权。超时路径下不调用——控制器状态需留给仍存活的循环。</summary>

@@ -6,25 +6,32 @@ HTML_PRINT "<img src='Face_2'>"
 PRINTL [0] Hello
 PRINTL [1] Quit
 PRINTL [2] Long loop
-PRINTL [3] Await block
+; 注：[3] 空缺。该编号原为「不可中断窗口」构造（issue-002 的 AWAITBLOCK.ERB），
+; issue-003 让 AWAIT 变为可中断后它失效，拆除超时用例改用「初始化期」窗口
+; （不需要脚本，见 SessionTeardownTimeoutTests），故本编号已删除。
+; 其余编号保持不变，避免动到既有测试投的输入值。
 PRINTL [4] Flow check
+PRINTL [5] Await frames
+PRINTL [7] Await skip
 INPUT
 IF RESULT == 2
-	; issue-001：长回合入口（测试专用分支，既有测试只发 0/1，不受影响）。
-	; 8 秒：须显著长于测试注入的拆除超时（2s）+ 断言窗口，否则测不出挂起。
+	; issue-001/002：长回合入口（测试专用分支，既有测试只发 0/1，不受影响）。
+	; 8 秒：须显著长于测试注入的拆除超时 + 断言窗口，否则测不出挂起。
 	; 同时足够短，使测试能在有界时间内等旧循环自然退出完成清理。
+	; 注意：issue-002 之后它<b>可被中断</b>，故不再用于拆除超时路径
+	; （那条路径改由「初始化期」窗口覆盖），此处只服务于「拆除信号到达后
+	; 脚本在下一个指令边界停下」的验收（ScriptInterruptionTests）。
 	CALL TEST_LONGLOOP(8000)
-ELSEIF RESULT == 3
-	; issue-002：不可中断窗口（见 erb/AWAITBLOCK.ERB 文件头）。
-	; 6 秒：须显著长于拆除超时（2s）+ 断言窗口，否则超时路径测不出来；
-	; 同时够短，使旧循环能在清理窗口内自然退出。
-	; 注意：一旦 AWAIT 语义改动（issue-003），此枝将失去不可中断性，
-	;      必须连同 AWAITBLOCK.ERB 一起换构造。
-	CALL TEST_AWAITBLOCK(6000)
 ELSEIF RESULT == 4
 	; issue-002：正常流程回归（见 erb/FLOWCHECK.ERB 文件头）。
 	; 用于证明「每条指令前的检查点」不会让正常流程少执行语句。
 	CALL TEST_FLOW
+ELSEIF RESULT == 5
+	; issue-003：AWAIT 推帧（见 erb/AWAITFRAMES.ERB 文件头）。
+	CALL TEST_AWAITFRAMES
+ELSEIF RESULT == 7
+	; issue-003：可打断性（见 erb/AWAITFRAMES.ERB 的 @TEST_AWAITSKIP）。
+	CALL TEST_AWAITSKIP
 ELSEIF RESULT == 0
 	PRINTFORML You entered: {RESULT}
 	PRINTL Select again:
