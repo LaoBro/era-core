@@ -58,14 +58,56 @@ public class SafScriptFileTests
 		Assert.Equal(expectedFileName, SafPath.GetLogicalFileName(path));
 	}
 
+	/// <summary>
+	/// 任意游戏根子目录都可解析（<c>bad/</c>、<c>plugins/</c>、<c>erb/</c>、多级 <c>assets/img/</c>…）。
+	/// 旧实现只放行根目录与 <c>sav/</c>，其余一律 <c>false</c>——eraTW <c>@BADAPPLE</c> 的
+	/// <c>LOADTEXT("bad/bad_apple{count}.txt")</c> 因此静默返回空串，动画全程画不出内容。
+	/// 越界防护见 <see cref="Relative_script_path_rejects_unsafe_or_unsupported_locations"/>。
+	/// </summary>
+	[Theory]
+	[InlineData("bad/bad_apple1.txt", "bad_apple1.txt")]
+	[InlineData("plugins/bbas_dataset.xml", "bbas_dataset.xml")]
+	[InlineData("erb/script.txt", "script.txt")]
+	[InlineData(@"assets\img\a.txt", "a.txt")]
+	public void Relative_script_path_allows_any_descendant_of_game_root(string relativePath, string expectedFileName)
+	{
+		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		using var gamePaths = new GamePathsScope(accessor);
+
+		// 与参考实现 Utils.GetValidPath 对齐：不按目录名设白名单，只挡越界。
+		Assert.True(SafCompat.TryResolveGameRelativePath(relativePath, createParentDirectories: true, out var path));
+		Assert.Equal(expectedFileName, SafPath.GetLogicalFileName(path));
+	}
+
+	/// <summary>
+	/// eraTW <c>TITLE.ERB</c> 的 <c>@BADAPPLE</c> 用 <c>LOADTEXT("bad/bad_apple{count}.txt")</c>
+	/// 逐帧读 6572 个 ASCII 动画文件。路径白名单曾只放行 <c>sav/</c>，这些调用全部静默返回空串，
+	/// 动画画不出任何内容——表现为「点 [2] DEMO 后界面冻住」。此处钉住 <c>bad/</c> 可读。
+	/// </summary>
+	[Fact]
+	public void LoadText_reads_animation_frames_outside_sav_tree()
+	{
+		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		using var gamePaths = new GamePathsScope(accessor);
+		using var scope = GlobalStatic.OpenScope(new ConfigData());
+
+		var badDir = SafCompat.ResolveSubPath(Root, "bad");
+		SafCompat.CreateDirectory(badDir);
+		accessor.Seed(SafCompat.CombinePath(badDir, "bad_apple1.txt"), "@@@@\n@@@@\n"u8.ToArray());
+
+		var loadText = FunctionMethodCreator.GetMethodList()["LOADTEXT"];
+		Assert.Equal("@@@@\n@@@@\n", loadText.GetStrValue(null!, [new SingleStrTerm("bad/bad_apple1.txt")]));
+	}
+
     [Theory]
     [InlineData("")]
     [InlineData("../escape.txt")]
     [InlineData("sav/../escape.txt")]
+    [InlineData("bad/../../escape.txt")]
     [InlineData("sav//empty.txt")]
-    [InlineData("erb/script.txt")]
     [InlineData("C:\\outside.txt")]
     [InlineData("/outside.txt")]
+    [InlineData("./relative.txt")]
 	public void Relative_script_path_rejects_unsafe_or_unsupported_locations(string input)
 	{
 		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);

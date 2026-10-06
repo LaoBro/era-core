@@ -150,20 +150,36 @@ internal static class SafCompat
     }
 
     /// <summary>
-    /// Resolves a script-supplied text filename beneath the game root. Only files at the root
-    /// and descendants of sav are allowed, so the same logical path works for filesystem and SAF roots.
+    /// Resolves a script-supplied text filename beneath the game root. Any descendant of the
+    /// game root is allowed (<c>bad/</c>, <c>plugins/</c>, <c>sav/</c>, …) — games ship data files
+    /// in their own subdirectories and scripts read them with LOADTEXT by plain relative path.
     /// </summary>
+    /// <remarks>
+    /// 越界防护与参考实现 <c>Utils.GetValidPath</c> 对齐（skia 版 <c>Creator.Method.cs:9211</c>）：
+    /// 只挡「逃出游戏根」与「不是相对路径」，不按目录名设白名单。
+    /// <para>
+    /// 此前本方法额外要求首段是 <c>sav</c>（<c>onlySavTree</c>），该限制比参考实现严格得多，
+    /// 导致 <c>LOADTEXT("bad/bad_apple1.txt")</c> 一类调用<b>静默返回空串</b>——
+    /// eraTW <c>TITLE.ERB</c> 的 <c>@BADAPPLE</c>（6573 帧 ASCII 动画）因此全程画不出内容，
+    /// 表现为「点 [2] DEMO 后界面冻住不动」。同因失效的还有 <c>plugins/*.xml</c> 读取。
+    /// </para>
+    /// <para>
+    /// 越界仍被以下四条挡住：绝对路径（<see cref="Path.IsPathRooted"/>）、含盘符/冒号的段
+    /// （<c>C:\</c>、<c>http:</c>）、<c>.</c> / <c>..</c> 段、空段（<c>//</c>、尾随斜杠）。
+    /// 段内 <c>..</c> 无法上跳，故拼接结果恒在游戏根之下。
+    /// </para>
+    /// <para>
+    /// SAF（content://）下同样成立：<c>ResolveSubPath</c> 按目录名逐级解析，与目录是否名为
+    /// <c>sav</c> 无关。
+    /// </para>
+    /// </remarks>
     internal static bool TryResolveGameRelativePath(string relativePath, bool createParentDirectories, out string path)
-        => TryResolvePathUnderGameRoot(relativePath, createParentDirectories, out path, onlySavTree: true);
+        => TryResolvePathUnderGameRoot(relativePath, createParentDirectories, out path);
 
     /// <summary>
     /// Resolves a relative path beneath the game root for engine-owned files such as logs.
-    /// Unlike script text paths, descendants are not restricted to <c>sav</c>.
     /// </summary>
     internal static bool TryResolvePathUnderGameRoot(string relativePath, bool createParentDirectories, out string path)
-        => TryResolvePathUnderGameRoot(relativePath, createParentDirectories, out path, onlySavTree: false);
-
-    private static bool TryResolvePathUnderGameRoot(string relativePath, bool createParentDirectories, out string path, bool onlySavTree)
     {
         path = null!;
         if (string.IsNullOrWhiteSpace(relativePath)
@@ -174,8 +190,6 @@ internal static class SafCompat
         var segments = relativePath.Split(['/', '\\'], System.StringSplitOptions.None);
         if (segments.Length == 0 || segments.Any(segment => string.IsNullOrEmpty(segment)
             || segment == "." || segment == ".." || segment.Contains(':')))
-            return false;
-        if (onlySavTree && segments.Length > 1 && !segments[0].Equals("sav", System.StringComparison.OrdinalIgnoreCase))
             return false;
 
         var directory = GamePaths.Current?.ExeDir;
