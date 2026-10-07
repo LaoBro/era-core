@@ -1,14 +1,19 @@
 /**
  * Emuera.Headless ↔ Web 前端协议类型定义（issue 02）。
  *
+ * 权威规格见 `docs/guides/turn-protocol.md` —— 本文件是它的 TS 镜像，改动协议时
+ * 三处（C# record / 本文件 / 规格文档）必须同步。
+ *
  * 与 C# 端字段命名严格对称——直接对应序列化 JSON 的字段名：
- * - C# `DisplaySnapshot`（Emuera.Headless/Agent/DisplayState.cs:18）
+ * - C# `DisplaySnapshot`（EraCore.Core/Agent/DisplayState.cs:21）
  * - C# `TurnRecord` / `DisplayDiff` / `LineOp*` / `TurnOp*` / `PrintSegment` / `ButtonRef`
- *   （Emuera.Headless/Agent/TurnRecord.cs）
+ *   （EraCore.Core/Agent/TurnRecord.cs）
  *
  * 协议稳定性：ADR-0013/0014 已锁定字段集；C# `JsonSerializerOptions` 用
  * `WhenWritingNull` —— nullable 字段在为 null 时不写入 JSON，故 TS 类型中所有 optional
  * 字段（`?`）对应 C# 端 nullable reference type，反序列化时缺失即为 undefined。
+ *
+ * 当前协议版本：**11**。
  *
  * 手动维护：spec.md 决策——「协议已稳定，自动生成工具脆」。如 C# 端新增字段，此处同步。
  */
@@ -170,7 +175,7 @@ export interface DisplayLine {
  * - `state`：游戏状态字符串（C# `ConsoleState.ToString()`，如 "WaitInput"/"Quit"/"Error"）
  * - `inputType`：当前输入请求类型（C# `InputType.ToString()`，如 "IntValue"/"StrValue"/"AnyKey"/"EnterKey"）
  * - `needValue`：是否需要值输入（inputType=IntValue/StrValue 时 true）
- * - `protocolVersion`：协议版本号（与 `TurnRecord.protocolVersion` 一致，v7 当前）
+ * - `protocolVersion`：协议版本号（与 `TurnRecord.protocolVersion` 一致，当前 **11**）
  * - `generation`：快照时的 generation 号（v7），前端用于按钮过期检测
  * - `timeLimit`：ADR-0016——TINPUT 总时长（毫秒），null/省略 = 非 TINPUT 期间
  * - `displayTime`：ADR-0016——是否向玩家显示倒计时（ERB 可设 false）
@@ -269,14 +274,16 @@ export type TurnOp =
  *
  * 每个 WS Text 帧是一个 `TurnRecord` JSON。前端 `parseTurnRecord` 把原始 JSON 字符串
  * 解析为该类型。v5 后 `diff` 是唯一增量格式（`ops` 已废弃移除）。
+ * 权威规格见 `docs/guides/turn-protocol.md`。
  *
  * - `state`：本回合后的游戏状态（"WaitInput"/"Quit"/"Error" 等）
- * - `inputType`：本回合后的输入请求类型（null 表示无需输入）
+ * - `inputType`：本回合后的输入请求类型。**"Void" 表示不接受输入、只能等**
+ *   （`AWAIT` 动画等待 / `TWAIT t,1`）——两者在 wire 上无法区分，见规格 §3
  * - `needValue`：是否需要值输入
  * - `diff`：行级差异（null 表示本回合显示未变——例如纯状态切换）
- * - `error`：错误信息（state=Error 时填充）
- * - `protocolVersion`：协议版本（v7 当前；首次帧必带，后续帧可省略）
- * - `generation`：本回合 generation 号（v7），前端用于按钮过期检测；v7 每帧必带
+ * - `error`：输入拒绝原因或脚本异常消息
+ * - `protocolVersion`：协议版本（当前 **11**；仅首帧必带，后续帧省略）
+ * - `generation`：本回合 generation 号（v7），前端用于按钮过期检测；v7 起每帧必带
  * - `timeLimit`：ADR-0016——TINPUT 总时长（毫秒），null/省略 = 非 TINPUT 期间
  * - `displayTime`：ADR-0016——是否向玩家显示倒计时（ERB 可设 false）
  * - `timeUpMessage`：ADR-0016——ERB 超时提示文案
@@ -284,6 +291,11 @@ export type TurnOp =
  *
  * 注意：v5 协议中 `ops[]` 字段已废弃，本类型不包含该字段。C# `TestAdapter.ApplyOps`
  * 直接消费 `TurnOp[]`——TS 端做对称测试时也直接构造 `TurnOp[]`，不经 TurnRecord。
+ *
+ * **已知缺口**：C# 端还会发 `errorInfo?: {type, message, inner?}`（结构化异常，
+ * agent 用它一次定位崩溃），本类型尚未声明、解析器也未消费——即 C# 发得出、
+ * TS 接不住。当前不影响渲染（`error` 字符串已足够弹提示），但若要按类型/message
+ * 分支处理崩溃，需先补声明与解析。
  */
 export interface TurnRecord {
   state: string;

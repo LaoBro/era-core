@@ -41,19 +41,35 @@ agent
 
 ---
 
-## JSONL 协议
+## 回合协议
 
-无头运行器的 JSONL 协议由 server 模式（`--server`）通过 HTTP 暴露，适合脚本和自动化。创建会话后游戏自动输出初始 turn，之后每发送一条输入命令返回一个 turn。
+字段规格见 **[turn-protocol.md](turn-protocol.md)**（协议权威文档，含 `TurnRecord` 全字段、
+`diff` 四种行操作、状态与输入类型表、版本演进史）。本节只给最小可用的形状。
+
+一个会话产出**一帧一个 turn**：每回合是一个完整的「画面 + 输入需求」JSON。
+`GET /turn` 长轮询取帧（25s 超时返 `204`，需继续轮询），`GET /ws` 收同一种裸帧。
 
 ```python
-# 游戏自动输出初始 turn（无需发送任何命令）：
-{"text": "标题画面...", "state": "WaitInput", "inputType": "IntValue", "needValue": true, "buttons": [...]}
+# 首帧自动产出（无需发任何命令），携带 protocolVersion：
+{"state": "WaitInput", "inputType": "IntValue", "needValue": true,
+ "diff": null, "protocolVersion": 11, "timedOut": false, "generation": 0}
 
-# 客户端发送输入：
+# 客户端发送输入（POST /input 的 body）：
 {"type": "input", "value": "0"}
 
-# 服务器响应下一 turn：
-{"text": "输出文本...", "state": "WaitInput", "inputType": "IntValue", "needValue": true, "buttons": [...]}
+# 服务端回下一个 turn，画面变化在 diff 里：
+{"state": "WaitInput", "inputType": "AnyKey", "needValue": false,
+ "diff": {"lineOps": [{"type": "append", "newLines": [/* ... */]}], "bgColor": "#101010"},
+ "timedOut": false, "generation": 1}
 ```
 
-参考 [`tests/emuera_server.py`](../../tests/emuera_server.py)（server 模式测试 helper）与 [`tests/test_jsonl.py`](../../tests/test_jsonl.py)（示例）。
+要点三条，细节见规格文档：
+
+- **`diff` 是帧内增量**——`lineOps` 按序应用（`shift_head` → `clear_line_diff` →
+  `clear_screen` → `append`）；`diff` 为 null/省略表示画面完全未变。
+- **`text` / `buttons` 字段已不存在**（v4/v5 起被 `diff` 与 `generation` 取代）。
+- **`inputType: "Void"` 表示不接受输入、只能等**（`AWAIT` 动画等待 / `TWAIT`）。
+  客户端可据此启用"跳过"——两种来源在 wire 上无法区分，见规格 §3。
+
+参考 [`tests/emuera_server.py`](../../tests/emuera_server.py)（server 模式测试 helper）
+与 [`tests/test_jsonl.py`](../../tests/test_jsonl.py)（示例）。

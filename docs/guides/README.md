@@ -16,7 +16,8 @@
 |---|---|
 | [build-and-publish.md](build-and-publish.md) | 构建与发布：`scripts/publish.ps1` 各目标、原生 dotnet 命令、Android NativeAOT 六条约束、前端与 MAUI 资源同步 |
 | [performance-tuning.md](performance-tuning.md) | 性能与加载开关：ERB 并行加载、未调用函数延迟解析、关联警告开关、实测数据与验收门禁 |
-| [agent-integration.md](agent-integration.md) | Agent 集成：调用链、`start` 的 server 复用优先级、运行期产物、JSONL 协议 |
+| [agent-integration.md](agent-integration.md) | Agent 集成：调用链、`start` 的 server 复用优先级、运行期产物、回合协议速览 |
+| [turn-protocol.md](turn-protocol.md) | **Turn 协议规格（权威）**：`TurnRecord` 全字段、`diff` 四种行操作、状态与输入类型、帧产出时机、版本演进史 |
 
 ## 相关入口
 
