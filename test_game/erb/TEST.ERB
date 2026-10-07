@@ -16,6 +16,11 @@ PRINTL [4] Flow check
 PRINTL [5] Await frames
 PRINTL [6] Await idle
 PRINTL [7] Await skip
+PRINTL [8] Redraw probe V0 (baseline)
+PRINTL [9] Redraw probe V1 (net-zero)
+PRINTL [10] Redraw probe V2 (REDRAW 0)
+PRINTL [11] Redraw probe V3 (non-cancelling)
+PRINTL [12] Redraw probe V4 (real length)
 INPUT
 IF RESULT == 2
 	; issue-001/002：长回合入口（测试专用分支，既有测试只发 0/1，不受影响）。
@@ -38,6 +43,21 @@ ELSEIF RESULT == 6
 ELSEIF RESULT == 7
 	; issue-003：可打断性（见 erb/AWAITFRAMES.ERB 的 @TEST_AWAITSKIP）。
 	CALL TEST_AWAITSKIP
+ELSEIF RESULT == 8
+	; spec v3 §10-A：REDRAW / 动画中间帧交付探针 V0 基线
+	CALL TEST_REDRAW_V0
+ELSEIF RESULT == 9
+	; spec v3 §10-A：V1 净值（KEYTYPING 形状）
+	CALL TEST_REDRAW_V1
+ELSEIF RESULT == 10
+	; spec v3 §10-A：V2 REDRAW 0 隔离
+	CALL TEST_REDRAW_V2
+ELSEIF RESULT == 11
+	; spec v3 §10-A：V3 不抵消（区分产出丢帧 vs 抑制丢帧）
+	CALL TEST_REDRAW_V3
+ELSEIF RESULT == 12
+	; spec v3 §4.5：V4 真实长度 —— 测 O(n²) 的实际字节量
+	CALL TEST_REDRAW_V4
 ELSEIF RESULT == 0
 	PRINTFORML You entered: {RESULT}
 	PRINTL Select again:
