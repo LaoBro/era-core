@@ -51,7 +51,6 @@ html.legacy-webview .game-row-main > * + * { margin-left: 6px; }
 html.legacy-webview .input-bar > * + * { margin-top: var(--space-1); }
 html.legacy-webview .input-row > * + * { margin-left: var(--space-2); }
 html.legacy-webview .key-prompt > * + * { margin-left: var(--space-3); }
-html.legacy-webview .state-running,
 html.legacy-webview .state-quit,
 html.legacy-webview .state-error,
 html.legacy-webview .state-idle,

@@ -3,21 +3,33 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { useGameStore } from '../stores/game';
 import { useConnectionStore } from '../stores/connection';
 import { useUiStore } from '../stores/ui';
+import { isValueInputType } from '../lib/awaiting';
 
 /**
  * InputBar.vue — 输入栏 + 游戏状态显示 + TINPUT 倒计时（ui-redesign-spec §6.3）。
  *
- * 职责：
- * 1. 根据 `snapshot.inputType` 分支渲染 5 种输入 UI：
- *    - `IntValue`：数字输入框 + 「发送」，`needValue=true` 时禁止空提交
- *    - `StrValue`：文本输入框 + 「发送」，`needValue=true` 时禁止空提交
- *    - `AnyKey`：只显示状态行「按任意键继续」，不渲染空输入框
- *    - `EnterKey`：只显示状态行「按回车继续」，不渲染空输入框
- *    - `AnyValue`：文本输入框 + 「发送」，允许空提交
- * 2. 显示游戏状态（Running / Quit / Error / 等待连接）。
- * 3. ADR-0016：TINPUT 超时通知 + 实时倒计时（TinputCountdown 组件，输入栏上方窄状态行）。
- * 4. 输入框聚焦：WaitInput 且为文本类型时自动聚焦。
- * 5. 虚拟滚动 sticky 守卫——AnyKey 模式下 `isStickyToBottom=false` 时拒绝全局 click 推进。
+ * ## issue 08：整条分支链从「引擎状态字段」改按 v12 契约 `awaiting` 分派
+ *
+ * 迁移前是五路整块分支（`state` = WaitInput / Running / Quit / Error / 空 / 未知）。
+ * 其中「脚本正在执行」（Running）在 v12 契约里**没有落点**——帧只在脚本停稳时产出，
+ * wire 上不存在「脚本正在跑」这一态，该分支已删除（不再保留永不命中的死分支）。
+ *
+ * 新分派（与 `TerminalView.showInputBar` / `App.keyboardActive` 同源）：
+ * 1. `awaiting.ended` 非空 ⇒ 终态行（`terminal` = Quit / Error / 其他）
+ * 2. `awaiting.input` 非空 ⇒ 输入 UI，按 `input.type` 再分支：
+ *    - `IntValue` / `StrValue`：输入框 + 「发送」，值输入类型禁止空提交
+ *    - `AnyValue`：输入框 + 「发送」，允许空提交
+ *    - `AnyKey`：状态行「按任意键继续」，不渲染空输入框
+ *    - `EnterKey`：状态行「按回车继续」，不渲染空输入框
+ * 3. 其余（`awaiting` 为空）⇒ 版本兼容期兜底（空闲 / 等待连接），收缩阶段（09）随旧字段移除
+ *
+ * 定时等待 / 零时长让路（只有 `awaiting.wait`）**不**会走到本组件——TerminalView 不渲染它，
+ * 由倒计时行 / 跳过提示表达，故此处不再保留「脚本正在执行」加载分支。
+ *
+ * 其余职责不变：
+ * - ADR-0016：TINPUT 超时通知 + 实时倒计时（TinputCountdown 组件，输入栏上方窄状态行）。
+ * - 输入框聚焦：进入输入等待且为文本类型时自动聚焦。
+ * - 虚拟滚动 sticky 守卫——AnyKey 模式下 `isStickyToBottom=false` 时拒绝全局 click 推进。
  *
  * 视觉（spec §6.3）：容器 --color-surface + 顶部 --color-border 分隔线；左侧输入类型标签；
  * 输入框单下边框、聚焦时 --color-indicator 下边框 + 清晰焦点环；提交按钮文案「发送 / 继续」。
@@ -31,18 +43,24 @@ const inputValue = ref<string>('');
 /** 输入框 DOM 引用——用于 auto-focus。 */
 const inputEl = ref<HTMLInputElement | null>(null);
 
-/** 当前是否处于可输入状态——检查游戏状态 + 连接状态 + inputInFlight。 */
+/** 当前输入请求类型——v12 契约派生（`awaiting.input` 缺省即 null）。 */
+const inputType = computed<string | null>(() => game.awaiting.input?.type ?? null);
+
+/** 终态取值——v12 契约 `awaiting.ended.terminal`（"Quit" / "Error"）。 */
+const terminal = computed<string | null>(() => game.awaiting.ended?.terminal ?? null);
+
+/** 当前是否处于可输入状态——`awaiting.input` 非空（issue 08 前读 `state === 'WaitInput'`）。 */
 const canSubmit = computed<boolean>(
   () =>
     conn.status === 'connected'
     && conn.canInput
-    && game.displayState.state === 'WaitInput'
+    && game.awaiting.input != null
     && !game.inputInFlight,
 );
 
 /** 当前是否需要值输入——IntValue/StrValue/AnyValue 三类有输入框。 */
 const hasTextInput = computed<boolean>(() => {
-  const t = game.displayState.inputType;
+  const t = inputType.value;
   return t === 'IntValue' || t === 'StrValue' || t === 'AnyValue';
 });
 
@@ -52,11 +70,11 @@ const hasTextInput = computed<boolean>(() => {
  */
 const showTextField = computed<boolean>(() => hasTextInput.value);
 
-/** 是否禁止空提交——IntValue/StrValue 在 needValue=true 时禁止空，AnyValue 始终允许空。 */
-const blockEmpty = computed<boolean>(() => {
-  const t = game.displayState.inputType;
-  return (t === 'IntValue' || t === 'StrValue') && game.displayState.needValue;
-});
+/**
+ * 是否禁止空提交——IntValue/StrValue（值输入）禁止空，AnyValue 始终允许空。
+ * 值输入判定收敛到 `isValueInputType`（与 store 的 `needValue` 派生同源）。
+ */
+const blockEmpty = computed<boolean>(() => isValueInputType(inputType.value));
 
 /**
  * 提交当前输入。
@@ -81,34 +99,25 @@ function submit(): void {
 }
 
 /**
- * 监听 displayState.state 变化——进入新的 WaitInput 时清空输入框并 auto-focus；
- * 从 WaitInput 切走时也清空（避免残留）。
+ * 监听输入请求类型变化——进入新的输入等待（含同一等待内 inputType 改变）时清空输入框
+ * 并 auto-focus；离开输入等待（类型变 null）时清空（避免残留）。
+ *
+ * issue 08：判据从 `displayState.state === 'WaitInput'` 改为契约 `awaiting.input.type`；
+ * 原「state 变化」+「inputType 变化」两个 watch 合并为一个（同一维度的两个视图）。
  */
 watch(
-  () => game.displayState.state,
-  (newState, oldState) => {
-    if (newState === 'WaitInput') {
+  () => inputType.value,
+  (newType, oldType) => {
+    if (newType === oldType) return;
+    if (newType !== null) {
       inputValue.value = '';
       if (hasTextInput.value) {
         void nextTick(() => {
           inputEl.value?.focus();
         });
       }
-    }
-    if (oldState === 'WaitInput' && newState !== 'WaitInput') {
+    } else {
       inputValue.value = '';
-    }
-  },
-);
-
-/** 监听 inputType 变化——同一 WaitInput 内若 inputType 改变，重新 focus。 */
-watch(
-  () => game.displayState.inputType,
-  () => {
-    if (game.displayState.state === 'WaitInput' && hasTextInput.value) {
-      void nextTick(() => {
-        inputEl.value?.focus();
-      });
     }
   },
 );
@@ -120,7 +129,7 @@ watch(
 function isAnyKeyMode(): boolean {
   return (
     canSubmit.value &&
-    game.displayState.inputType === 'AnyKey'
+    inputType.value === 'AnyKey'
   );
 }
 
@@ -128,7 +137,7 @@ function isAnyKeyMode(): boolean {
 function onGlobalKeydown(e: KeyboardEvent): void {
   if (e.ctrlKey || e.metaKey) return;
   if (!canSubmit.value) return;
-  const t = game.displayState.inputType;
+  const t = inputType.value;
   if (t === 'EnterKey') {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -157,7 +166,7 @@ function onGlobalClick(e: MouseEvent): void {
 onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown);
   window.addEventListener('click', onGlobalClick);
-  if (game.displayState.state === 'WaitInput' && hasTextInput.value) {
+  if (game.awaiting.input != null && hasTextInput.value) {
     void nextTick(() => inputEl.value?.focus());
   }
 });
@@ -169,7 +178,7 @@ onUnmounted(() => {
 
 /** 输入框 placeholder——按 inputType 提示。 */
 const inputPlaceholder = computed<string>(() => {
-  const t = game.displayState.inputType;
+  const t = inputType.value;
   if (t === 'IntValue') return '输入数字…';
   if (t === 'StrValue') return '输入文本…';
   if (t === 'AnyValue') return '输入文本…';
@@ -178,7 +187,7 @@ const inputPlaceholder = computed<string>(() => {
 
 /** 输入框 inputmode——IntValue 用 numeric 提示移动端键盘。 */
 const inputMode = computed<'text' | 'numeric'>(() =>
-  game.displayState.inputType === 'IntValue' ? 'numeric' : 'text',
+  inputType.value === 'IntValue' ? 'numeric' : 'text',
 );
 
 /** 错误显示文案——lastTurn.error 优先（协议层错误），其次 lastError（解析层错误）。 */
@@ -200,7 +209,7 @@ const submitDisabled = computed<boolean>(() => {
  * 不再使用「提交（可空）」等实现性文案。
  */
 const submitLabel = computed<string>(() => {
-  const t = game.displayState.inputType;
+  const t = inputType.value;
   if (t === 'AnyKey' || t === 'EnterKey') return '继续';
   return '发送';
 });
@@ -215,8 +224,27 @@ const submitLabel = computed<string>(() => {
       <span>{{ game.timeoutNotice }}</span>
     </div>
 
-    <!-- 状态显示：按 displayState.state 分支 -->
-    <template v-if="game.displayState.state === 'WaitInput'">
+    <!-- 状态显示：按 v12 契约 awaiting 分派（issue 08） -->
+
+    <!-- 1. 终态：awaiting.ended（terminal = Quit / Error / 其他兜底） -->
+    <template v-if="game.awaiting.ended">
+      <div v-if="terminal === 'Quit'" class="state-quit">
+        <span class="state-icon" aria-hidden="true">■</span>
+        <span>游戏结束</span>
+      </div>
+
+      <div v-else-if="terminal === 'Error'" class="state-error">
+        <span class="state-icon" aria-hidden="true">✕</span>
+        <span>错误：{{ errorText ?? '未知错误' }}</span>
+      </div>
+
+      <div v-else class="state-unknown">
+        <span>状态：{{ terminal }}</span>
+      </div>
+    </template>
+
+    <!-- 2. 等待输入：awaiting.input 非空，按 input.type 再分支 -->
+    <template v-else-if="game.awaiting.input">
       <!-- 文本/数字输入：占位提示 + 输入框 + 发送按钮 -->
       <div v-if="showTextField" class="input-row">
         <input
@@ -240,7 +268,7 @@ const submitLabel = computed<string>(() => {
 
       <!-- AnyKey / EnterKey：状态行 + 「继续」按钮，不渲染空输入框（spec §6.3）。
            按钮提交空串；全局 click 监听已通过 closest('button') 排除按钮自身，不会双提交。 -->
-      <div v-else-if="game.displayState.inputType === 'AnyKey'" class="key-prompt">
+      <div v-else-if="inputType === 'AnyKey'" class="key-prompt">
         <span>按任意键继续</span>
         <button
           class="btn-primary submit-btn"
@@ -251,7 +279,7 @@ const submitLabel = computed<string>(() => {
         </button>
       </div>
 
-      <div v-else-if="game.displayState.inputType === 'EnterKey'" class="key-prompt">
+      <div v-else-if="inputType === 'EnterKey'" class="key-prompt">
         <span>按回车继续</span>
         <button
           class="btn-primary submit-btn"
@@ -263,31 +291,14 @@ const submitLabel = computed<string>(() => {
       </div>
 
       <div v-else class="unknown-input-type">
-        <span>未知输入类型：{{ game.displayState.inputType ?? '(null)' }}</span>
+        <span>未知输入类型：{{ inputType ?? '(null)' }}</span>
       </div>
     </template>
 
-    <div v-else-if="game.displayState.state === 'Running'" class="state-running">
-      <span class="state-icon" aria-hidden="true">⟳</span>
-      <span>游戏运行中…</span>
-    </div>
-
-    <div v-else-if="game.displayState.state === 'Quit'" class="state-quit">
-      <span class="state-icon" aria-hidden="true">■</span>
-      <span>游戏结束</span>
-    </div>
-
-    <div v-else-if="game.displayState.state === 'Error'" class="state-error">
-      <span class="state-icon" aria-hidden="true">✕</span>
-      <span>错误：{{ errorText ?? '未知错误' }}</span>
-    </div>
-
-    <div v-else-if="game.displayState.state === ''" class="state-idle">
+    <!-- 3. 版本兼容期兜底：awaiting 为空（空闲 / 等待连接）——收缩阶段（09）随旧字段移除。
+         定时等待 / 让路（只有 wait）不会走到这里：TerminalView 不渲染本组件。 -->
+    <div v-else class="state-idle">
       <span>等待连接…</span>
-    </div>
-
-    <div v-else class="state-unknown">
-      <span>状态：{{ game.displayState.state }}</span>
     </div>
   </div>
 </template>
@@ -377,7 +388,6 @@ const submitLabel = computed<string>(() => {
 }
 
 /* 状态显示 */
-.state-running,
 .state-quit,
 .state-error,
 .state-idle,
@@ -393,11 +403,6 @@ const submitLabel = computed<string>(() => {
 .state-icon {
   font-size: 14px;
 }
-.state-running .state-icon {
-  color: var(--color-indicator);
-  animation: spin 1.4s linear infinite;
-  display: inline-block;
-}
 .state-quit .state-icon {
   color: var(--color-error);
 }
@@ -409,11 +414,6 @@ const submitLabel = computed<string>(() => {
 }
 .unknown-input-type {
   color: var(--color-warning);
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 </style>
 
