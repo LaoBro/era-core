@@ -150,15 +150,10 @@ internal sealed class Session : IDisposable
                         AgentLog.Instance.Write("session game loop exception: " + ex);
                         // 目标 3：记录 LastError，GET /state 透出 lastError（threadAlive=false 的因果）。
                         _lastError = ex.ToString();
-                        // 3.3（NativeAOT）：JsonObject.ToJsonString()——匿名类型在 AOT 下反射序列化被禁用。
                         // 目标 1：errorInfo 结构化（type/message/inner），agent 一次定位；error 保留完整串兼容既有消费者。
-                        var structured = ErrorInfo.From(ex);
-                        _io.WriteLine(new JsonObject
-                        {
-                            ["error"] = ex.ToString(),
-                            ["errorInfo"] = structured?.ToJsonObject(),
-                            ["state"] = _console!.State.ToString()
-                        }.ToJsonString());
+                        // v12：改用共享构造点——终态形状 awaiting.ended{terminal:"Error"}（原先手拼 JsonObject
+                        // 带旧顶层 state 且无 awaiting，前端会判为协议解析失败，真实错误反而看不到）。
+                        _io.WriteLine(AgentJsonlProtocol.BuildErrorTurn(ex.ToString(), ErrorInfo.From(ex)));
                     }
                     finally
                     {
@@ -190,16 +185,10 @@ internal sealed class Session : IDisposable
         AgentLog.Instance.Write("session game loop exception (init stage): " + ex);
         _lastError = ex.ToString();
         _loading = false;
-        var structured = ErrorInfo.From(ex);
         try
         {
-            // NativeAOT：JsonObject.ToJsonString()，禁用匿名类型反射序列化（同 runLoop 回调内约定）。
-            _io.WriteLine(new JsonObject
-            {
-                ["error"] = ex.ToString(),
-                ["errorInfo"] = structured?.ToJsonObject(),
-                ["state"] = _console?.State.ToString() ?? "Idle"
-            }.ToJsonString());
+            // v12：与 runLoop 回调内 catch 同一条共享构造点（终态 awaiting.ended{terminal:"Error"}）。
+            _io.WriteLine(AgentJsonlProtocol.BuildErrorTurn(ex.ToString(), ErrorInfo.From(ex)));
         }
         catch (Exception wex)
         {

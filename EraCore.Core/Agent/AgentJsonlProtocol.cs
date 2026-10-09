@@ -55,6 +55,25 @@ namespace MinorShift.Emuera.GameView
             awaiting: AwaitInfo.Of(null, ConsoleState.Error, timedOut: false),
             error: message));
 
+        /// <summary>
+        /// 会话级异常帧（初始化阶段失败 / 游戏循环回调异常）——同样<b>不经过脚本</b>、是终态。
+        ///
+        /// <para>与 <see cref="BuildFatalTurn"/> 同属「第二产出者」：必须与主流帧共用同一条
+        /// 序列化路径（<see cref="SerializeTurn"/>），形状是 <c>awaiting.ended{terminal:"Error"}</c>。
+        /// 差别只在这里额外携带结构化诊断 <paramref name="errorInfo"/>，且 <c>error</c> 用完整串
+        /// （含堆栈）以兼容既有消费者。</para>
+        ///
+        /// <para>⚠️ 这两个调用点原先是手拼 <c>JsonObject</c>（含旧的顶层 <c>state</c>、无
+        /// <c>awaiting</c>）——v12 起前端要求 <c>awaiting</c> 必填，手拼帧会被判为协议解析失败、
+        /// 真实错误反而看不到。</para>
+        /// </summary>
+        internal static string BuildErrorTurn(string errorText, ErrorInfo? errorInfo)
+            => SerializeTurn(new TurnRecord(
+                diff: null,
+                awaiting: AwaitInfo.Of(null, ConsoleState.Error, timedOut: false),
+                error: errorText,
+                errorInfo: errorInfo));
+
         private readonly SessionIO _io;
         private readonly DisplayState _displayState;
         private string? _pendingRejectReason;
@@ -62,7 +81,7 @@ namespace MinorShift.Emuera.GameView
         /// ADR-0016：TINPUT 超时 flag——SubmitTimeoutAsync 路径置 true，
         /// 下次 BuildTurn 写出后清空。复用 _pendingRejectReason 同样的"一次性旗标"模式。
         /// RunLoopAsync 的 OperationCanceledException 分支调 HandleTimeoutAndWriteAsync
-        /// → SubmitTimeoutAsync → 此处置 true → BuildTurn 读出写入 turn.timedOut → 清空。
+        /// → SubmitTimeoutAsync → 此处置 true → BuildTurn 读出写入 `awaiting.wait.timedOut` → 清空。
         /// </summary>
         private bool _pendingTimeoutFlag;
 
@@ -157,7 +176,7 @@ namespace MinorShift.Emuera.GameView
         /// I-08：原先同步 BuildTurn 拿快照，绕过 WaitForInputAsync 的 30s 超时与取消保护；
         /// 若 RunEmueraProgram 卡死整个 server 线程被阻塞。
         /// ADR-0016：进入此路径前置 _pendingTimeoutFlag=true，让下一帧 BuildTurn 写出
-        /// turn.timedOut=true，前端据此清空启发式检测（issue 04 已删，改消费 timedOut 旗标）。
+        /// `awaiting.wait.timedOut=true`，前端据此显示超时通知（issue 04 的启发式检测已删）。
         /// </summary>
         internal async Task<string?> SubmitTimeoutAsync()
         {

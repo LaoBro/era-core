@@ -41,6 +41,36 @@ public sealed class FatalTurnShapeTests
     }
 
     /// <summary>
+    /// v12 收缩的第二个「第二产出者」：初始化阶段失败 / 游戏循环回调异常（<c>Session</c>）。
+    /// 这两处原先是手拼 <c>JsonObject</c>（含旧顶层 <c>state</c>、无 <c>awaiting</c>）——
+    /// 收缩后前端要求 <c>awaiting</c> 必填，手拼帧会被判为协议解析失败、真实错误反而看不到。
+    /// </summary>
+    [Fact]
+    public void Session_error_turn_is_a_wellformed_terminal_frame_with_error_info()
+    {
+        var errorInfo = new ErrorInfo("System.InvalidOperationException", "boom",
+            new ErrorInfo("System.IO.IOException", "disk"));
+
+        var json = AgentJsonlProtocol.BuildErrorTurn("boom (full stack)", errorInfo);
+
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        Assert.False(root.TryGetProperty("state", out _), "v12 起顶层 state 不得再出现");
+        Assert.Equal("boom (full stack)", root.GetProperty("error").GetString());
+
+        var awaiting = root.GetProperty("awaiting");
+        Assert.Equal("Error", awaiting.GetProperty("ended").GetProperty("terminal").GetString());
+        Assert.False(awaiting.TryGetProperty("input", out _), "终态帧不得带 input（互斥键）");
+        Assert.False(awaiting.TryGetProperty("wait", out _), "终态帧不得带 wait（互斥键）");
+
+        // 结构化诊断透传（含嵌套 inner）
+        var info = root.GetProperty("errorInfo");
+        Assert.Equal("System.InvalidOperationException", info.GetProperty("type").GetString());
+        Assert.Equal("disk", info.GetProperty("inner").GetProperty("message").GetString());
+    }
+
+    /// <summary>
     /// 🔴 新的内嵌类型必须在源生成解析器里注册：<c>EmueraJsonContext.Default</c>（**无 Converters**）
     /// 也必须能把 <c>awaiting</c> 序列化成完整对象，而不是空壳/抛异常 ——
     /// 这正是 MAUI 那条历史路径的失效面（变异式 H）。
