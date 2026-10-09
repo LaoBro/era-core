@@ -85,7 +85,30 @@ namespace MinorShift.Emuera.GameView
                     // 提前结束等待 —— issue-003 验收项「长动画期间按任意键可中断」。
                     // 未置位则吞掉输入，保持参考实现语义。
                     if (req.Skippable && req.Timelimit > 0)
-                        console.SubmitTimeout();
+                    {
+                        // 请求侧快进仍用 \e（spec v5 §4.2，对齐优先于 API 优雅）。
+                        // 置位后再走续跑：本次 RunEmueraProgram 期间 MESSKIP() 为真，
+                        // 脚本里的 `SIF MESSKIP() RETURN` 由此从死代码变为可执行。
+                        // ——这正是「打断」与「只迈一步」的分水岭：不置位则脚本读到 0，
+                        // 动画只会往后走一帧然后再次等待。
+                        //
+                        // scoped 语义（§4.3）：MesSkip 不是「只由输入侧拥有」的状态（脚本
+                        // SKIPLOG 也写它，ScriptProc.cs:787），故这里只收回「本文自己写的
+                        // 那一置位」，且必须自己归零 —— 本路径绕过了 ConsoleInputHandler 既有
+                        // 的两处清零点（PressEnterKey 对 Void 在 :106 早退，循环后归零到不了）。
+                        // 不归零会让后续 10 处 CanSkip 输入被静默填默认值。try/finally 覆盖
+                        // SubmitTimeout 的异常路径。
+                        //
+                        // ⚠️ 已知范围边界（§4.4 ⚠️）：本路径是 SubmitTimeout() → EndTimerCore()
+                        // 的单次 RunEmueraProgram("")，不进 PressEnterKey 的跨 WaitInput while
+                        // 快进链（ConsoleInputHandler.cs:134-142）。故只承诺**单个续跑区间内**
+                        // 跳过：脚本若在两次等待之间夹了 WAIT，不承诺跨过去（有意收窄，避免
+                        // MesSkip 长期为真污染上述 CanSkip 分支）。
+                        if (input.Contains("\\e", StringComparison.Ordinal))
+                            console.MesSkip = true;
+                        try { console.SubmitTimeout(); }
+                        finally { console.MesSkip = false; }
+                    }
                     break;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(input), req.InputType, $"未处理的输入类型: {req.InputType}");
