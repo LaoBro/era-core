@@ -434,6 +434,18 @@ internal sealed class ConsoleStateManager
     /// （server：<c>RunLoopAsync</c> 的 CancelAfter → SubmitTimeout；
     /// CLI：<c>CliGameLoop.HandleTimeout</c> 的挂钟比对）—— 不新建机制。
     ///
+    /// <para><b>2026.10.7 W1（让路停稳点）</b>：<c>time &lt;= 0</c>（无参 <c>AWAIT</c> /
+    /// <c>AWAIT 0</c>）不再「只刷新就继续跑」，而是同样进入 WaitInput、但
+    /// <see cref="InputRequest.Timelimit"/><c>=0</c> + <see cref="InputRequest.IsYield"/><c>=true</c>：
+    /// 零时长挂起点，宿主交付一帧后调 <c>EmueraConsole.EndYield</c> 在同线程续跑。
+    /// 与 <c>time &gt; 0</c> 的差别是<b>不装定时器</b>（<c>Timelimit=0</c> ⇒
+    /// <c>InputTimeoutMs</c> 返回 null）⇒ 不引入任何超时/tick 风暴，也不会有超时续跑。</para>
+    ///
+    /// <para>⚠️ 这是**强于参考实现**的控制流变更（spec §3.1.1）：参考实现的
+    /// <c>Await(int)</c> 在 <c>time &lt;= 0</c> 时是 <c>ProcessEvents()</c> 泵一次窗口后立刻
+    /// 回 Running（靠 WinForms 同步重绘逐帧可见）；无头架构里「重绘」的等价物只有一个
+    /// 停稳点上交付的帧，故这里必须真的挂起。</para>
+    ///
     /// 插件 API <c>PluginManager.Await</c> 也走这里，一并获得同一语义。
     /// </summary>
     public void Await(int time)
@@ -446,10 +458,16 @@ internal sealed class ConsoleStateManager
         _console.RefreshStrings(true);
         if (time <= 0)
         {
-            // 无时长（AWAIT 不带参 / AWAIT 0）：新语义下 Timelimit<=0 会让宿主循环
-            // 在 ReadLineAsync 上无限等待（InputTimeoutMs 对 Timelimit<=0 返回 null，
-            // 即不设超时上界），故保留改动前「只刷新、不等待」的形态 —— 它本来就是
-            // 一个无时长的让路点。
+            // 无参 AWAIT / AWAIT 0：零时长让路点。Timelimit=0 让 InputTimeoutMs 返回 null
+            // （ConsoleInputHandler.WaitInput 只在 Timelimit>0 时 PresetTimer）⇒ 不装定时器、
+            // 不发 tick、不会被 SubmitTimeout 提前续跑。Skippable 保持 false：让路期间客户端
+            // 输入与定时等待同待遇（吞掉、不报错、不推进，spec §2.4）。
+            _console.WaitInput(new InputRequest
+            {
+                InputType = InputType.Void,
+                Timelimit = 0,
+                IsYield = true,
+            });
             return;
         }
         _console.WaitInput(new InputRequest

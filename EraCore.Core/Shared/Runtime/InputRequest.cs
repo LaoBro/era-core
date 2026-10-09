@@ -70,5 +70,17 @@ internal sealed class InputRequest
 	/// </summary>
 	public bool Skippable;
 
+	/// <summary>
+	/// 让路点：非真实等待。<c>InputType=Void</c> + <see cref="Timelimit"/><c>=0</c> +
+	/// <see cref="IsYield"/><c>=true</c> 三者共同描述「零时长挂起」——脚本在此停下，
+	/// 宿主应立即交付一帧、并在同线程调用续跑入口（引擎侧 <c>EmueraConsole.EndYield</c>）；
+	/// 续跑期间<b>不得</b>置 <c>isTimeout</c>（否则脚本变量 <c>ISTIMEOUT</c> 长期说谎）。
+	///
+	/// <para>只由无参 <c>AWAIT</c> / <c>AWAIT 0</c> 置位（<c>ConsoleStateManager.Await</c>），
+	/// 与 <c>TWAIT t,1</c> 的 Void 等待（<see cref="Timelimit"/>&gt;0，走超时续跑）区分开。
+	/// <b>不上 wire</b>：它只作服务端让路识别（drain）的判据。</para>
+	/// </summary>
+	public bool IsYield;
+
 	static long LastRequestID;
 }

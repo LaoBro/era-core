@@ -328,6 +328,13 @@ internal sealed class EmueraConsole : IDisposable, IConsoleStateView, IButtonDis
     // ========================================
 
     internal void SubmitTimeout() => _timer.SubmitTimeout();
+    /// <summary>
+    /// 让路点（<c>InputRequest.IsYield</c>）的续跑入口 —— <b>宿主侧唯一应调用的引擎侧入口</b>。
+    /// 宿主识别出让路点后应交付一帧，再调用本方法在同线程续跑；<b>不要直接摸内部计时器</b>
+    /// （保持 facade 分层，spec §5.1b W1-4）。语义见 <c>ConsoleTimerManager.EndYieldCore</c>：
+    /// 与超时续跑不同，它不留下任何「这次是超时」的痕迹。
+    /// </summary>
+    internal void EndYield() => _timer.EndYieldCore();
     internal long? InputTimeoutMs => _timer.InputTimeoutMs;
     internal long InputTimelimit => _timer.InputTimelimit;
     internal bool IsDisplayTimeActive => _timer.IsDisplayTimeActive;

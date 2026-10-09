@@ -141,6 +141,26 @@ internal sealed class ConsoleTimerManager
         EndTimerCore();
     }
 
+    /// <summary>
+    /// 让路点（<c>InputRequest.IsYield</c>）的续跑：与 <see cref="EndTimerCore"/> 的唯一差别是
+    /// <b>不置 <c>isTimeout</c>、不打印 <c>TimeUpMes</c></b>——本次等待没有「超时」语义。
+    ///
+    /// <para>🔴 <b>禁止复用 <see cref="EndTimerCore"/></b>：<c>isTimeout</c> 经
+    /// <c>EmueraConsole.IsTimeOut</c> 对脚本暴露为 <c>ISTIMEOUT</c>，并驱动
+    /// <c>IsRunningTimer</c>；它唯一的复位点是 <see cref="SetTimer"/>，而 <c>SetTimer</c>
+    /// 只由 <c>Timelimit &gt; 0</c> 的等待触发 —— 一次误置会让 `ISTIMEOUT` 一直说谎到
+    /// 下一次带定时器的等待。spec §3.2 ③ / §7.1 的 E2④⑤ 即为这条不变式的闸门。</para>
+    ///
+    /// <para>终止性不变量：本次 <c>RunEmueraProgram("")</c> 的终止点，与改动前「AWAIT 直接
+    /// 跑过」时那个连续执行的终止点完全相同；只是把「一次跑到底」切成「跑一段 → 续跑」。</para>
+    /// </summary>
+    internal void EndYieldCore()
+    {
+        StopTimer();                       // 幂等：让路请求 Timelimit=0，本就不会武装定时器
+        _console.RunEmueraProgram("");
+        _console.RefreshStrings(true);
+    }
+
     internal long? InputTimeoutMs
     {
         get
