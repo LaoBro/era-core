@@ -20,7 +20,7 @@ import type { DisplayState, DisplayLine, DisplayEntry, TurnOp, DisplayDiff, BgIm
  * 与 button 也深拷贝（与 `applySnapshot` 的 `copyEntry` 一致——TS 对象默认可变，深拷贝
  * 保证 caller 后续 mutate 不影响内部状态）。
  *
- * state/inputType/needValue 不被 applyOps 修改——它们由 TurnRecord 顶层字段携带，
+ * state/inputType/needValue/awaiting 不被 applyOps 修改——它们由 TurnRecord 携带，
  * 不是 ops。与 C# TestAdapter 行为对称（T_full_roundtrip_preserves_state_inputType_needValue_from_snapshot）。
  *
  * @throws {Error} 未知 op 类型（与 C# `InvalidOperationException` 对称）
@@ -93,6 +93,8 @@ export function applyOps(state: DisplayState, ops: TurnOp[]): DisplayState {
     lines,
     bgColor,
     bgImages,
+    // v12：awaiting 与 state/inputType/needValue 一样不是 ops 载荷，原样透传（由外层 TurnRecord 携带）。
+    awaiting: state.awaiting,
     state: state.state,
     inputType: state.inputType,
     needValue: state.needValue,
@@ -137,7 +139,7 @@ export type DisplaySignal =
  *
  * 函数式纯度：与 applyOps 一致——返回新对象，深拷贝 segments/button。
  *
- * state/inputType/needValue 不被 applyDiff 修改——它们由 TurnRecord 顶层字段携带。
+ * state/inputType/needValue/awaiting 不被 applyDiff 修改——它们由 TurnRecord 携带。
  *
  * @returns `{ state, signal }`——signal 为 null 表示本帧无结构性变化（不影响滚动位置）；
  *   有 clear_screen 时返回 `{type:'clear_screen'}`，否则有 shift_head 时返回
@@ -215,6 +217,8 @@ export function applyDiff(
       lines,
       bgColor,
       bgImages,
+      // v12：同上——awaiting 由外层 TurnRecord 携带，归约层原样透传。
+      awaiting: state.awaiting,
       state: state.state,
       inputType: state.inputType,
       needValue: state.needValue,

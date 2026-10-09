@@ -193,19 +193,25 @@ export const useConnectionStore = defineStore('connection', () => {
         try {
           const obj = JSON.parse(text);
           // 用 parseTurnRecord 的字段校验逻辑做最小形状校验——DisplaySnapshot 与
-          // TurnRecord 顶层结构部分重叠（state/inputType/needValue/protocolVersion），
+          // TurnRecord 顶层结构部分重叠（awaiting/state/inputType/needValue/protocolVersion），
           // 但 DisplaySnapshot 必有 lines 字段。这里独立校验 lines。
           if (!Array.isArray(obj?.lines)) {
             throw new Error('snapshot.lines 缺失或非数组');
           }
-          if (typeof obj.state !== 'string') {
-            throw new Error('snapshot.state 缺失或非 string');
+          // issue 06：旧字段 state/needValue 降级为「存在即校验类型」——契约字段已换成 awaiting。
+          if (obj.state !== undefined && obj.state !== null && typeof obj.state !== 'string') {
+            throw new Error('snapshot.state 非 string');
           }
-          if (typeof obj.needValue !== 'boolean') {
-            throw new Error('snapshot.needValue 缺失或非 boolean');
+          if (obj.needValue !== undefined && obj.needValue !== null && typeof obj.needValue !== 'boolean') {
+            throw new Error('snapshot.needValue 非 boolean');
           }
           if (typeof obj.generation !== 'number') {
             throw new Error('snapshot.generation 缺失或非 number');
+          }
+          // v12：awaiting 必填（与 parseTurnRecord 同一版本判据：只看协议版本，不看字段在不在）。
+          const snapshotVersion = typeof obj.protocolVersion === 'number' ? obj.protocolVersion : null;
+          if (snapshotVersion !== null && snapshotVersion >= 12 && obj.awaiting == null) {
+            throw new Error('snapshot.awaiting 缺失（v12 起为必填契约字段）');
           }
           return obj as DisplaySnapshot;
         } catch (e) {

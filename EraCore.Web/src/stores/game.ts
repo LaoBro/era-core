@@ -3,6 +3,7 @@ import { ref, shallowRef, computed } from 'vue';
 import { parseTurnRecord, ParseTurnRecordError } from '../lib/parseTurnRecord';
 import { applyDiff, type DisplaySignal } from '../lib/opsApplier';
 import { applySnapshot } from '../lib/snapshotReducer';
+import { isValueInputType } from '../lib/awaiting';
 import { EMPTY_DISPLAY_STATE } from '../types/protocol';
 import type { DisplayState, DisplaySnapshot, TurnRecord } from '../types/protocol';
 import { useConnectionStore } from './connection';
@@ -225,12 +226,13 @@ function writeLastPlayedGameToStorage(name: string): void {
 /**
  * useGameStore — 游戏帧数据与显示状态（issue 03 升级 / issue 04 ADR-0016 v6 重构）。
  *
- * 协议消费链路（issue 02 引入纯函数，issue 03 在此 wiring，ADR-0016 加 timer 字段）：
+ * 协议消费链路（issue 02 引入纯函数，issue 03 在此 wiring，ADR-0016 加 timer 字段，
+ * issue 06 接 v12 唯一契约字段 awaiting）：
  *   WS 帧原始 JSON
- *     → parseTurnRecord(rawJson)  → TurnRecord（含 timeLimit/displayTime/timeUpMessage/timedOut）
+ *     → parseTurnRecord(rawJson, stickyProtocolVersion) → TurnRecord（awaiting 恒非 null）
  *     → applyDiff(displayState, turn.diff)  → { DisplayState, signal }
  *        signal 非 null 时写入 lastDisplaySignal（归约层对 shift_head/clear_screen 的分类摘要）
- *     → 顶层 state/inputType/needValue 用 turn 字段覆盖
+ *     → awaiting 写入 displayState；inputType/needValue 由 awaiting.input 派生
  *
  * 与 C# `Emuera.Headless/Server/OutputHub` + `AgentJsonlProtocol.RunLoopAsync` 对称：
  * 每个 WS Text 帧是一个 TurnRecord v6 JSON，diff 字段携带 LineOp[] 增量，
@@ -418,6 +420,17 @@ export const useGameStore = defineStore('game', () => {
    * sticky 行为：首帧收到非空版本时写入；后续帧的 null 字段不覆盖。`reset()` 时清空。
    */
   const protocolVersion = ref<number | null>(null);
+
+  /**
+   * v12（issue 06）：**服务端此刻在等什么**——唯一契约字段的只读视图。
+   *
+   * 恒非 null（v12 帧取自 wire；v11 兼容帧/快照由旧顶层字段合成），故消费者可直接写
+   * `awaiting.input` / `awaiting.wait?.durationMs` / `awaiting.ended?.terminal`，
+   * 不必做「字段在不在」的判断——这正是本轮要用契约取代反向推测的地方。
+   *
+   * ⚠️ issue 06 只**装载**该字段，不切换任何消费者（迁移见 issue 07 / 08）。
+   */
+  const awaiting = computed(() => displayState.value.awaiting);
 
   // ---------- 显示变更信号（shift_head / clear_screen） ----------
   //
@@ -748,7 +761,8 @@ export const useGameStore = defineStore('game', () => {
    *    - 成功：清 lastError，继续步骤 3
    * 3. 首帧（isInitial=true）带 protocolVersion；后续帧该字段为 null，不覆盖已 sticky 的版本
    * 4. 应用 diff（若存在）。applyDiff 不修改入参——返回新对象
-   * 5. 用 turn 顶层字段覆盖 state/inputType/needValue
+   * 5. 装载 turn.awaiting；inputType/needValue 由 awaiting.input 派生（不再读旧顶层字段），
+   *    state 仍取 turn.state（awaiting 无此维度，见更新处注释）
    * 6. ADR-0016：根据 turn.state + turn.timeLimit 更新 TINPUT timer 状态——
    *    WaitInput+timeLimit>0 → set startedAt/limit/displayTime/timeUpMessage + 启动 setInterval
    *    其他状态 / timeLimit=null → 清空 + 停止 setInterval
@@ -772,7 +786,9 @@ export const useGameStore = defineStore('game', () => {
 
     let turn: TurnRecord;
     try {
-      turn = parseTurnRecord(rawJson);
+      // 传入已装好的 sticky 协议版本：`awaiting` 的必填性由协议版本决定（issue 06），
+      // 而后续帧自身不带 protocolVersion（仅首帧带），解析器只能靠 sticky 判断是否 v12。
+      turn = parseTurnRecord(rawJson, protocolVersion.value);
     } catch (e) {
       lastError.value = e instanceof ParseTurnRecordError
         ? `协议解析失败：${e.message}`
@@ -812,12 +828,18 @@ export const useGameStore = defineStore('game', () => {
       afterDiff = displayState.value;
     }
 
-    // 用 turn 顶层字段覆盖 state/inputType/needValue
+    // v12：装载唯一契约字段 awaiting；旧的「输入状态」字段改由其派生，不再读帧的顶层旧字段。
+    //
+    // - awaiting：v12 帧直接来自 wire；v11 兼容帧已由解析器按旧顶层字段合成（同一形状）
+    // - inputType / needValue：由 awaiting.input 派生（与旧顶层字段同源，故旧消费者不受影响）
+    // - state：⚠️ 例外——awaiting 没有「游戏状态」这一维度（只有 等输入/等定时/终态），
+    //   故仍取自帧的顶层 state，留待收缩阶段（issue 09）与旧字段一起删除。
     displayState.value = {
       ...afterDiff,
-      state: turn.state,
-      inputType: turn.inputType ?? null,
-      needValue: turn.needValue,
+      awaiting: turn.awaiting,
+      state: turn.state ?? '',
+      inputType: turn.awaiting.input?.type ?? null,
+      needValue: isValueInputType(turn.awaiting.input?.type),
     };
 
     // ADR-0016：更新 TINPUT timer 状态。仅 WaitInput + timeLimit>0 才视为 TINPUT 期间。
@@ -1652,6 +1674,8 @@ export const useGameStore = defineStore('game', () => {
     lastTurn,
     lastSnapshot,
     displayState,
+    // v12（issue 06）：唯一契约字段的只读视图（恒非 null）
+    awaiting,
     protocolVersion,
     // v7：按钮 generation 失效 + 三重守卫
     currentTurnGeneration,

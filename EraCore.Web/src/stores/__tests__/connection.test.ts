@@ -222,8 +222,31 @@ describe('useConnectionStore.fetchSnapshot', () => {
 
     const conn = useConnectionStore();
     await expect(conn.fetchSnapshot('http://localhost:5173')).rejects.toThrow(
-      /snapshot\.state 缺失或非 string/,
+      /snapshot\.state 非 string/,
     );
+  });
+
+  it('200 但 v12 快照缺 awaiting：抛解析失败（契约字段缺失即抛）', async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(
+      JSON.stringify({ lines: [], state: 'WaitInput', needValue: false, generation: 0, protocolVersion: 12 }),
+      { status: 200 },
+    ));
+
+    const conn = useConnectionStore();
+    await expect(conn.fetchSnapshot('http://localhost:5173')).rejects.toThrow(
+      /snapshot\.awaiting 缺失/,
+    );
+  });
+
+  it('200 但 v11 快照缺 awaiting：不抛错（兼容期允许降级）', async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(
+      JSON.stringify({ lines: [], state: 'WaitInput', inputType: 'IntValue', needValue: true, generation: 0, protocolVersion: 11 }),
+      { status: 200 },
+    ));
+
+    const conn = useConnectionStore();
+    const snapshot = await conn.fetchSnapshot('http://localhost:5173');
+    expect(snapshot.protocolVersion).toBe(11);
   });
 
   it('fetch 网络异常：throw 原始 Error', async () => {

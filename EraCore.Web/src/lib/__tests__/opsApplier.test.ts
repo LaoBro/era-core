@@ -56,6 +56,8 @@ function makeState(partial: Partial<DisplayState> = {}): DisplayState {
     lines: partial.lines ?? [],
     bgColor: partial.bgColor ?? null,
     bgImages: partial.bgImages ?? [],
+    // v12：awaiting 恒非 null（空闲态 = 三键皆无）。归约层原样透传，故默认空对象即可。
+    awaiting: partial.awaiting ?? {},
     state: partial.state ?? '',
     inputType: partial.inputType ?? null,
     needValue: partial.needValue ?? false,

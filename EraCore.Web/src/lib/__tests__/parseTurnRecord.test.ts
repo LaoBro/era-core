@@ -167,12 +167,37 @@ describe('parseTurnRecord', () => {
     expect(() => parseTurnRecord('[]')).toThrow(ParseTurnRecordError);
   });
 
-  it('缺 state 字段抛 ParseTurnRecordError', () => {
-    expect(() => parseTurnRecord(JSON.stringify({ needValue: false }))).toThrow(ParseTurnRecordError);
+  it('缺 generation 字段抛 ParseTurnRecordError（v7 起每帧必带，不接受降级）', () => {
+    expect(() => parseTurnRecord(JSON.stringify({ state: 'WaitInput', needValue: false }))).toThrow(ParseTurnRecordError);
   });
 
-  it('缺 needValue 字段抛 ParseTurnRecordError', () => {
-    expect(() => parseTurnRecord(JSON.stringify({ state: 'WaitInput' }))).toThrow(ParseTurnRecordError);
+  it('缺 awaiting 的 v12 帧抛 ParseTurnRecordError（v12 唯一契约字段，缺失即抛）', () => {
+    const json = JSON.stringify({
+      state: 'WaitInput',
+      inputType: 'IntValue',
+      needValue: true,
+      protocolVersion: 12,
+      generation: 0,
+    });
+    expect(() => parseTurnRecord(json)).toThrow(ParseTurnRecordError);
+  });
+
+  it('v12 判定走 sticky 版本：帧省略 protocolVersion 时由形参补足', () => {
+    const json = JSON.stringify({ state: 'WaitInput', needValue: false, generation: 0 });
+    // sticky 已装好 12 ⇒ 后续帧（省略 protocolVersion）同样要求 awaiting
+    expect(() => parseTurnRecord(json, 12)).toThrow(ParseTurnRecordError);
+    // sticky 仍是 11（兼容期）⇒ 不要求，awaiting 由旧字段合成
+    expect(parseTurnRecord(json, 11).awaiting).toEqual({});
+    // 完全不传（未知版本）⇒ 走兼容期，不抛
+    expect(parseTurnRecord(json).awaiting).toEqual({});
+  });
+
+  it('旧字段 state / needValue 自 issue 06 起不再必填（降级为可选，存在即透传）', () => {
+    const json = JSON.stringify({ generation: 0 });
+    const turn = parseTurnRecord(json);
+    expect(turn.state).toBeNull();
+    expect(turn.needValue).toBeNull();
+    expect(turn.awaiting).toEqual({});
   });
 
   it('未知 LineOp type 抛 ParseTurnRecordError', () => {

@@ -317,17 +317,28 @@ describe('useGameStore.applyTurn', () => {
     expect(game.lastTurnJson).toBe('not a json');
   });
 
-  it('缺必填字段的 JSON：lastError 设置，displayState 不变', () => {
+  it('缺 awaiting 的 v12 帧：lastError 设置，displayState 不变', () => {
     const game = useGameStore();
     game.applyTurn(appendFrameJson(['orig']));
 
-    // 缺 needValue
-    game.applyTurn(JSON.stringify({ state: 'WaitInput', generation: 0 }));
+    // v12 帧：帧自带 protocolVersion=12 ⇒ awaiting 为必填契约字段，缺失即抛
+    game.applyTurn(JSON.stringify({ state: 'WaitInput', needValue: false, generation: 0, protocolVersion: 12 }));
 
     expect(game.lastError).not.toBeNull();
-    expect(game.lastError).toContain('needValue');
+    expect(game.lastError).toContain('awaiting');
     expect(game.displayState.lines).toHaveLength(1);
     expect(game.displayState.lines[0].entries[0].segments[0].text).toBe('orig');
+  });
+
+  it('旧必填校验已移除（issue 06）：缺 state/needValue 的 v11 帧不再报错', () => {
+    const game = useGameStore();
+
+    // 契约字段已换成 awaiting ⇒ 旧顶层字段降级为可选；v11 兼容期由垫片合成 awaiting
+    game.applyTurn(JSON.stringify({ state: 'WaitInput', generation: 0 }));
+
+    expect(game.lastError).toBeNull();
+    expect(game.displayState.state).toBe('WaitInput');
+    expect(game.awaiting).toEqual({});
   });
 
   it('protocolVersion sticky：首帧后后续帧省略时保留版本（C# isInitial 行为对称）', () => {

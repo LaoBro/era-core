@@ -1,22 +1,37 @@
-import type { TurnRecord, DisplayDiff, LineOp, DisplayLine, DisplayEntry, ButtonRef, PrintSegment, SegmentImage, SegmentShape, SegmentCrop, BgImageState } from '../types/protocol';
+import type { TurnRecord, DisplayDiff, LineOp, DisplayLine, DisplayEntry, ButtonRef, PrintSegment, SegmentImage, SegmentShape, SegmentCrop, BgImageState, AwaitInfo, ErrorInfo } from '../types/protocol';
+import { awaitingFromLegacyFields } from './awaiting';
+
+/** v12 起 `awaiting` 成为唯一契约字段（`TurnRecord.CurrentProtocolVersion` 的 TS 镜像）。 */
+const PROTOCOL_V12 = 12;
 
 /**
- * 解析 WS 帧 JSON 字符串为 `TurnRecord`（issue 02）。
+ * 解析 WS 帧 JSON 字符串为 `TurnRecord`（issue 02；issue 06 接 `awaiting`）。
  *
  * C# `KestrelGameServer` 把每个 turn 序列化为单个 Text 帧下发——前端 `connection` store
  * 的 `onmessage` 收到原始字符串后经此函数得到结构化对象。
  *
  * 设计选择：
- * - 只做最小形状校验——`state`/`needValue` 必填；其余字段可选（与 C# WhenWritingNull 对齐）
- * - 不强校验 `protocolVersion`——版本协商留给上层 store；解析层只透传
+ * - **必填字段（缺失即抛）**：`generation`（v7 起每帧必带）+ `awaiting`（v12 起唯一契约字段）
+ * - `awaiting` 的必填性按**协议版本**判定（见下），不按「`awaiting` 字段在不在」判定
+ * - 旧顶层字段 `state` / `needValue` 自 issue 06 起**不再必填**（契约已换成 `awaiting`）
  * - 抛 `ParseTurnRecordError` 而非 `Error`——便于上层 catch 时区分协议错误与其他异常
  * - 未知 `LineOp.type` 抛错——与 C# `TestAdapter.ApplyDiff` 抛 `InvalidOperationException` 对称
  *
+ * ## `awaiting` 的版本分支（spec §5.3 第 6 项）
+ *
+ * 分支只看**协议版本**：`有效版本 >= 12` ⇒ `awaiting` 必填、缺失即抛；否则（v11 兼容期）
+ * 允许缺失，由旧顶层字段合成（`awaitingFromLegacyFields`）。**不得**写成「有没有某个字段」
+ * 的启发式判断——那正是本轮要消灭的东西。
+ *
+ * 有效版本 = 帧自身的 `protocolVersion`（仅首帧带）**优先于** `protocolVersion` 形参
+ * （调用方传入的 sticky 协议版本）——后续帧省略该字段，只能靠 sticky 才知道是 v12。
+ *
  * @param rawJson WS 帧原始 JSON 字符串
- * @returns 结构化 `TurnRecord` 对象
+ * @param protocolVersion 调用方（game store）已装好的 sticky 协议版本；默认 null（未知 ⇒ 按兼容期处理）
+ * @returns 结构化 `TurnRecord` 对象（`awaiting` 恒非 null）
  * @throws {ParseTurnRecordError} JSON 语法错误 / 缺必填字段 / 未知 op 类型
  */
-export function parseTurnRecord(rawJson: string): TurnRecord {
+export function parseTurnRecord(rawJson: string, protocolVersion: number | null = null): TurnRecord {
   let obj: unknown;
   try {
     obj = JSON.parse(rawJson);
@@ -32,18 +47,15 @@ export function parseTurnRecord(rawJson: string): TurnRecord {
 
   const root = obj as Record<string, unknown>;
 
-  // 必填字段校验
-  if (typeof root.state !== 'string') {
-    throw new ParseTurnRecordError(`字段 state 缺失或非 string（得到 ${typeof root.state}）`);
-  }
-  if (typeof root.needValue !== 'boolean') {
-    throw new ParseTurnRecordError(`字段 needValue 缺失或非 boolean（得到 ${typeof root.needValue}）`);
-  }
+  // 必填字段校验（v7 起每帧必带 generation；缺失即抛，不接受降级）
+  const generation = readIntRequired(root.generation, 'generation');
 
   // optional 字段
   const inputType = readStringOrNull(root.inputType, 'inputType');
+  const state = readStringOrNull(root.state, 'state');
+  const needValue = readBoolOrNull(root.needValue, 'needValue');
   const error = readStringOrNull(root.error, 'error');
-  const protocolVersion = readIntOrNull(root.protocolVersion, 'protocolVersion');
+  const protocolVersionOnFrame = readIntOrNull(root.protocolVersion, 'protocolVersion');
   // ADR-0016：timer 字段——timeLimit / displayTime / timeUpMessage nullable + WhenWritingNull
   const timeLimit = readIntOrNull(root.timeLimit, 'timeLimit');
   const displayTime = readBoolOrNull(root.displayTime, 'displayTime');
@@ -52,23 +64,137 @@ export function parseTurnRecord(rawJson: string): TurnRecord {
   // 当 JSON 中省略该字段时（理论不会发生——C# WhenWritingNull 不抑制非 nullable bool），
   // 视为 false，与 C# 默认值对称。
   const timedOut = readBoolWithDefault(root.timedOut, 'timedOut', false);
-  // v7：generation 为必填 int，缺失时抛错——不接受降级
-  const generation = readIntRequired(root.generation, 'generation');
-  const diff = root.diff === undefined || root.diff === null ? null : parseDiff(root.diff);
 
-  return {
-    state: root.state,
-    needValue: root.needValue,
+  const diff = root.diff === undefined || root.diff === null ? null : parseDiff(root.diff);
+  // 诊断：结构化异常（C# `ErrorInfo`，非异常帧不出现）。纯增量字段，不升协议版本。
+  const errorInfo =
+    root.errorInfo === undefined || root.errorInfo === null
+      ? null
+      : parseErrorInfo(root.errorInfo, 'errorInfo');
+
+  // v12 唯一契约字段。版本判定用「帧自带版本 ?? sticky」——子序列帧省略 protocolVersion。
+  const effectiveVersion = protocolVersionOnFrame ?? protocolVersion;
+  const awaiting = parseAwaiting(root.awaiting, effectiveVersion != null && effectiveVersion >= PROTOCOL_V12, {
+    state,
     inputType,
-    diff,
-    error,
-    protocolVersion,
     timeLimit,
     displayTime,
     timeUpMessage,
     timedOut,
+  });
+
+  return {
+    awaiting,
+    diff,
+    error,
+    errorInfo,
+    protocolVersion: protocolVersionOnFrame,
     generation,
+    state,
+    inputType,
+    needValue,
+    timeLimit,
+    displayTime,
+    timeUpMessage,
+    timedOut,
   };
+}
+
+/**
+ * 解析 `awaiting`（v12 唯一契约字段）。
+ *
+ * - 字段缺失：v12 ⇒ 抛错（契约字段不得降级）；v11 兼容期 ⇒ 由旧顶层字段合成
+ * - 字段存在：严格按「两个正交维度 + 互斥终态键」校验形状
+ *
+ * 返回的容器**只带出现过的键**（缺失维度不写成 `null`），故空闲/瞬态快照得到 `{}`
+ * ——与 `EMPTY_DISPLAY_STATE.awaiting` 同形，消费者按「既不等输入也不等定时器」处理。
+ */
+function parseAwaiting(
+  raw: unknown,
+  required: boolean,
+  legacy: Parameters<typeof awaitingFromLegacyFields>[0],
+): AwaitInfo {
+  if (raw === undefined || raw === null) {
+    if (required) {
+      throw new ParseTurnRecordError(
+        '字段 awaiting 缺失或为 null（v12 起为必填契约字段，缺失即抛）',
+      );
+    }
+    return awaitingFromLegacyFields(legacy);
+  }
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ParseTurnRecordError(`awaiting 期望对象，得到 ${Array.isArray(raw) ? 'array' : typeof raw}`);
+  }
+  const obj = raw as Record<string, unknown>;
+
+  const info: AwaitInfo = {};
+  if (obj.input !== undefined && obj.input !== null) {
+    info.input = parseAwaitInput(obj.input, 'awaiting.input');
+  }
+  if (obj.wait !== undefined && obj.wait !== null) {
+    info.wait = parseAwaitWait(obj.wait, 'awaiting.wait');
+  }
+  if (obj.ended !== undefined && obj.ended !== null) {
+    info.ended = parseAwaitEnded(obj.ended, 'awaiting.ended');
+  }
+  return info;
+}
+
+/** 解析 `awaiting.input` ——「是否期待客户端发输入」维度。`type` 必填 string。 */
+function parseAwaitInput(raw: unknown, path: string): NonNullable<AwaitInfo['input']> {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new ParseTurnRecordError(`${path} 期望对象，得到 ${typeof raw}`);
+  }
+  const obj = raw as Record<string, unknown>;
+  return { type: readStringRequired(obj.type, `${path}.type`) };
+}
+
+/**
+ * 解析 `awaiting.wait` ——「是否有一段有上界的等待」维度。`durationMs` 必填 int
+ * （三态：缺省键 = 无限期 / `0` = 零时长让路 / `>0` = 定时等待）；
+ * 其余四个键可选，语义是 C# `WhenWritingNull`（仅 true / 有值时出现）。
+ */
+function parseAwaitWait(raw: unknown, path: string): NonNullable<AwaitInfo['wait']> {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new ParseTurnRecordError(`${path} 期望对象，得到 ${typeof raw}`);
+  }
+  const obj = raw as Record<string, unknown>;
+  return {
+    durationMs: readIntRequired(obj.durationMs, `${path}.durationMs`),
+    interruptible: readBoolOrNull(obj.interruptible, `${path}.interruptible`),
+    displayTime: readBoolOrNull(obj.displayTime, `${path}.displayTime`),
+    timeUpMessage: readStringOrNull(obj.timeUpMessage, `${path}.timeUpMessage`),
+    timedOut: readBoolOrNull(obj.timedOut, `${path}.timedOut`),
+  };
+}
+
+/** 解析 `awaiting.ended` —— 互斥终态键。`terminal` 必填 string（"Quit" / "Error"）。 */
+function parseAwaitEnded(raw: unknown, path: string): NonNullable<AwaitInfo['ended']> {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new ParseTurnRecordError(`${path} 期望对象，得到 ${typeof raw}`);
+  }
+  const obj = raw as Record<string, unknown>;
+  return { terminal: readStringRequired(obj.terminal, `${path}.terminal`) };
+}
+
+/**
+ * 解析 `errorInfo`（C# `ErrorInfo`）：`type`（完整类型名）+ `message` 必填，
+ * `inner` 可选且递归同形（C# 最深 4 层，这里不再设限——信源已封顶）。
+ */
+function parseErrorInfo(raw: unknown, path: string): ErrorInfo {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new ParseTurnRecordError(`${path} 期望对象，得到 ${typeof raw}`);
+  }
+  const obj = raw as Record<string, unknown>;
+  const inner = obj.inner === undefined || obj.inner === null
+    ? null
+    : parseErrorInfo(obj.inner, `${path}.inner`);
+  const info: ErrorInfo = {
+    type: readStringRequired(obj.type, `${path}.type`),
+    message: readStringRequired(obj.message, `${path}.message`),
+  };
+  if (inner) info.inner = inner;
+  return info;
 }
 
 /**
