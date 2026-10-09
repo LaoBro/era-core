@@ -299,9 +299,7 @@ namespace MinorShift.Emuera.GameView
         /// drain 会把它提前 <c>EndYield</c>，吞掉本次等待的输入 / 计时能力
         /// （「画面无变化时不发帧」「超时回归」用例即为此闸门）。</para>
         /// </summary>
-        private bool IsYieldPoint()
-            => console.State == ConsoleState.WaitInput
-               && console.CurrentRequest is { InputType: InputType.Void, Timelimit: <= 0 };
+        private bool IsYieldPoint() => IsAtYieldPoint();
 
         protected override void OnInputRejected(string reason)
         {

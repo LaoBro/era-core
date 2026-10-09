@@ -230,6 +230,14 @@ namespace MinorShift.Emuera.GameView
         void IInputTimer.SubmitTimeout() => console.SubmitTimeout();
         void IInputTimer.ClearInputBuffer() => _input.Clear();
 
+        // spec §5.1b W1-6 / W1-7：让路识别与续跑 —— 只做转发，不在协议层自建一套。
+        // 判据与 server 共用 AgentProtocolBase.IsAtYieldPoint（单一真相源，避免两份清单漂移）；
+        // 续跑走 EmueraConsole.EndYield facade（不置 isTimeout、不打印 TimeUpMes）。
+        // 这是 CLI 的存活条件：CliGameLoop 除输入与超时外没有别的续跑入口，
+        // 缺了它无参 AWAIT 挂起后 CLI 必然停住（而 server 全绿发现不了）。
+        bool IInputTimer.IsYieldPoint => IsAtYieldPoint();
+        void IInputTimer.EndYield() => console.EndYield();
+
         #endregion
 
         #region Keyboard / character input

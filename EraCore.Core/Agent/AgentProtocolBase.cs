@@ -37,6 +37,26 @@ namespace MinorShift.Emuera.GameView
             _ => false,
         };
 
+        /// <summary>
+        /// 让路点判据（<b>单一真相源</b>：CLI 与 server 共用，避免两份清单漂移）：
+        /// <c>State=WaitInput</c> + <see cref="InputType.Void"/> + <b>无时长</b>（<c>Timelimit&lt;=0</c>）。
+        ///
+        /// <para>这正是让路帧在 wire 上的可观测形态（spec §3.6：<c>state:"WaitInput"</c> +
+        /// <c>inputType:"Void"</c> + <c>Timelimit&lt;=0</c>），故判据与实际形态同源，
+        /// 不引入第二处真相。刻意<b>不</b>再叠加内部标记 <c>InputRequest.IsYield</c>：
+        /// 它只由 <c>ConsoleStateManager.Await(time&lt;=0)</c> 置位、与 <c>Timelimit=0</c> 恒等，
+        /// 叠加它只会漏掉另一类零时长 Void 等待（<c>TWAIT 0,1</c>）——那类等待
+        /// <c>InputTimeoutMs</c> 返回 null（无超时续跑）又不被判为让路点 ⇒ 宿主循环
+        /// 阻塞在读输入上、脚本永久停住。</para>
+        ///
+        /// <para>🔒 <c>Timelimit &lt;= 0</c> 是安全阀，不可省：省掉会把<b>真</b>的定时等待
+        /// （<c>TWAIT t,1</c> / <c>AWAIT t</c>：Void 且 <c>Timelimit &gt; 0</c>）误判为让路点，
+        /// drain 会把它提前续跑，吞掉本次等待的输入 / 计时能力。</para>
+        /// </summary>
+        protected bool IsAtYieldPoint()
+            => console.State == ConsoleState.WaitInput
+               && console.CurrentRequest is { InputType: InputType.Void, Timelimit: <= 0 };
+
         protected virtual void DispatchInput(string input)
         {
             if (console.State != ConsoleState.WaitInput)

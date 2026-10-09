@@ -85,6 +85,22 @@ internal sealed class CliGameLoop
         if (HandleTimeout())
             return RunState.Running;
 
+        // spec v5 §5.1b W1-8 / §3.2 ④（CLI 段）：让路点同步 drain。
+        //
+        // 🔴 这是 <b>CLI 的存活条件</b>，不是「顺手也实现一下」：本类只经输入与超时两条路径推进
+        // 脚本，而超时路径在上面的 HandleTimeout 里对 Timelimit<=0 直接早退。无参 AWAIT 改为
+        // 挂起后，CLI 再无任何续跑入口 —— 必然死锁，而 server 路径全绿也发现不了。
+        //
+        // 位置固定：超时处理之后（真定时等待仍由超时路径负责）、读取终端输入之前
+        // （续跑优先于本次输入消费）。CLI 的「交付一帧」是一次 Flush 重绘，不是写一行 IO。
+        // 不动 _waitInputEnteredAt：让路没有倒计时语义（此处的 Timelimit<=0 本就不会武装起始时间）。
+        if (_inputTimer.IsYieldPoint)
+        {
+            _redraw.Redraw(RedrawKind.Flush, false);
+            _inputTimer.EndYield();   // 转发到引擎 EmueraConsole.EndYield：不置 isTimeout、不打印 TimeUpMes
+            return RunState.Running;
+        }
+
         if (_vtInput.HasInputAvailable())
         {
             int b = _vtInput.ReadByte();

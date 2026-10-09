@@ -29,13 +29,18 @@ public class CliGameLoopTests
         public long InputTimelimitValue;
         public bool IsWaitingInputValue;
         public string? TimeUpMessageValue;
+        /// <summary>让路点（W1-6）：CLI 主循环据此在超时之后做同步 drain。</summary>
+        public bool IsYieldPointValue;
         public int SubmitTimeoutCalls;
         public int ClearInputBufferCalls;
+        public int EndYieldCalls;
         long IInputTimer.InputTimelimit => InputTimelimitValue;
         bool IInputTimer.IsWaitingInput => IsWaitingInputValue;
         string? IInputTimer.TimeUpMessage => TimeUpMessageValue;
+        bool IInputTimer.IsYieldPoint => IsYieldPointValue;
         public void SubmitTimeout() => SubmitTimeoutCalls++;
         public void ClearInputBuffer() => ClearInputBufferCalls++;
+        public void EndYield() => EndYieldCalls++;
     }
 
     private sealed class FakeWindowSize : IWindowSize
@@ -80,8 +85,9 @@ public class CliGameLoopTests
     {
         public int ReadByteResult = -1;
         public bool HasInput;
+        public int ReadByteCalls;
         public bool HasInputAvailable() => HasInput;
-        public int ReadByte() => ReadByteResult;
+        public int ReadByte() { ReadByteCalls++; return ReadByteResult; }
         public void EnableSgrMouse() { }
         public void DisableSgrMouse() { }
         public void Dispose() { }
@@ -355,5 +361,96 @@ public class CliGameLoopTests
         h.GameLoop.RunLoop(h.Cts.Token);
 
         Assert.Equal(0, h.Renderer.FlushBufferCalls);
+    }
+
+    // ===============================================================
+    // 让路点 drain（spec v5 §5.1b W1-8 / §3.2 ④ CLI 段）
+    //
+    // CLI 的「交付一帧」= 一次 Flush 重绘，续跑经 IInputTimer.EndYield 转发到引擎。
+    // 位置固定在 HandleTimeout 之后、读取终端输入之前 —— 缺了它无参 AWAIT 后 CLI 停住。
+    // ===============================================================
+
+    /// <summary>让路点 → 交付一帧（Flush）并续跑，且不沾染任何超时/倒计时语义。</summary>
+    [Fact]
+    public void Yield_point_flushes_a_frame_and_resumes()
+    {
+        var h = new Harness();
+        h.InputTimer.IsWaitingInputValue = true;
+        h.InputTimer.IsYieldPointValue = true;
+        h.InputTimer.InputTimelimitValue = 0;
+
+        var state = h.GameLoop.RunOneFrame(h.Cts.Token);
+
+        Assert.Equal(RunState.Running, state);
+        Assert.Equal(1, h.InputTimer.EndYieldCalls);
+        Assert.Equal(1, h.Renderer.FlushBufferCalls);
+        // 让路不走超时路径：不提交超时、不推超时文案、不清输入缓冲（§3.2 ③）。
+        Assert.Equal(0, h.InputTimer.SubmitTimeoutCalls);
+        Assert.Equal(0, h.InputTimer.ClearInputBufferCalls);
+        Assert.Equal(0, h.Countdown.OverwriteCalls);
+        // 让路没有倒计时语义 ⇒ 不动等待起始时间，倒计时既不更新也不重置。
+        Assert.Equal(0, h.Countdown.UpdateCalls);
+        Assert.Equal(0, h.Countdown.ResetCalls);
+    }
+
+    /// <summary>续跑优先于本次输入消费：让路帧不读终端输入（drain 在读取之前）。</summary>
+    [Fact]
+    public void Yield_point_resumes_before_reading_terminal_input()
+    {
+        var h = new Harness();
+        h.InputTimer.IsWaitingInputValue = true;
+        h.InputTimer.IsYieldPointValue = true;
+        h.TerminalInput.HasInput = true;
+        h.TerminalInput.ReadByteResult = 0x61;
+
+        h.GameLoop.RunOneFrame(h.Cts.Token);
+
+        Assert.Equal(1, h.InputTimer.EndYieldCalls);
+        Assert.Equal(0, h.TerminalInput.ReadByteCalls);
+    }
+
+    /// <summary>超时处理在 drain 之前：两者同时成立时走超时路径（位置保持为「超时之后」）。</summary>
+    [Fact]
+    public void Timeout_takes_precedence_over_yield_point()
+    {
+        var h = new Harness();
+        h.InputTimer.IsWaitingInputValue = true;
+        // 合成状态：只为钉住编排顺序（真实请求里 Timelimit&gt;0 不可能是让路点）。
+        h.InputTimer.InputTimelimitValue = 100;
+        h.InputTimer.IsYieldPointValue = true;
+
+        h.GameLoop.RunOneFrame(h.Cts.Token);
+
+        Assert.Equal(1, h.InputTimer.SubmitTimeoutCalls);
+        Assert.Equal(0, h.InputTimer.EndYieldCalls);
+    }
+
+    /// <summary>画面无变化（Flush 返回 false）时也必须续跑 —— 否则「只 AWAIT、无打印」的
+    /// 让路循环会把 CLI 永久卡死（续跑不得挂在重绘成功上）。</summary>
+    [Fact]
+    public void Yield_point_resumes_even_when_frame_has_no_change()
+    {
+        var h = new Harness();
+        h.Renderer.FlushResult = false;
+        h.InputTimer.IsWaitingInputValue = true;
+        h.InputTimer.IsYieldPointValue = true;
+
+        var state = h.GameLoop.RunOneFrame(h.Cts.Token);
+
+        Assert.Equal(RunState.Running, state);
+        Assert.Equal(1, h.InputTimer.EndYieldCalls);
+    }
+
+    /// <summary>CLI 无让路回归：非让路帧一次续跑都不发生。</summary>
+    [Fact]
+    public void Non_yield_frame_never_resumes()
+    {
+        var h = new Harness();
+        h.InputTimer.IsWaitingInputValue = true;
+        h.InputTimer.InputTimelimitValue = 5000;
+
+        h.GameLoop.RunOneFrame(h.Cts.Token);
+
+        Assert.Equal(0, h.InputTimer.EndYieldCalls);
     }
 }
