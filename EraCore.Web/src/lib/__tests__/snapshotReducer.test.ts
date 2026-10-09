@@ -12,7 +12,7 @@ import type { DisplaySnapshot, DisplayLine, DisplayEntry, ButtonRef, PrintSegmen
  * - 有行：snapshot.lines 含多行 → 全部复制到新状态
  * - 有按钮：snapshot.lines[].entries[].button → 几何 col/width 透传
  * - 有背景色：snapshot.bgColor → 新状态 bgColor
- * - 有 state/inputType/needValue：snapshot 顶层字段 → 新状态对应字段
+ * - 有 awaiting（v12 唯一契约字段）：snapshot.awaiting → 新状态 awaiting
  *
  * 函数式纯度验证：applySnapshot 不修改入参 state 与 snapshot（深拷贝隔离）。
  */
@@ -35,35 +35,33 @@ function line(entries: DisplayEntry[], align?: DisplayLine['align'], isLineEnd =
   return align === undefined ? { entries, isLineEnd } : { entries, align, isLineEnd };
 }
 
-function snapshot(partial: Partial<DisplaySnapshot> & Pick<DisplaySnapshot, 'state' | 'needValue'>): DisplaySnapshot {
+function snapshot(partial: Partial<DisplaySnapshot> & Pick<DisplaySnapshot, 'awaiting'>): DisplaySnapshot {
   return {
     lines: partial.lines ?? [],
     bgColor: partial.bgColor ?? null,
-    state: partial.state,
-    inputType: partial.inputType ?? null,
-    needValue: partial.needValue,
-    protocolVersion: partial.protocolVersion ?? 7,
+    awaiting: partial.awaiting,
+    protocolVersion: partial.protocolVersion ?? 12,
     generation: partial.generation ?? 0,
   };
 }
+
+/** 最常见的夹具：等一个「任意键」输入的停稳点。 */
+const INPUT_WAIT = { input: { type: 'EnterKey' } };
 
 // ---------- 测试 ----------
 
 describe('applySnapshot', () => {
   it('空快照：lines=[] → 新状态也为空', () => {
-    const snap = snapshot({ state: 'WaitInput', needValue: false });
+    const snap = snapshot({ awaiting: INPUT_WAIT });
     const newState = applySnapshot(EMPTY_DISPLAY_STATE, snap);
     expect(newState.lines).toEqual([]);
     expect(newState.bgColor).toBeNull();
-    expect(newState.state).toBe('WaitInput');
-    expect(newState.inputType).toBeNull();
-    expect(newState.needValue).toBe(false);
+    expect(newState.awaiting).toEqual(INPUT_WAIT);
   });
 
   it('有行：snapshot.lines 含 2 行 → 全部复制到新状态', () => {
     const snap = snapshot({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       lines: [
         line([entry('Hello')]),
         line([entry('World')]),
@@ -79,8 +77,7 @@ describe('applySnapshot', () => {
   it('有按钮：ButtonRef 几何 col/width 透传', () => {
     const btn = button(1, true, 0, 4, 0);
     const snap = snapshot({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       lines: [line([entry('[OK]', btn)])],
     });
     const newState = applySnapshot(EMPTY_DISPLAY_STATE, snap);
@@ -95,24 +92,23 @@ describe('applySnapshot', () => {
 
   it('有背景色：snapshot.bgColor → 新状态 bgColor', () => {
     const snap = snapshot({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       bgColor: '#FF0000',
     });
     const newState = applySnapshot(EMPTY_DISPLAY_STATE, snap);
     expect(newState.bgColor).toBe('#FF0000');
   });
 
-  it('有 state/inputType/needValue：顶层字段全部覆盖到新状态', () => {
-    const snap = snapshot({
-      state: 'WaitInput',
-      inputType: 'IntValue',
-      needValue: true,
-    });
+  it('有 awaiting：唯一契约字段原样覆盖到新状态（两维同现的 TINPUT 形态）', () => {
+    const awaiting = {
+      input: { type: 'IntValue' },
+      wait: { durationMs: 3000, displayTime: true },
+    };
+    const snap = snapshot({ awaiting });
     const newState = applySnapshot(EMPTY_DISPLAY_STATE, snap);
-    expect(newState.state).toBe('WaitInput');
-    expect(newState.inputType).toBe('IntValue');
-    expect(newState.needValue).toBe(true);
+    expect(newState.awaiting).toEqual(awaiting);
+    expect(newState.awaiting.input!.type).toBe('IntValue');
+    expect(newState.awaiting.wait!.durationMs).toBe(3000);
   });
 
   it('T_snapshot 对称：多行多 entry（含按钮 + 非按钮 + 按钮）按字段重建', () => {
@@ -120,8 +116,7 @@ describe('applySnapshot', () => {
     // 第一行单按钮 [OK]（col=0, width=4）
     // 第二行 3 entries：[Yes]（col=0, width=5）/ " or " 非按钮 / [No]（col=9, width=4）
     const snap = snapshot({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       bgColor: '#0A141E',
       lines: [
         line([entry('[OK]', button(1, true, 0, 4, 0))], 'left', true),
@@ -138,9 +133,7 @@ describe('applySnapshot', () => {
     // 顶层字段
     expect(newState.lines).toHaveLength(2);
     expect(newState.bgColor).toBe('#0A141E');
-    expect(newState.state).toBe('WaitInput');
-    expect(newState.inputType).toBeNull();
-    expect(newState.needValue).toBe(false);
+    expect(newState.awaiting).toEqual(INPUT_WAIT);
 
     // 第一行：单按钮
     const l1 = newState.lines[0];
@@ -171,8 +164,7 @@ describe('applySnapshot', () => {
 
   it('深拷贝隔离：修改新状态不影响原 snapshot', () => {
     const snap = snapshot({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       lines: [line([entry('orig')])],
     });
     const newState = applySnapshot(EMPTY_DISPLAY_STATE, snap);
@@ -191,8 +183,7 @@ describe('applySnapshot', () => {
     // "[0]"(3) + "[1]"(3) + "[2]"(3) + "[Cancel]"(8) — col 累加 0/3/6/9
     // 注意：col 累加是 C# BuildSnapshot 计算的，TS 端只验证透传
     const snap = snapshot({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       lines: [line([
         entry('[0]', button(0, true, 0, 3, 0)),
         entry('[1]', button(1, true, 3, 3, 0)),

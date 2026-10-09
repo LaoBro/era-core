@@ -12,23 +12,23 @@ import { parseTurnRecord, ParseTurnRecordError } from '../parseTurnRecord';
  * - 非 JSON 字符串 → 抛 ParseTurnRecordError
  */
 describe('parseTurnRecord', () => {
-  it('解析最简 TurnRecord（仅必填字段 state + needValue）', () => {
-    const json = JSON.stringify({ state: 'WaitInput', needValue: false, generation: 0 });
+  it('解析最简 TurnRecord（v12 两个必填键：generation + awaiting）', () => {
+    const json = JSON.stringify({ generation: 0, awaiting: { input: { type: 'EnterKey' } } });
     const turn = parseTurnRecord(json);
-    expect(turn.state).toBe('WaitInput');
-    expect(turn.needValue).toBe(false);
-    expect(turn.inputType).toBeNull();
+    expect(turn.awaiting).toEqual({ input: { type: 'EnterKey' } });
     expect(turn.diff).toBeNull();
     expect(turn.error).toBeNull();
+    expect(turn.errorInfo).toBeNull();
     expect(turn.protocolVersion).toBeNull();
   });
 
-  it('解析完整 TurnRecord（含 inputType / diff / protocolVersion）', () => {
+  it('解析完整 TurnRecord（含 input+wait 两维 / diff / protocolVersion）', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      inputType: 'IntValue',
-      needValue: true,
-      protocolVersion: 6,
+      awaiting: {
+        input: { type: 'IntValue' },
+        wait: { durationMs: 3000, displayTime: true, timeUpMessage: '時間切れ' },
+      },
+      protocolVersion: 12,
       generation: 0,
       diff: {
         lineOps: [
@@ -40,10 +40,11 @@ describe('parseTurnRecord', () => {
       },
     });
     const turn = parseTurnRecord(json);
-    expect(turn.state).toBe('WaitInput');
-    expect(turn.inputType).toBe('IntValue');
-    expect(turn.needValue).toBe(true);
-    expect(turn.protocolVersion).toBe(6);
+    expect(turn.awaiting.input).toEqual({ type: 'IntValue' });
+    expect(turn.awaiting.wait!.durationMs).toBe(3000);
+    expect(turn.awaiting.wait!.displayTime).toBe(true);
+    expect(turn.awaiting.wait!.timeUpMessage).toBe('時間切れ');
+    expect(turn.protocolVersion).toBe(12);
     expect(turn.diff).not.toBeNull();
     expect(turn.diff!.bgColor).toBe('#FF0000');
     expect(turn.diff!.lineOps).toHaveLength(3);
@@ -68,22 +69,20 @@ describe('parseTurnRecord', () => {
     expect(turn.diff!.lineOps[2].type).toBe('clear_screen');
   });
 
-  it('解析 error 帧（state=Error 时携带 error 字段）', () => {
+  it('解析 error 帧（终态 awaiting + error 文案）', () => {
     const json = JSON.stringify({
-      state: 'Error',
-      needValue: false,
+      awaiting: { ended: { terminal: 'Error' } },
       generation: 0,
       error: 'EraBrowser load failed',
     });
     const turn = parseTurnRecord(json);
-    expect(turn.state).toBe('Error');
+    expect(turn.awaiting.ended!.terminal).toBe('Error');
     expect(turn.error).toBe('EraBrowser load failed');
   });
 
   it('解析带 ButtonRef 的 entry（value 为 number/string 两种）', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [
@@ -127,8 +126,7 @@ describe('parseTurnRecord', () => {
 
   it('解析 align 字段（left/center/right/null）', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [
@@ -168,43 +166,25 @@ describe('parseTurnRecord', () => {
   });
 
   it('缺 generation 字段抛 ParseTurnRecordError（v7 起每帧必带，不接受降级）', () => {
-    expect(() => parseTurnRecord(JSON.stringify({ state: 'WaitInput', needValue: false }))).toThrow(ParseTurnRecordError);
+    expect(() => parseTurnRecord(JSON.stringify({ awaiting: { input: { type: 'EnterKey' } } }))).toThrow(ParseTurnRecordError);
   });
 
-  it('缺 awaiting 的 v12 帧抛 ParseTurnRecordError（v12 唯一契约字段，缺失即抛）', () => {
+  it('缺 awaiting 抛 ParseTurnRecordError（v12 唯一契约字段，缺失即抛；不再有版本双轨）', () => {
     const json = JSON.stringify({
+      generation: 0,
+      // 旧顶层字段即使全都在，也合成不出 awaiting
       state: 'WaitInput',
       inputType: 'IntValue',
       needValue: true,
       protocolVersion: 12,
-      generation: 0,
     });
     expect(() => parseTurnRecord(json)).toThrow(ParseTurnRecordError);
   });
 
-  it('v12 判定走 sticky 版本：帧省略 protocolVersion 时由形参补足', () => {
-    const json = JSON.stringify({ state: 'WaitInput', needValue: false, generation: 0 });
-    // sticky 已装好 12 ⇒ 后续帧（省略 protocolVersion）同样要求 awaiting
-    expect(() => parseTurnRecord(json, 12)).toThrow(ParseTurnRecordError);
-    // sticky 仍是 11（兼容期）⇒ 不要求，awaiting 由旧字段合成
-    expect(parseTurnRecord(json, 11).awaiting).toEqual({});
-    // 完全不传（未知版本）⇒ 走兼容期，不抛
-    expect(parseTurnRecord(json).awaiting).toEqual({});
-  });
-
-  it('旧字段 state / needValue 自 issue 06 起不再必填（降级为可选，存在即透传）', () => {
-    const json = JSON.stringify({ generation: 0 });
-    const turn = parseTurnRecord(json);
-    expect(turn.state).toBeNull();
-    expect(turn.needValue).toBeNull();
-    expect(turn.awaiting).toEqual({});
-  });
-
   it('未知 LineOp type 抛 ParseTurnRecordError', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
       generation: 0,
+      awaiting: { input: { type: 'EnterKey' } },
       diff: {
         lineOps: [{ type: 'unknown_op', foo: 'bar' }],
       },
@@ -214,9 +194,8 @@ describe('parseTurnRecord', () => {
 
   it('lineOps 非数组抛 ParseTurnRecordError', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
       generation: 0,
+      awaiting: { input: { type: 'EnterKey' } },
       diff: { lineOps: 'not_an_array' },
     });
     expect(() => parseTurnRecord(json)).toThrow(ParseTurnRecordError);
@@ -224,9 +203,8 @@ describe('parseTurnRecord', () => {
 
   it('ButtonRef.value 既非 number 也非 string 抛 ParseTurnRecordError', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
       generation: 0,
+      awaiting: { input: { type: 'EnterKey' } },
       diff: {
         lineOps: [
           {
@@ -245,107 +223,83 @@ describe('parseTurnRecord', () => {
   });
 });
 
-// ---------- ADR-0016：timer 字段 ----------
+// ---------- ADR-0016：TINPUT 计时元数据（v12 起挂在 awaiting.wait 上）----------
 //
-// v6 协议新增 4 个 TurnRecord 字段：
-// - timeLimit (int|null)：TINPUT 总时长（毫秒），仅 WaitInput+Timelimit>0 时下发
-// - displayTime (bool|null)：是否向玩家显示倒计时，仅 displayTime=true 时下发
-// - timeUpMessage (string|null)：ERB 自定义超时文案
-// - timedOut (bool，非 nullable)：本回合是否由 TINPUT 超时推进（默认 false）
-//
-// 与 C# AgentJsonlProtocolTests 的 7 个用例对称：覆盖填充、省略、形状校验。
+// 旧顶层四件套（timeLimit / displayTime / timeUpMessage / timedOut）已随 v12 收缩退场；
+// 同一份数据现在只出现在 `awaiting.wait` 的四个可选键上，语义是 C# `WhenWritingNull`
+// （仅 true / 有值时出现）。与 C# AgentJsonlProtocolTests 对称：覆盖填充、缺省、形状校验。
 
-describe('parseTurnRecord - ADR-0016 timer fields', () => {
-  it('TINPUT turn：timeLimit/displayTime/timeUpMessage/timedOut 全部正确解析', () => {
+describe('parseTurnRecord - TINPUT 计时元数据（awaiting.wait）', () => {
+  it('TINPUT 帧：durationMs + displayTime + timeUpMessage 正确解析', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      inputType: 'IntValue',
-      needValue: true,
-      protocolVersion: 6,
-      generation: 0,
-      timeLimit: 5000,
-      displayTime: true,
-      timeUpMessage: '时间到！',
-      timedOut: false,
-      diff: null,
-    });
-    const turn = parseTurnRecord(json);
-    expect(turn.timeLimit).toBe(5000);
-    expect(turn.displayTime).toBe(true);
-    expect(turn.timeUpMessage).toBe('时间到！');
-    expect(turn.timedOut).toBe(false);
-  });
-
-  it('超时帧：timedOut=true 透传', () => {
-    const json = JSON.stringify({
-      state: 'WaitInput',
-      inputType: 'IntValue',
-      needValue: true,
-      generation: 0,
-      timedOut: true,
-      timeUpMessage: 'Time up, continue with default',
-      diff: null,
-    });
-    const turn = parseTurnRecord(json);
-    expect(turn.timedOut).toBe(true);
-    expect(turn.timeUpMessage).toBe('Time up, continue with default');
-  });
-
-  it('非 TINPUT turn：timer 字段省略时 timeLimit/displayTime/timeUpMessage=null, timedOut=false', () => {
-    // C# WhenWritingNull 抑制 null 字段——非 TINPUT 帧的 JSON 不含 timer 字段
-    const json = JSON.stringify({
-      state: 'WaitInput',
-      inputType: 'AnyKey',
-      needValue: false,
+      awaiting: {
+        input: { type: 'IntValue' },
+        wait: { durationMs: 5000, displayTime: true, timeUpMessage: '时间到！' },
+      },
+      protocolVersion: 12,
       generation: 0,
       diff: null,
     });
     const turn = parseTurnRecord(json);
-    expect(turn.timeLimit).toBeNull();
-    expect(turn.displayTime).toBeNull();
-    expect(turn.timeUpMessage).toBeNull();
-    // timedOut 非 nullable，C# 每帧必发；防御性允许省略时视为 false
-    expect(turn.timedOut).toBe(false);
+    expect(turn.awaiting.wait!.durationMs).toBe(5000);
+    expect(turn.awaiting.wait!.displayTime).toBe(true);
+    expect(turn.awaiting.wait!.timeUpMessage).toBe('时间到！');
+    // 尚未超时 ⇒ 一次性旗标键缺省（不是 false）
+    expect(turn.awaiting.wait!.timedOut).toBeNull();
   });
 
-  it('timedOut 省略时默认 false（防御性，与 C# 默认值对称）', () => {
+  it('超时续跑帧：wait.timedOut=true 透传（一次性旗标）', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: {
+        input: { type: 'IntValue' },
+        wait: { durationMs: 5000, timedOut: true, timeUpMessage: 'Time up, continue with default' },
+      },
       generation: 0,
+      diff: null,
     });
     const turn = parseTurnRecord(json);
-    expect(turn.timedOut).toBe(false);
+    expect(turn.awaiting.wait!.timedOut).toBe(true);
+    expect(turn.awaiting.wait!.timeUpMessage).toBe('Time up, continue with default');
   });
 
-  it('timeLimit 非 int 抛 ParseTurnRecordError', () => {
+  it('零时长让路帧：只有 durationMs=0，四个可选键全缺省', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { wait: { durationMs: 0 } },
       generation: 0,
-      timeLimit: '5000',
+      diff: null,
     });
-    expect(() => parseTurnRecord(json)).toThrow(ParseTurnRecordError);
+    const turn = parseTurnRecord(json);
+    expect(turn.awaiting.wait).toEqual({
+      durationMs: 0,
+      interruptible: null,
+      displayTime: null,
+      timeUpMessage: null,
+      timedOut: null,
+    });
   });
 
-  it('displayTime 非 boolean 抛 ParseTurnRecordError', () => {
+  it('wait.durationMs 非 int 抛 ParseTurnRecordError', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { wait: { durationMs: '5000' } },
       generation: 0,
-      displayTime: 'yes',
     });
-    expect(() => parseTurnRecord(json)).toThrow(ParseTurnRecordError);
+    expect(() => parseTurnRecord(json)).toThrow(/awaiting\.wait\.durationMs/);
   });
 
-  it('timedOut 非 boolean 抛 ParseTurnRecordError', () => {
+  it('wait.displayTime 非 boolean 抛 ParseTurnRecordError', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { wait: { durationMs: 3000, displayTime: 'yes' } },
       generation: 0,
-      timedOut: 1,
     });
-    expect(() => parseTurnRecord(json)).toThrow(ParseTurnRecordError);
+    expect(() => parseTurnRecord(json)).toThrow(/awaiting\.wait\.displayTime/);
+  });
+
+  it('wait.timedOut 非 boolean 抛 ParseTurnRecordError', () => {
+    const json = JSON.stringify({
+      awaiting: { wait: { durationMs: 3000, timedOut: 1 } },
+      generation: 0,
+    });
+    expect(() => parseTurnRecord(json)).toThrow(/awaiting\.wait\.timedOut/);
   });
 });
 
@@ -356,8 +310,7 @@ describe('parseTurnRecord - ADR-0016 timer fields', () => {
 describe('parseTurnRecord - shift_head LineOp', () => {
   it('解析 shift_head op（count=1，MaxLog 滚动场景）', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [
@@ -378,8 +331,7 @@ describe('parseTurnRecord - shift_head LineOp', () => {
 
   it('解析 shift_head op（count>1，多行截断）', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [{ type: 'shift_head', count: 5 }],
@@ -394,8 +346,7 @@ describe('parseTurnRecord - shift_head LineOp', () => {
 
   it('shift_head count 缺失抛 ParseTurnRecordError', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [{ type: 'shift_head' }],
@@ -406,8 +357,7 @@ describe('parseTurnRecord - shift_head LineOp', () => {
 
   it('shift_head count 非 int 抛 ParseTurnRecordError', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [{ type: 'shift_head', count: '1' }],
@@ -418,8 +368,7 @@ describe('parseTurnRecord - shift_head LineOp', () => {
 
   it('shift_head count=0 合法（无操作，防御性）', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [{ type: 'shift_head', count: 0 }],
@@ -442,8 +391,7 @@ describe('parseTurnRecord - shift_head LineOp', () => {
 describe('parseTurnRecord - v8 image/shape/bgImages', () => {
   it('image segment：src/srcb/srcm/width/height/ypos 全字段透传', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [
@@ -474,8 +422,7 @@ describe('parseTurnRecord - v8 image/shape/bgImages', () => {
 
   it('image segment：srcb/srcm 省略时解析为 null（WhenWritingNull 对称）', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [
@@ -498,8 +445,7 @@ describe('parseTurnRecord - v8 image/shape/bgImages', () => {
 
   it('shape segment：type/x/y/width/height/color 全字段透传', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [
@@ -530,8 +476,7 @@ describe('parseTurnRecord - v8 image/shape/bgImages', () => {
 
   it('underline 文本样式透传（PRINT_SLIDER 横线）', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [
@@ -554,8 +499,7 @@ describe('parseTurnRecord - v8 image/shape/bgImages', () => {
 
   it('strikeout 文本样式透传（PRINT_SLIDER 轨道，ERB 位4=删除线）', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [
@@ -579,8 +523,7 @@ describe('parseTurnRecord - v8 image/shape/bgImages', () => {
 
   it('diff.bgImages：src/depth/opacity 数组透传', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [],
@@ -603,8 +546,7 @@ describe('parseTurnRecord - v8 image/shape/bgImages', () => {
 
   it('纯文本段：image/shape 为 undefined（v7 行为锁定）', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [
@@ -627,8 +569,7 @@ describe('parseTurnRecord - v8 image/shape/bgImages', () => {
 
   it('image 缺 src 抛 ParseTurnRecordError', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [
@@ -648,8 +589,7 @@ describe('parseTurnRecord - v8 image/shape/bgImages', () => {
 
   it('image crop：x/y/imgWidth/imgHeight 全字段透传', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [
@@ -682,8 +622,7 @@ describe('parseTurnRecord - v8 image/shape/bgImages', () => {
 
   it('image 无 crop 字段时解析为 undefined（老客户端帧兼容）', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [
@@ -708,8 +647,7 @@ describe('parseTurnRecord - v8 image/shape/bgImages', () => {
 
   it('image crop 缺字段（非 int）抛 ParseTurnRecordError', () => {
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'EnterKey' } },
       generation: 0,
       diff: {
         lineOps: [

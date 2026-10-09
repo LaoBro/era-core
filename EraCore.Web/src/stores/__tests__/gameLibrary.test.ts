@@ -377,19 +377,18 @@ describe('useGameStore game-library 状态与动作', () => {
       // 模拟 WS 帧推送
       game.applyTurn(
         JSON.stringify({
-          state: 'WaitInput',
-          needValue: false,
+          awaiting: { input: { type: 'AnyKey' } },
           generation: 1,
           diff: null,
         }),
       );
       expect(game.lastTurn).not.toBeNull();
-      expect(game.displayState.state).toBe('WaitInput');
+      expect(game.awaiting).toEqual({ input: { type: 'AnyKey' } });
 
       game.completeExitGame();
 
       expect(game.lastTurn).toBeNull();
-      expect(game.displayState.state).toBe('');
+      expect(game.awaiting).toEqual({});
     });
 
     it('视图拨回 terminal——退出前停留 debug/settings，重开不残留', () => {
@@ -461,8 +460,7 @@ describe('useGameStore game-library 状态与动作', () => {
       game.applyServerState('WaitInput');
       game.applyTurn(
         JSON.stringify({
-          state: 'WaitInput',
-          needValue: false,
+          awaiting: { input: { type: 'AnyKey' } },
           generation: 1,
           diff: null,
         }),

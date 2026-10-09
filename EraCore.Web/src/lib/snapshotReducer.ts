@@ -1,17 +1,14 @@
 import type { DisplayState, DisplaySnapshot, DisplayLine, DisplayEntry } from '../types/protocol';
-import { awaitingFromLegacyFields, isValueInputType } from './awaiting';
 
 /**
- * 用全量 `DisplaySnapshot` 替换内部状态（issue 02；issue 06 接 `awaiting`）。
+ * 用全量 `DisplaySnapshot` 替换内部状态（issue 02；issue 06 接 `awaiting`；issue 09 收缩）。
  *
- * 与 C# `TestAdapter.ApplySnapshot`（Emuera.Headless.Tests/TestAdapter.cs:34）对称：
+ * 与 C# `TestAdapter.ApplySnapshot` 对称：
  * - lines 深拷贝（每行 entries 也深拷贝，避免外部 mutation 影响内部状态）
- * - bgColor 直接覆盖
- * - `awaiting` 覆盖：v12 快照取自 wire（与流上帧同形）；**v11 兼容期**快照不带该字段时，
- *   由旧顶层字段合成（`awaitingFromLegacyFields`），使晚加入者与流上帧拿到同一形状
- * - `inputType` / `needValue` 由 `awaiting.input` **派生**（不再直接读旧顶层字段）
- * - `state` 仍取自快照顶层——`awaiting` 没有「游戏状态」这一维度（说明见 `DisplayState` 注释）
- * - protocolVersion 不进入 DisplayState（wire 元数据，不属于显示状态）
+ * - bgColor / bgImages 直接覆盖
+ * - `awaiting` 覆盖：**必填**契约字段——快照与流上帧同形（同一个 C# 工厂、同一个
+ *   req/state），v12 起不再有「旧顶层字段合成」的兼容垫片
+ * - `protocolVersion` / `generation` 不进入 DisplayState（wire 元数据，不属于显示状态）
  *
  * 函数式纯度：返回新对象，不修改入参 `state`（与 C# TestAdapter 可变实例不同——
  * Pinia store 需要响应式不可变更新）。`state` 参数保留是为了与 `applyOps(state, ops)`
@@ -22,16 +19,12 @@ import { awaitingFromLegacyFields, isValueInputType } from './awaiting';
  * @returns 新的 DisplayState
  */
 export function applySnapshot(_state: DisplayState, snapshot: DisplaySnapshot): DisplayState {
-  const awaiting = snapshot.awaiting ?? awaitingFromLegacyFields(snapshot);
   return {
     lines: snapshot.lines.map(copyLine),
     bgColor: snapshot.bgColor ?? null,
     // v8：背景图全量重建（C# 紧凑归一——空列表在 JSON 中省略，缺失即空）
     bgImages: (snapshot.bgImages ?? []).map((bg) => ({ ...bg })),
-    awaiting,
-    state: snapshot.state,
-    inputType: awaiting.input?.type ?? null,
-    needValue: isValueInputType(awaiting.input?.type),
+    awaiting: snapshot.awaiting,
   };
 }
 

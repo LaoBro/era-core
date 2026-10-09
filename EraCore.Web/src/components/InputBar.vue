@@ -21,10 +21,10 @@ import { isValueInputType } from '../lib/awaiting';
  *    - `AnyValue`：输入框 + 「发送」，允许空提交
  *    - `AnyKey`：状态行「按任意键继续」，不渲染空输入框
  *    - `EnterKey`：状态行「按回车继续」，不渲染空输入框
- * 3. 其余（`awaiting` 为空）⇒ 版本兼容期兜底（空闲 / 等待连接），收缩阶段（09）随旧字段移除
  *
- * 定时等待 / 零时长让路（只有 `awaiting.wait`）**不**会走到本组件——TerminalView 不渲染它，
- * 由倒计时行 / 跳过提示表达，故此处不再保留「脚本正在执行」加载分支。
+ * 两路都不命中（`awaiting` 为空 / 只有 `wait`）时**不渲染任何内容**——本组件由
+ * `TerminalView.showInputBar` 以「`awaiting.input` 或 `awaiting.ended`」为条件挂载，
+ * 故那两种情形根本走不到这里（收缩阶段（09）已删除版本兼容期的「等待连接」兜底分支）。
  *
  * 其余职责不变：
  * - ADR-0016：TINPUT 超时通知 + 实时倒计时（TinputCountdown 组件，输入栏上方窄状态行）。
@@ -295,11 +295,6 @@ const submitLabel = computed<string>(() => {
       </div>
     </template>
 
-    <!-- 3. 版本兼容期兜底：awaiting 为空（空闲 / 等待连接）——收缩阶段（09）随旧字段移除。
-         定时等待 / 让路（只有 wait）不会走到这里：TerminalView 不渲染本组件。 -->
-    <div v-else class="state-idle">
-      <span>等待连接…</span>
-    </div>
   </div>
 </template>
 
@@ -390,7 +385,6 @@ const submitLabel = computed<string>(() => {
 /* 状态显示 */
 .state-quit,
 .state-error,
-.state-idle,
 .state-unknown,
 .unknown-input-type {
   display: flex;

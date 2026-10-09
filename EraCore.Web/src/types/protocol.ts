@@ -13,7 +13,8 @@
  * `WhenWritingNull` —— nullable 字段在为 null 时不写入 JSON，故 TS 类型中所有 optional
  * 字段（`?`）对应 C# 端 nullable reference type，反序列化时缺失即为 undefined。
  *
- * 当前协议版本：**12**（v12 引入 `awaiting` 唯一契约字段；展开阶段七个旧顶层字段暂时保留）。
+ * 当前协议版本：**12**（wire 上只剩 `diff` / `awaiting` / `error` / `errorInfo` /
+ * `protocolVersion` / `generation` 六个键——七个旧顶层字段已在收缩阶段全部退场）。
  *
  * 手动维护：spec.md 决策——「协议已稳定，自动生成工具脆」。如 C# 端新增字段，此处同步。
  */
@@ -150,8 +151,8 @@ export interface ButtonRef {
 //   · TINPUT（既等输入、又有期限）第一次能被表达；
 //   · `AWAIT 8000`（纯定时等待）与 `无参 AWAIT`（零时长让路）只是 `durationMs` 不同。
 //
-// 展开阶段（issue 06）这些键与旧顶层字段（`state`/`inputType`/`needValue`/`timeLimit`
-// 等）并存且同源；收缩阶段（issue 09）删旧字段后 `awaiting` 成为唯一契约。
+// 展开阶段（05–08）这些键曾与旧顶层字段（`state`/`inputType`/`needValue`/`timeLimit`
+// 等）并存且同源；收缩阶段（09）删旧字段后 `awaiting` 成为 wire 上的唯一契约。
 
 /** 「是否期待客户端发输入」维度（C# `AwaitInput`）。`inputType != Void` 时出现。 */
 export interface AwaitInput {
@@ -251,18 +252,14 @@ export interface DisplayLine {
  * - `lines`：当前所有显示行
  * - `bgColor`：当前背景色（CSS hex 形如 "#FF0000"，可能为 null）
  * - `bgImages`：v8——当前背景图列表（depth 降序应用；空/省略 = 无背景图）
- * - `awaiting`：v12 唯一契约字段——与流上帧**同形**（同一个 C# 工厂、同一个 req/state），
- *   故晚加入者拿到的第一张画面不是另一套契约形状。快照可能在「脚本还在跑」的瞬态被取到，
- *   那时 `awaiting` 可为 `{}`（两维无值），由仍保留的 `state` 字段区分。
- *   可选：v11 兼容期快照可能不带该字段（届时前端按旧字段合成，见 `lib/awaiting.ts`）
- * - `state`：游戏状态字符串（C# `ConsoleState.ToString()`，如 "WaitInput"/"Quit"/"Error"）
- * - `inputType`：当前输入请求类型（C# `InputType.ToString()`，如 "IntValue"/"StrValue"/"AnyKey"/"EnterKey"）
- * - `needValue`：是否需要值输入（inputType=IntValue/StrValue 时 true）
+ * - `awaiting`：**v12 唯一契约字段（必填）**——与流上帧**同形**（同一个 C# 工厂、
+ *   同一个 req/state），故晚加入者拿到的第一张画面不是另一套契约形状。
+ *   TINPUT 计时元数据随 `awaiting.wait` 一并下发（顶层不再重复）。
+ *   ⚠️ 快照可能落在「脚本还在跑」的瞬态（`GET /snapshot` 随时可调），那时两个维度都
+ *   无值、序列化成 `{}`——这不是契约违规：`awaiting` 的不变式只约束**停稳点上产出的流帧**。
+ *   客户端把 `{}` 当作「没有可推进的等待」处理，下一次 WS 帧会给出真实停稳点。
  * - `protocolVersion`：协议版本号（与 `TurnRecord.protocolVersion` 一致，当前 **12**）
  * - `generation`：快照时的 generation 号（v7），前端用于按钮过期检测
- * - `timeLimit`：ADR-0016——TINPUT 总时长（毫秒），null/省略 = 非 TINPUT 期间
- * - `displayTime`：ADR-0016——是否向玩家显示倒计时（ERB 可设 false）
- * - `timeUpMessage`：ADR-0016——ERB 超时提示文案
  *
  * `timedOut` **不在 DisplaySnapshot**——snapshot 表示"当前状态"而非"如何到达此状态"，
  * 晚加入者只关心"现在还有多久超时"，不关心上一帧是否刚超时。
@@ -272,16 +269,10 @@ export interface DisplaySnapshot {
   bgColor?: string | null;
   /** v8：背景图列表。depth 降序应用；省略/空 = 无背景图（C# 紧凑归一：空列表不进 JSON）。 */
   bgImages?: BgImageState[] | null;
-  /** v12：唯一契约字段。v12 快照必带（与流上帧同形）；v11 兼容期可为缺失。 */
-  awaiting?: AwaitInfo | null;
-  state: string;
-  inputType?: string | null;
-  needValue: boolean;
+  /** v12：唯一契约字段（必填；与流上帧同形）。见上方说明。 */
+  awaiting: AwaitInfo;
   protocolVersion: number;
   generation: number;
-  timeLimit?: number | null;
-  displayTime?: boolean | null;
-  timeUpMessage?: string | null;
 }
 
 // ---------- DisplayDiff：行级差异（增量） ----------
@@ -355,36 +346,30 @@ export type TurnOp =
 // ---------- TurnRecord：单回合 WS 帧 ----------
 
 /**
- * WS 单回合帧（C# `TurnRecord`，ADR-0016 v6 加 timer 字段）。
+ * WS 单回合帧（C# `TurnRecord`，ADR-0016 v6 加 timer 字段；v12 收缩到 `awaiting`）。
  *
  * 每个 WS Text 帧是一个 `TurnRecord` JSON。前端 `parseTurnRecord` 把原始 JSON 字符串
  * 解析为该类型。v5 后 `diff` 是唯一增量格式（`ops` 已废弃移除）。
  * 权威规格见 `docs/guides/turn-protocol.md`。
  *
- * - `awaiting`：**v12 唯一契约字段**——「服务端此刻在等什么」（两个正交维度 + 互斥终态键）。
- *   v12 帧**必现**（缺失即抛）；v11 兼容期由解析器按旧顶层字段合成（见 `lib/awaiting.ts`），
- *   故类型上恒为一个对象。†
+ * - `awaiting`：**v12 唯一契约字段（必填，缺失即抛）**——「服务端此刻在等什么」
+ *   （`input` / `wait` 两个正交维度 + 互斥的 `ended` 终态键）。
  * - `diff`：行级差异（null 表示本回合显示未变——例如纯状态切换）
  * - `error`：语义收窄为一句话：**非空 ⇒ 客户端上一次输入未被接受，画面与等待状态均未推进**
- * - `errorInfo`：结构化异常诊断（脚本运行期异常帧携带；非异常帧不出现）——issue 06 补声明与解析
+ * - `errorInfo`：结构化异常诊断（脚本运行期异常帧携带；非异常帧不出现）
  * - `protocolVersion`：协议版本（当前 **12**；仅首帧必带，后续帧省略）
  * - `generation`：本回合 generation 号（v7），前端用于按钮过期检测；v7 起每帧必带
  *
- * † **旧顶层字段（展开阶段仍在 wire 上，收缩阶段 issue 09 删除）**：
- * - `state`：本回合后的游戏状态（"WaitInput"/"Quit"/"Error" 等）
- * - `inputType`：本回合后的输入请求类型。**"Void" 表示不接受输入、只能等**
- *   （`AWAIT` 动画等待 / `TWAIT t,1`）——两者在 wire 上无法区分，见规格 §3
- * - `needValue`：是否需要值输入
- * - `timeLimit` / `displayTime` / `timeUpMessage` / `timedOut`：ADR-0016 的 TINPUT 计时四件套
- *
- * 🔓 **issue 06 起 `state` / `needValue` 不再是必填**：契约字段已换成 `awaiting`，
- * 旧字段降级为「存在即透传」的可选值（解析器不再对缺失抛错）。
+ * 🔒 **v12 起 wire 上只有这六个键**。旧顶层字段（`state` / `inputType` / `needValue` /
+ * `timeLimit` / `displayTime` / `timeUpMessage` / `timedOut`）已全部退场：
+ * 输入状态由 `awaiting.input` 表达、`needValue` 由客户端按 `input.type` 推出
+ * （见 `lib/awaiting.ts` 的 `isValueInputType`）、TINPUT 计时元数据挂在 `awaiting.wait`。
  *
  * 注意：v5 协议中 `ops[]` 字段已废弃，本类型不包含该字段。C# `TestAdapter.ApplyOps`
  * 直接消费 `TurnOp[]`——TS 端做对称测试时也直接构造 `TurnOp[]`，不经 TurnRecord。
  */
 export interface TurnRecord {
-  /** v12：唯一契约字段（v12 帧必现；v11 兼容期由旧字段合成，恒非 null）。 */
+  /** v12：唯一契约字段（必填，缺失即抛）。 */
   awaiting: AwaitInfo;
   diff?: DisplayDiff | null;
   error?: string | null;
@@ -393,45 +378,29 @@ export interface TurnRecord {
   protocolVersion?: number | null;
   /** v7：本回合 generation 号，前端按钮过期检测。v7 每帧必带（缺失即抛）。 */
   generation: number;
-  // ---------- 旧顶层字段（展开阶段保留，issue 09 删除）----------
-  /** 旧：本回合后的游戏状态。issue 06 起不再必填（旧字段降级为可选）。 */
-  state?: string | null;
-  inputType?: string | null;
-  /** 旧：是否需要值输入。issue 06 起不再必填。 */
-  needValue?: boolean | null;
-  timeLimit?: number | null;
-  displayTime?: boolean | null;
-  timeUpMessage?: string | null;
-  /** ADR-0016：本帧是否由 TINPUT 超时触发（非 nullable bool，默认 false）。 */
-  timedOut: boolean;
 }
 
+/**
+ * 前端内部可变显示状态（`DisplaySnapshot` 去掉协议元数据后的形状）。
+ *
+ * 与 C# `TestAdapter` 字段对称：`lines` / `bgColor` / `bgImages` / `awaiting`。
+ * 不含 `protocolVersion` / `generation`——协议版本与回合号是 wire 元数据，不属于显示状态。
+ *
+ * 由 `applySnapshot` 从 `DisplaySnapshot` 重建，由 `applyDiff` 经增量更新。
+ * 函数式纯度：所有 reducer 返回新对象，不修改入参。
+ */
 export interface DisplayState {
   lines: DisplayLine[];
   bgColor: string | null;
   /** v8：当前背景图（空数组 = 无背景图）。applySnapshot 全量重建 / applyDiff 整体替换。 */
   bgImages: BgImageState[];
   /**
-   * v12：服务端此刻在等什么（唯一契约字段）。**恒非 null** —— v12 帧直接取自 wire，
-   * v11 兼容帧/快照由旧顶层字段合成（`lib/awaiting.ts`）；resetter 清为 `{}`（空闲态）。
+   * v12：服务端此刻在等什么（唯一契约字段）。**恒非 null** —— 帧 / 快照直接取自 wire；
+   * resetter 清为 `{}`（空闲态，也是快照瞬态形态）。
    */
   awaiting: AwaitInfo;
-  /**
-   * 旧：游戏状态字符串。⚠️ 与 `inputType` / `needValue` 不同，`awaiting` **没有**对应维度
-   * （它只描述「等输入 / 等定时 / 终态」），故该字段仍取自帧的顶层 `state`，
-   * 留待收缩阶段（issue 09）随旧字段一起删除。
-   */
-  state: string;
-  /** 旧：输入请求类型。issue 06 起**不再**取自帧的顶层字段，改由 `awaiting.input?.type` 派生。 */
-  inputType: string | null;
-  /** 旧：是否需要值输入。issue 06 起由 `awaiting.input?.type` 派生（IntValue/StrValue）。 */
-  needValue: boolean;
 }
 
-/**
- * 空状态（初始值）。`applySnapshot` 之前 / `clear` op 之后的状态。
- * state='' 与 C# TestAdapter `State = ""` 初始值对称。
- */
 // ---------- 控制权交接（issue 04 / M3） ----------
 
 /** Controller 身份。C# `ControllerInfo.Kind`：`agent` | `user`。空闲时 HTTP 返回 null。 */
@@ -472,9 +441,6 @@ export const EMPTY_DISPLAY_STATE: DisplayState = {
   lines: [],
   bgColor: null,
   bgImages: [],
-  // 空闲/未知：三键皆无（既不等输入、也不等定时器、也不是终态）。
+  // 空闲：三键皆无（既不等输入、也不等定时器、也不是终态）。
   awaiting: {},
-  state: '',
-  inputType: null,
-  needValue: false,
 };

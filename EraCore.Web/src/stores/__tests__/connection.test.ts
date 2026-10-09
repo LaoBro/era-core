@@ -137,14 +137,12 @@ describe('useConnectionStore.ensureSession', () => {
 /**
  * 构造合法 DisplaySnapshot JSON body——只覆盖 fetchSnapshot 校验的必填字段。
  */
-function snapshotJson(lines: unknown[] = [], opts: { state?: string; needValue?: boolean; protocolVersion?: number } = {}): string {
+function snapshotJson(lines: unknown[] = [], opts: { awaiting?: unknown; protocolVersion?: number } = {}): string {
   return JSON.stringify({
     lines,
-    state: opts.state ?? 'WaitInput',
-    inputType: null,
-    needValue: opts.needValue ?? false,
+    awaiting: opts.awaiting ?? { input: { type: 'AnyKey' } },
     generation: 0,
-    protocolVersion: opts.protocolVersion ?? 6,
+    protocolVersion: opts.protocolVersion ?? 12,
   });
 }
 
@@ -172,8 +170,8 @@ describe('useConnectionStore.fetchSnapshot', () => {
     const conn = useConnectionStore();
     const snapshot = await conn.fetchSnapshot('http://localhost:5173');
     expect(snapshot.lines).toHaveLength(1);
-    expect(snapshot.state).toBe('WaitInput');
-    expect(snapshot.protocolVersion).toBe(6);
+    expect(snapshot.awaiting).toEqual({ input: { type: 'AnyKey' } });
+    expect(snapshot.protocolVersion).toBe(12);
     expect(fetchSpy).toHaveBeenCalledWith('http://localhost:5173/snapshot');
   });
 
@@ -183,7 +181,7 @@ describe('useConnectionStore.fetchSnapshot', () => {
 
     const conn = useConnectionStore();
     const snapshot = await conn.fetchSnapshot('http://localhost:5173');
-    expect(snapshot.state).toBe('WaitInput');
+    expect(snapshot.awaiting).toEqual({ input: { type: 'AnyKey' } });
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
@@ -209,7 +207,7 @@ describe('useConnectionStore.fetchSnapshot', () => {
   });
 
   it('200 但 lines 非数组：抛解析失败', async () => {
-    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ state: 'WaitInput', needValue: false, lines: 'oops' }), { status: 200 }));
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ awaiting: { input: { type: 'AnyKey' } }, lines: 'oops' }), { status: 200 }));
 
     const conn = useConnectionStore();
     await expect(conn.fetchSnapshot('http://localhost:5173')).rejects.toThrow(
@@ -217,18 +215,21 @@ describe('useConnectionStore.fetchSnapshot', () => {
     );
   });
 
-  it('200 但 state 非 string：抛解析失败', async () => {
-    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ state: 123, needValue: false, lines: [] }), { status: 200 }));
+  it('200 但 generation 缺失：抛解析失败', async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(
+      JSON.stringify({ lines: [], awaiting: { input: { type: 'AnyKey' } } }),
+      { status: 200 },
+    ));
 
     const conn = useConnectionStore();
     await expect(conn.fetchSnapshot('http://localhost:5173')).rejects.toThrow(
-      /snapshot\.state 非 string/,
+      /snapshot\.generation 缺失或非 number/,
     );
   });
 
-  it('200 但 v12 快照缺 awaiting：抛解析失败（契约字段缺失即抛）', async () => {
+  it('200 但快照缺 awaiting：抛解析失败（v12 唯一契约字段，无版本双轨）', async () => {
     fetchSpy.mockResolvedValueOnce(new Response(
-      JSON.stringify({ lines: [], state: 'WaitInput', needValue: false, generation: 0, protocolVersion: 12 }),
+      JSON.stringify({ lines: [], generation: 0, protocolVersion: 12 }),
       { status: 200 },
     ));
 
@@ -236,17 +237,6 @@ describe('useConnectionStore.fetchSnapshot', () => {
     await expect(conn.fetchSnapshot('http://localhost:5173')).rejects.toThrow(
       /snapshot\.awaiting 缺失/,
     );
-  });
-
-  it('200 但 v11 快照缺 awaiting：不抛错（兼容期允许降级）', async () => {
-    fetchSpy.mockResolvedValueOnce(new Response(
-      JSON.stringify({ lines: [], state: 'WaitInput', inputType: 'IntValue', needValue: true, generation: 0, protocolVersion: 11 }),
-      { status: 200 },
-    ));
-
-    const conn = useConnectionStore();
-    const snapshot = await conn.fetchSnapshot('http://localhost:5173');
-    expect(snapshot.protocolVersion).toBe(11);
   });
 
   it('fetch 网络异常：throw 原始 Error', async () => {
@@ -505,10 +495,9 @@ describe('useConnectionStore.connect — onopen 立即拉 snapshot', () => {
 
     // 模拟 server 推送一帧带 diff 的 turn——在 snapshot 之上叠加新行
     const turnJson = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'AnyKey' } },
       generation: 0,
-      protocolVersion: 6,
+      protocolVersion: 12,
       diff: {
         lineOps: [
           { type: 'append', newLines: [{ entries: [{ segments: [{ text: 'Hello' }] }], isLineEnd: true }] },
@@ -521,7 +510,7 @@ describe('useConnectionStore.connect — onopen 立即拉 snapshot', () => {
     expect(game.displayState.lines).toHaveLength(2);
     expect(game.displayState.lines[0].entries[0].segments[0].text).toBe('Snapshot');
     expect(game.displayState.lines[1].entries[0].segments[0].text).toBe('Hello');
-    expect(game.protocolVersion).toBe(6);
+    expect(game.protocolVersion).toBe(12);
     expect(fetchSpy).toHaveBeenCalledWith('http://localhost:5173/snapshot');
     expect(fetchSpy).toHaveBeenCalledWith('http://localhost:5173/control');
   });
@@ -554,10 +543,9 @@ describe('useConnectionStore.connect — onopen 立即拉 snapshot', () => {
     // snapshot 还 pending——此时 WS delta 帧到达
     // 预期：onmessage await pendingSnapshotPromise，不会立即 applyTurn
     const deltaJson = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'AnyKey' } },
       generation: 0,
-      protocolVersion: 6,
+      protocolVersion: 12,
       diff: {
         lineOps: [
           { type: 'append', newLines: [{ entries: [{ segments: [{ text: 'Delta' }] }], isLineEnd: true }] },
@@ -639,7 +627,7 @@ describe('useConnectionStore.connect — onopen 立即拉 snapshot', () => {
         snapshotCallCount++;
         if (snapshotCallCount === 1) {
           // 第一次：游戏循环还没产出任何 PRINT——空 lines
-          return new Response(snapshotJson([], { state: 'WaitInput' }), { status: 200 });
+          return new Response(snapshotJson([]), { status: 200 });
         }
         // 第二次（fallback 触发）：游戏已产出 1 行 "Title"
         return new Response(
@@ -665,11 +653,9 @@ describe('useConnectionStore.connect — onopen 立即拉 snapshot', () => {
 
     // 模拟 C# 推送首帧 turn（diff 必为 null——ComputeDiff 第一次返回 null）
     const firstTurnJson = JSON.stringify({
-      state: 'WaitInput',
-      inputType: 'IntValue',
-      needValue: true,
+      awaiting: { input: { type: 'IntValue' } },
       generation: 0,
-      protocolVersion: 6,
+      protocolVersion: 12,
       // 注意：没有 diff 字段
     });
     FakeWebSocket.lastInstance!.triggerMessage(firstTurnJson);

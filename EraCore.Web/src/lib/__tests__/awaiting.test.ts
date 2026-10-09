@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { parseTurnRecord, ParseTurnRecordError } from '../parseTurnRecord';
-import { awaitingFromLegacyFields, isValueInputType } from '../awaiting';
+import { isValueInputType } from '../awaiting';
 
 /**
- * v12 `awaiting` 解析验收（issue 06）。
+ * v12 `awaiting` 解析验收（issue 06；issue 09 收缩后复审）。
  *
  * 契约权威：C# `EraCore.Core/Agent/AwaitInfo.cs` + `docs/guides/turn-protocol.md` §2。
  * 结构 =「两个正交维度（input / wait）+ 一个互斥终态键（ended）」，故本组用例把规格里
@@ -13,7 +13,7 @@ import { awaitingFromLegacyFields, isValueInputType } from '../awaiting';
  * `AwaitInfo` 落到 JS 后字段可选性语义（`WhenWritingNull`）与键出现与否，都只由解析器保证。
  */
 
-/** 造一个 v12 帧：`awaiting` 为必填，其余旧顶层字段故意留空以证明它们不再被依赖。 */
+/** 造一个 v12 帧：`awaiting` 为必填（wire 上已没有第二套输入状态可供降级）。 */
 function v12Frame(awaiting: unknown, extra: Record<string, unknown> = {}): string {
   return JSON.stringify({
     generation: 7,
@@ -84,8 +84,8 @@ describe('parseTurnRecord - v12 awaiting 形态', () => {
     expect(turn.awaiting.wait).toBeUndefined();
   });
 
-  it('⑦ 瞬态 `{}`：两维皆无（脚本还在跑时取到快照的情形），由 state 区分', () => {
-    const turn = parseTurnRecord(v12Frame({}, { state: 'Running' }));
+  it('⑦ 瞬态 `{}`：两维皆无（脚本还在跑时取到快照的情形，非契约违规——不变式只约束停稳点帧）', () => {
+    const turn = parseTurnRecord(v12Frame({}));
     expect(turn.awaiting).toEqual({});
   });
 
@@ -100,8 +100,8 @@ describe('parseTurnRecord - v12 awaiting 形态', () => {
     expect(() => parseTurnRecord(v12Frame({ ended: {} }))).toThrow(/awaiting\.ended\.terminal/);
   });
 
-  it('wait.timedOut 挂在 wait 上（不在顶层）——超时续跑是一次性旗标', () => {
-    const turn = parseTurnRecord(v12Frame({ wait: { durationMs: 5000, timedOut: true } }, { timedOut: true }));
+  it('wait.timedOut 挂在 wait 上——超时续跑是一次性旗标（顶层没有该键）', () => {
+    const turn = parseTurnRecord(v12Frame({ wait: { durationMs: 5000, timedOut: true } }));
     expect(turn.awaiting.wait!.timedOut).toBe(true);
   });
 });
@@ -133,44 +133,50 @@ describe('parseTurnRecord - errorInfo（issue 06 补齐的半接线头）', () =
   });
 });
 
-describe('awaitingFromLegacyFields / isValueInputType（v11 兼容垫片）', () => {
-  it('isValueInputType：只有 IntValue / StrValue 需要值输入', () => {
+describe('isValueInputType（v12 由 input.type 推出，不再依赖顶层 needValue）', () => {
+  it('只有 IntValue / StrValue 需要非空值输入（其余类型要么允许空、要么走游戏内按钮）', () => {
     expect(isValueInputType('IntValue')).toBe(true);
     expect(isValueInputType('StrValue')).toBe(true);
+    expect(isValueInputType('AnyValue')).toBe(false);
     expect(isValueInputType('AnyKey')).toBe(false);
     expect(isValueInputType('EnterKey')).toBe(false);
+    expect(isValueInputType('IntButton')).toBe(false);
     expect(isValueInputType(null)).toBe(false);
     expect(isValueInputType(undefined)).toBe(false);
   });
+});
 
-  it('终态：Quit / Error ⇒ ended，且不合成 input / wait', () => {
-    expect(awaitingFromLegacyFields({ state: 'Quit', inputType: 'IntValue', timeLimit: 5000 }))
-      .toEqual({ ended: { terminal: 'Quit' } });
-    expect(awaitingFromLegacyFields({ state: 'Error' })).toEqual({ ended: { terminal: 'Error' } });
+describe('parseTurnRecord - v12 收缩：awaiting 必填 + 七个旧顶层字段退场', () => {
+  it('awaiting 缺失 / null ⇒ 抛 ParseTurnRecordError（唯一契约字段不得降级）', () => {
+    expect(() => parseTurnRecord(JSON.stringify({ generation: 0, diff: null })))
+      .toThrow(/awaiting/);
+    expect(() => parseTurnRecord(JSON.stringify({ generation: 0, awaiting: null })))
+      .toThrow(/awaiting/);
   });
 
-  it('TINPUT：input + wait（displayTime / timeUpMessage / timedOut 仅在为真时出现）', () => {
-    expect(awaitingFromLegacyFields({
+  it('generation 仍必填（缺失即抛）', () => {
+    expect(() => parseTurnRecord(JSON.stringify({ awaiting: { input: { type: 'EnterKey' } } })))
+      .toThrow(/generation/);
+  });
+
+  it('七个旧顶层字段即使出现也不被消费、不进结果对象（wire 上已退场）', () => {
+    const turn = parseTurnRecord(JSON.stringify({
+      generation: 3,
+      awaiting: { input: { type: 'IntValue' } },
+      // 旧字段：解析器不读，也不该出现在结果类型上
       state: 'WaitInput',
       inputType: 'IntValue',
+      needValue: true,
       timeLimit: 3000,
       displayTime: true,
-      timeUpMessage: '時間切れ',
+      timeUpMessage: 'x',
       timedOut: true,
-    })).toEqual({
-      input: { type: 'IntValue' },
-      wait: { durationMs: 3000, displayTime: true, timeUpMessage: '時間切れ', timedOut: true },
-    });
-  });
+    }));
 
-  it('inputType="Void" 不产 input 维度（AWAIT / TWAIT 在旧 wire 上只能这样表达）', () => {
-    expect(awaitingFromLegacyFields({ state: 'WaitInput', inputType: 'Void', timeLimit: 8000 }))
-      .toEqual({ wait: { durationMs: 8000 } });
-  });
-
-  it('两维皆无（Running / 空闲）⇒ {}；旧 wire 的零时长让路不可表达（固有损失）', () => {
-    expect(awaitingFromLegacyFields({ state: 'Running', inputType: null })).toEqual({});
-    // 旧 wire 只在 Timelimit>0 时下发 timeLimit ⇒ timeLimit=null 合成不出 durationMs:0
-    expect(awaitingFromLegacyFields({ state: 'WaitInput', inputType: 'Void', timeLimit: null })).toEqual({});
+    expect(turn.awaiting).toEqual({ input: { type: 'IntValue' } });
+    expect(turn.generation).toBe(3);
+    for (const legacy of ['state', 'inputType', 'needValue', 'timeLimit', 'displayTime', 'timeUpMessage', 'timedOut']) {
+      expect(legacy in turn).toBe(false);
+    }
   });
 });

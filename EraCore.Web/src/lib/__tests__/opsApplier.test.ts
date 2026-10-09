@@ -17,7 +17,7 @@ import type { DisplayState, DisplaySnapshot, DisplayLine, DisplayEntry, ButtonRe
  * - 几何透传：ButtonRef 的 col/width 正确传递
  * - 多按钮同行（连续 PrintOp 不换行）
  * - 全量快照 + 增量 ops roundtrip
- * - state/inputType/needValue 在 ops 应用后保持不变
+ * - awaiting 在 ops 应用后保持不变
  * - 空 ops 不改变状态
  * - 纯度：applyOps 不修改入参 state 与 ops
  *
@@ -39,17 +39,18 @@ function button(value: number | string, isInteger: boolean, col: number, width: 
   return { value, isInteger, generation, col, width };
 }
 
-function snapshot(partial: Partial<DisplaySnapshot> & Pick<DisplaySnapshot, 'state' | 'needValue'>): DisplaySnapshot {
+function snapshot(partial: Partial<DisplaySnapshot> & Pick<DisplaySnapshot, 'awaiting'>): DisplaySnapshot {
   return {
     lines: partial.lines ?? [],
     bgColor: partial.bgColor ?? null,
-    state: partial.state,
-    inputType: partial.inputType ?? null,
-    needValue: partial.needValue,
-    protocolVersion: partial.protocolVersion ?? 8,
+    awaiting: partial.awaiting,
+    protocolVersion: partial.protocolVersion ?? 12,
     generation: partial.generation ?? 0,
   };
 }
+
+/** 最常见的夹具：等一个「任意键」输入的停稳点。 */
+const INPUT_WAIT = { input: { type: 'EnterKey' } };
 
 function makeState(partial: Partial<DisplayState> = {}): DisplayState {
   return {
@@ -58,9 +59,6 @@ function makeState(partial: Partial<DisplayState> = {}): DisplayState {
     bgImages: partial.bgImages ?? [],
     // v12：awaiting 恒非 null（空闲态 = 三键皆无）。归约层原样透传，故默认空对象即可。
     awaiting: partial.awaiting ?? {},
-    state: partial.state ?? '',
-    inputType: partial.inputType ?? null,
-    needValue: partial.needValue ?? false,
   };
 }
 
@@ -204,8 +202,7 @@ describe('applyOps: clear', () => {
   it('T_ops_clear 对称：清空全部行 + 重置 bgColor', () => {
     // 先用 snapshot 设置初始状态（含 bgColor）
     const snap = snapshot({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       bgColor: '#FF0000',
       lines: [{ entries: [entry('data')], isLineEnd: true }],
     });
@@ -312,8 +309,7 @@ describe('applyOps: roundtrip', () => {
   it('T_full_roundtrip 对称：snapshot 初始化 + ops 增量（clear + set_bg + print + newline）', () => {
     // 初始快照：1 行 [Start] 按钮
     const snap = snapshot({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       bgColor: '#000000',
       lines: [lineFromButton('[Start]', 1)],
     });
@@ -342,17 +338,14 @@ describe('applyOps: roundtrip', () => {
     expect(final.bgColor).toBe('#0000FF');
   });
 
-  it('T_full_roundtrip_preserves_state 对称：ops 不改变 state/inputType/needValue', () => {
+  it('T_full_roundtrip_preserves_awaiting 对称：ops 不改变 awaiting', () => {
     const snap = snapshot({
-      state: 'WaitInput',
-      inputType: 'IntValue',
-      needValue: true,
+      awaiting: { input: { type: 'IntValue' }, wait: { durationMs: 3000, displayTime: true } },
     });
     const state = applySnapshot(EMPTY_DISPLAY_STATE, snap);
 
-    expect(state.state).toBe('WaitInput');
-    expect(state.inputType).toBe('IntValue');
-    expect(state.needValue).toBe(true);
+    expect(state.awaiting.input!.type).toBe('IntValue');
+    expect(state.awaiting.wait!.durationMs).toBe(3000);
 
     const ops: TurnOp[] = [
       { type: 'print', segments: [seg('x')] },
@@ -360,15 +353,15 @@ describe('applyOps: roundtrip', () => {
     ];
     const final = applyOps(state, ops);
 
-    expect(final.state).toBe('WaitInput');
-    expect(final.inputType).toBe('IntValue');
-    expect(final.needValue).toBe(true);
+    expect(final.awaiting).toEqual({
+      input: { type: 'IntValue' },
+      wait: { durationMs: 3000, displayTime: true },
+    });
   });
 
   it('空 ops 不改变状态', () => {
     const snap = snapshot({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       bgColor: '#FF0000',
       lines: [lineFromButton('[OK]', 1)],
     });
@@ -377,7 +370,7 @@ describe('applyOps: roundtrip', () => {
     const final = applyOps(state, []);
     expect(final.lines).toHaveLength(1);
     expect(final.bgColor).toBe('#FF0000');
-    expect(final.state).toBe('WaitInput');
+    expect(final.awaiting).toEqual(INPUT_WAIT);
   });
 });
 
@@ -545,8 +538,7 @@ describe('applyDiff', () => {
     const snap: DisplaySnapshot = {
       lines: [],
       bgColor: null,
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       protocolVersion: 8,
       generation: 0,
       bgImages: [{ src: 'bg/a.png', depth: 1, opacity: 0.5 }],
@@ -556,8 +548,7 @@ describe('applyDiff', () => {
     const emptySnap: DisplaySnapshot = {
       lines: [],
       bgColor: null,
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       protocolVersion: 8,
       generation: 0,
     };

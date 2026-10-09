@@ -4,24 +4,17 @@ import { useGameStore } from '../game';
 import type { DisplaySnapshot } from '../../types/protocol';
 
 /**
- * 状态层持有 `awaiting`（issue 06）。
+ * 状态层持有 `awaiting`（issue 06；issue 09 收缩后复审）。
  *
- * 本票**不切换任何消费者**（迁移见 issue 07 / 08），但状态层必须先从「反向推断」换成
- * 「直接读契约」：`displayState.awaiting` 恒非 null，`inputType` / `needValue` 由其派生。
- *
- * 最能说明收益的一条：让帧的**旧顶层字段与 awaiting 故意冲突**，断言状态层以 awaiting 为准
- * ——这正是「旧的输入状态字段不再由帧的顶层字段覆盖」的可判定形式。
+ * v12 起 wire 上只剩 `awaiting`——状态层不再承载 `state` / `inputType` / `needValue`，
+ * 七个旧顶层字段已退场（连「旧字段与 awaiting 冲突」这种用例都不再可能构造）。
+ * 本组用例锁定：状态层把 `awaiting` 原样装进来，`serverState` 由它派生，
+ * 倒计时 / 跳过 / 超时通知全部读 `awaiting.wait`，快照与流上帧同形。
  */
 
 /** 造一个 v12 WS 帧（`awaiting` 必填）。 */
-function v12Frame(awaiting: unknown, extra: Record<string, unknown> = {}): string {
-  return JSON.stringify({
-    generation: 5,
-    protocolVersion: 12,
-    diff: null,
-    awaiting,
-    ...extra,
-  });
+function v12Frame(awaiting: unknown): string {
+  return JSON.stringify({ generation: 5, protocolVersion: 12, diff: null, awaiting });
 }
 
 describe('useGameStore - v12 awaiting（状态层装载）', () => {
@@ -29,83 +22,54 @@ describe('useGameStore - v12 awaiting（状态层装载）', () => {
     setActivePinia(createPinia());
   });
 
-  it('装载 awaiting，且 inputType / needValue 由 awaiting 派生（旧顶层字段冲突时以 awaiting 为准）', () => {
+  it('装载 awaiting（唯一契约字段），无任何派生副本', () => {
     const game = useGameStore();
 
-    game.applyTurn(v12Frame(
-      { input: { type: 'StrValue' } },
-      // 故意与 awaiting 冲突：旧字段说 Void / 不要值
-      { state: 'WaitInput', inputType: 'Void', needValue: false },
-    ));
+    game.applyTurn(v12Frame({ input: { type: 'StrValue' } }));
 
     expect(game.awaiting).toEqual({ input: { type: 'StrValue' } });
     expect(game.displayState.awaiting).toEqual({ input: { type: 'StrValue' } });
-    // 派生自 awaiting.input.type ⇒ 旧顶层字段的 'Void' / false 不再生效
-    expect(game.displayState.inputType).toBe('StrValue');
-    expect(game.displayState.needValue).toBe(true);
-    // state 例外：awaiting 没有「游戏状态」维度，仍取顶层
-    expect(game.displayState.state).toBe('WaitInput');
+    // 旧的派生副本字段已随收缩退场
+    expect('inputType' in game.displayState).toBe(false);
+    expect('needValue' in game.displayState).toBe(false);
+    expect('state' in game.displayState).toBe(false);
   });
 
   it('零时长让路帧：durationMs=0 被原样持有（客户端理解为「下一帧立刻到」）', () => {
     const game = useGameStore();
 
-    game.applyTurn(v12Frame({ wait: { durationMs: 0 } }, { state: 'WaitInput' }));
+    game.applyTurn(v12Frame({ wait: { durationMs: 0 } }));
 
     expect(game.awaiting.wait!.durationMs).toBe(0);
-    expect(game.displayState.inputType).toBeNull();
-    expect(game.displayState.needValue).toBe(false);
+    expect(game.awaiting.input).toBeUndefined();
   });
 
   it('终态帧：ended.terminal 可读，且两维为空', () => {
     const game = useGameStore();
 
-    game.applyTurn(v12Frame({ ended: { terminal: 'Quit' } }, { state: 'Quit' }));
+    game.applyTurn(v12Frame({ ended: { terminal: 'Quit' } }));
 
     expect(game.awaiting.ended!.terminal).toBe('Quit');
     expect(game.awaiting.input).toBeUndefined();
-    expect(game.displayState.inputType).toBeNull();
-    expect(game.displayState.needValue).toBe(false);
+    expect(game.awaiting.wait).toBeUndefined();
   });
 
-  it('sticky 版本生效：首帧装好 12 后，省略 protocolVersion 的后续帧缺 awaiting 也抛', () => {
+  it('后续帧缺 awaiting 也抛（v12 起无版本双轨，缺失即拒）', () => {
     const game = useGameStore();
-    game.applyTurn(v12Frame({ input: { type: 'AnyKey' } }, { state: 'WaitInput' }));
+    game.applyTurn(v12Frame({ input: { type: 'AnyKey' } }));
     expect(game.protocolVersion).toBe(12);
 
-    // 后续帧：帧自带 protocolVersion 省略（C# 仅首帧带）⇒ 只能靠 sticky 判定为 v12
-    game.applyTurn(JSON.stringify({ state: 'WaitInput', generation: 6, diff: null }));
+    // 后续帧（C# 仅首帧带 protocolVersion）
+    game.applyTurn(JSON.stringify({ generation: 6, diff: null }));
 
     expect(game.lastError).toContain('awaiting');
     // 解析失败不改画面
     expect(game.awaiting).toEqual({ input: { type: 'AnyKey' } });
   });
 
-  it('v11 兼容帧（无 awaiting）：由旧顶层字段合成，旧消费者读到的值不变', () => {
-    const game = useGameStore();
-
-    game.applyTurn(JSON.stringify({
-      state: 'WaitInput',
-      inputType: 'IntValue',
-      needValue: true,
-      generation: 0,
-      timeLimit: 5000,
-      displayTime: true,
-      timedOut: false,
-      diff: null,
-    }));
-
-    expect(game.awaiting).toEqual({
-      input: { type: 'IntValue' },
-      wait: { durationMs: 5000, displayTime: true },
-    });
-    expect(game.displayState.inputType).toBe('IntValue');
-    expect(game.displayState.needValue).toBe(true);
-  });
-
   it('reset()：awaiting 回到空闲形态（三键皆无）', () => {
     const game = useGameStore();
-    game.applyTurn(v12Frame({ input: { type: 'AnyKey' } }, { state: 'WaitInput' }));
+    game.applyTurn(v12Frame({ input: { type: 'AnyKey' } }));
     expect(game.awaiting).toEqual({ input: { type: 'AnyKey' } });
 
     game.reset();
@@ -114,19 +78,19 @@ describe('useGameStore - v12 awaiting（状态层装载）', () => {
   });
 });
 
-describe('useGameStore - 倒计时 / 跳过提示判据（issue 07 改读 awaiting.wait）', () => {
+describe('useGameStore - 倒计时 / 跳过提示判据（读 awaiting.wait）', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
   });
 
-  it('v12：wait.durationMs>0 → 启动倒计时（起始时刻/时限/是否显示/超时文案全部来自 awaiting.wait）', () => {
+  it('wait.durationMs>0 → 启动倒计时（起始时刻/时限/是否显示/超时文案全部来自 awaiting.wait）', () => {
     const game = useGameStore();
     const start = Date.now();
 
     game.applyTurn(v12Frame({
       input: { type: 'IntValue' },
       wait: { durationMs: 3000, displayTime: true, timeUpMessage: '快选择' },
-    }, { state: 'WaitInput' }));
+    }));
 
     expect(game.tinputStartedAt).not.toBeNull();
     expect(game.tinputStartedAt!).toBeGreaterThanOrEqual(start);
@@ -139,10 +103,10 @@ describe('useGameStore - 倒计时 / 跳过提示判据（issue 07 改读 awaiti
     game.reset();
   });
 
-  it('v12：零时长让路（durationMs=0）→ 不启动倒计时、也不给跳过提示', () => {
+  it('零时长让路（durationMs=0）→ 不启动倒计时、也不给跳过提示', () => {
     const game = useGameStore();
 
-    game.applyTurn(v12Frame({ wait: { durationMs: 0 } }, { state: 'WaitInput' }));
+    game.applyTurn(v12Frame({ wait: { durationMs: 0 } }));
 
     expect(game.tinputStartedAt).toBeNull();
     expect(game.tinputTimeLimit).toBeNull();
@@ -153,30 +117,28 @@ describe('useGameStore - 倒计时 / 跳过提示判据（issue 07 改读 awaiti
   it('canSkipWait：可打断（interruptible=true）才为真；不可打断 / 无 wait 均为假', () => {
     const game = useGameStore();
 
-    game.applyTurn(v12Frame({ wait: { durationMs: 8000, interruptible: true } }, { state: 'WaitInput' }));
+    game.applyTurn(v12Frame({ wait: { durationMs: 8000, interruptible: true } }));
     expect(game.canSkipWait).toBe(true);
 
     // TWAIT t,1：Skippable=false ⇒ interruptible 键不出现
-    game.applyTurn(v12Frame({ wait: { durationMs: 8000 } }, { state: 'WaitInput' }));
+    game.applyTurn(v12Frame({ wait: { durationMs: 8000 } }));
     expect(game.canSkipWait).toBe(false);
 
     // 纯输入等待：没有 wait 维度
-    game.applyTurn(v12Frame({ input: { type: 'IntValue' } }, { state: 'WaitInput' }));
+    game.applyTurn(v12Frame({ input: { type: 'IntValue' } }));
     expect(game.canSkipWait).toBe(false);
   });
 
-  it('v12 超时帧：wait.timedOut=true → timeoutNotice 用 wait.timeUpMessage（缺省用默认文案）', () => {
+  it('超时帧：wait.timedOut=true → timeoutNotice 用 wait.timeUpMessage（缺省用默认文案）', () => {
     const game = useGameStore();
 
     game.applyTurn(v12Frame(
       { input: { type: 'IntValue' }, wait: { durationMs: 3000, timedOut: true } },
-      { state: 'WaitInput' },
     ));
     expect(game.timeoutNotice).toBe('TINPUT 超时，游戏以默认值继续');
 
     game.applyTurn(v12Frame(
       { input: { type: 'IntValue' }, wait: { durationMs: 3000, timedOut: true, timeUpMessage: '時間切れ' } },
-      { state: 'WaitInput' },
     ));
     expect(game.timeoutNotice).toBe('時間切れ');
 
@@ -185,11 +147,11 @@ describe('useGameStore - 倒计时 / 跳过提示判据（issue 07 改读 awaiti
 
   it('定时等待结束（下一帧无 wait）→ 倒计时与跳过提示同时清空', () => {
     const game = useGameStore();
-    game.applyTurn(v12Frame({ wait: { durationMs: 8000, interruptible: true, displayTime: true } }, { state: 'WaitInput' }));
+    game.applyTurn(v12Frame({ wait: { durationMs: 8000, interruptible: true, displayTime: true } }));
     expect(game.showTinputCountdown).toBe(true);
     expect(game.canSkipWait).toBe(true);
 
-    game.applyTurn(v12Frame({ input: { type: 'AnyKey' } }, { state: 'WaitInput' }));
+    game.applyTurn(v12Frame({ input: { type: 'AnyKey' } }));
 
     expect(game.showTinputCountdown).toBe(false);
     expect(game.canSkipWait).toBe(false);
@@ -202,16 +164,14 @@ describe('useGameStore.setSnapshot - v12 awaiting（晚加入者与流上帧同�
     setActivePinia(createPinia());
   });
 
-  it('v12 快照：awaiting 原样进入状态层，inputType / needValue 由其派生', () => {
+  it('快照的 awaiting 原样进入状态层（与流上帧同一形状、同一工厂产出）', () => {
     const game = useGameStore();
     const snap: DisplaySnapshot = {
       lines: [],
-      state: 'WaitInput',
-      inputType: null,
-      needValue: false,
+      bgColor: null,
+      awaiting: { input: { type: 'IntValue' }, wait: { durationMs: 3000, displayTime: true } },
       protocolVersion: 12,
       generation: 3,
-      awaiting: { input: { type: 'IntValue' }, wait: { durationMs: 3000, displayTime: true } },
     };
 
     game.setSnapshot(snap);
@@ -220,37 +180,16 @@ describe('useGameStore.setSnapshot - v12 awaiting（晚加入者与流上帧同�
       input: { type: 'IntValue' },
       wait: { durationMs: 3000, displayTime: true },
     });
-    expect(game.displayState.inputType).toBe('IntValue');
-    expect(game.displayState.needValue).toBe(true);
     expect(game.protocolVersion).toBe(12);
   });
 
-  it('v11 快照（无 awaiting）：由旧顶层字段合成同一形状', () => {
+  it('契约要求 awaiting 必填：快照类型上已无旧字段可兜底', () => {
     const game = useGameStore();
     const snap: DisplaySnapshot = {
       lines: [],
-      state: 'WaitInput',
-      inputType: 'AnyKey',
-      needValue: false,
-      protocolVersion: 11,
-      generation: 3,
-    };
-
-    game.setSnapshot(snap);
-
-    expect(game.awaiting).toEqual({ input: { type: 'AnyKey' } });
-    expect(game.displayState.inputType).toBe('AnyKey');
-    expect(game.displayState.needValue).toBe(false);
-  });
-
-  it('v11 终态快照：ended 由 state 合成（旧消费者的 state 判断等价物）', () => {
-    const game = useGameStore();
-    const snap: DisplaySnapshot = {
-      lines: [],
-      state: 'Quit',
-      inputType: null,
-      needValue: false,
-      protocolVersion: 11,
+      bgColor: null,
+      awaiting: { ended: { terminal: 'Quit' } },
+      protocolVersion: 12,
       generation: 0,
     };
 

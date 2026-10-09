@@ -132,39 +132,36 @@ describe('InputBar: awaiting.ended ⇒ 终态行', () => {
   });
 });
 
-describe('InputBar: 空 awaiting 兜底 + 死分支已删', () => {
+describe('InputBar: 两路之外不渲染（兼容兜底已随收缩删除）+ 死分支不存在', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('awaiting 为空（空闲 / 等待连接）→ 兜底状态行，无任何输入 UI', async () => {
+  it('awaiting 为空 → 不渲染任何内容（挂载条件保证；「等待连接」兜底已在 09 删除）', async () => {
     const { wrapper, game } = mountInputBar();
     setAwaiting(game, {});
     await wrapper.vm.$nextTick();
 
-    expect(wrapper.find('.state-idle').text()).toContain('等待连接');
+    expect(wrapper.find('.state-idle').exists()).toBe(false);
     expect(wrapper.find('.input-row').exists()).toBe(false);
     expect(wrapper.find('.key-prompt').exists()).toBe(false);
   });
 
-  it('🔒 定时等待（只有 wait）→ 不渲染「游戏运行中」加载行（该分支已删除）', async () => {
+  it('🔒 定时等待（只有 wait）→ 不渲染「游戏运行中」加载行（该分支与 DisplayState.state 均已删除）', async () => {
     const { wrapper, game } = mountInputBar();
     setAwaiting(game, { wait: { durationMs: 8000, interruptible: true } });
-    // 旧实现按 displayState.state 分派：置 'Running' 使其**必然命中**已删分支，
-    // 从而本断言只在「真正删除了该分支」时通过（否则旧代码会渲染「游戏运行中…」）。
-    game.displayState = { ...game.displayState, state: 'Running' };
     await wrapper.vm.$nextTick();
 
     expect(wrapper.find('.state-running').exists()).toBe(false);
     expect(wrapper.text()).not.toContain('游戏运行中');
-    // 也不是输入态：走到空闲兜底
+    // 也不是输入态
     expect(wrapper.find('.input-row').exists()).toBe(false);
+    expect(wrapper.find('.key-prompt').exists()).toBe(false);
   });
 
   it('🔒 零时长让路（durationMs=0）→ 同样无加载行、无输入 UI', async () => {
     const { wrapper, game } = mountInputBar();
     setAwaiting(game, { wait: { durationMs: 0 } });
-    game.displayState = { ...game.displayState, state: 'Running' };
     await wrapper.vm.$nextTick();
 
     expect(wrapper.find('.state-running').exists()).toBe(false);

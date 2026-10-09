@@ -192,26 +192,17 @@ export const useConnectionStore = defineStore('connection', () => {
         const text = await resp.text();
         try {
           const obj = JSON.parse(text);
-          // 用 parseTurnRecord 的字段校验逻辑做最小形状校验——DisplaySnapshot 与
-          // TurnRecord 顶层结构部分重叠（awaiting/state/inputType/needValue/protocolVersion），
-          // 但 DisplaySnapshot 必有 lines 字段。这里独立校验 lines。
+          // 最小形状校验——DisplaySnapshot 与 TurnRecord 共有的键是 awaiting / protocolVersion，
+          // 外加快照独有的 lines / generation。这里独立校验（不共用 parseTurnRecord 的 diff 解析）。
           if (!Array.isArray(obj?.lines)) {
             throw new Error('snapshot.lines 缺失或非数组');
-          }
-          // issue 06：旧字段 state/needValue 降级为「存在即校验类型」——契约字段已换成 awaiting。
-          if (obj.state !== undefined && obj.state !== null && typeof obj.state !== 'string') {
-            throw new Error('snapshot.state 非 string');
-          }
-          if (obj.needValue !== undefined && obj.needValue !== null && typeof obj.needValue !== 'boolean') {
-            throw new Error('snapshot.needValue 非 boolean');
           }
           if (typeof obj.generation !== 'number') {
             throw new Error('snapshot.generation 缺失或非 number');
           }
-          // v12：awaiting 必填（与 parseTurnRecord 同一版本判据：只看协议版本，不看字段在不在）。
-          const snapshotVersion = typeof obj.protocolVersion === 'number' ? obj.protocolVersion : null;
-          if (snapshotVersion !== null && snapshotVersion >= 12 && obj.awaiting == null) {
-            throw new Error('snapshot.awaiting 缺失（v12 起为必填契约字段）');
+          // v12：awaiting 是唯一契约字段（必填）——收缩后不再有「按协议版本决定是否必填」的双轨。
+          if (obj.awaiting === undefined || obj.awaiting === null || typeof obj.awaiting !== 'object') {
+            throw new Error('snapshot.awaiting 缺失（v12 唯一契约字段）');
           }
           return obj as DisplaySnapshot;
         } catch (e) {
@@ -627,8 +618,8 @@ export const useConnectionStore = defineStore('connection', () => {
    * 提交输入。HTTP 模式走 `POST /input`（无 token = 用户），以便 409 回落到控制状态；
    * MAUI 仍走 bridge `postInput`。
    *
-   * ADR-0016：v6 协议用 turn.timedOut 旗标检测超时，已删除 issue 04 启发式
-   * 超时检测——通知由下一帧 turn.timedOut 派生清空，submit 不需要任何额外动作。
+   * ADR-0016：超时检测消费契约里的一次性旗标（v12 起为 `awaiting.wait.timedOut`），
+   * 已删除 issue 04 启发式超时检测——通知由下一帧的该旗标派生清空，submit 不需要额外动作。
    *
    * Issue 07 / spec ID7：MAUI 环境分支——不走 WS，用 `postInput` 投递给 C# `IJsBridge.InputReceived`，
    * `BridgeHost.OnInputFromJs` 识别 `{"type":"input","value":"..."}` 后（T08）入 `MauiBridgeIO.EnqueueInput`。

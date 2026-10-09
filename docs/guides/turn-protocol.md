@@ -34,30 +34,34 @@
 
 ## 2. `TurnRecord` 字段表
 
-`TurnRecord` 有 5 类字段：画面状态、输入需求、计时、诊断、协议元信息。
+`TurnRecord` 只有 **六个键**：唯一的契约字段 `awaiting`，加上帧内增量、诊断与协议元信息。
 
 序列化用 `JsonSerializerOptions.DefaultIgnoreCondition = WhenWritingNull`——
 **nullable 字段为 null 时字段整个不出现**（不是写 `"x": null`）。下表"省略"列即为此意。
 
 | 字段 | 类型 | 必现 | 说明 |
 |---|---|---|---|
-| `state` | string | 是 | 引擎状态。见 §3 状态表 |
-| `inputType` | string | 否 | 输入需求类型。见 §3 输入类型表。null/省略 = 本帧不请求输入 |
-| `needValue` | bool | 是 | 是否需要值输入。为 true 时 `inputType` 必为 `IntValue`/`StrValue`/`AnyValue`/`PrimitiveMouseKey`/`IntButton`/`StrButton` |
-| `diff` | object | 否 | 行级增量。见 §4。null/省略 = **画面完全未变**（纯状态切换，或空转帧被抑制） |
-| `error` | string | 否 | 输入拒绝原因（如"当前需要整数输入，请重试"）或脚本异常消息 |
+| `awaiting` | object | **是** | **唯一契约字段**：服务端此刻在等什么。见下 |
+| `diff` | object | 否 | 行级增量。见 §4。null/省略 = **画面完全未变**（输入被拒，或空转帧被抑制） |
+| `error` | string | 否 | 语义收窄为一句话：**非空 ⇒ 客户端上一次输入未被接受，画面与等待状态均未推进**（见 §7） |
 | `errorInfo` | object | 否 | 结构化异常（`type`/`message`/`inner?`，`inner` 最深 4 层）。见 §7 |
 | `protocolVersion` | number | **仅首帧** | 协议版本。仅 initial turn 携带，后续帧省略（见 §6） |
-| `timeLimit` | number | 否 | TINPUT/定时等待的总时长（ms）。仅 `Timelimit > 0` 时出现 |
-| `displayTime` | boolean | 否 | 是否向玩家显示倒计时。ERB 可设 false 抑制。省略 = 显示 |
-| `timeUpMessage` | string | 否 | 超时提示文案 |
-| `timedOut` | boolean | **是** | 本帧是否由超时触发。**非 nullable**，每帧都出现（默认 false） |
-| `generation` | number | **是** | 按钮代号，用于按钮过期检测（见 §5） |
+| `generation` | number | **是** | 按钮代号，用于按钮过期检测（见 §5）。非 nullable，每帧都出现 |
 
-> `timedOut` 与 `generation` 是仅有的两个"非 nullable 且非必填语义"的字段——
-> 它们每帧都出现，前端无需处理 undefined。
+> `generation` 是唯一"非 nullable 且每帧必现"的字段——客户端无需处理 `undefined`。
 
-### `awaiting` —— v12 的唯一契约字段（展开阶段：与上表旧字段并存）
+🔒 **v12 起不存在** `state` / `inputType` / `needValue` / `timeLimit` / `displayTime` /
+`timeUpMessage` / `timedOut` 这些顶层字段：它们承载的信息全部并入 `awaiting`。
+
+| 旧顶层字段 | v12 去向 |
+|---|---|
+| `state` | 帧内不再有"引擎状态"——"在等什么"读 `awaiting`；会话级状态见 §3 |
+| `inputType` | `awaiting.input.type` |
+| `needValue` | 不占字段：客户端按 `input.type` 推出（§3 的输入类型表） |
+| `timeLimit` | `awaiting.wait.durationMs` |
+| `displayTime` / `timeUpMessage` / `timedOut` | `awaiting.wait` 的同名键（语义不变：仅真/有值时出现） |
+
+### `awaiting` —— 唯一契约字段
 
 `awaiting` 每帧必现（非 nullable），回答**服务端此刻在等什么**。它是「两个正交维度 +
 一个互斥终态键」：
@@ -74,7 +78,7 @@
 2. `ended` 未出现 ⇒ `input` / `wait` **至少其一必现**（两者都空 = 这个等待既不等输入也不等
    定时器，没有任何东西能推进它）。
 
-**`wait` 的三态（写死，不得再加第四个取值）：**
+**三个键写死，`wait` 的三态也写死（不得再加第四个取值）：**
 
 | 形态 | 含义 | 客户端表现 |
 |---|---|---|
@@ -97,13 +101,15 @@
 {"awaiting":{"ended":{"terminal":"Quit"}}}                                  // 终态：与 input / wait 互斥
 ```
 
-> ⚠️ **展开阶段（issue 05）**：`awaiting` 入网时，上表里的 `state`/`inputType`/`needValue`/
-> `timeLimit`/`displayTime`/`timeUpMessage`/`timedOut` 七个顶层字段**暂时保留**（现有前端保持全绿），
-> 它们与 `awaiting` 同源。收缩阶段（issue 09）删除后，`awaiting` 成为唯一契约字段。
+> ⚠️ **客户端遇到未知键必须回退取快照，不得静默忽略**：若 `awaiting` 里出现本文未描述的
+> 第三个维度（或 `wait` 的未知选项），客户端应重新 `GET /snapshot` 并把它当作
+> 「服务端在等一件我不认识的事」处理（保守：不推进、不显示可交互 affordance）。
+> 静默忽略会把「在等一件我不知道的事」误当成「无事可做」。未知的
+> `awaiting.ended.terminal` 取值按**终态**处理（停止交互），不是空闲。
 >
-> ⚠️ `GET /snapshot` 也带 `awaiting` 且**形状相同**（见 §6）；但快照可能在"脚本还在跑"的瞬态被
-> 取到 —— 那时两维都无值（`awaiting:{}`，由仍保留的 `state` 字段区分）。流上的帧只在**停稳点**
-> 产出，故"至少一维必现"只约束流上的帧。
+> ⚠️ `GET /snapshot` 也带 `awaiting` 且**形状相同**（见 §6）；但快照可能在"脚本还在跑"的
+> 瞬态被取到 —— 那时两维都无值（`awaiting:{}`）。流上的帧只在**停稳点**产出，故"至少一维
+> 必现"只约束**流上的帧**（§8 说明产出时机）。
 >
 > 致命错误帧（MAUI `BridgeHost.ShowError`，不经过脚本）同样是终态形状
 > `{"awaiting":{"ended":{"terminal":"Error"}}}`，见 §7。
@@ -112,13 +118,9 @@
 
 ```json
 {
-  "state": "WaitInput",
-  "inputType": "IntValue",
-  "needValue": true,
   "awaiting": { "input": { "type": "IntValue" } },
   "diff": null,
   "protocolVersion": 12,
-  "timedOut": false,
   "generation": 0
 }
 ```
@@ -127,9 +129,6 @@
 
 ```json
 {
-  "state": "WaitInput",
-  "inputType": "AnyKey",
-  "needValue": false,
   "awaiting": { "input": { "type": "AnyKey" } },
   "diff": {
     "lineOps": [
@@ -138,7 +137,6 @@
     "bgColor": "#101010",
     "bgImages": null
   },
-  "timedOut": false,
   "generation": 3
 }
 ```
@@ -147,20 +145,24 @@
 
 ## 3. 状态与输入类型
 
-### `state`（`ConsoleState`）
+### `state`（`ConsoleState`）—— 只在 `GET /state` 出现
 
-| 值 | 含义 | 客户端应对 |
-|---|---|---|
-| `Running` | 脚本执行中 | 不可交互；等待下一帧 |
-| `WaitInput` | 停在输入请求上 | 按 `inputType` 决定 UI形态 |
-| `Quit` | 脚本 QUIT/EXIT 正常退出 | 会话终结，停止轮询 |
-| `Error` | 脚本或引擎异常 | 读 `error`/`errorInfo` 展示；会话终结 |
-| `Loading` | 会话已建、游戏循环未启动完 | 仅 `GET /state` 返回，**不出现在 turn 里** |
+**帧里没有 `state`**（v12 起删除）。会话级状态由 `GET /state` 的 `state` 字段给出，用于 UI
+判断"是否有活跃游戏"（`Idle` = 无活跃 session）。它不是"服务端此刻在等什么"——那件事读
+`awaiting`。
 
-> `Initializing`（=0）在正常路径下不会成为帧内容。
-> 历史上的 `Sleep`（=21）已删除——它曾承载 AWAIT，现已改走 `WaitInput`（见 §8）。
+| 值 | 含义（`GET /state` 语义） |
+|---|---|
+| `Idle` | 无活跃 session |
+| `Loading` | 会话已建、游戏循环未启动完 |
+| `Running` | 脚本执行中 |
+| `WaitInput` | 停在某个等待上（等输入 / 定时等待 / 让路都归此类——**帧里不区分**） |
+| `Quit` / `Error` | 会话终结 |
 
-### `inputType`（`InputType`）
+> ⚠️ `Running` **不会出现在帧里**：帧只在脚本停稳点产出（§8），wire 上不存在"脚本正在跑"。
+> 历史上的 `Sleep`（=21）已删除——它曾承载 `AWAIT`，现已改走停稳点（§8）。
+
+### `inputType`（`InputType`）—— 即 `awaiting.input.type`
 
 | 值 | 含义 | 需要输入 |
 |---|---|---|
@@ -183,8 +185,8 @@
 
 `Skippable` 自 v12 起**已上 wire**——就是 `awaiting.wait.interruptible`（见 §2）。
 客户端**不需要**再反向推断：`interruptible` 为真即可启用"跳过"affordance，
-缺省（不可打断）时不启用。旧顶层字段 `state`/`inputType`/`timeLimit` 的组合推断方式
-在收缩阶段（issue 09）删除。
+缺省（不可打断）时不启用。那个旧顶层字段 `state`/`inputType`/`timeLimit` 的组合推断方式
+已随七个顶层字段在 v12 删除。
 
 ---
 
@@ -294,8 +296,8 @@ Emuera 的显示模型是**追加式**的，故只需四类操作覆盖全部情
 （[ADR-0001](../adr/0001-turn-protocol-versioning.md)）——客户端连上后从首帧即知版本，
 无需握手往返。
 
-演进策略是**纯增量**：新字段一律以 nullable 形式加入，旧客户端忽略未知字段自然降级。
-因此每个新增字段都不升版本号，只有**语义变更或破坏性改动**才升。
+演进策略是**纯增量字段 + 破坏性取值变更才升版本**：新增 nullable 字段不升版本号（旧客户端
+忽略未知字段自然降级）；但给取值集合加新值、或给 `awaiting` 加新维度键，**必须升**（§10）。
 
 | 版本 | 变更 |
 |---|---|
@@ -308,7 +310,7 @@ Emuera 的显示模型是**追加式**的，故只需四类操作覆盖全部情
 | v9 | `SegmentImage.crop`——图集 sprite 裁切 |
 | v10 | `PrintSegment.underline` |
 | v11 | `PrintSegment.strikeout`——按 ERB `FONTSTYLE` 位契约对称补齐（位4=删除线、位8=下划线） |
-| v12 | `awaiting` 容器（`input` / `wait` 两个正交维度 + `ended` 互斥终态）取代"用 `state`+`inputType`+`timeLimit` 反向推断"；`wait.interruptible` 让 `Skippable` 首次上 wire。**展开阶段**七个旧顶层字段暂时保留，issue 09 删除 |
+| v12 | `awaiting` 容器（`input` / `wait` 两个正交维度 + `ended` 互斥终态）成为**唯一契约字段**，"用 `state`+`inputType`+`timeLimit` 反向推断"退场；七个旧顶层字段（`state`/`inputType`/`needValue`/`timeLimit`/`displayTime`/`timeUpMessage`/`timedOut`）**全部删除**；`wait.interruptible` 让 `Skippable` 首次上 wire |
 
 > v2/v3 属重构期过渡态，未在生产协议中留存。
 
@@ -321,13 +323,9 @@ Emuera 的显示模型是**追加式**的，故只需四类操作覆盖全部情
   "lines": [ DisplayLine ],
   "bgColor": "#101010",
   "bgImages": [ BgImageState ],
-  "state": "WaitInput",
-  "inputType": "AnyKey",
-  "needValue": false,
   "awaiting": { "input": { "type": "AnyKey" } },
   "protocolVersion": 12,
-  "generation": 3,
-  "timeLimit": null
+  "generation": 3
 }
 ```
 
@@ -352,64 +350,98 @@ Emuera 的显示模型是**追加式**的，故只需四类操作覆盖全部情
 `errorInfo` 是纯增量 nullable 字段——非异常帧不出现，**不升协议版本**。它的存在是为了让
 agent 一次定位崩溃，而不必在长堆栈里手工挖类型与信息。
 
-> 初始化阶段的异常不走 `BuildTurn`，而是直接写一个手拼的 `JsonObject`
-> （仅 `error`/`errorInfo`/`state`），见 `Session.DeliverInitStageFailure`。
+> 初始化阶段的异常与游戏循环回调的异常都**不经过脚本**，走的是
+> `AgentJsonlProtocol.BuildErrorTurn`——终态形状 `awaiting.ended{terminal:"Error"}` +
+> `error`（完整串）+ `errorInfo`（结构化）。见 `Session.DeliverInitStageFailure`。
 
 ---
 
-## 8. 帧的产出时机（当前实现的真相）
+## 8. 帧的产出时机 = 轴 A（停稳点形态）× 轴 B（驱动）
 
-这一节记录**现状**，包含一处已知的设计债。
+🔒 **不变量（唯一必要条件）：服务端只在脚本已停稳时才发帧。**
 
-### 四条产出路径
+「产出时机」曾含两类信息，拆开后各归其位：
 
-| 路径 | 触发 | 是否可抑制 |
+| 轴 | 回答 | 取值 | 决定什么 |
+|---|---|---|---|
+| **A · 脚本侧** | 停稳点**是什么** | 等输入 / 定时等待 / 让路 / 终态 | `awaiting` 的内容（§2） |
+| **B · 驱动侧** | **谁**把脚本推进到这个停稳点 | 会话启动 / 客户端输入 / 定时器到期 / 让路 drain / 致命错误 | **可否抑制** |
+
+> 🔑 **「收到客户端输入」是轴 B 的一项，不是产出时机本身。** 代码上是清楚的——`StepAsync`
+> 先等当前停稳点，再 `DispatchInput`，而 `ui.Invoke` 是**同步内联**的（见本节的宿主契约）⇒
+> `DispatchInput` 返回时脚本已经跑到下一个停稳点，帧是在那儿产出的。
+
+### 轴 A：停稳点的四种形态
+
+| 形态 | 判据 | `awaiting` |
 |---|---|---|
-| initial turn | 会话建立后引擎首次稳定 | 否（携带 `protocolVersion`） |
-| **应答帧** | 客户端发来一次 `POST /input` | **否**——客户端发了输入就必须有回音 |
-| **超时帧** | `Timelimit` 到期，走超时续跑 | **可**——若 diff 为空且状态指纹未变则不产出 |
-| final turn | 游戏循环退出（Quit/Error） | 否 |
+| **等输入** | `inputType != Void` | `input{type}`（可同时有 `wait`） |
+| **定时等待** | `inputType == Void && Timelimit > 0` | `wait{durationMs>0}` |
+| **让路** | 无参 `AWAIT` / `AWAIT 0` | `wait{durationMs:0}` |
+| **终态** | `state ∈ {Quit, Error}` | `ended{terminal}` |
 
-### AWAIT：借道输入通道的绕行
+> 「这帧产自哪条指令 / 哪个时机」**根本不进 wire**（`InputRequest.IsYield` 只是服务端的
+> drain 判据，永不序列化）。客户端在意的是「下一帧立刻到」（`durationMs:0`），不是那个
+> 旗标叫什么。
 
-`AWAIT t`（回合内动画/渐变等待）**本不属于上表任何一条路径**。参考实现里它是
-`Thread.Sleep` + 休眠态——但休眠态不触发回合边界，等待期间画面完全不外送，
-导致 eraTW 的背景色渐变表现为"卡住一阵然后突然跳变"、进度条全程静止。
+### 轴 B：五种驱动
 
-现有实现的对齐落点是 **`TWAIT t,1`**：`AWAIT` 进入 `WaitInput`（`InputType.Void` +
-`Timelimit` + `Skippable`），等待期满后由宿主循环走**既有的超时续跑路径**继续脚本
-（server：`RunLoopAsync` 的 `CancelAfter` → `SubmitTimeout`；CLI：挂钟比对）。
+| # | 驱动 | 触发 | 可否抑制 | 理由 |
+|---|---|---|---|---|
+| **B1** | 会话启动 | 引擎首次到达停稳点 | 否 | 客户端还没见过任何帧，且要带 `protocolVersion` |
+| **B2** | **客户端输入** | 收到 `{"type":"input",...}` | **否** | 必须回应（含被拒，见下） |
+| **B3** | 定时器到期 | `InputTimeoutMs` 到期（超时续跑） | 是 | 引擎自己推进的；带 `wait.timedOut:true` |
+| **B4** | 让路 drain | 宿主识别出让路点（`wait.durationMs == 0`） | 是 | 画面没变就不落 wire |
+| **B5** | 致命错误 | MAUI fatal（**不经过脚本**） | 否 | 第二产出者，终态 |
 
-参考实现同样是 Sleep，但它在 WinForms 里是**直绘**（`RefreshStrings` +
-`ProcessEvents` 同步重绘）。无头移植里"重绘"的等价物就是"交付一个回合"——
-所以等待输入态是原语义在此处的正确落点。**这不是随意缝合，而是有依据的等价映射。**
+一句话记住：**客户端发起的推进（B1/B2）必须回应；引擎自己发起的推进（B3/B4）可抑制；
+终态（B5）永不抑制。**
 
-### 由此产生的设计债
+> **B5 是轴 A 的例外**：它不经过脚本、不对应任何停稳点，直接构造
+> `ended{terminal:"Error"}`。会话终结（`Quit`/`Error` 经脚本）则由 `BuildFinalTurn`
+> 在 B1/B2/B3 任一驱动的帧里体现为 `ended`。
 
-1. **帧产出被绑死在"等输入 + 超时"这条为 TINPUT 设计的通路上。** `AWAIT` 想要的是
-   "时间到了，该重绘了"，却只能表达成"我假装在等一个永不来的输入，然后超时"。
-2. **`InputRequest.Skippable` 是给错误抽象打的补丁**——参考实现里 `Void` 的语义是
-   "入力不能、待つしかない"（`PressEnterKey` 对 `Void` 直接 return），所以"天然可接收
-   输入"并不成立，需要额外标记才能实现可打断。
-3. **`Void` 承载两种语义且 wire 上无法区分**（见 §3）。
-4. **`BuildTurn` 的空转帧抑制依赖上述假设**——其注释明确写着空转帧"**只**产自超时续跑
-   路径"。协议层已经开始依赖这个实现细节，若新增帧来源需同步复核。
-
-### 升级方向（未实施）
-
-给帧加**显式的类别字段**，让 `AWAIT` 走自己的类别而不是伪装成输入超时：
+抑制判据（`BuildTurn`）：
 
 ```
-frameKind: "response" | "tick" | "final"
+产帧 ⟺ diff 非空
+     ∨ awaiting 的【形状】与上一已产出帧不同（哪个键出现：input / wait / ended）
+     ∨ input 的【性质】（type）与上一帧不同
+     ∨ wait 的【性质】（durationMs + interruptible + displayTime + timeUpMessage）与上一帧不同
 ```
 
-- `response`——客户端输入的回音（永不抑制）
-- `tick`——脚本自主推进的中间帧（空转可抑制；`AWAIT` 属此类）
-- `final`——会话最后一帧
+- 🔒 **比较「性质」不得比较「实例」**——每次等待都是新实例，比较实例会让抑制形同虚设。
+- 🔒 **B1 / B2 / B5 永不抑制**：输入被拒（`error`）的帧画面恒为空、等待契约与上一帧完全
+  相同，一旦让 B2 参与抑制，`error` 就永远送不到客户端（见下条）。
 
-届时 `Skippable` 可还原为 `AWAIT` 自身的属性，`Void` 的双重语义也自然拆开。
-**在此之前，`AWAIT` 路径的行为依赖上述实现细节，改动 `BuildTurn` 的抑制逻辑时必须
-同步复核这条路径。**
+### 🔴 唯一例外：输入被拒时**没有新停稳点，帧仍必须发**
+
+输入未被接受时（`OnInputRejected`）**不调 `RunEmueraProgram`**——`State` 仍是 `WaitInput`、
+`CurrentRequest` 还是原来那个。于是这一帧：
+
+- 画面未变（`diff` 为空）、`awaiting` 未变、**没有新停稳点**；
+- 但它是「客户端发了一次输入」的唯一回音载体（`error` 非空）。
+
+⇒ **「产出时机 = 到达停稳点」严格说不完备**：B2 的被拒分支是**驱动侧单独强制**的交付。
+这是全表唯一的例外。客户端读到非空 `error` 时应理解为"这一次输入没被接受，画面与等待都没变"。
+
+### 🔒 宿主契约：`IConsoleUI.Invoke` 必须同步执行完毕
+
+```csharp
+// EraCore.Core/Headless/HeadlessConsole.cs
+public void Invoke(Action action) => action?.Invoke();
+```
+
+⇒ 脚本执行与帧生成**永远在同一个线程、同一个调用栈上**：让路 drain 期间没有任何人并发改动
+画面，`BuildTurn` 的 `ComputeDiff` 不存在撕裂风险。**这与「脚本跑在自己线程上、外部观察」
+相比，省掉了一整套锁与快照队列。**
+
+⚠️ **这条契约是本节多处结论的前提**（两轴模型、让路 drain 的即时交付）。若未来某个宿主把
+`Invoke` 改成异步投递，则 `BuildTurn` 可能取到撕裂画面——届时必须改走真线程 + 快照队列，
+本节结论随之作废。实现 `IConsoleUI` 时必须保持同步语义。
+
+> 该不变量对 **CLI 同样成立**：`CliGameLoop.RunLoop` 是同步轮询，脚本由 `DispatchInput` /
+> `HandleTimeout` 在同一线程上推进，不存在第二个观察线程。
 
 ---
 
@@ -488,13 +520,17 @@ frameKind: "response" | "tick" | "final"
 2. **前端类型**——`EraCore.Web/src/types/protocol.ts`（手动维护）
 3. **本文**——字段表与版本演进表
 
-已知的现存偏差（本文与实现的差异，以本文为准去订正实现侧注释）：
+已知的现存偏差：**无**（v12 收缩后三处已对齐）。
 
-- `protocol.ts` 的 `DisplaySnapshot` 缺 `errorInfo` 相关说明，且注释中协议版本仍写 "v7"
-  （实际 v12）。
-- `docs/guides/agent-integration.md` 的 JSONL 示例仍是 v1 形态（`text`/`buttons` 字段
-  早已被 `diff` 取代），已订正并指向本文。
+另注：`docs/guides/agent-integration.md` 的 JSONL 示例是 v1 形态（`text`/`buttons` 字段早已被
+`diff` 取代），已订正并指向本文。
 
-**新增字段的规矩**：一律 nullable + `WhenWritingNull`（省略而非 null），不升版本号，
-旧客户端忽略即可。只有语义变更或破坏性改动才升 `protocolVersion`，且必须在本文的
-版本演进表里加一行说明改了什么。
+**新增字段的规矩**：
+
+- **纯增量 nullable 字段**（如 `errorInfo`）：`WhenWritingNull`（省略而非 null），**不升版本号**，
+  旧客户端忽略即可。
+- 🔒 **新增枚举取值必须升版本号**：给 `awaiting.ended.terminal`、`InputType` 之类**取值集合**
+  加新值，或给 `awaiting` 加第三个维度键，都是**破坏性扩展**——客户端不认识这个取值时会走错
+  分支（把终态当空闲、把新等待当无事可做），必须升 `protocolVersion` 并在本文版本演进表里
+  加一行说明改了什么。
+- 客户端遇到不认识的键 / 取值：**回退 `GET /snapshot`**，不得静默忽略（§2）。

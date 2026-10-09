@@ -51,25 +51,27 @@ agent
 
 ```python
 # 首帧自动产出（无需发任何命令），携带 protocolVersion：
-{"state": "WaitInput", "inputType": "IntValue", "needValue": true,
- "diff": null, "protocolVersion": 11, "timedOut": false, "generation": 0}
+{"awaiting": {"input": {"type": "IntValue"}},
+ "diff": null, "protocolVersion": 12, "generation": 0}
 
 # 客户端发送输入（POST /input 的 body）：
 {"type": "input", "value": "0"}
 
 # 服务端回下一个 turn，画面变化在 diff 里：
-{"state": "WaitInput", "inputType": "AnyKey", "needValue": false,
+{"awaiting": {"input": {"type": "AnyKey"}},
  "diff": {"lineOps": [{"type": "append", "newLines": [/* ... */]}], "bgColor": "#101010"},
- "timedOut": false, "generation": 1}
+ "generation": 1}
 ```
 
 要点三条，细节见规格文档：
 
+- **`awaiting` 是唯一契约字段**（v12）——"服务端此刻在等什么"：`input` / `wait` 两个正交维度
+  + `ended` 互斥终态键。七个旧顶层字段（`state`/`inputType`/`needValue`/`timeLimit` 等）已删除。
 - **`diff` 是帧内增量**——`lineOps` 按序应用（`shift_head` → `clear_line_diff` →
   `clear_screen` → `append`）；`diff` 为 null/省略表示画面完全未变。
 - **`text` / `buttons` 字段已不存在**（v4/v5 起被 `diff` 与 `generation` 取代）。
-- **`inputType: "Void"` 表示不接受输入、只能等**（`AWAIT` 动画等待 / `TWAIT`）。
-  客户端可据此启用"跳过"——两种来源在 wire 上无法区分，见规格 §3。
+- **定时等待 / 让路看 `awaiting.wait`**：`durationMs > 0` 是定时等待（`interruptible` 为真时
+  给"跳过"affordance），`durationMs == 0` 是"下一帧立刻到"。`input` 缺省即"不接受输入"。
 
 参考 [`tests/emuera_server.py`](../../tests/emuera_server.py)（server 模式测试 helper）
 与 [`tests/test_jsonl.py`](../../tests/test_jsonl.py)（示例）。

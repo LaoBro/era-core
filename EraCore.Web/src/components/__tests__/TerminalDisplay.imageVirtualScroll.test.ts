@@ -74,8 +74,7 @@ describe('TerminalDisplay: 跨行图片的锚定行滚出窗口', () => {
     game.displayState = {
       ...game.displayState,
       lines,
-      state: 'WaitInput',
-      inputType: 'IntValue',
+      awaiting: { input: { type: 'IntValue' } },
     };
 
     const wrapper = mount(TerminalDisplay, { global: { plugins: [pinia] } });
@@ -132,8 +131,7 @@ describe('TerminalDisplay: 跨行图片的渲染窗口扩展', () => {
     game.displayState = {
       ...game.displayState,
       lines,
-      state: 'WaitInput',
-      inputType: 'IntValue',
+      awaiting: { input: { type: 'IntValue' } },
     };
     const wrapper = mount(TerminalDisplay, { global: { plugins: [pinia] } });
     await wrapper.vm.$nextTick();

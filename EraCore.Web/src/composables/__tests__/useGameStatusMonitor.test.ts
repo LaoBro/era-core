@@ -48,7 +48,7 @@ describe('useGameStatusMonitor', () => {
 
     const game = useGameStore();
     game.gameDir = 'D:/game';
-    game.applyTurn(JSON.stringify({ state: 'Running', needValue: false, generation: 0 }));
+    game.applyTurn(JSON.stringify({ awaiting: {}, generation: 0 }));
     game.lastActivityAt = Date.now() - 60000;
 
     startGameStatusMonitor();
@@ -61,7 +61,7 @@ describe('useGameStatusMonitor', () => {
     const postSpy = stubMauiWindow();
     const game = useGameStore();
     game.gameDir = 'D:/game';
-    game.applyTurn(JSON.stringify({ state: 'Running', needValue: false, generation: 0 }));
+    game.applyTurn(JSON.stringify({ awaiting: {}, generation: 0 }));
     game.lastActivityAt = Date.now() - 10000;
 
     startGameStatusMonitor();
@@ -75,7 +75,7 @@ describe('useGameStatusMonitor', () => {
     const game = useGameStore();
     game.gameDir = 'D:/game';
     // issue 07：判据改读 awaiting.input ⇒ 夹具必须带 inputType（"等玩家输入"的 wire 形态）
-    game.applyTurn(JSON.stringify({ state: 'WaitInput', inputType: 'AnyKey', needValue: false, generation: 0 }));
+    game.applyTurn(JSON.stringify({ awaiting: { input: { type: 'AnyKey' } }, generation: 0 }));
     game.lastActivityAt = Date.now() - 60000;
     game.setGameStatusHint('running');
 
@@ -91,10 +91,7 @@ describe('useGameStatusMonitor', () => {
     const game = useGameStore();
     game.gameDir = 'D:/game';
     game.applyTurn(JSON.stringify({
-      state: 'WaitInput',
       generation: 0,
-      protocolVersion: 12,
-      diff: null,
       awaiting: { wait: { durationMs: 8000 } },
     }));
     game.lastActivityAt = Date.now() - 60000;
@@ -112,10 +109,7 @@ describe('useGameStatusMonitor', () => {
     const game = useGameStore();
     game.gameDir = 'D:/game';
     game.applyTurn(JSON.stringify({
-      state: 'WaitInput',
       generation: 0,
-      protocolVersion: 12,
-      diff: null,
       awaiting: { wait: { durationMs: 0 } },
     }));
     game.lastActivityAt = Date.now() - 60000;
@@ -132,7 +126,7 @@ describe('useGameStatusMonitor', () => {
     game.gameDir = 'D:/game';
     // 上一回合：等待输入
     // issue 07：判据改读 awaiting.input ⇒ 夹具必须带 inputType（"等玩家输入"的 wire 形态）
-    game.applyTurn(JSON.stringify({ state: 'WaitInput', inputType: 'AnyKey', needValue: false, generation: 0 }));
+    game.applyTurn(JSON.stringify({ awaiting: { input: { type: 'AnyKey' } }, generation: 0 }));
     // 用户提交输入——慢回合计算期间 C# 不产帧，state 停留在 WaitInput
     game.markInputSubmitted();
     game.lastActivityAt = Date.now() - 10000;
@@ -148,10 +142,10 @@ describe('useGameStatusMonitor', () => {
     const game = useGameStore();
     game.gameDir = 'D:/game';
     // issue 07：判据改读 awaiting.input ⇒ 夹具必须带 inputType（"等玩家输入"的 wire 形态）
-    game.applyTurn(JSON.stringify({ state: 'WaitInput', inputType: 'AnyKey', needValue: false, generation: 0 }));
+    game.applyTurn(JSON.stringify({ awaiting: { input: { type: 'AnyKey' } }, generation: 0 }));
     game.markInputSubmitted();
     // 慢回合处理完成，新 turn 到达——inputSubmittedAt 清空，状态恢复 WaitInput
-    game.applyTurn(JSON.stringify({ state: 'WaitInput', inputType: 'AnyKey', needValue: false, generation: 1 }));
+    game.applyTurn(JSON.stringify({ awaiting: { input: { type: 'AnyKey' } }, generation: 1 }));
     game.lastActivityAt = Date.now() - 60000;
 
     startGameStatusMonitor();
@@ -164,7 +158,7 @@ describe('useGameStatusMonitor', () => {
   it('无活跃游戏（gameDir 为空）→ 不探测且清空已有提示', () => {
     const postSpy = stubMauiWindow();
     const game = useGameStore();
-    game.applyTurn(JSON.stringify({ state: 'Running', needValue: false, generation: 0 }));
+    game.applyTurn(JSON.stringify({ awaiting: {}, generation: 0 }));
     game.lastActivityAt = Date.now() - 60000;
     game.setGameStatusHint('stopped');
 
@@ -179,7 +173,7 @@ describe('useGameStatusMonitor', () => {
     const postSpy = stubMauiWindow();
     const game = useGameStore();
     game.gameDir = 'D:/game';
-    game.applyTurn(JSON.stringify({ state: 'Running', needValue: false, generation: 0 }));
+    game.applyTurn(JSON.stringify({ awaiting: {}, generation: 0 }));
     game.lastActivityAt = Date.now() - 60000;
     game.setGameStatusHint('running');
 
@@ -194,7 +188,7 @@ describe('useGameStatusMonitor', () => {
     const postSpy = stubMauiWindow();
     const game = useGameStore();
     game.gameDir = 'D:/game';
-    game.applyTurn(JSON.stringify({ state: 'Running', needValue: false, generation: 0 }));
+    game.applyTurn(JSON.stringify({ awaiting: {}, generation: 0 }));
 
     startGameStatusMonitor();
     vi.advanceTimersByTime(4000);
@@ -205,7 +199,7 @@ describe('useGameStatusMonitor', () => {
     expect(postSpy).toHaveBeenCalledTimes(1);
 
     // 新 turn 到达 → lastActivityAt 刷新 + 提示清空，重新计时
-    game.applyTurn(JSON.stringify({ state: 'Running', needValue: false, generation: 0 }));
+    game.applyTurn(JSON.stringify({ awaiting: {}, generation: 0 }));
     expect(game.gameStatusHint).toBeNull();
     vi.advanceTimersByTime(2000);
     expect(postSpy).toHaveBeenCalledTimes(1);

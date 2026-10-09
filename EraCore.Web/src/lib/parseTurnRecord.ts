@@ -1,37 +1,24 @@
 import type { TurnRecord, DisplayDiff, LineOp, DisplayLine, DisplayEntry, ButtonRef, PrintSegment, SegmentImage, SegmentShape, SegmentCrop, BgImageState, AwaitInfo, ErrorInfo } from '../types/protocol';
-import { awaitingFromLegacyFields } from './awaiting';
-
-/** v12 起 `awaiting` 成为唯一契约字段（`TurnRecord.CurrentProtocolVersion` 的 TS 镜像）。 */
-const PROTOCOL_V12 = 12;
 
 /**
- * 解析 WS 帧 JSON 字符串为 `TurnRecord`（issue 02；issue 06 接 `awaiting`）。
+ * 解析 WS 帧 JSON 字符串为 `TurnRecord`（issue 02；issue 06 接 `awaiting`；issue 09 收缩）。
  *
  * C# `KestrelGameServer` 把每个 turn 序列化为单个 Text 帧下发——前端 `connection` store
  * 的 `onmessage` 收到原始字符串后经此函数得到结构化对象。
  *
  * 设计选择：
- * - **必填字段（缺失即抛）**：`generation`（v7 起每帧必带）+ `awaiting`（v12 起唯一契约字段）
- * - `awaiting` 的必填性按**协议版本**判定（见下），不按「`awaiting` 字段在不在」判定
- * - 旧顶层字段 `state` / `needValue` 自 issue 06 起**不再必填**（契约已换成 `awaiting`）
+ * - **必填字段（缺失即抛）**：`generation`（v7 起每帧必带）+ `awaiting`（v12 唯一契约字段）
+ * - v12 起 wire 上**只有** `diff` / `awaiting` / `error` / `errorInfo` / `protocolVersion` /
+ *   `generation` 六个键；七个旧顶层字段已退场，解析器不再读取它们，也不再需要
+ *   「按协议版本决定 `awaiting` 是否必填」的双轨（收缩阶段删除了 sticky 版本判据）
  * - 抛 `ParseTurnRecordError` 而非 `Error`——便于上层 catch 时区分协议错误与其他异常
  * - 未知 `LineOp.type` 抛错——与 C# `TestAdapter.ApplyDiff` 抛 `InvalidOperationException` 对称
  *
- * ## `awaiting` 的版本分支（spec §5.3 第 6 项）
- *
- * 分支只看**协议版本**：`有效版本 >= 12` ⇒ `awaiting` 必填、缺失即抛；否则（v11 兼容期）
- * 允许缺失，由旧顶层字段合成（`awaitingFromLegacyFields`）。**不得**写成「有没有某个字段」
- * 的启发式判断——那正是本轮要消灭的东西。
- *
- * 有效版本 = 帧自身的 `protocolVersion`（仅首帧带）**优先于** `protocolVersion` 形参
- * （调用方传入的 sticky 协议版本）——后续帧省略该字段，只能靠 sticky 才知道是 v12。
- *
  * @param rawJson WS 帧原始 JSON 字符串
- * @param protocolVersion 调用方（game store）已装好的 sticky 协议版本；默认 null（未知 ⇒ 按兼容期处理）
  * @returns 结构化 `TurnRecord` 对象（`awaiting` 恒非 null）
  * @throws {ParseTurnRecordError} JSON 语法错误 / 缺必填字段 / 未知 op 类型
  */
-export function parseTurnRecord(rawJson: string, protocolVersion: number | null = null): TurnRecord {
+export function parseTurnRecord(rawJson: string): TurnRecord {
   let obj: unknown;
   try {
     obj = JSON.parse(rawJson);
@@ -50,20 +37,9 @@ export function parseTurnRecord(rawJson: string, protocolVersion: number | null 
   // 必填字段校验（v7 起每帧必带 generation；缺失即抛，不接受降级）
   const generation = readIntRequired(root.generation, 'generation');
 
-  // optional 字段
-  const inputType = readStringOrNull(root.inputType, 'inputType');
-  const state = readStringOrNull(root.state, 'state');
-  const needValue = readBoolOrNull(root.needValue, 'needValue');
+  // optional 字段（协议元数据 + 诊断）
   const error = readStringOrNull(root.error, 'error');
-  const protocolVersionOnFrame = readIntOrNull(root.protocolVersion, 'protocolVersion');
-  // ADR-0016：timer 字段——timeLimit / displayTime / timeUpMessage nullable + WhenWritingNull
-  const timeLimit = readIntOrNull(root.timeLimit, 'timeLimit');
-  const displayTime = readBoolOrNull(root.displayTime, 'displayTime');
-  const timeUpMessage = readStringOrNull(root.timeUpMessage, 'timeUpMessage');
-  // ADR-0016：timedOut 非 nullable bool，默认 false（C# record 默认值）
-  // 当 JSON 中省略该字段时（理论不会发生——C# WhenWritingNull 不抑制非 nullable bool），
-  // 视为 false，与 C# 默认值对称。
-  const timedOut = readBoolWithDefault(root.timedOut, 'timedOut', false);
+  const protocolVersion = readIntOrNull(root.protocolVersion, 'protocolVersion');
 
   const diff = root.diff === undefined || root.diff === null ? null : parseDiff(root.diff);
   // 诊断：结构化异常（C# `ErrorInfo`，非异常帧不出现）。纯增量字段，不升协议版本。
@@ -72,55 +48,31 @@ export function parseTurnRecord(rawJson: string, protocolVersion: number | null 
       ? null
       : parseErrorInfo(root.errorInfo, 'errorInfo');
 
-  // v12 唯一契约字段。版本判定用「帧自带版本 ?? sticky」——子序列帧省略 protocolVersion。
-  const effectiveVersion = protocolVersionOnFrame ?? protocolVersion;
-  const awaiting = parseAwaiting(root.awaiting, effectiveVersion != null && effectiveVersion >= PROTOCOL_V12, {
-    state,
-    inputType,
-    timeLimit,
-    displayTime,
-    timeUpMessage,
-    timedOut,
-  });
+  // v12 唯一契约字段：**必填**，缺失即抛（wire 上没有第二套形状可供降级合成）。
+  const awaiting = parseAwaiting(root.awaiting);
 
   return {
     awaiting,
     diff,
     error,
     errorInfo,
-    protocolVersion: protocolVersionOnFrame,
+    protocolVersion,
     generation,
-    state,
-    inputType,
-    needValue,
-    timeLimit,
-    displayTime,
-    timeUpMessage,
-    timedOut,
   };
 }
 
 /**
- * 解析 `awaiting`（v12 唯一契约字段）。
+ * 解析 `awaiting`（v12 唯一契约字段）。**必填**——缺失 / null / 非对象即抛。
  *
- * - 字段缺失：v12 ⇒ 抛错（契约字段不得降级）；v11 兼容期 ⇒ 由旧顶层字段合成
- * - 字段存在：严格按「两个正交维度 + 互斥终态键」校验形状
- *
- * 返回的容器**只带出现过的键**（缺失维度不写成 `null`），故空闲/瞬态快照得到 `{}`
- * ——与 `EMPTY_DISPLAY_STATE.awaiting` 同形，消费者按「既不等输入也不等定时器」处理。
+ * 严格按「两个正交维度 + 互斥终态键」校验形状。返回的容器**只带出现过的键**
+ * （缺失维度不写成 `null`），故空闲/瞬态快照得到 `{}`——与 `EMPTY_DISPLAY_STATE.awaiting`
+ * 同形，消费者按「既不等输入也不等定时器」处理。
  */
-function parseAwaiting(
-  raw: unknown,
-  required: boolean,
-  legacy: Parameters<typeof awaitingFromLegacyFields>[0],
-): AwaitInfo {
+function parseAwaiting(raw: unknown): AwaitInfo {
   if (raw === undefined || raw === null) {
-    if (required) {
-      throw new ParseTurnRecordError(
-        '字段 awaiting 缺失或为 null（v12 起为必填契约字段，缺失即抛）',
-      );
-    }
-    return awaitingFromLegacyFields(legacy);
+    throw new ParseTurnRecordError(
+      '字段 awaiting 缺失或为 null（v12 唯一契约字段，缺失即抛）',
+    );
   }
   if (typeof raw !== 'object' || Array.isArray(raw)) {
     throw new ParseTurnRecordError(`awaiting 期望对象，得到 ${Array.isArray(raw) ? 'array' : typeof raw}`);
@@ -475,21 +427,6 @@ function readBoolOrNull(v: unknown, path: string): boolean | null {
   if (v === undefined || v === null) return null;
   if (typeof v !== 'boolean') {
     throw new ParseTurnRecordError(`${path} 期望 boolean|null，得到 ${typeof v}`);
-  }
-  return v;
-}
-
-/**
- * ADR-0016：读非 nullable bool 字段，省略时返回 default。
- *
- * 用于 `timedOut`——C# record 默认 false，`JsonSerializerOptions.WhenWritingNull`
- * 不抑制非 nullable bool，故正常情况下 server 每帧都发该字段。
- * 防御性允许省略（与 v5 兼容性 / 测试构造方便），省略时视为 false。
- */
-function readBoolWithDefault(v: unknown, path: string, defaultValue: boolean): boolean {
-  if (v === undefined || v === null) return defaultValue;
-  if (typeof v !== 'boolean') {
-    throw new ParseTurnRecordError(`${path} 期望 boolean，得到 ${typeof v}`);
   }
   return v;
 }

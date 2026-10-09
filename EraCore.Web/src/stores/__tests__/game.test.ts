@@ -8,18 +8,19 @@ import type { DisplayLine, PrintSegment, DisplaySnapshot } from '../../types/pro
  *
  * 这是 issue 03 的协议层 wiring 测试（spec.md 决策：Vitest 仅覆盖协议层 seam，
  * 不写 Vue 组件 e2e）。验证：
- * - 合法 WS 帧 → displayState 正确更新（lines / bgColor / state / inputType / needValue）
+ * - 合法 WS 帧 → displayState 正确更新（lines / bgColor / awaiting）
  * - 多帧累积：第二帧的 diff 在第一帧的基础上叠加
  * - 非法 JSON → lastError 设置，displayState 保持不变
  * - diff=null 的帧（纯状态切换）→ state 字段更新，lines 不变
  * - protocolVersion 派生：从 lastTurn 正确推导
  * - reset() 复位所有状态
  *
- * ADR-0016（v6）新增：
- * - timeoutNotice 改为 turn.timedOut 派生（删除 issue 04 启发式检测）
+ * ADR-0016（v6；v12 收缩后判据改读 awaiting.wait）：
+ * - timeoutNotice 由 `awaiting.wait.timedOut` 派生
  * - TINPUT timer 状态（tinputStartedAt/tinputTimeLimit/displayTime/timeUpMessage）
- *   由 turn.timeLimit>0 + state=WaitInput 触发；setSnapshot 也填充
+ *   由 `awaiting.wait.durationMs > 0` 触发；setSnapshot 也填充
  * - showTinputCountdown 仅在 displayTime=true 时为 true
+ * - serverState 由 `awaiting.ended.terminal` / 非终态 → 'WaitInput' 派生
  */
 
 // ---------- 测试夹具 ----------
@@ -34,20 +35,19 @@ function diffLine(text: string, align?: 'left' | 'center' | 'right'): DisplayLin
     : { entries: [{ segments: [seg(text)] }], isLineEnd: true };
 }
 
-/** 构造一个简单的 append diff 帧 JSON */
+/** 最常见的夹具：等一个「任意键」输入的停稳点。 */
+const INPUT_WAIT = { input: { type: 'AnyKey' } };
+
+/** 构造一个简单的 append diff 帧 JSON（awaiting 默认等任意键输入）。 */
 function appendFrameJson(
   texts: string[],
-  opts: { state?: string; inputType?: string | null; needValue?: boolean; bgColor?: string | null; protocolVersion?: number | null } = {},
+  opts: { awaiting?: unknown; bgColor?: string | null; protocolVersion?: number | null } = {},
 ): string {
-  const state = opts.state ?? 'WaitInput';
-  const needValue = opts.needValue ?? false;
-  const inputType = opts.inputType === undefined ? null : opts.inputType;
+  const awaiting = opts.awaiting ?? INPUT_WAIT;
   const bgColor = opts.bgColor === undefined ? null : opts.bgColor;
   const protocolVersion = opts.protocolVersion === undefined ? null : opts.protocolVersion;
   return JSON.stringify({
-    state,
-    inputType,
-    needValue,
+    awaiting,
     generation: 0,
     protocolVersion,
     diff: {
@@ -60,8 +60,7 @@ function appendFrameJson(
 /** 构造一个 clear_line_diff 帧 */
 function clearLineFrameJson(clearCount: number): string {
   return JSON.stringify({
-    state: 'WaitInput',
-    needValue: false,
+    awaiting: INPUT_WAIT,
     generation: 0,
     diff: {
       lineOps: [{ type: 'clear_line_diff', clearCount }],
@@ -73,8 +72,7 @@ function clearLineFrameJson(clearCount: number): string {
 /** 构造一个 clear_screen + set_bg 帧 */
 function clearScreenFrameJson(newBg?: string): string {
   return JSON.stringify({
-    state: 'WaitInput',
-    needValue: false,
+    awaiting: INPUT_WAIT,
     generation: 0,
     diff: {
       lineOps: [{ type: 'clear_screen' }],
@@ -83,45 +81,35 @@ function clearScreenFrameJson(newBg?: string): string {
   });
 }
 
-/** 构造一个 diff=null 的纯状态切换帧 */
-function stateOnlyFrameJson(state: string, inputType?: string, needValue?: boolean): string {
-  return JSON.stringify({
-    state,
-    inputType: inputType ?? null,
-    needValue: needValue ?? false,
-    generation: 0,
-    diff: null,
-  });
+/** 构造一个 diff=null 的纯等待帧（v12：等待状态只由 awaiting 表达）。 */
+function awaitingOnlyFrameJson(awaiting: unknown): string {
+  return JSON.stringify({ awaiting, generation: 0, diff: null });
 }
 
 /**
- * ADR-0016：构造 TINPUT timer 帧 JSON。
+ * ADR-0016：构造 TINPUT 帧 JSON（v12：计时元数据挂在 `awaiting.wait` 上）。
  *
- * 模拟 C# WhenWritingNull 行为：null 字段不下发。
- * - timedOut 总是下发（非 nullable bool）
- * - timeLimit / displayTime / timeUpMessage 仅在非 null 时下发
+ * 模拟 C# `WhenWritingNull` 行为——false / 空值字段不下发：
+ * - `durationMs` 缺省 ⇒ 没有 `wait` 键（= 无限期）
+ * - `timedOut` 仅在 true 且有时限时出现（与 `AwaitInfo.Of` 的 `Timelimit > 0 && timedOut` 对齐）
  */
 function tinputFrameJson(opts: {
-  state?: string;
   inputType?: string | null;
-  needValue?: boolean;
-  timeLimit?: number | null;
+  durationMs?: number | null;
   displayTime?: boolean | null;
   timeUpMessage?: string | null;
   timedOut?: boolean;
 }): string {
-  const obj: Record<string, unknown> = {
-    state: opts.state ?? 'WaitInput',
-    inputType: opts.inputType ?? null,
-    needValue: opts.needValue ?? false,
-    generation: 0,
-    timedOut: opts.timedOut ?? false,
-    diff: null,
-  };
-  if (opts.timeLimit != null) obj.timeLimit = opts.timeLimit;
-  if (opts.displayTime != null) obj.displayTime = opts.displayTime;
-  if (opts.timeUpMessage != null) obj.timeUpMessage = opts.timeUpMessage;
-  return JSON.stringify(obj);
+  const awaiting: Record<string, unknown> = {};
+  if (opts.inputType) awaiting.input = { type: opts.inputType };
+  if (opts.durationMs != null) {
+    const wait: Record<string, unknown> = { durationMs: opts.durationMs };
+    if (opts.displayTime === true) wait.displayTime = true;
+    if (opts.timeUpMessage != null && opts.timeUpMessage !== '') wait.timeUpMessage = opts.timeUpMessage;
+    if (opts.timedOut === true) wait.timedOut = true;
+    awaiting.wait = wait;
+  }
+  return JSON.stringify({ awaiting, generation: 0, diff: null });
 }
 
 // ---------- 测试 ----------
@@ -136,9 +124,8 @@ describe('useGameStore.applyTurn', () => {
     const game = useGameStore();
     expect(game.displayState.lines).toEqual([]);
     expect(game.displayState.bgColor).toBeNull();
-    expect(game.displayState.state).toBe('');
-    expect(game.displayState.inputType).toBeNull();
-    expect(game.displayState.needValue).toBe(false);
+    // v12：空闲态 = 三键皆无
+    expect(game.awaiting).toEqual({});
     expect(game.lastTurn).toBeNull();
     expect(game.lastTurnJson).toBeNull();
     expect(game.turnHistory).toEqual([]);
@@ -146,14 +133,12 @@ describe('useGameStore.applyTurn', () => {
     expect(game.protocolVersion).toBeNull();
   });
 
-  it('合法 append 帧：displayState 更新 lines + 顶层字段', () => {
+  it('合法 append 帧：displayState 更新 lines + awaiting + serverState 派生', () => {
     const game = useGameStore();
     game.applyTurn(appendFrameJson(['Hello', 'World'], {
-      state: 'WaitInput',
-      inputType: 'AnyKey',
-      needValue: false,
+      awaiting: { input: { type: 'AnyKey' } },
       bgColor: '#FF0000',
-      protocolVersion: 6,
+      protocolVersion: 12,
     }));
 
     expect(game.lastError).toBeNull();
@@ -161,10 +146,10 @@ describe('useGameStore.applyTurn', () => {
     expect(game.displayState.lines[0].entries[0].segments[0].text).toBe('Hello');
     expect(game.displayState.lines[1].entries[0].segments[0].text).toBe('World');
     expect(game.displayState.bgColor).toBe('#FF0000');
-    expect(game.displayState.state).toBe('WaitInput');
-    expect(game.displayState.inputType).toBe('AnyKey');
-    expect(game.displayState.needValue).toBe(false);
-    expect(game.protocolVersion).toBe(6);
+    expect(game.awaiting.input!.type).toBe('AnyKey');
+    expect(game.protocolVersion).toBe(12);
+    // serverState 由契约派生：非终态停稳点 → 'WaitInput'
+    expect(game.serverState).toBe('WaitInput');
     expect(game.lastTurnJson).not.toBeNull();
     expect(game.turnHistory).toHaveLength(1);
   });
@@ -221,8 +206,7 @@ describe('useGameStore.applyTurn', () => {
     // watch(lines.length) 检测不到全清——信号必须由归约层在应用 op 时同步产出。
     const game = useGameStore();
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       generation: 0,
       diff: {
         lineOps: [
@@ -247,8 +231,7 @@ describe('useGameStore.applyTurn', () => {
     expect(game.lastDisplaySignal).toBeNull(); // append-only 帧不产信号
 
     game.applyTurn(JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       generation: 0,
       diff: {
         lineOps: [{ type: 'shift_head', count: 2 }],
@@ -288,41 +271,48 @@ describe('useGameStore.applyTurn', () => {
     expect(game.lastDisplaySignal).toBeNull();
   });
 
-  it('diff=null 帧：仅更新 state/inputType/needValue，lines 不变', () => {
+  it('diff=null 帧：仅更新 awaiting（让路 → 等输入），lines 不变', () => {
     const game = useGameStore();
-    game.applyTurn(appendFrameJson(['keep'], { state: 'Running', inputType: null, needValue: false }));
+    // 零时长让路帧：只有 wait 维度
+    game.applyTurn(appendFrameJson(['keep'], { awaiting: { wait: { durationMs: 0 } } }));
     expect(game.displayState.lines).toHaveLength(1);
 
-    game.applyTurn(stateOnlyFrameJson('WaitInput', 'IntValue', true));
+    game.applyTurn(awaitingOnlyFrameJson({ input: { type: 'IntValue' } }));
     expect(game.displayState.lines).toHaveLength(1); // lines 不变
     expect(game.displayState.lines[0].entries[0].segments[0].text).toBe('keep');
-    expect(game.displayState.state).toBe('WaitInput');
-    expect(game.displayState.inputType).toBe('IntValue');
-    expect(game.displayState.needValue).toBe(true);
+    expect(game.awaiting.input!.type).toBe('IntValue');
+    // 同一份契约也驱动 serverState 派生
+    expect(game.serverState).toBe('WaitInput');
   });
 
   it('非法 JSON：lastError 设置，displayState 保持不变', () => {
     const game = useGameStore();
     game.applyTurn(appendFrameJson(['orig']));
     const beforeLines = game.displayState.lines.length;
-    const beforeState = game.displayState.state;
+    const beforeAwaiting = game.awaiting;
 
     game.applyTurn('not a json');
 
     expect(game.lastError).not.toBeNull();
     expect(game.lastError).toContain('协议解析失败');
     expect(game.displayState.lines).toHaveLength(beforeLines); // 状态不变
-    expect(game.displayState.state).toBe(beforeState);
+    expect(game.awaiting).toBe(beforeAwaiting);
     expect(game.turnHistory).toHaveLength(2); // 但原文仍入历史
     expect(game.lastTurnJson).toBe('not a json');
   });
 
-  it('缺 awaiting 的 v12 帧：lastError 设置，displayState 不变', () => {
+  it('缺 awaiting 的帧：lastError 设置，displayState 不变（唯一契约字段不得降级）', () => {
     const game = useGameStore();
     game.applyTurn(appendFrameJson(['orig']));
 
-    // v12 帧：帧自带 protocolVersion=12 ⇒ awaiting 为必填契约字段，缺失即抛
-    game.applyTurn(JSON.stringify({ state: 'WaitInput', needValue: false, generation: 0, protocolVersion: 12 }));
+    // 旧顶层字段全在也救不回来——v12 起解析器只认 awaiting
+    game.applyTurn(JSON.stringify({
+      state: 'WaitInput',
+      inputType: 'IntValue',
+      needValue: true,
+      generation: 0,
+      protocolVersion: 12,
+    }));
 
     expect(game.lastError).not.toBeNull();
     expect(game.lastError).toContain('awaiting');
@@ -330,27 +320,25 @@ describe('useGameStore.applyTurn', () => {
     expect(game.displayState.lines[0].entries[0].segments[0].text).toBe('orig');
   });
 
-  it('旧必填校验已移除（issue 06）：缺 state/needValue 的 v11 帧不再报错', () => {
+  it('终态帧：awaiting.ended.terminal 驱动 serverState', () => {
     const game = useGameStore();
+    game.applyTurn(awaitingOnlyFrameJson({ ended: { terminal: 'Quit' } }));
+    expect(game.serverState).toBe('Quit');
 
-    // 契约字段已换成 awaiting ⇒ 旧顶层字段降级为可选；v11 兼容期由垫片合成 awaiting
-    game.applyTurn(JSON.stringify({ state: 'WaitInput', generation: 0 }));
-
-    expect(game.lastError).toBeNull();
-    expect(game.displayState.state).toBe('WaitInput');
-    expect(game.awaiting).toEqual({});
+    game.applyTurn(awaitingOnlyFrameJson({ ended: { terminal: 'Error' } }));
+    expect(game.serverState).toBe('Error');
   });
 
   it('protocolVersion sticky：首帧后后续帧省略时保留版本（C# isInitial 行为对称）', () => {
     const game = useGameStore();
-    // 第一帧带 protocolVersion=6（C# AgentJsonlProtocol isInitial=true）
-    game.applyTurn(appendFrameJson(['A'], { protocolVersion: 6 }));
-    expect(game.protocolVersion).toBe(6);
+    // 第一帧带 protocolVersion=12（C# AgentJsonlProtocol isInitial=true）
+    game.applyTurn(appendFrameJson(['A'], { protocolVersion: 12 }));
+    expect(game.protocolVersion).toBe(12);
 
     // 第二帧不带 protocolVersion（C# isInitial=false 时该字段为 null）
     game.applyTurn(appendFrameJson(['B'], { protocolVersion: null }));
     // sticky 行为：版本号保留，不闪烁归 null
-    expect(game.protocolVersion).toBe(6);
+    expect(game.protocolVersion).toBe(12);
   });
 
   it('protocolVersion sticky：后续帧带新版本时更新（罕见场景，协议升级时）', () => {
@@ -364,8 +352,8 @@ describe('useGameStore.applyTurn', () => {
 
   it('protocolVersion sticky：reset 后清空', () => {
     const game = useGameStore();
-    game.applyTurn(appendFrameJson(['A'], { protocolVersion: 6 }));
-    expect(game.protocolVersion).toBe(6);
+    game.applyTurn(appendFrameJson(['A'], { protocolVersion: 12 }));
+    expect(game.protocolVersion).toBe(12);
 
     game.reset();
     expect(game.protocolVersion).toBeNull();
@@ -373,16 +361,14 @@ describe('useGameStore.applyTurn', () => {
 
   it('reset()：所有状态复位到空', () => {
     const game = useGameStore();
-    game.applyTurn(appendFrameJson(['data'], { state: 'WaitInput', protocolVersion: 6 }));
+    game.applyTurn(appendFrameJson(['data'], { protocolVersion: 12 }));
     expect(game.displayState.lines).toHaveLength(1);
 
     game.reset();
 
     expect(game.displayState.lines).toEqual([]);
     expect(game.displayState.bgColor).toBeNull();
-    expect(game.displayState.state).toBe('');
-    expect(game.displayState.inputType).toBeNull();
-    expect(game.displayState.needValue).toBe(false);
+    expect(game.awaiting).toEqual({});
     expect(game.lastTurn).toBeNull();
     expect(game.lastTurnJson).toBeNull();
     expect(game.turnHistory).toEqual([]);
@@ -393,8 +379,7 @@ describe('useGameStore.applyTurn', () => {
   it('按钮 entry：value 为 number / string 都正确解析并保留', () => {
     const game = useGameStore();
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       generation: 0,
       diff: {
         lineOps: [
@@ -432,8 +417,7 @@ describe('useGameStore.applyTurn', () => {
   it('多 entry 行（按钮 + 非按钮 + 按钮）：结构完整保留', () => {
     const game = useGameStore();
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       generation: 0,
       diff: {
         lineOps: [
@@ -467,8 +451,7 @@ describe('useGameStore.applyTurn', () => {
   it('segment 颜色正确保留（hex 字符串透传）', () => {
     const game = useGameStore();
     const json = JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       generation: 0,
       diff: {
         lineOps: [
@@ -505,9 +488,9 @@ describe('useGameStore.applyTurn', () => {
 // timeoutNotice 改为 computed：`wait.timedOut === true` 时显示文案，否则 null。
 // 文案优先级：`wait.timeUpMessage` → 默认「TINPUT 超时，游戏以默认值继续」。
 //
-// ⚠️ 夹具都带 `timeLimit`（= v12 的 `wait.durationMs`）：真实 C# 只在 `Timelimit > 0` 时
-// 才会置 `timedOut`（`AwaitInfo.Of` 的 `w.Timelimit > 0 && timedOut`），故「有超时旗标但
-// 没有时限」在 wire 上不存在；不带 timeLimit 的夹具只会走到「无 wait ⇒ 无通知」。
+// ⚠️ 夹具都带 `durationMs`：真实 C# 只在 `Timelimit > 0` 时才会置 `wait.timedOut`
+// （`AwaitInfo.Of` 的 `w.Timelimit > 0 && timedOut`），故「有超时旗标但没有时限」在 wire 上
+// 不存在；不带 `wait` 的夹具只会走到「无 wait ⇒ 无通知」。
 //
 // 行为副作用（已接受）：本通知在**下一帧 turn 到达时**才清空（timedOut 缺省）。
 // 比用户点击提交晚 50–200ms——TINPUT 场景下人眼无感。
@@ -525,10 +508,8 @@ describe('useGameStore - ADR-0016 timeoutNotice 派生', () => {
   it('wait.timedOut=true + 无 timeUpMessage → 显示默认文案', () => {
     const game = useGameStore();
     game.applyTurn(tinputFrameJson({
-      state: 'WaitInput',
       inputType: 'IntValue',
-      needValue: true,
-      timeLimit: 5000,
+      durationMs: 5000,
       timedOut: true,
     }));
     expect(game.timeoutNotice).toBe('TINPUT 超时，游戏以默认值继续');
@@ -537,10 +518,8 @@ describe('useGameStore - ADR-0016 timeoutNotice 派生', () => {
   it('wait.timedOut=true + 自定义 timeUpMessage → 显示自定义文案', () => {
     const game = useGameStore();
     game.applyTurn(tinputFrameJson({
-      state: 'WaitInput',
       inputType: 'IntValue',
-      needValue: true,
-      timeLimit: 5000,
+      durationMs: 5000,
       timedOut: true,
       timeUpMessage: '时间到，使用默认值继续',
     }));
@@ -551,31 +530,23 @@ describe('useGameStore - ADR-0016 timeoutNotice 派生', () => {
     const game = useGameStore();
     // 帧 1：超时
     game.applyTurn(tinputFrameJson({
-      state: 'WaitInput',
       inputType: 'IntValue',
-      needValue: true,
-      timeLimit: 5000,
+      durationMs: 5000,
       timedOut: true,
       timeUpMessage: '时间到',
     }));
     expect(game.timeoutNotice).toBe('时间到');
 
-    // 帧 2：玩家正常输入推进——timedOut=false
-    game.applyTurn(tinputFrameJson({
-      state: 'WaitInput',
-      inputType: 'IntValue',
-      needValue: true,
-      timedOut: false,
-    }));
+    // 帧 2：玩家正常输入推进——没有 wait（非 TINPUT）
+    game.applyTurn(tinputFrameJson({ inputType: 'IntValue' }));
     expect(game.timeoutNotice).toBeNull();
   });
 
   it('reset()：清空 timeoutNotice', () => {
     const game = useGameStore();
     game.applyTurn(tinputFrameJson({
-      state: 'WaitInput',
-      needValue: true,
-      timeLimit: 5000,
+      inputType: 'IntValue',
+      durationMs: 5000,
       timedOut: true,
     }));
     expect(game.timeoutNotice).not.toBeNull();
@@ -587,9 +558,9 @@ describe('useGameStore - ADR-0016 timeoutNotice 派生', () => {
 
 // ---------- ADR-0016：TINPUT timer 状态 ----------
 //
-// applyTurn 末尾根据 turn.state + turn.timeLimit 更新 TINPUT timer 状态：
-// - WaitInput + timeLimit > 0 → 记 tinputStartedAt=Date.now()，启动 setInterval ticker
-// - 其他状态 / timeLimit=null → 清空状态，停止 ticker
+// applyTurn 末尾根据 `awaiting.wait` 更新 TINPUT timer 状态：
+// - wait.durationMs > 0 → 记 tinputStartedAt=Date.now()，启动 setInterval ticker
+// - 无 wait / durationMs === 0（零时长让路）→ 清空状态，停止 ticker
 //
 // showTinputCountdown 仅在 displayTime=true 时为 true（ERB 可隐藏倒计时）。
 // tinputRemainingMs 是 computed，依赖 tinputTick（setInterval 100ms ++）触发响应式更新。
@@ -605,10 +576,8 @@ describe('useGameStore - ADR-0016 TINPUT timer 状态', () => {
     const game = useGameStore();
     const start = Date.now();
     game.applyTurn(tinputFrameJson({
-      state: 'WaitInput',
       inputType: 'IntValue',
-      needValue: true,
-      timeLimit: 5000,
+      durationMs: 5000,
       displayTime: true,
       timeUpMessage: '时间到',
     }));
@@ -633,18 +602,14 @@ describe('useGameStore - ADR-0016 TINPUT timer 状态', () => {
     const game = useGameStore();
     // 先进入 TINPUT
     game.applyTurn(tinputFrameJson({
-      state: 'WaitInput',
-      needValue: true,
-      timeLimit: 5000,
+      inputType: 'IntValue',
+      durationMs: 5000,
       displayTime: true,
     }));
     expect(game.tinputStartedAt).not.toBeNull();
 
-    // 切到 Quit——timer 状态清空
-    game.applyTurn(tinputFrameJson({
-      state: 'Quit',
-      needValue: false,
-    }));
+    // 切到 Quit（终态）——timer 状态清空
+    game.applyTurn(awaitingOnlyFrameJson({ ended: { terminal: 'Quit' } }));
     expect(game.tinputStartedAt).toBeNull();
     expect(game.tinputTimeLimit).toBeNull();
     expect(game.tinputDisplayTime).toBeNull();
@@ -653,24 +618,18 @@ describe('useGameStore - ADR-0016 TINPUT timer 状态', () => {
     expect(game.tinputRemainingMs).toBeNull();
   });
 
-  it('WaitInput 但 timeLimit=null（非 TINPUT 输入）→ 清空 timer 状态', () => {
+  it('无 wait 的输入等待（如 AnyKey）→ 清空 timer 状态', () => {
     const game = useGameStore();
     // 先进入 TINPUT
     game.applyTurn(tinputFrameJson({
-      state: 'WaitInput',
-      needValue: true,
-      timeLimit: 5000,
+      inputType: 'IntValue',
+      durationMs: 5000,
       displayTime: true,
     }));
     expect(game.tinputStartedAt).not.toBeNull();
 
-    // 切到非 TINPUT 的 WaitInput（如 AnyKey）——timer 状态清空
-    game.applyTurn(tinputFrameJson({
-      state: 'WaitInput',
-      inputType: 'AnyKey',
-      needValue: false,
-      // 不带 timeLimit——C# WhenWritingNull 不发该字段
-    }));
+    // 切到非 TINPUT 的输入等待（AnyKey）——awaiting 里没有 wait 键
+    game.applyTurn(tinputFrameJson({ inputType: 'AnyKey' }));
     expect(game.tinputStartedAt).toBeNull();
     expect(game.tinputTimeLimit).toBeNull();
     expect(game.showTinputCountdown).toBe(false);
@@ -679,9 +638,8 @@ describe('useGameStore - ADR-0016 TINPUT timer 状态', () => {
   it('displayTime=false → tinputStartedAt 仍 set 但 showTinputCountdown=false（ERB 隐藏倒计时）', () => {
     const game = useGameStore();
     game.applyTurn(tinputFrameJson({
-      state: 'WaitInput',
-      needValue: true,
-      timeLimit: 5000,
+      inputType: 'IntValue',
+      durationMs: 5000,
       displayTime: false, // ERB 显式禁用倒计时显示
     }));
 
@@ -702,14 +660,12 @@ describe('useGameStore - ADR-0016 TINPUT timer 状态', () => {
     const snap: DisplaySnapshot = {
       lines: [],
       bgColor: null,
-      state: 'WaitInput',
-      inputType: 'IntValue',
-      needValue: true,
-      protocolVersion: 6,
+      awaiting: {
+        input: { type: 'IntValue' },
+        wait: { durationMs: 3000, displayTime: true, timeUpMessage: '快选择！' },
+      },
+      protocolVersion: 12,
       generation: 0,
-      timeLimit: 3000,
-      displayTime: true,
-      timeUpMessage: '快选择！',
     };
 
     const start = Date.now();
@@ -730,12 +686,10 @@ describe('useGameStore - ADR-0016 TINPUT timer 状态', () => {
     const snap: DisplaySnapshot = {
       lines: [],
       bgColor: null,
-      state: 'Quit',
-      inputType: null,
-      needValue: false,
-      protocolVersion: 6,
+      // 终态：没有 wait 键
+      awaiting: { ended: { terminal: 'Quit' } },
+      protocolVersion: 12,
       generation: 0,
-      // 不带 timer 字段
     };
     game.setSnapshot(snap);
     expect(game.tinputStartedAt).toBeNull();
@@ -752,10 +706,8 @@ describe('useGameStore - ADR-0016 TINPUT timer 状态', () => {
         { entries: [{ segments: [{ text: 'Title' }] }], isLineEnd: true },
       ],
       bgColor: '#000000',
-      state: 'WaitInput',
-      inputType: 'IntValue',
-      needValue: true,
-      protocolVersion: 6,
+      awaiting: INPUT_WAIT,
+      protocolVersion: 12,
       generation: 0,
     };
     game.setSnapshot(snap);
@@ -771,10 +723,8 @@ describe('useGameStore - ADR-0016 TINPUT timer 状态', () => {
     const snap: DisplaySnapshot = {
       lines: [],
       bgColor: null,
-      state: 'Quit',
-      inputType: null,
-      needValue: false,
-      protocolVersion: 6,
+      awaiting: { ended: { terminal: 'Quit' } },
+      protocolVersion: 12,
       generation: 0,
     };
     game.setSnapshot(snap);
@@ -892,7 +842,7 @@ describe('useGameStore - 游戏静默状态提示（gameStatusHint / lastActivit
     const game = useGameStore();
     game.lastActivityAt = Date.now() - 60000;
 
-    game.applyTurn(appendFrameJson(['activity'], { state: 'Running' }));
+    game.applyTurn(appendFrameJson(['activity'], { awaiting: { wait: { durationMs: 0 } } }));
 
     expect(Date.now() - game.lastActivityAt).toBeLessThan(1000);
   });
@@ -922,7 +872,7 @@ describe('useGameStore - 游戏静默状态提示（gameStatusHint / lastActivit
     game.markInputSubmitted();
     expect(game.inputSubmittedAt).not.toBeNull();
 
-    game.applyTurn(appendFrameJson(['activity'], { state: 'WaitInput' }));
+    game.applyTurn(appendFrameJson(['activity'], { awaiting: INPUT_WAIT }));
 
     expect(game.inputSubmittedAt).toBeNull();
   });
@@ -957,8 +907,7 @@ describe('useGameStore - hasActiveButtons（按钮 generation 过滤）', () => 
 
   function frameWithButtons(generation: number, buttonGens: number[]): string {
     return JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: INPUT_WAIT,
       generation,
       diff: {
         lineOps: [
@@ -999,8 +948,7 @@ describe('useGameStore - hasActiveButtons（按钮 generation 过滤）', () => 
     const game = useGameStore();
     game.applyTurn(
       JSON.stringify({
-        state: 'WaitInput',
-        needValue: false,
+        awaiting: INPUT_WAIT,
         generation: 0,
         diff: { lineOps: [{ type: 'append', newLines: [diffLine('纯文本')] }] },
       }),
@@ -1016,8 +964,7 @@ describe('useGameStore - hasActiveButtons（按钮 generation 过滤）', () => 
     // 第二回合：generation 升到 1，只追加无按钮行——旧按钮仍在历史行，但已过期
     game.applyTurn(
       JSON.stringify({
-        state: 'WaitInput',
-        needValue: false,
+        awaiting: INPUT_WAIT,
         generation: 1,
         diff: { lineOps: [{ type: 'append', newLines: [diffLine('新内容')] }] },
       }),

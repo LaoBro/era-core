@@ -53,7 +53,6 @@ html.legacy-webview .input-row > * + * { margin-left: var(--space-2); }
 html.legacy-webview .key-prompt > * + * { margin-left: var(--space-3); }
 html.legacy-webview .state-quit,
 html.legacy-webview .state-error,
-html.legacy-webview .state-idle,
 html.legacy-webview .state-unknown,
 html.legacy-webview .unknown-input-type > * + * { margin-left: var(--space-2); }
 html.legacy-webview .tinput-notice > * + * { margin-left: var(--space-2); }

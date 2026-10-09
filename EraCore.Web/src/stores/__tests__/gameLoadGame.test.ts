@@ -324,8 +324,7 @@ describe('useGameStore.loadGame', () => {
 
     // 先往 store 灌一些显示数据
     game.applyTurn(JSON.stringify({
-      state: 'WaitInput',
-      needValue: false,
+      awaiting: { input: { type: 'AnyKey' } },
       generation: 0,
       diff: {
         lineOps: [{ type: 'append', newLines: [{ entries: [{ segments: [{ text: 'old data' }] }], isLineEnd: true }] }],

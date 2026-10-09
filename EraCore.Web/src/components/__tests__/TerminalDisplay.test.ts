@@ -95,8 +95,6 @@ async function mountWith(lines: DisplaySnapshot['lines'][number][], bgImages: Bg
     ...game.displayState,
     lines,
     bgImages,
-    state: 'WaitInput',
-    inputType: 'IntValue',
     awaiting: { input: { type: 'IntValue' } },
   };
   game.currentTurnGeneration = 0;
@@ -364,10 +362,8 @@ describe('TerminalDisplay: srcm 热区点击', () => {
       }],
       bgColor: '#000000',
       bgImages: [],
-      state: 'WaitInput',
-      inputType: 'IntValue',
-      needValue: true,
-      protocolVersion: 8,
+      awaiting: { input: { type: 'IntValue' } },
+      protocolVersion: 12,
       generation: 0,
     };
     const { wrapper, conn } = await mountWith(snap.lines);
@@ -400,10 +396,8 @@ describe('TerminalDisplay: srcm 热区点击', () => {
       }],
       bgColor: '#000000',
       bgImages: [],
-      state: 'WaitInput',
-      inputType: 'IntValue',
-      needValue: true,
-      protocolVersion: 8,
+      awaiting: { input: { type: 'IntValue' } },
+      protocolVersion: 12,
       generation: 0,
     };
     const { wrapper, conn } = await mountWith(snap.lines);
@@ -433,10 +427,8 @@ describe('TerminalDisplay: srcm 热区点击', () => {
       }],
       bgColor: '#000000',
       bgImages: [],
-      state: 'WaitInput',
-      inputType: 'IntValue',
-      needValue: true,
-      protocolVersion: 8,
+      awaiting: { input: { type: 'IntValue' } },
+      protocolVersion: 12,
       generation: 0,
     };
     const { wrapper, conn } = await mountWith(snap.lines);
@@ -519,7 +511,7 @@ describe('TerminalDisplay: 默认文字色', () => {
     const conn = useConnectionStore();
     conn.status = 'connected';
     conn.sendInput = vi.fn();
-    game.displayState = { ...game.displayState, lines: [line([{ text: 'こんにちは' }])], state: 'WaitInput' };
+    game.displayState = { ...game.displayState, lines: [line([{ text: 'こんにちは' }])] };
     return mount(TerminalDisplay, { global: { plugins: [pinia] } });
   }
 
@@ -600,11 +592,10 @@ describe('TerminalDisplay: 触控排版', () => {
     if (opts.targetCols !== undefined) ui.setTouchTargetCols(opts.targetCols);
     if (opts.lineHeight !== undefined) game.setGameLayout({ lineHeight: opts.lineHeight });
     game.currentTurnGeneration = opts.turnGeneration ?? 0;
-    // issue 07：触控排版判据读 awaiting.input ⇒ inputType 与 awaiting 必须同源更新
+    // 触控排版判据读 awaiting.input ⇒ 夹具直接把类型喂给契约字段
     const inputType = opts.inputType ?? 'IntValue';
     game.displayState = {
       ...game.displayState,
-      inputType,
       awaiting: { input: { type: inputType } },
     };
     await wrapper.vm.$nextTick();

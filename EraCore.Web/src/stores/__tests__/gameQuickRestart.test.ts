@@ -217,11 +217,10 @@ describe('useGameStore.quickRestart', () => {
 
   it('reset 时 serverState 回 Idle', () => {
     const game = useGameStore();
-    // 模拟 WS 帧推送更新 serverState
+    // 模拟 WS 帧推送更新 serverState（v12：由 awaiting 派生）
     game.applyTurn(
       JSON.stringify({
-        state: 'WaitInput',
-        needValue: false,
+        awaiting: { input: { type: 'AnyKey' } },
         generation: 0,
         diff: null,
       }),
@@ -232,28 +231,26 @@ describe('useGameStore.quickRestart', () => {
     expect(game.serverState).toBe('Idle');
   });
 
-  it('applyTurn 同步 serverState 从 turn.state', () => {
+  it('applyTurn 由 awaiting 派生 serverState（非终态 → WaitInput；终态 → terminal）', () => {
     const game = useGameStore();
     expect(game.serverState).toBe('Idle');
 
     game.applyTurn(
       JSON.stringify({
-        state: 'Loading',
-        needValue: false,
-        generation: 0,
-        diff: null,
-      }),
-    );
-    expect(game.serverState).toBe('Loading');
-
-    game.applyTurn(
-      JSON.stringify({
-        state: 'WaitInput',
-        needValue: false,
+        awaiting: { wait: { durationMs: 0 } },
         generation: 0,
         diff: null,
       }),
     );
     expect(game.serverState).toBe('WaitInput');
+
+    game.applyTurn(
+      JSON.stringify({
+        awaiting: { ended: { terminal: 'Quit' } },
+        generation: 0,
+        diff: null,
+      }),
+    );
+    expect(game.serverState).toBe('Quit');
   });
 });
