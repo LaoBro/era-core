@@ -11,7 +11,7 @@ namespace Emuera.Headless.Tests;
 /// 模拟 Web 前端的状态管理：
 /// - <see cref="ApplySnapshot"/> 用 DisplaySnapshot 初始化全量状态
 /// - <see cref="ApplyOps"/> 消费增量 ops（print/newline/clearline/clear/set_bg）更新状态
-/// - <see cref="Lines"/> / <see cref="BgColor"/> / <see cref="State"/> / <see cref="InputType"/> / <see cref="NeedValue"/>
+/// - <see cref="Lines"/> / <see cref="BgColor"/> / <see cref="Awaiting"/>
 ///   暴露重建后的状态，可与原 displayLineList 逐字段比对。
 ///
 /// 如果 TestAdapter 能从 DisplayState 输出重建显示状态，任何前端（Web/移动/另一个 CLI）也能——
@@ -26,19 +26,13 @@ internal sealed class TestAdapter
     public string? BgColor { get; private set; }
     /// <summary>v8（issue 02）：背景图状态。null=无背景；[]=已清空；非空=当前背景层列表。</summary>
     public List<BgImageState>? BgImages { get; private set; }
-    public string State { get; private set; } = "";
-    public string? InputType { get; private set; }
-    public bool NeedValue { get; private set; }
-    /// <summary>ADR-0016：TINPUT 总时长（毫秒），null = 无 TINPUT。</summary>
-    public long? TimeLimit { get; private set; }
-    /// <summary>ADR-0016：是否向玩家显示倒计时（ERB 可设 false）。</summary>
-    public bool? DisplayTime { get; private set; }
-    /// <summary>ADR-0016：ERB 超时提示文案。</summary>
-    public string? TimeUpMessage { get; private set; }
+    /// <summary>
+    /// v12：唯一契约字段——「服务端此刻在等什么」（`input` / `wait` 两个正交维度 + `ended` 互斥终态）。
+    /// </summary>
+    public AwaitInfo? Awaiting { get; private set; }
 
     /// <summary>
-    /// 用 DisplaySnapshot 替换内部状态——lines[] 转为内部行列表，bgColor/state/inputType/needValue
-    /// 与 ADR-0016 timer 字段（timeLimit/displayTime/timeUpMessage）覆盖。
+    /// 用 DisplaySnapshot 替换内部状态——lines[] 转为内部行列表，bgColor / bgImages / awaiting 覆盖。
     /// </summary>
     public void ApplySnapshot(DisplaySnapshot snapshot)
     {
@@ -52,12 +46,7 @@ internal sealed class TestAdapter
         }
         BgColor = snapshot.bgColor;
         BgImages = snapshot.bgImages;
-        State = snapshot.state;
-        InputType = snapshot.inputType;
-        NeedValue = snapshot.needValue;
-        TimeLimit = snapshot.timeLimit;
-        DisplayTime = snapshot.displayTime;
-        TimeUpMessage = snapshot.timeUpMessage;
+        Awaiting = snapshot.awaiting;
     }
 
     /// <summary>

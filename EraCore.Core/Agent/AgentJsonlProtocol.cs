@@ -51,9 +51,6 @@ namespace MinorShift.Emuera.GameView
         /// <c>awaiting</c> 一变成内嵌对象，这条路径的风险就不再是「改一行注册」的量级。</para>
         /// </summary>
         internal static string BuildFatalTurn(string message) => SerializeTurn(new TurnRecord(
-            state: ConsoleState.Error.ToString(),
-            inputType: null,
-            needValue: false,
             diff: null,
             awaiting: AwaitInfo.Of(null, ConsoleState.Error, timedOut: false),
             error: message));
@@ -125,9 +122,6 @@ namespace MinorShift.Emuera.GameView
                 // 不能走下方 catch-all——那会构造 state=Running + error 文本的回合，
                 // 前端画面不变、无可见错误，表现为假死。这里构造干净 Quit 回合并结束会话。
                 var quitTurn = SerializeTurn(new TurnRecord(
-                    state: "Quit",
-                    inputType: null,
-                    needValue: false,
                     diff: null,
                     // 终态：只剩 ended（§0.1 ① 那个「Quit 帧还带 inputType/timeLimit」的残留
                     // bug 在新形态下结构性不可能构造出来）。
@@ -142,9 +136,6 @@ namespace MinorShift.Emuera.GameView
                 var msg = $"StepAsync fatal: {ex}";
                 EmueraLog.Error("jsonl", msg);
                 var errorTurn = SerializeTurn(new TurnRecord(
-                    state: console.State.ToString(),
-                    inputType: null,
-                    needValue: false,
                     diff: null,
                     // 运行期异常一律 fatal（Process 内部状态不可逆）⇒ awaiting 按终态构造。
                     // 不照抄 console.State：异常可能发生在 Running 态，那时按停稳点判据
@@ -385,10 +376,7 @@ namespace MinorShift.Emuera.GameView
             _pendingTimeoutFlag = false;
 
             // issue-004：空转帧抑制。返回 null = 本回合不产出（调用方据此不写 IO）。
-            var state = console.State.ToString();
-            var inputType = req?.InputType.ToString();
-            bool needValue = req?.NeedValue ?? false;
-
+            //
             // v12：唯一契约字段（§2.2 的两条维度判据在工厂里，两个维度各自独立判定）。
             var awaiting = AwaitInfo.Of(req, console.State, timedOut);
 
@@ -409,29 +397,13 @@ namespace MinorShift.Emuera.GameView
             _emittedInputProps = inputProps;
             _emittedWaitProps = waitProps;
 
-            // ADR-0016：TINPUT timer 字段——仅 TINPUT 期间（Timelimit > 0）填充。
-            // displayTime 取 InputRequest.DisplayTime（ERB 可设 false 让前端不显示倒计时）。
-            // timeUpMessage 仅在非空时携带。
-            // v12 展开阶段：这些旧顶层字段与 awaiting.wait 同源（同一个 req），09 删除。
-            long? timeLimit = req is { Timelimit: > 0 } ? req.Timelimit : null;
-            bool? displayTime = req is { Timelimit: > 0, DisplayTime: true } ? true : null;
-            string? timeUpMessage = req is { Timelimit: > 0 } reqWithMes
-                && !string.IsNullOrEmpty(reqWithMes.TimeUpMes)
-                ? reqWithMes.TimeUpMes
-                : null;
-
+            // ADR-0016：TINPUT 计时元数据（timeLimit / displayTime / timeUpMessage）自 v12 起
+            // 只挂在 `awaiting.wait` 上（由 AwaitInfo.Of 从同一个 req 填充），顶层不再重复。
             return SerializeTurn(new TurnRecord(
-                state: state,
-                inputType: inputType,
-                needValue: needValue,
                 diff: diff,
                 awaiting: awaiting,
                 error: error,
                 protocolVersion: isInitial ? TurnRecord.CurrentProtocolVersion : null,
-                timeLimit: timeLimit,
-                displayTime: displayTime,
-                timeUpMessage: timeUpMessage,
-                timedOut: timedOut,
                 generation: console.LastButtonGeneration
             ));
         }

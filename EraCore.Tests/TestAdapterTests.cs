@@ -59,9 +59,11 @@ public class TestAdapterTests
         // 断言重建状态与原 displayLineList 一一对应
         Assert.Equal(2, adapter.Lines.Count);
         Assert.Equal("#0A141E", adapter.BgColor);
-        Assert.Equal("WaitInput", adapter.State);
-        Assert.Null(adapter.InputType);
-        Assert.False(adapter.NeedValue);
+        // v12：非终态 + req=null ⇒ 两个正交维度皆无（`{}`，快照瞬态形态）
+        Assert.NotNull(adapter.Awaiting);
+        Assert.Null(adapter.Awaiting!.input);
+        Assert.Null(adapter.Awaiting!.wait);
+        Assert.Null(adapter.Awaiting!.ended);
 
         // 第一行：单按钮
         var line1 = adapter.Lines[0];
@@ -268,7 +270,7 @@ public class TestAdapterTests
     }
 
     [Fact]
-    public void T_full_roundtrip_preserves_state_inputType_needValue_from_snapshot()
+    public void T_full_roundtrip_preserves_awaiting_from_snapshot()
     {
         var req = new InputRequest { InputType = InputType.IntValue };
         var snapshot = DisplayState.BuildSnapshot(
@@ -281,20 +283,16 @@ public class TestAdapterTests
         var adapter = new TestAdapter();
         adapter.ApplySnapshot(snapshot);
 
-        Assert.Equal("WaitInput", adapter.State);
-        Assert.Equal("IntValue", adapter.InputType);
-        Assert.True(adapter.NeedValue);
+        Assert.Equal("IntValue", adapter.Awaiting!.input!.type);
 
-        // 增量 ops 不应改变 state/inputType/needValue（这些由 TurnRecord 的顶层字段携带，不是 ops）
+        // 增量 ops 不应改变 awaiting（它由 TurnRecord 的顶层字段携带，不是 ops）
         adapter.ApplyOps(new List<TurnOp>
         {
             new PrintOp(new List<PrintSegment> { new("x", null, null, null, null) }, null),
             new NewLineOp(null),
         });
 
-        Assert.Equal("WaitInput", adapter.State);
-        Assert.Equal("IntValue", adapter.InputType);
-        Assert.True(adapter.NeedValue);
+        Assert.Equal("IntValue", adapter.Awaiting!.input!.type);
     }
 
     // ---------- T-multi-button-line：多按钮 col 累加 ----------
@@ -355,7 +353,7 @@ public class TestAdapterTests
     // ---------- 额外：空 ops 不改变状态 ----------
 
     [Fact]
-    public void Empty_ops_leaves_state_unchanged()
+    public void Empty_ops_leaves_awaiting_unchanged()
     {
         var snapshot = DisplayState.BuildSnapshot(
             new List<ConsoleDisplayLine>
@@ -375,7 +373,7 @@ public class TestAdapterTests
 
         Assert.Single(adapter.Lines);
         Assert.Equal("#FF0000", adapter.BgColor);
-        Assert.Equal("WaitInput", adapter.State);
+        Assert.NotNull(adapter.Awaiting);
     }
 
     // ---------- plan C：ApplyDiff 消费 DisplayDiff（显式清空信号）----------
@@ -467,12 +465,12 @@ public class TestAdapterTests
         Assert.Equal("#0000FF", adapter.BgColor);
     }
 
-    // ---------- ADR-0016：timer 字段 ApplySnapshot 保留 ----------
+    // ---------- ADR-0016：TINPUT 计时元数据经 awaiting.wait 保留 ----------
 
     [Fact]
-    public void T_snapshot_tinput_populates_timer_fields()
+    public void T_snapshot_tinput_populates_awaiting_wait()
     {
-        // TINPUT 期间：Timelimit>0 + DisplayTime=true + 非空 TimeUpMes → 三字段全填
+        // TINPUT 期间：Timelimit>0 + DisplayTime=true + 非空 TimeUpMes → wait 带全量元数据
         var req = new InputRequest
         {
             InputType = InputType.EnterKey,
@@ -490,13 +488,14 @@ public class TestAdapterTests
         var adapter = new TestAdapter();
         adapter.ApplySnapshot(snapshot);
 
-        Assert.Equal(5000L, adapter.TimeLimit);
-        Assert.True(adapter.DisplayTime);
-        Assert.Equal("时间到", adapter.TimeUpMessage);
+        var wait = adapter.Awaiting!.wait!;
+        Assert.Equal(5000L, wait.durationMs);
+        Assert.True(wait.displayTime);
+        Assert.Equal("时间到", wait.timeUpMessage);
     }
 
     [Fact]
-    public void T_snapshot_non_tinput_leaves_timer_fields_null()
+    public void T_snapshot_non_tinput_has_no_wait()
     {
         var snapshot = DisplayState.BuildSnapshot(
             new List<ConsoleDisplayLine>(),
@@ -508,9 +507,7 @@ public class TestAdapterTests
         var adapter = new TestAdapter();
         adapter.ApplySnapshot(snapshot);
 
-        Assert.Null(adapter.TimeLimit);
-        Assert.Null(adapter.DisplayTime);
-        Assert.Null(adapter.TimeUpMessage);
+        Assert.Null(adapter.Awaiting!.wait);
     }
 
     // ---------- shift_head：TestAdapter 消费方对称测试 ----------

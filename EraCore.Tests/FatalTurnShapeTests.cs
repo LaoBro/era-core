@@ -28,7 +28,8 @@ public sealed class FatalTurnShapeTests
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
-        Assert.Equal("Error", root.GetProperty("state").GetString());
+        // v12：顶层 state 已退场——终态只由 awaiting.ended 表达。
+        Assert.False(root.TryGetProperty("state", out _), "v12 起顶层 state 不得再出现");
         Assert.Equal("boom", root.GetProperty("error").GetString());
 
         var awaiting = root.GetProperty("awaiting");
@@ -48,9 +49,6 @@ public sealed class FatalTurnShapeTests
     public void Source_generated_context_serializes_awaiting_fully()
     {
         var turn = new TurnRecord(
-            state: "WaitInput",
-            inputType: "Void",
-            needValue: false,
             diff: null,
             awaiting: AwaitInfo.Of(
                 new InputRequest { InputType = InputType.Void, Timelimit = 3000, Skippable = true },

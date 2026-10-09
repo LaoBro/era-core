@@ -62,10 +62,17 @@ public class YieldDrainTests
     private static void SendInput(Session session, string value)
         => session.IO.EnqueueInput($"{{\"type\":\"input\",\"value\":\"{value}\"}}");
 
+    /// <summary>
+    /// v12：帧不再带顶层 <c>state</c>——本套用例只区分「终态」与「非终态停稳点」，
+    /// 故从契约 <c>awaiting</c> 取终态值（无 <c>ended</c> 一律归为非终态 "WaitInput"）。
+    /// </summary>
     private static string TurnState(string turnJson)
     {
         using var doc = JsonDocument.Parse(turnJson);
-        return doc.RootElement.GetProperty("state").GetString() ?? "";
+        var awaiting = doc.RootElement.GetProperty("awaiting");
+        return awaiting.TryGetProperty("ended", out var ended)
+            ? ended.GetProperty("terminal").GetString() ?? ""
+            : "WaitInput";
     }
 
     private static async Task<string> WaitTurnAsync(Session session)

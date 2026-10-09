@@ -26,7 +26,7 @@ public class TerminalRendererClearDetectionTests
     }
 
     private static DisplaySnapshot Snapshot(params DisplayLine[] lines) =>
-        new(new List<DisplayLine>(lines), null, "WaitInput", null, false,
+        new(new List<DisplayLine>(lines), null,
             AwaitInfo.Of(new InputRequest { InputType = InputType.EnterKey }, ConsoleState.WaitInput, timedOut: false),
             5, 0);
 

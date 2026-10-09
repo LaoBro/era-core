@@ -79,7 +79,7 @@ public class RedrawAnimFrameTests
             if (result.Status == TurnWaitStatus.Turn && result.Turn != null)
             {
                 turns.Add(result.Turn);
-                if (TurnField(result.Turn, "state") == "Quit")
+                if (TurnTerminal(result.Turn) == "Quit")
                     break;
                 continue;
             }
@@ -99,6 +99,44 @@ public class RedrawAnimFrameTests
         }
         catch { /* 摘要用，不因解析失败中断 */ }
         return "";
+    }
+
+    /// <summary>
+    /// v12：帧不再带顶层 <c>state</c>——从契约 <c>awaiting.ended.terminal</c> 取终态值
+    /// （非终态帧返回空串）。
+    /// </summary>
+    private static string TurnTerminal(string turnJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(turnJson);
+            if (doc.RootElement.TryGetProperty("awaiting", out var a)
+                && a.TryGetProperty("ended", out var ended)
+                && ended.TryGetProperty("terminal", out var t))
+                return t.GetString() ?? "";
+        }
+        catch { /* 摘要用 */ }
+        return "";
+    }
+
+    /// <summary>v12：把 <c>awaiting</c> 压成一行可读摘要（替代旧 state/inputType 两列）。</summary>
+    private static string AwaitingShape(string turnJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(turnJson);
+            if (!doc.RootElement.TryGetProperty("awaiting", out var a))
+                return "";
+            if (a.TryGetProperty("ended", out var ended))
+                return "ended:" + ended.GetProperty("terminal").GetString();
+            var s = a.TryGetProperty("input", out var input)
+                ? "input:" + input.GetProperty("type").GetString()
+                : "";
+            if (a.TryGetProperty("wait", out var wait))
+                s += (s.Length > 0 ? "+" : "") + "wait:" + wait.GetProperty("durationMs").GetInt64();
+            return s.Length > 0 ? s : "{}";
+        }
+        catch { return ""; }
     }
 
     /// <summary>只取 lineOps 的形状（什么操作、几行），不取整段 JSON。</summary>
@@ -160,7 +198,7 @@ public class RedrawAnimFrameTests
             $"{label}：帧数 {turns.Count} 少于循环步数 {Steps} —— 有中间态被吞。\n{Describe(turns)}");
 
         Assert.Contains(turns, t => t.Contains(doneMarker, StringComparison.Ordinal));
-        Assert.Equal("Quit", TurnField(turns[^1], "state"));
+        Assert.Equal("Quit", TurnTerminal(turns[^1]));
     }
 
     private static async Task RunVariantAsync(
@@ -288,8 +326,7 @@ public class RedrawAnimFrameTests
         var sb = new StringBuilder();
         for (int i = 0; i < turns.Count; i++)
         {
-            sb.Append($"  #{i:D2} state={TurnField(turns[i], "state"),-9}" +
-                      $" input={TurnField(turns[i], "inputType"),-8}" +
+            sb.Append($"  #{i:D2} awaiting={AwaitingShape(turns[i]),-24}" +
                       $" ops=[{OpsShape(turns[i])}]\n");
         }
         return sb.ToString();

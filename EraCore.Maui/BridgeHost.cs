@@ -2201,7 +2201,7 @@ internal sealed class BridgeHost : IDisposable
     /// <summary>
     /// 推致命错误 turn 给 Vue——spec ID10。
     /// <para>
-    /// 构造 <c>TurnRecord(state:"Error", error: ex.Message)</c> JSON 调 <see cref="IJsBridge.PostTurn"/> 推给 Vue，
+    /// 构造 <c>TurnRecord(awaiting: ended{terminal:"Error"}, error: ex.Message)</c> JSON 调 <see cref="IJsBridge.PostTurn"/> 推给 Vue，
     /// Vue 端 <c>applyTurn</c> 渲染 error 字段。error turn 格式与 <c>AgentJsonlProtocol.StepAsync</c> 的脚本异常
     /// error turn 一致——前端代码零改动复用渲染逻辑。
     /// </para>
@@ -2223,7 +2223,7 @@ internal sealed class BridgeHost : IDisposable
     /// <summary>
     /// 推 error turn 给 Vue（issue 09 公开版本——可被外部 reload 路径调用）。
     /// <para>
-    /// 与 <see cref="ShowFatalError"/> 共用渲染链路——构造 <c>TurnRecord(state:"Error", error: message)</c> JSON
+    /// 与 <see cref="ShowFatalError"/> 共用渲染链路——构造 <c>TurnRecord(awaiting: ended{terminal:"Error"}, error: message)</c> JSON
     /// 调 <see cref="IJsBridge.PostTurn"/> 推给 Vue。失败 fallback <c>DisplayAlert</c>。
     /// </para>
     /// </summary>

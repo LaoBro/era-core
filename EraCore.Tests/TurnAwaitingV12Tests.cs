@@ -288,8 +288,8 @@ public sealed class TurnAwaitingV12Tests
         var frame = Parse((await host.Protocol.SubmitTimeoutAsync())!);
 
         AssertShape(frame, inputType: "IntValue", waitDurationMs: 3000, timedOut: true);
-        // 展开阶段旧字段仍在：顶层 timedOut 同样为真（09 删除）。
-        Assert.True(frame.GetProperty("timedOut").GetBoolean());
+        // v12（收缩完成）：顶层 timedOut 已退场——该旗标只挂在 awaiting.wait 上。
+        Assert.False(frame.TryGetProperty("timedOut", out _));
     }
 
     // ------------------------------------------------------------------

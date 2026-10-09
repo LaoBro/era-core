@@ -73,22 +73,34 @@ public class AgentJsonlProtocolTests : IDisposable
         using var doc = JsonDocument.Parse(json!);
         var root = doc.RootElement;
 
-        Assert.Equal("WaitInput", root.GetProperty("state").GetString());
-        Assert.Equal("EnterKey", root.GetProperty("inputType").GetString());
         Assert.Equal(12, root.GetProperty("protocolVersion").GetInt32()); // v12：awaiting 容器
 
-        Assert.Equal(5000L, root.GetProperty("timeLimit").GetInt64());
-        Assert.True(root.GetProperty("displayTime").GetBoolean());
-        Assert.Equal("时间到", root.GetProperty("timeUpMessage").GetString());
-        Assert.False(root.GetProperty("timedOut").GetBoolean());
+        // v12：七个旧顶层字段全部退场——顶层不得再出现它们。
+        Assert.False(root.TryGetProperty("state", out _), "v12 起顶层 state 不得再出现");
+        Assert.False(root.TryGetProperty("inputType", out _), "v12 起顶层 inputType 不得再出现");
+        Assert.False(root.TryGetProperty("needValue", out _), "v12 起顶层 needValue 不得再出现");
+        Assert.False(root.TryGetProperty("timeLimit", out _), "v12 起顶层 timeLimit 不得再出现");
+        Assert.False(root.TryGetProperty("displayTime", out _), "v12 起顶层 displayTime 不得再出现");
+        Assert.False(root.TryGetProperty("timeUpMessage", out _), "v12 起顶层 timeUpMessage 不得再出现");
+        Assert.False(root.TryGetProperty("timedOut", out _), "v12 起顶层 timedOut 不得再出现");
+
+        // TINPUT 的计时元数据只挂在 awaiting.wait 上。
+        var awaiting = root.GetProperty("awaiting");
+        Assert.Equal("EnterKey", awaiting.GetProperty("input").GetProperty("type").GetString());
+        var wait = awaiting.GetProperty("wait");
+        Assert.Equal(5000L, wait.GetProperty("durationMs").GetInt64());
+        Assert.True(wait.GetProperty("displayTime").GetBoolean());
+        Assert.Equal("时间到", wait.GetProperty("timeUpMessage").GetString());
+        // 尚未超时 ⇒ wait.timedOut 键缺省（不是 false）。
+        Assert.False(wait.TryGetProperty("timedOut", out _));
     }
 
-    // ---------- T_buildturn_non_tinput_omits_nullable_timer_fields ----------
+    // ---------- T_buildturn_non_tinput_has_no_wait ----------
 
     [Fact]
-    public async Task T_buildturn_non_tinput_omits_nullable_timer_fields()
+    public async Task T_buildturn_non_tinput_has_no_wait()
     {
-        // inputReq=null：非 TINPUT 期间，三 nullable 字段不应出现在 JSON 中
+        // inputReq=null：非 TINPUT 期间，两个正交维度皆无（`{}`）；顶层不再有任何 time* 键。
         SetWaitInput(req: null);
 
         var json = await _protocol.GetInitialTurnAsync();
@@ -97,16 +109,14 @@ public class AgentJsonlProtocolTests : IDisposable
         using var doc = JsonDocument.Parse(json!);
         var root = doc.RootElement;
 
-        Assert.False(root.TryGetProperty("timeLimit", out _),
-            "非 TINPUT 期间 timeLimit 不应出现（WhenWritingNull）");
-        Assert.False(root.TryGetProperty("displayTime", out _),
-            "非 TINPUT 期间 displayTime 不应出现（WhenWritingNull）");
-        Assert.False(root.TryGetProperty("timeUpMessage", out _),
-            "非 TINPUT 期间 timeUpMessage 不应出现（WhenWritingNull）");
+        Assert.False(root.TryGetProperty("timeLimit", out _), "顶层 timeLimit 已退场");
+        Assert.False(root.TryGetProperty("displayTime", out _), "顶层 displayTime 已退场");
+        Assert.False(root.TryGetProperty("timeUpMessage", out _), "顶层 timeUpMessage 已退场");
+        Assert.False(root.TryGetProperty("timedOut", out _), "顶层 timedOut 已退场");
 
-        // timedOut 为非 nullable bool，默认 false，永远出现
-        Assert.True(root.TryGetProperty("timedOut", out var timedOutEl));
-        Assert.False(timedOutEl.GetBoolean());
+        var awaiting = root.GetProperty("awaiting");
+        Assert.False(awaiting.TryGetProperty("input", out _));
+        Assert.False(awaiting.TryGetProperty("wait", out _));
     }
 
     // ---------- T_buildturn_tinput_without_displaytime_omits_displaytime ----------
@@ -115,30 +125,29 @@ public class AgentJsonlProtocolTests : IDisposable
     public async Task T_buildturn_tinput_without_displaytime_omits_displaytime_field()
     {
         // Timelimit>0 但 DisplayTime=false：ERB 脚本要求前端不显示倒计时
-        // timeLimit 应出现，displayTime 不出现（WhenWritingNull，false→null）
-        // TimeUpMes 空字符串 → timeUpMessage 不出现
+        // durationMs 仍出现，displayTime 键缺省（false→null）
+        // TimeUpMes 空字符串 → timeUpMessage 键缺省
         SetWaitInput(TinputReq(timelimit: 3000, displayTime: false, timeUpMes: ""));
 
         var json = await _protocol.GetInitialTurnAsync();
 
         Assert.NotNull(json);
         using var doc = JsonDocument.Parse(json!);
-        var root = doc.RootElement;
+        var wait = doc.RootElement.GetProperty("awaiting").GetProperty("wait");
 
-        Assert.Equal(3000L, root.GetProperty("timeLimit").GetInt64());
-        Assert.False(root.TryGetProperty("displayTime", out _),
-            "DisplayTime=false 时 displayTime 字段应为 null（WhenWritingNull 不出现）");
-        Assert.False(root.TryGetProperty("timeUpMessage", out _),
-            "TimeUpMes 空字符串时 timeUpMessage 字段应不出现");
-        Assert.False(root.GetProperty("timedOut").GetBoolean());
+        Assert.Equal(3000L, wait.GetProperty("durationMs").GetInt64());
+        Assert.False(wait.TryGetProperty("displayTime", out _),
+            "DisplayTime=false 时 displayTime 键缺省（WhenWritingNull）");
+        Assert.False(wait.TryGetProperty("timeUpMessage", out _),
+            "TimeUpMes 空字符串时 timeUpMessage 键缺省");
     }
 
-    // ---------- T_buildturn_negative_timelimit_omits_timer_fields ----------
+    // ---------- T_buildturn_negative_timelimit_has_no_wait ----------
 
     [Fact]
-    public async Task T_buildturn_negative_timelimit_omits_timer_fields()
+    public async Task T_buildturn_negative_timelimit_has_no_wait()
     {
-        // Timelimit=-1（InputRequest 默认值）：等同于"无 TINPUT"
+        // Timelimit=-1（InputRequest 默认值）：等同于"无 TINPUT" → wait 键缺省（= 无限期）
         SetWaitInput(TinputReq(timelimit: -1, displayTime: true, timeUpMes: "x"));
 
         var json = await _protocol.GetInitialTurnAsync();
@@ -147,24 +156,25 @@ public class AgentJsonlProtocolTests : IDisposable
         using var doc = JsonDocument.Parse(json!);
         var root = doc.RootElement;
 
-        Assert.False(root.TryGetProperty("timeLimit", out _),
-            "Timelimit=-1 时 timeLimit 不应出现");
-        Assert.False(root.TryGetProperty("displayTime", out _),
-            "Timelimit=-1 时 displayTime 不应出现");
-        Assert.False(root.TryGetProperty("timeUpMessage", out _),
-            "Timelimit=-1 时 timeUpMessage 不应出现");
+        Assert.False(root.TryGetProperty("timeLimit", out _), "顶层 timeLimit 已退场");
+        Assert.False(root.TryGetProperty("displayTime", out _), "顶层 displayTime 已退场");
+        Assert.False(root.TryGetProperty("timeUpMessage", out _), "顶层 timeUpMessage 已退场");
+        Assert.False(root.GetProperty("awaiting").TryGetProperty("wait", out _),
+            "Timelimit=-1 时 wait 键缺省");
     }
 
-    // ---------- T_submit_timeout_sets_timed_out_true ----------
+    // ---------- T_submit_timeout_flag_is_one_shot ----------
 
     [Fact]
-    public async Task T_submit_timeout_sets_timed_out_true()
+    public async Task T_submit_timeout_leaves_no_top_level_timed_out()
     {
-        // SubmitTimeoutAsync 路径置 _pendingTimeoutFlag=true，下一帧 BuildTurn 写出 timedOut=true。
-        // 测试绕开 EndTimerCore（会 RunEmueraProgram 卡住）：
+        // v12：timedOut 只挂在 awaiting.wait 上（一次性、仅 Timelimit>0 时出现），顶层不再有该键。
+        // 本用例绕开 EndTimerCore（会 RunEmueraProgram 卡住）：
         //   - State=Quit → WaitForInputAsync 立即返回 true
-        //   - inputReq=null → SubmitTimeout 内部条件 guard 直接 return（不调 EndTimerCore）
-        // 验证目标：_pendingTimeoutFlag → turn.timedOut 的传递，不是 EndTimerCore 行为
+        //   - inputReq=null → SubmitTimeout 内部 guard 直接 return（不调 EndTimerCore）
+        // 于是本帧是终态帧：`_pendingTimeoutFlag` 无处可落，只验证「顶层无 timedOut 痕迹 +
+        // 旗标一次性」。真实超时续跑的**正面**路径（wait.timedOut=true）由
+        // TurnAwaitingV12Tests.Timeout_resume_puts_timed_out_on_wait（真实脚本）覆盖。
         _console._state.State = ConsoleState.Quit;
         _console._state.inputReq = null;
 
@@ -172,18 +182,16 @@ public class AgentJsonlProtocolTests : IDisposable
 
         Assert.NotNull(json);
         using var doc = JsonDocument.Parse(json!);
-        var root = doc.RootElement;
+        Assert.False(doc.RootElement.TryGetProperty("timedOut", out _),
+            "v12 起顶层 timedOut 已退场");
 
-        Assert.True(root.GetProperty("timedOut").GetBoolean(),
-            "SubmitTimeoutAsync 路径必须置 timedOut=true");
-
-        // flag 一次性：再调 GetInitialTurnAsync 不应残留 timedOut=true（已清空）
+        // flag 一次性：再调 GetInitialTurnAsync 不应残留
         _console._state.State = ConsoleState.WaitInput;
         var json2 = await _protocol.GetInitialTurnAsync();
         Assert.NotNull(json2);
         using var doc2 = JsonDocument.Parse(json2!);
-        Assert.False(doc2.RootElement.GetProperty("timedOut").GetBoolean(),
-            "_pendingTimeoutFlag 必须一次性——读出后清空，下一帧 timedOut=false");
+        Assert.False(doc2.RootElement.TryGetProperty("timedOut", out _),
+            "_pendingTimeoutFlag 必须一次性——读出后清空");
     }
 
     // ---------- T_buildturn_initial_includes_protocol_version ----------

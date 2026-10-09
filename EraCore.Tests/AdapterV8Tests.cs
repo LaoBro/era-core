@@ -246,7 +246,12 @@ public class AdapterV8Tests : IDisposable
 
         // v7 已知字段仍在——老客户端按 v7 解析不炸、忽略未知字段自然降级
         Assert.Equal("#000000", doc.RootElement.GetProperty("bgColor").GetString());
-        Assert.Equal("WaitInput", doc.RootElement.GetProperty("state").GetString());
+        // v12：快照的输入状态只由 awaiting 表达，顶层 state 已退场。
+        // 本夹具 currentRequest=null ⇒ 两个正交维度皆无（快照瞬态形态 `{}`）。
+        Assert.False(doc.RootElement.TryGetProperty("state", out _));
+        var awaiting = doc.RootElement.GetProperty("awaiting");
+        Assert.False(awaiting.TryGetProperty("input", out _));
+        Assert.False(awaiting.TryGetProperty("wait", out _));
 
         // 反序列化回对象：字段完整
         var back = JsonSerializer.Deserialize<DisplaySnapshot>(json, new JsonSerializerOptions

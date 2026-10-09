@@ -17,7 +17,7 @@ namespace Emuera.Headless.Tests;
 /// 验证 BuildSnapshot 从 displayLineList → DisplaySnapshot 的映射：
 /// - 行数一致
 /// - 每行 entries[] / segments[] / button（含 col/width）/ align / isLineEnd 正确
-/// - bgColor / state / inputType / needValue / protocolVersion 字段正确
+/// - bgColor / awaiting / protocolVersion 字段正确
 ///
 /// 复用 TestButtonFactory（null console → Generation=0），不依赖真实 EmueraConsole/Config。
 /// 通过 internal static DisplayState.BuildSnapshot 直测——无需构造完整 console。
@@ -51,9 +51,11 @@ public class DisplayStateTests
 
         Assert.Empty(snapshot.lines);
         Assert.Equal("#000000", snapshot.bgColor);
-        Assert.Equal("WaitInput", snapshot.state);
-        Assert.Null(snapshot.inputType);
-        Assert.False(snapshot.needValue);
+        // v12：req=null 且非终态 ⇒ 两个正交维度都无值（`{}`）。快照可在「脚本还在跑」的
+        // 瞬态被取到，故这不是契约违规（§1.2 规则 1 只约束停稳点上的流帧）。
+        Assert.Null(snapshot.awaiting.input);
+        Assert.Null(snapshot.awaiting.wait);
+        Assert.Null(snapshot.awaiting.ended);
         Assert.Equal(ExpectedProtocolVersion, snapshot.protocolVersion);
     }
 
@@ -281,48 +283,51 @@ public class DisplayStateTests
     }
 
     [Fact]
-    public void State_serialized_as_string_name()
+    public void Terminal_states_serialize_as_awaiting_ended()
     {
-        foreach (ConsoleState s in new[] { ConsoleState.WaitInput, ConsoleState.Quit, ConsoleState.Error, ConsoleState.Running })
+        foreach (ConsoleState s in new[] { ConsoleState.Quit, ConsoleState.Error })
         {
             var snapshot = DisplayState.BuildSnapshot(
                 new List<ConsoleDisplayLine>(), EmuColor.Black, s, currentRequest: null, "TestFont");
-            Assert.Equal(s.ToString(), snapshot.state);
+            // 终态键与两个正交维度互斥（§1.2 规则 1）。
+            Assert.Equal(s.ToString(), snapshot.awaiting.ended!.terminal);
+            Assert.Null(snapshot.awaiting.input);
+            Assert.Null(snapshot.awaiting.wait);
         }
     }
 
     [Fact]
-    public void CurrentRequest_intValue_provides_inputType_and_needValue_true()
+    public void CurrentRequest_intValue_provides_awaiting_input()
     {
         var req = new InputRequest { InputType = InputType.IntValue };
 
         var snapshot = DisplayState.BuildSnapshot(
             new List<ConsoleDisplayLine>(), EmuColor.Black, ConsoleState.WaitInput, req, "TestFont");
 
-        Assert.Equal("IntValue", snapshot.inputType);
-        Assert.True(snapshot.needValue);
+        // v12：顶层 inputType 退场——`needValue` 改由客户端按 type 推出（IntValue 属值输入）。
+        Assert.Equal("IntValue", snapshot.awaiting.input!.type);
     }
 
     [Fact]
-    public void CurrentRequest_enterKey_provides_needValue_false()
+    public void CurrentRequest_enterKey_provides_awaiting_input()
     {
         var req = new InputRequest { InputType = InputType.EnterKey };
 
         var snapshot = DisplayState.BuildSnapshot(
             new List<ConsoleDisplayLine>(), EmuColor.Black, ConsoleState.WaitInput, req, "TestFont");
 
-        Assert.Equal("EnterKey", snapshot.inputType);
-        Assert.False(snapshot.needValue);
+        Assert.Equal("EnterKey", snapshot.awaiting.input!.type);
     }
 
     [Fact]
-    public void Null_currentRequest_yields_null_inputType_and_false_needValue()
+    public void Null_currentRequest_leaves_awaiting_empty()
     {
         var snapshot = DisplayState.BuildSnapshot(
             new List<ConsoleDisplayLine>(), EmuColor.Black, ConsoleState.WaitInput, currentRequest: null, "TestFont");
 
-        Assert.Null(snapshot.inputType);
-        Assert.False(snapshot.needValue);
+        Assert.Null(snapshot.awaiting.input);
+        Assert.Null(snapshot.awaiting.wait);
+        Assert.Null(snapshot.awaiting.ended);
     }
 
     [Fact]
@@ -338,9 +343,9 @@ public class DisplayStateTests
     // ---------- ADR-0016：TINPUT timer 元数据填充 ----------
 
     [Fact]
-    public void BuildSnapshot_tinput_request_populates_timer_fields()
+    public void BuildSnapshot_tinput_request_populates_awaiting_wait()
     {
-        // Timelimit>0 + DisplayTime=true + 非空 TimeUpMes → 三字段全填
+        // Timelimit>0 + DisplayTime=true + 非空 TimeUpMes → wait 携带全量计时元数据
         var req = new InputRequest
         {
             InputType = InputType.EnterKey,
@@ -352,42 +357,40 @@ public class DisplayStateTests
         var snapshot = DisplayState.BuildSnapshot(
             new List<ConsoleDisplayLine>(), EmuColor.Black, ConsoleState.WaitInput, req, "TestFont");
 
-        Assert.Equal(5000L, snapshot.timeLimit);
-        Assert.True(snapshot.displayTime);
-        Assert.Equal("时间到", snapshot.timeUpMessage);
+        var wait = snapshot.awaiting.wait!;
+        Assert.Equal(5000L, wait.durationMs);
+        Assert.True(wait.displayTime);
+        Assert.Equal("时间到", wait.timeUpMessage);
     }
 
     [Fact]
-    public void BuildSnapshot_non_tinput_request_leaves_timer_fields_null()
+    public void BuildSnapshot_non_tinput_request_has_no_wait()
     {
-        // currentRequest=null → 三字段均为 null（非 TINPUT 期间）
+        // currentRequest=null → wait 键缺省（= 无限期），两个维度皆无
         var snapshot = DisplayState.BuildSnapshot(
             new List<ConsoleDisplayLine>(), EmuColor.Black, ConsoleState.WaitInput, currentRequest: null, "TestFont");
 
-        Assert.Null(snapshot.timeLimit);
-        Assert.Null(snapshot.displayTime);
-        Assert.Null(snapshot.timeUpMessage);
+        Assert.Null(snapshot.awaiting.wait);
     }
 
     [Fact]
-    public void BuildSnapshot_negative_timelimit_leaves_timer_fields_null()
+    public void BuildSnapshot_negative_timelimit_has_no_wait()
     {
-        // Timelimit=-1（InputRequest 默认值，等同于"无 TINPUT"）→ 三字段均 null
+        // Timelimit=-1（InputRequest 默认值，等同于"无 TINPUT"）→ wait 键缺省
         var req = new InputRequest { InputType = InputType.EnterKey };
 
         var snapshot = DisplayState.BuildSnapshot(
             new List<ConsoleDisplayLine>(), EmuColor.Black, ConsoleState.WaitInput, req, "TestFont");
 
-        Assert.Null(snapshot.timeLimit);
-        Assert.Null(snapshot.displayTime);
-        Assert.Null(snapshot.timeUpMessage);
+        Assert.Null(snapshot.awaiting.wait);
+        Assert.Equal("EnterKey", snapshot.awaiting.input!.type);
     }
 
     [Fact]
-    public void BuildSnapshot_tinput_without_displaytime_leaves_displaytime_null()
+    public void BuildSnapshot_tinput_without_displaytime_leaves_displaytime_absent()
     {
-        // Timelimit>0 + DisplayTime=false → displayTime=null（ERB 要求前端不显示倒计时）
-        // timeLimit 仍填，timeUpMes 空 → timeUpMessage=null
+        // Timelimit>0 + DisplayTime=false → displayTime 键缺省（ERB 要求前端不显示倒计时）
+        // durationMs 仍填，timeUpMes 空 → timeUpMessage 键缺省
         var req = new InputRequest
         {
             InputType = InputType.EnterKey,
@@ -399,9 +402,10 @@ public class DisplayStateTests
         var snapshot = DisplayState.BuildSnapshot(
             new List<ConsoleDisplayLine>(), EmuColor.Black, ConsoleState.WaitInput, req, "TestFont");
 
-        Assert.Equal(3000L, snapshot.timeLimit);
-        Assert.Null(snapshot.displayTime);
-        Assert.Null(snapshot.timeUpMessage);
+        var wait = snapshot.awaiting.wait!;
+        Assert.Equal(3000L, wait.durationMs);
+        Assert.Null(wait.displayTime);
+        Assert.Null(wait.timeUpMessage);
     }
 
     // ---------- Phase 0-2：快照确定性 / 等价性 ----------

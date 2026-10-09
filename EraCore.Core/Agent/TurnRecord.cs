@@ -7,19 +7,14 @@ using System.Text.Json.Serialization;
 namespace MinorShift.Emuera.GameView;
 
 internal record TurnRecord(
-    string state,
-    string? inputType,
-    bool needValue,
     DisplayDiff? diff,
     // v12：唯一契约字段（必填、非 nullable、每帧必现）——「服务端此刻在等什么」。
-    // 展开阶段（05）它与下面七个旧顶层字段并存；收缩阶段（09）删旧字段。
+    // 展开阶段（05）它曾与七个旧顶层字段（state / inputType / needValue / timeLimit /
+    // displayTime / timeUpMessage / timedOut）并存；收缩阶段（09）旧字段已全部退场，
+    // wire 上只剩 diff / awaiting / error / errorInfo / protocolVersion / generation。
     AwaitInfo awaiting,
     string? error = null,
     int? protocolVersion = null,
-    long? timeLimit = null,
-    bool? displayTime = null,
-    string? timeUpMessage = null,
-    bool timedOut = false,
     long generation = 0,
     // 诊断：暂停运行期异常的结构化信息（type/message/inner），供 agent 一次性定位。
     // 纯增量 nullable 字段 + WhenWritingNull → 非异常 turn 不出现，不升协议版本。
@@ -44,8 +39,10 @@ internal record TurnRecord(
     /// v11：PrintSegment 加 strikeout?——PRINT_SLIDER 实际用 ERB FONTSTYLE 位4（删除线，取消線）
     /// 绘制滑条轨道，v10 只实现 underline 导致删除线缺失、被 v10 修复提交误映射为 underline；
     /// 现按 ERB 位契约（位4=删除线、位8=下划线）对称补齐 strikeout 字段。
-    /// v12（issue 05）：新增 `awaiting`（唯一契约字段：input / wait 两个正交维度 + ended 互斥终态），
-    /// 描述「服务端此刻在等什么」；旧七个顶层字段暂时保留（展开阶段），09 删除。
+    /// v12（issue 05 / 09）：新增 `awaiting`（唯一契约字段：input / wait 两个正交维度 + ended 互斥终态），
+    /// 描述「服务端此刻在等什么」；**删除**七个旧顶层字段（state / inputType / needValue / timeLimit /
+    /// displayTime / timeUpMessage / timedOut）——`needValue` 改由客户端按 `input.type` 推出，
+    /// TINPUT 计时元数据移入 `awaiting.wait`。
     /// </summary>
     internal const int CurrentProtocolVersion = 12;
 }
@@ -88,7 +85,7 @@ internal record ErrorInfo(
 
 /// <summary>
 /// 两个连续 DisplaySnapshot 之间的差异（Phase 2 / ADR-0014）。
-/// 仅含行级操作序列 + 背景色；state/inputType/needValue/protocolVersion 由外层 TurnRecord 携带，不在此重复。
+/// 仅含行级操作序列 + 背景色；awaiting/protocolVersion/generation/error/errorInfo 由外层 TurnRecord 携带，不在此重复。
 /// Phase 5 后 diff 是唯一的增量格式（ops 已废弃移除）。
 /// plan C（v5）：行级操作显式携带清空语义——AppendLinesOp（追加）/ ClearLineDiffOp（截尾=清行）/
 /// ClearScreenOp（全清）。清空不再是隐含的结构推断，而是 op 名即语义（DisplayState 统一真相源）。

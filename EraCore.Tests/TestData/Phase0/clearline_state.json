@@ -35,9 +35,6 @@
     }
   ],
   "bgColor": "#000000",
-  "state": "WaitInput",
-  "inputType": "EnterKey",
-  "needValue": false,
   "awaiting": {
     "input": {
       "type": "EnterKey"

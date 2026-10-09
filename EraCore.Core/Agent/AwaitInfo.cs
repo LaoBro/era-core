@@ -71,7 +71,11 @@ internal sealed record AwaitInfo
                     // 而契约要求「不可打断 ⇒ 该键**不出现**」（前端据此判断有无「跳过」affordance）。
                     interruptible = w.Skippable ? true : null,
                     displayTime = w.Timelimit > 0 && w.DisplayTime ? true : null,
-                    timeUpMessage = w.Timelimit > 0 ? w.TimeUpMes : null,
+                    // ⚠️ 空串与非空一样要「有值才出现」：WhenWritingNull 只抑制 null，
+                    // 不归一的话 TINPUT 未设 TimeUpMes（默认 null! 但 ERB 常置 ""）时会写出
+                    // `"timeUpMessage":""`，前端据此会显示空文案而非默认提示。旧顶层字段走
+                    // IsNullOrEmpty 归一，容器化时必须保留同一条归一。
+                    timeUpMessage = w.Timelimit > 0 && !string.IsNullOrEmpty(w.TimeUpMes) ? w.TimeUpMes : null,
                     timedOut = w.Timelimit > 0 && timedOut ? true : null,
                 }
                 : null,

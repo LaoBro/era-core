@@ -12,26 +12,21 @@ using MinorShift.Emuera.UI.Game;
 namespace MinorShift.Emuera.GameView;
 
 /// <summary>
-/// 当前全量显示状态的快照（ADR-0013 决策二 / ADR-0016 加 timer 字段）。
+/// 当前全量显示状态的快照（ADR-0013 决策二 / ADR-0016 / v12 收拢到 awaiting）。
 /// state-based 格式——直接表示当前显示状态，不是操作序列的回放。
 /// WS 晚加入者调 GET /snapshot 拿初始状态，再订阅 WS 收增量 ops。
-/// ADR-0016：新增 timeLimit / displayTime / timeUpMessage 三字段（无 timedOut——
-/// snapshot 表示"当前状态"，"上一帧是否超时触发"对晚加入者无意义）。
+/// v12（issue 09）：旧顶层 state / inputType / needValue / timeLimit / displayTime /
+/// timeUpMessage 全部退场，改由 `awaiting` 单一下发（TINPUT 计时元数据在 `awaiting.wait`）。
+/// 快照**没有** timedOut —— 它表示「当前状态」，「上一帧是否超时触发」对晚加入者无意义。
 /// </summary>
 internal record DisplaySnapshot(
     List<DisplayLine> lines,
     string? bgColor,
-    string state,
-    string? inputType,
-    bool needValue,
     // v12（spec §5.2 第 4 项）：GET /snapshot 也下发 awaiting ——「晚加入者拿到的第一张画面
     // 不能是另一套契约形状」。⚠️ 快照**没有** timedOut（见类型注释），故 timedOut 固定传 false。
     AwaitInfo awaiting,
     int protocolVersion,
     long generation,
-    long? timeLimit = null,
-    bool? displayTime = null,
-    string? timeUpMessage = null,
     List<BgImageState>? bgImages = null
 );
 
@@ -409,11 +404,10 @@ internal sealed class DisplayState : IDisplayState
                     // 避免头部删除被 StructuralDiff 误判为 ClearScreenOp + Append 全量重印。
                     // bgImages 一并透传（StructuralDiff 目前不读，但保持快照字段语义完整）。
                     var effectivePrev = new DisplaySnapshot(
-                        lines: effectivePrevLines, bgColor: prev.bgColor, state: prev.state,
-                        inputType: prev.inputType, needValue: prev.needValue, awaiting: prev.awaiting,
+                        lines: effectivePrevLines, bgColor: prev.bgColor,
+                        awaiting: prev.awaiting,
                         protocolVersion: prev.protocolVersion, generation: prev.generation,
-                        timeLimit: prev.timeLimit, displayTime: prev.displayTime,
-                        timeUpMessage: prev.timeUpMessage, bgImages: prev.bgImages);
+                        bgImages: prev.bgImages);
                     tailOps = StructuralDiff(effectivePrev, current);
                 }
 
@@ -613,28 +607,18 @@ internal sealed class DisplayState : IDisplayState
         return new DisplaySnapshot(
             lines: lines,
             bgColor: bgColor.ToHex(),
-            state: state.ToString(),
-            inputType: currentRequest?.InputType.ToString(),
-            needValue: currentRequest?.NeedValue ?? false,
             // v12：与流上帧同源（同一工厂、同一 req/state）。timedOut 传 false —— 快照表示
             // 「当前状态」，「上一帧是否超时触发」对晚加入者无意义（见 DisplaySnapshot 注释）。
+            // TINPUT 计时元数据（timeLimit / displayTime / timeUpMessage）自 v12 起随
+            // `awaiting.wait` 一并下发，顶层不再重复。
             //
             // ⚠️ 与流上帧的唯一差别：快照可能在「脚本还在跑」的瞬态被取到（GET /snapshot 是
             // 随时可调的端点）——此时两个维度都无值，序列化成 awaiting:{}。这不是契约违规：
-            // §1.2 规则 1 约束的是**停稳点**上的帧（流上的帧只在停稳点产出）。该瞬态在展开阶段
-            // 由仍保留的 state 字段区分；「Running 不再是可表示状态」是收缩阶段（09）的事。
+            // §1.2 规则 1 约束的是**停稳点**上的帧（流上的帧只在停稳点产出）；客户端把
+            // `{}` 当作「没有可推进的等待」处理即可（下一次 WS 帧会给出真实停稳点）。
             awaiting: AwaitInfo.Of(currentRequest, state, timedOut: false),
             protocolVersion: TurnRecord.CurrentProtocolVersion,
             generation: generation,
-            // ADR-0016：TINPUT timer 元数据——仅在 TINPUT 期间（Timelimit > 0）填充。
-            // 非 TINPUT 期间 / 无 currentRequest → 三字段均为 null（WhenWritingNull 时不写入 JSON）。
-            // displayTime 取 InputRequest.DisplayTime——尊重 ERB 脚本"别给玩家看"的意图。
-            timeLimit: currentRequest is { Timelimit: > 0 } req ? req.Timelimit : null,
-            displayTime: currentRequest is { Timelimit: > 0, DisplayTime: true } ? true : null,
-            timeUpMessage: currentRequest is { Timelimit: > 0 } reqWithMes
-                && !string.IsNullOrEmpty(reqWithMes.TimeUpMes)
-                ? reqWithMes.TimeUpMes
-                : null,
             // issue 02：背景图（浅拷贝防并发/同引用误判——_console.BgImages 是活引用，
             // 快照必须持有独立副本，否则连续非空变更时 SequenceEqual 同引用恒真、diff 丢失；
             // 紧凑归一：空列表不进 JSON，diff 层用 [] 表达清空）

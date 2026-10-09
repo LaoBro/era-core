@@ -15,9 +15,6 @@
     }
   ],
   "bgColor": "#00008B",
-  "state": "WaitInput",
-  "inputType": "IntValue",
-  "needValue": true,
   "awaiting": {
     "input": {
       "type": "IntValue"
