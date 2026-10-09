@@ -499,13 +499,17 @@ describe('useGameStore.applyTurn', () => {
   });
 });
 
-// ---------- ADR-0016：timeoutNotice 派生（issue 04） ----------
+// ---------- ADR-0016：timeoutNotice 派生（issue 04；issue 07 改读 awaiting.wait） ----------
 //
-// v6 协议携带 turn.timedOut 旗标——前端不再依赖启发式检测。
-// timeoutNotice 改为 computed：turn.timedOut=true 时显示文案，否则 null。
-// 文案优先级：turn.timeUpMessage → 默认「TINPUT 超时，游戏以默认值继续」。
+// v6 协议携带超时旗标、v12 把它挂在 `awaiting.wait.timedOut` 上——前端不再依赖启发式检测。
+// timeoutNotice 改为 computed：`wait.timedOut === true` 时显示文案，否则 null。
+// 文案优先级：`wait.timeUpMessage` → 默认「TINPUT 超时，游戏以默认值继续」。
 //
-// 行为副作用（已接受）：本通知在**下一帧 turn 到达时**才清空（turn.timedOut=false）。
+// ⚠️ 夹具都带 `timeLimit`（= v12 的 `wait.durationMs`）：真实 C# 只在 `Timelimit > 0` 时
+// 才会置 `timedOut`（`AwaitInfo.Of` 的 `w.Timelimit > 0 && timedOut`），故「有超时旗标但
+// 没有时限」在 wire 上不存在；不带 timeLimit 的夹具只会走到「无 wait ⇒ 无通知」。
+//
+// 行为副作用（已接受）：本通知在**下一帧 turn 到达时**才清空（timedOut 缺省）。
 // 比用户点击提交晚 50–200ms——TINPUT 场景下人眼无感。
 
 describe('useGameStore - ADR-0016 timeoutNotice 派生', () => {
@@ -518,36 +522,39 @@ describe('useGameStore - ADR-0016 timeoutNotice 派生', () => {
     expect(game.timeoutNotice).toBeNull();
   });
 
-  it('turn.timedOut=true + 无 timeUpMessage → 显示默认文案', () => {
+  it('wait.timedOut=true + 无 timeUpMessage → 显示默认文案', () => {
     const game = useGameStore();
     game.applyTurn(tinputFrameJson({
       state: 'WaitInput',
       inputType: 'IntValue',
       needValue: true,
+      timeLimit: 5000,
       timedOut: true,
     }));
     expect(game.timeoutNotice).toBe('TINPUT 超时，游戏以默认值继续');
   });
 
-  it('turn.timedOut=true + 自定义 timeUpMessage → 显示自定义文案', () => {
+  it('wait.timedOut=true + 自定义 timeUpMessage → 显示自定义文案', () => {
     const game = useGameStore();
     game.applyTurn(tinputFrameJson({
       state: 'WaitInput',
       inputType: 'IntValue',
       needValue: true,
+      timeLimit: 5000,
       timedOut: true,
       timeUpMessage: '时间到，使用默认值继续',
     }));
     expect(game.timeoutNotice).toBe('时间到，使用默认值继续');
   });
 
-  it('turn.timedOut=false → timeoutNotice=null（下一帧清空）', () => {
+  it('wait.timedOut=false → timeoutNotice=null（下一帧清空）', () => {
     const game = useGameStore();
     // 帧 1：超时
     game.applyTurn(tinputFrameJson({
       state: 'WaitInput',
       inputType: 'IntValue',
       needValue: true,
+      timeLimit: 5000,
       timedOut: true,
       timeUpMessage: '时间到',
     }));
@@ -568,6 +575,7 @@ describe('useGameStore - ADR-0016 timeoutNotice 派生', () => {
     game.applyTurn(tinputFrameJson({
       state: 'WaitInput',
       needValue: true,
+      timeLimit: 5000,
       timedOut: true,
     }));
     expect(game.timeoutNotice).not.toBeNull();
@@ -680,7 +688,9 @@ describe('useGameStore - ADR-0016 TINPUT timer 状态', () => {
     // 内部 timer 状态仍填充（timeoutNotice 仍可派生）
     expect(game.tinputStartedAt).not.toBeNull();
     expect(game.tinputTimeLimit).toBe(5000);
-    expect(game.tinputDisplayTime).toBe(false);
+    // issue 07：`displayTime=false` 在 v12 wire 上与「键缺省」同形（WhenWritingNull）⇒
+    // 落地为 null 而非 false；判定只在 `=== true` 时成立，故渲染行为不变。
+    expect(game.tinputDisplayTime).not.toBe(true);
     // 但 UI 不渲染倒计时
     expect(game.showTinputCountdown).toBe(false);
 

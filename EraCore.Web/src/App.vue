@@ -181,8 +181,8 @@ function onExitCancel(): void {
  * 否则当前回合无按钮时显示（文本→输入行；AnyKey/EnterKey→提示行）。
  */
 const keyboardActive = computed<boolean>(() => {
-  const st = game.displayState.state;
-  if (st !== 'WaitInput') return false;
+  // issue 07：判据改读 awaiting.input（「服务端此刻在等你发输入」的直接表达）。
+  if (!game.awaiting.input) return false;
   if (ui.manualInputVisible) return true;
   return !game.hasActiveButtons;
 });

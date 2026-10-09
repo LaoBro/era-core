@@ -195,9 +195,9 @@ const terminalRef = ref<HTMLDivElement | null>(null);
 function isLiveButtonEntry(entry: DisplayEntry): boolean {
   const button = entry.button;
   if (!button) return false;
+  // issue 07：判据改读 awaiting（`input` 维度即「服务端此刻在等你发输入」）。
   return isLiveButton({
-    state: game.displayState.state,
-    inputType: game.displayState.inputType,
+    awaiting: game.awaiting,
     buttonGeneration: button.generation,
     currentTurnGeneration: game.currentTurnGeneration,
   });
@@ -408,7 +408,7 @@ function valueToWire(v: ButtonValue): string {
  * 按钮点击处理器——提交判定收敛到纯函数 inputRouting.shouldSubmitButtonValue，四重守卫：
  * 0. EnterKey/AnyKey 下按钮惰性——不提交 value（点击落到终端推进路径，避免多回显一行；
  *    与 CLI/WinForms 一致）
- * 1. state !== 'WaitInput' → 非等待态按钮不可点击
+ * 1. `awaiting.input` 缺省 → 服务端此刻不期待输入，按钮不可点击（原来读 state !== 'WaitInput'）
  * 2. button.generation !== game.currentTurnGeneration → 旧回合按钮不可点击
  * 3. game.inputInFlight → 同一回合内防重复点击（乐观锁）
  *
@@ -424,8 +424,7 @@ function onButtonClick(entry: DisplayEntry): void {
   if (!button) return;
   if (!shouldSubmitButtonValue({
     connected: conn.status === 'connected',
-    state: game.displayState.state,
-    inputType: game.displayState.inputType,
+    awaiting: game.awaiting,
     buttonGeneration: button.generation,
     currentTurnGeneration: game.currentTurnGeneration,
     inputInFlight: game.inputInFlight,
@@ -451,8 +450,7 @@ function onTerminalClick(e: MouseEvent): void {
   if (!shouldAdvanceOnTerminalClick({
     isButton: !!(target && target.closest('.term-btn')),
     isStickyToBottom: vs.isStickyToBottom.value,
-    state: game.displayState.state,
-    inputType: game.displayState.inputType,
+    awaiting: game.awaiting,
     connected: conn.status === 'connected',
     inputInFlight: game.inputInFlight,
     canInput: conn.canInput,
@@ -515,8 +513,7 @@ async function onImageClick(e: MouseEvent, img: SegmentImage, entry: DisplayEntr
   if (!button) return;
   if (!shouldSubmitButtonValue({
     connected: conn.status === 'connected',
-    state: game.displayState.state,
-    inputType: game.displayState.inputType,
+    awaiting: game.awaiting,
     buttonGeneration: button.generation,
     currentTurnGeneration: game.currentTurnGeneration,
     inputInFlight: game.inputInFlight,
@@ -665,7 +662,7 @@ watch(() => game.inputInFlight, (inFlight) => {
               :class="{ 'term-btn-touch': isTouchTarget(entry) }"
               :style="hitStyle(item, entryIdx)"
               :title="`点击提交: ${valueToWire(entry.button.value)}`"
-              :disabled="conn.status !== 'connected' || game.displayState.state !== 'WaitInput'"
+              :disabled="conn.status !== 'connected' || !game.awaiting.input"
               @click="onButtonClick(entry)"
             >
               <SegmentRenderer

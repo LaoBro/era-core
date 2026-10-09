@@ -89,8 +89,16 @@ async function mountWith(lines: DisplaySnapshot['lines'][number][], bgImages: Bg
   const conn = useConnectionStore();
   conn.status = 'connected';
   conn.sendInput = vi.fn();
-  // Pinia setup store 自动解包 ref——displayState 是值不是 Ref，直接整体赋值
-  game.displayState = { ...game.displayState, lines, bgImages, state: 'WaitInput', inputType: 'IntValue' };
+  // Pinia setup store 自动解包 ref——displayState 是值不是 Ref，直接整体赋值。
+  // issue 07：路由判据改读 awaiting ⇒ 夹具必须给出 input 维度（否则按钮一律视为不可提交）。
+  game.displayState = {
+    ...game.displayState,
+    lines,
+    bgImages,
+    state: 'WaitInput',
+    inputType: 'IntValue',
+    awaiting: { input: { type: 'IntValue' } },
+  };
   game.currentTurnGeneration = 0;
   const wrapper = mount(TerminalDisplay, { global: { plugins: [pinia] } });
   return { wrapper, game, conn };
@@ -592,7 +600,13 @@ describe('TerminalDisplay: 触控排版', () => {
     if (opts.targetCols !== undefined) ui.setTouchTargetCols(opts.targetCols);
     if (opts.lineHeight !== undefined) game.setGameLayout({ lineHeight: opts.lineHeight });
     game.currentTurnGeneration = opts.turnGeneration ?? 0;
-    game.displayState = { ...game.displayState, inputType: opts.inputType ?? 'IntValue' };
+    // issue 07：触控排版判据读 awaiting.input ⇒ inputType 与 awaiting 必须同源更新
+    const inputType = opts.inputType ?? 'IntValue';
+    game.displayState = {
+      ...game.displayState,
+      inputType,
+      awaiting: { input: { type: inputType } },
+    };
     await wrapper.vm.$nextTick();
     return wrapper;
   }

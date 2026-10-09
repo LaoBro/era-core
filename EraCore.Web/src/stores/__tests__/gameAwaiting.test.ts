@@ -114,6 +114,89 @@ describe('useGameStore - v12 awaiting（状态层装载）', () => {
   });
 });
 
+describe('useGameStore - 倒计时 / 跳过提示判据（issue 07 改读 awaiting.wait）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it('v12：wait.durationMs>0 → 启动倒计时（起始时刻/时限/是否显示/超时文案全部来自 awaiting.wait）', () => {
+    const game = useGameStore();
+    const start = Date.now();
+
+    game.applyTurn(v12Frame({
+      input: { type: 'IntValue' },
+      wait: { durationMs: 3000, displayTime: true, timeUpMessage: '快选择' },
+    }, { state: 'WaitInput' }));
+
+    expect(game.tinputStartedAt).not.toBeNull();
+    expect(game.tinputStartedAt!).toBeGreaterThanOrEqual(start);
+    expect(game.tinputTimeLimit).toBe(3000);
+    expect(game.tinputDisplayTime).toBe(true);
+    expect(game.tinputTimeUpMessage).toBe('快选择');
+    expect(game.showTinputCountdown).toBe(true);
+    expect(game.tinputRemainingMs!).toBeGreaterThan(2900);
+
+    game.reset();
+  });
+
+  it('v12：零时长让路（durationMs=0）→ 不启动倒计时、也不给跳过提示', () => {
+    const game = useGameStore();
+
+    game.applyTurn(v12Frame({ wait: { durationMs: 0 } }, { state: 'WaitInput' }));
+
+    expect(game.tinputStartedAt).toBeNull();
+    expect(game.tinputTimeLimit).toBeNull();
+    expect(game.showTinputCountdown).toBe(false);
+    expect(game.canSkipWait).toBe(false);
+  });
+
+  it('canSkipWait：可打断（interruptible=true）才为真；不可打断 / 无 wait 均为假', () => {
+    const game = useGameStore();
+
+    game.applyTurn(v12Frame({ wait: { durationMs: 8000, interruptible: true } }, { state: 'WaitInput' }));
+    expect(game.canSkipWait).toBe(true);
+
+    // TWAIT t,1：Skippable=false ⇒ interruptible 键不出现
+    game.applyTurn(v12Frame({ wait: { durationMs: 8000 } }, { state: 'WaitInput' }));
+    expect(game.canSkipWait).toBe(false);
+
+    // 纯输入等待：没有 wait 维度
+    game.applyTurn(v12Frame({ input: { type: 'IntValue' } }, { state: 'WaitInput' }));
+    expect(game.canSkipWait).toBe(false);
+  });
+
+  it('v12 超时帧：wait.timedOut=true → timeoutNotice 用 wait.timeUpMessage（缺省用默认文案）', () => {
+    const game = useGameStore();
+
+    game.applyTurn(v12Frame(
+      { input: { type: 'IntValue' }, wait: { durationMs: 3000, timedOut: true } },
+      { state: 'WaitInput' },
+    ));
+    expect(game.timeoutNotice).toBe('TINPUT 超时，游戏以默认值继续');
+
+    game.applyTurn(v12Frame(
+      { input: { type: 'IntValue' }, wait: { durationMs: 3000, timedOut: true, timeUpMessage: '時間切れ' } },
+      { state: 'WaitInput' },
+    ));
+    expect(game.timeoutNotice).toBe('時間切れ');
+
+    game.reset();
+  });
+
+  it('定时等待结束（下一帧无 wait）→ 倒计时与跳过提示同时清空', () => {
+    const game = useGameStore();
+    game.applyTurn(v12Frame({ wait: { durationMs: 8000, interruptible: true, displayTime: true } }, { state: 'WaitInput' }));
+    expect(game.showTinputCountdown).toBe(true);
+    expect(game.canSkipWait).toBe(true);
+
+    game.applyTurn(v12Frame({ input: { type: 'AnyKey' } }, { state: 'WaitInput' }));
+
+    expect(game.showTinputCountdown).toBe(false);
+    expect(game.canSkipWait).toBe(false);
+    expect(game.tinputStartedAt).toBeNull();
+  });
+});
+
 describe('useGameStore.setSnapshot - v12 awaiting（晚加入者与流上帧同形）', () => {
   beforeEach(() => {
     setActivePinia(createPinia());

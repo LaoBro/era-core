@@ -7,7 +7,19 @@
  *   并多回显一行输入（曾与 CLI/WinForms 行为不一致）。
  * - 其余等待态（IntValue/StrValue/AnyValue/IntButton/StrButton）：按钮是输入手段，
  *   点击按钮提交其 value；空白区点击不推进（输入由按钮 / 输入栏承担）。
+ *
+ * ## issue 07：判据从「引擎状态 + 输入种类反向推测」改为直接读契约 `awaiting`
+ *
+ * 改动前第一条守卫是 `state !== 'WaitInput'`——那是在**猜引擎此刻的模式**（"WaitInput 还包着
+ * 定时等待与让路两类"）。`awaiting.input` 非空就直接表达了「服务端此刻在等你发输入」这一件事，
+ * 于是三重守卫塌缩为两重：「有 input 维度」 + 「输入种类」 + 「代次匹配」。
+ *
+ * 语义增益（顺带修掉的一类错判）：`state=WaitInput && inputType=Void`（`AWAIT` / `TWAIT`
+ * 定时等待、无参 `AWAIT` 让路）在新判据下**没有** `input` 维度 ⇒ 按钮既不可提交也不撑触控盒；
+ * 旧判据下它们与真正的输入等待无法区分。
  */
+
+import type { AwaitInfo } from '../types/protocol';
 
 /** inputType 是否为"任意键/回车"推进等待态（C# `InputType.ToString()` 值）。 */
 export function isAnyKeyInput(inputType: string | null | undefined): boolean {
@@ -23,26 +35,24 @@ export function isAnyKeyInput(inputType: string | null | undefined): boolean {
  *
  * 无效的两类来源，都会让关掉它们的排版收益为零：
  * - 历史回合残留：`generation` 落后于当前回合（旧画面里的按钮点了也不生效）；
- * - EnterKey / AnyKey 等待态：按钮是惰性的，点击只推进，不提交 value。
+ * - 服务端不期待输入（`awaiting.input` 缺省：定时等待 / 让路 / 终态）或期待的是
+ *   EnterKey / AnyKey（按钮惰性，点击只推进，不提交 value）。
  */
 export function isLiveButton(ctx: {
-  state: string;
-  inputType: string | null;
+  awaiting: AwaitInfo;
   buttonGeneration: number;
   currentTurnGeneration: number;
 }): boolean {
-  if (ctx.state !== 'WaitInput') return false;
-  if (isAnyKeyInput(ctx.inputType)) return false;
+  if (!ctx.awaiting.input) return false;
+  if (isAnyKeyInput(ctx.awaiting.input.type)) return false;
   return ctx.buttonGeneration === ctx.currentTurnGeneration;
 }
 
 /** 按钮点击提交判定入参——TerminalDisplay.onButtonClick 的守卫上下文。 */
 export interface ButtonClickContext {
   connected: boolean;
-  /** displayState.state，'WaitInput' 才可提交。 */
-  state: string;
-  /** displayState.inputType。 */
-  inputType: string | null;
+  /** v12 唯一契约字段：`input` 非空才可提交（原来读 `state === 'WaitInput'`）。 */
+  awaiting: AwaitInfo;
   /** 被点击按钮携带的 generation。 */
   buttonGeneration: number;
   /** 当前回合 generation——过期按钮判定。 */
@@ -58,14 +68,14 @@ export interface ButtonClickContext {
  *
  * 守卫（顺序与行为语义对应）：
  * 0. EnterKey/AnyKey 下按钮惰性——不提交，点击落到终端推进路径（避免游戏多回显一行）；
- * 1. state !== 'WaitInput' 不提交；
+ * 1. `awaiting.input` 缺省（服务端不期待输入）不提交；
  * 2. 按钮 generation 与当前回合不一致（过期按钮）不提交；
  * 3. inputInFlight 不提交。
  */
 export function shouldSubmitButtonValue(ctx: ButtonClickContext): boolean {
   if (!ctx.connected) return false;
-  if (ctx.state !== 'WaitInput') return false;
-  if (isAnyKeyInput(ctx.inputType)) return false;
+  if (!ctx.awaiting.input) return false;
+  if (isAnyKeyInput(ctx.awaiting.input.type)) return false;
   if (ctx.buttonGeneration !== ctx.currentTurnGeneration) return false;
   if (ctx.inputInFlight) return false;
   if (ctx.canInput === false) return false;
@@ -78,8 +88,8 @@ export interface TerminalClickContext {
   isButton: boolean;
   /** 是否贴底——翻看历史（false）时不推进。 */
   isStickyToBottom: boolean;
-  state: string;
-  inputType: string | null;
+  /** v12 唯一契约字段：`input.type` 为 EnterKey/AnyKey 时才推进。 */
+  awaiting: AwaitInfo;
   connected: boolean;
   inputInFlight: boolean;
   /** 用户是否可输入。agent 持有时为 false；省略视为 true。 */
@@ -94,14 +104,14 @@ export interface TerminalClickContext {
  *   按钮惰性、点击同样推进——与 `shouldSubmitButtonValue` 的守卫 0 配套，保证该态下
  *   按钮点击既不提交 value 也不成为死区；
  * - sticky 守卫：isStickyToBottom=false（翻看历史）时不推进；
- * - 仅 WaitInput + EnterKey/AnyKey 推进；
+ * - 仅 `awaiting.input.type` 为 EnterKey/AnyKey 时推进（定时等待 / 让路 / 终态都不推进）；
  * - connected + 非 inputInFlight。
  */
 export function shouldAdvanceOnTerminalClick(ctx: TerminalClickContext): boolean {
-  if (ctx.isButton && !isAnyKeyInput(ctx.inputType)) return false;
+  const type = ctx.awaiting.input?.type;
+  if (ctx.isButton && !isAnyKeyInput(type)) return false;
   if (!ctx.isStickyToBottom) return false;
-  if (ctx.state !== 'WaitInput') return false;
-  if (!isAnyKeyInput(ctx.inputType)) return false;
+  if (!isAnyKeyInput(type)) return false;
   if (!ctx.connected) return false;
   if (ctx.inputInFlight) return false;
   if (ctx.canInput === false) return false;

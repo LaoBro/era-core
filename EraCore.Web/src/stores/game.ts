@@ -665,12 +665,16 @@ export const useGameStore = defineStore('game', () => {
 
   // ---------- ADR-0016：TINPUT timer 状态（本地钟表）----------
   //
-  // server 不周期 push tick 帧——只在 input/timeout 时发帧。前端收到 WaitInput+TINPUT 帧时
-  // 记 receivedAt，用 setInterval(100ms) 算 remaining。displayTime=true 才渲染倒计时 UI。
+  // server 不周期 push tick 帧——只在 input/timeout 时发帧。前端收到带**上界**的等待帧时
+  // 记 receivedAt，用 setInterval(500ms) 算 remaining。displayTime=true 才渲染倒计时 UI。
+  //
+  // issue 07：启动判据改读 `awaiting.wait`（`durationMs > 0` 才启动）——原来读
+  // 「state === 'WaitInput' + 顶层 timeLimit 字段」。零时长让路（durationMs === 0）
+  // 因此天然不启动倒计时；可打断性（interruptible）则驱动「跳过」affordance。
   //
   // 状态分两部分：
-  // - 静态 timer 元数据（timeLimit/displayTime/timeUpMessage）：每帧 turn 覆盖
-  // - 动态 startedAt：收到 WaitInput+TINPUT 帧时记 Date.now()，下一帧 turn 到达时清空
+  // - 静态 timer 元数据（durationMs/displayTime/timeUpMessage）：每帧 turn 覆盖
+  // - 动态 startedAt：收到定时等待帧时记 Date.now()，下一帧 turn 到达时清空
   // - 动态 remainingMs：computed，依赖 startedAt + 一个 setInterval 推动的 tick ref
   //
   // 后台 tab 节流、setInterval 跳变：回到前台或下一帧 turn 到达后立即修正（tick 立即重算）。
@@ -712,18 +716,19 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
-   * ADR-0016 决策三：超时通知——纯函数派生 turn.timedOut。
+   * ADR-0016 决策三：超时通知——纯函数派生（issue 07：改读 `awaiting.wait.timedOut`）。
    *
-   * - timedOut=true → 显示 turn.timeUpMessage 或默认文案
-   * - timedOut=false → null
+   * - `wait.timedOut === true` → 显示 `wait.timeUpMessage` 或默认文案
+   * - 其余（无 wait / timedOut 缺省）→ null
    *
    * 行为副作用（已接受）：本通知在**下一帧 turn 到达时**才清空。比用户点击提交晚 50–200ms
    * （网络往返 + server BuildTurn）。TINPUT 场景下人眼无感。
    */
   const timeoutNotice = computed<string | null>(() => {
-    const turn = lastTurn.value;
-    if (!turn || !turn.timedOut) return null;
-    return turn.timeUpMessage ?? 'TINPUT 超时，游戏以默认值继续';
+    // issue 07：改读契约里的一次性旗标 `awaiting.wait.timedOut` 与其文案（原来读帧的顶层字段）。
+    const wait = displayState.value.awaiting.wait ?? null;
+    if (wait === null || wait.timedOut !== true) return null;
+    return wait.timeUpMessage ?? 'TINPUT 超时，游戏以默认值继续';
   });
 
   /**
@@ -752,6 +757,18 @@ export const useGameStore = defineStore('game', () => {
   );
 
   /**
+   * issue 07：是否应给出「跳过」affordance —— 可打断的定时等待。
+   *
+   * 依据 `awaiting.wait.interruptible`（§2：`Skippable` 自 v12 起上 wire）。`TWAIT t,1`
+   * 不可打断 ⇒ 该键不出现；零时长让路也没有该键——这里再显式要求 `durationMs > 0`，
+   * 使「零时长让路帧不给跳过提示」由两重条件共同保证（不依赖 C# 单侧的置位习惯）。
+   */
+  const canSkipWait = computed<boolean>(() => {
+    const wait = displayState.value.awaiting.wait ?? null;
+    return wait !== null && wait.durationMs > 0 && wait.interruptible === true;
+  });
+
+  /**
    * 接收一个 WS 帧（裸 JSON 字符串）并更新内部状态。
    *
    * 流程：
@@ -763,9 +780,9 @@ export const useGameStore = defineStore('game', () => {
    * 4. 应用 diff（若存在）。applyDiff 不修改入参——返回新对象
    * 5. 装载 turn.awaiting；inputType/needValue 由 awaiting.input 派生（不再读旧顶层字段），
    *    state 仍取 turn.state（awaiting 无此维度，见更新处注释）
-   * 6. ADR-0016：根据 turn.state + turn.timeLimit 更新 TINPUT timer 状态——
-   *    WaitInput+timeLimit>0 → set startedAt/limit/displayTime/timeUpMessage + 启动 setInterval
-   *    其他状态 / timeLimit=null → 清空 + 停止 setInterval
+   * 6. ADR-0016（issue 07 改读 awaiting.wait）：更新 TINPUT timer 状态——
+   *    wait.durationMs > 0 → set startedAt/limit/displayTime/timeUpMessage + 启动 setInterval
+   *    无 wait / durationMs === 0（零时长让路）→ 清空 + 停止 setInterval
    *
    * 注意：v6 协议中 diff=null 表示本回合显示未变（如纯状态切换），
    * 此时仍需更新 state/inputType/needValue（步骤 5），但不调 applyDiff。
@@ -842,12 +859,15 @@ export const useGameStore = defineStore('game', () => {
       needValue: isValueInputType(turn.awaiting.input?.type),
     };
 
-    // ADR-0016：更新 TINPUT timer 状态。仅 WaitInput + timeLimit>0 才视为 TINPUT 期间。
-    if (turn.state === 'WaitInput' && typeof turn.timeLimit === 'number' && turn.timeLimit > 0) {
+    // ADR-0016（issue 07 判据改读 awaiting.wait）：带期限的定时等待才是 TINPUT 期间。
+    // ⚠️ 零时长让路（durationMs === 0）**不**启动倒计时——它表示「下一帧立刻到」，
+    // 既没有可数的剩余时间，也不该给出任何计时 affordance。
+    const wait = turn.awaiting.wait ?? null;
+    if (wait !== null && wait.durationMs > 0) {
       tinputStartedAt.value = Date.now();
-      tinputTimeLimit.value = turn.timeLimit;
-      tinputDisplayTime.value = turn.displayTime ?? null;
-      tinputTimeUpMessage.value = turn.timeUpMessage ?? null;
+      tinputTimeLimit.value = wait.durationMs;
+      tinputDisplayTime.value = wait.displayTime ?? null;
+      tinputTimeUpMessage.value = wait.timeUpMessage ?? null;
       startTinputTicker();
     } else {
       tinputStartedAt.value = null;
@@ -918,17 +938,15 @@ export const useGameStore = defineStore('game', () => {
     }
     // v7：更新 currentTurnGeneration + 清 inputInFlight（快照重建，解锁）
     acceptGeneration(snapshot.generation);
-    // ADR-0016：晚加入者也可能撞上 TINPUT 期间——snapshot 携带 timer 字段时
-    // 启动本地钟表。snapshot.state===WaitInput 校验避免 Quit/Error 状态误启。
-    if (
-      snapshot.state === 'WaitInput' &&
-      typeof snapshot.timeLimit === 'number' &&
-      snapshot.timeLimit > 0
-    ) {
+    // ADR-0016（issue 07 判据改读 awaiting）：晚加入者也可能撞上定时等待期间——快照的
+    // `awaiting.wait` 与流上帧同形（`applySnapshot` 已落到 displayState），故读同一处。
+    // 零时长让路同样不启动倒计时（与 applyTurn 一致）。
+    const snapshotWait = displayState.value.awaiting.wait ?? null;
+    if (snapshotWait !== null && snapshotWait.durationMs > 0) {
       tinputStartedAt.value = Date.now();
-      tinputTimeLimit.value = snapshot.timeLimit;
-      tinputDisplayTime.value = snapshot.displayTime ?? null;
-      tinputTimeUpMessage.value = snapshot.timeUpMessage ?? null;
+      tinputTimeLimit.value = snapshotWait.durationMs;
+      tinputDisplayTime.value = snapshotWait.displayTime ?? null;
+      tinputTimeUpMessage.value = snapshotWait.timeUpMessage ?? null;
       startTinputTicker();
     } else {
       tinputStartedAt.value = null;
@@ -1691,6 +1709,8 @@ export const useGameStore = defineStore('game', () => {
     tinputTimeUpMessage,
     tinputRemainingMs,
     showTinputCountdown,
+    // issue 07：可打断的定时等待 → 「跳过」affordance
+    canSkipWait,
     // 显示变更信号：暴露给 TerminalDisplay watch
     lastDisplaySignal,
     // game-library spec ID10：Android 物理返回键退出确认

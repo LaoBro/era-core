@@ -36,20 +36,19 @@ watch(
 );
 
 /**
- * 输入栏最终可见性（ui-redesign-spec §6.3 / §6.4）：
- * - WaitInput：⌨ 手动唤出恒显示；自动时当前回合无按钮即显示
+ * 输入栏最终可见性（ui-redesign-spec §6.3 / §6.4；issue 07 判据改读 awaiting）：
+ * - `awaiting.input` 非空（服务端在等输入）：⌨ 手动唤出恒显示；自动时当前回合无按钮即显示
  *   （文本/数字类型 → 输入行；AnyKey/EnterKey → 「按任意键/回车继续」提示行，spec §6.3）
- * - Quit / Error：终端底部显示非模态状态行（spec §6.4），不常驻大条幅
- * - Running / 空闲：不显示（连接状态由应用栏/顶部提示条表达）
+ * - `awaiting.ended`（终态 Quit / Error）：终端底部显示非模态状态行（spec §6.4），不常驻大条幅
+ * - 其余（定时等待 / 让路 / 空闲）：不显示——定时等待与让路由倒计时行 / 跳过提示表达，
+ *   连接状态由应用栏/顶部提示条表达
  */
 const showInputBar = computed<boolean>(() => {
-  const st = game.displayState.state;
-  if (st === 'WaitInput') {
+  if (game.awaiting.input) {
     if (ui.manualInputVisible) return true;
     return !game.hasActiveButtons;
   }
-  if (st === 'Quit' || st === 'Error') return true;
-  return false;
+  return game.awaiting.ended != null;
 });
 </script>
 

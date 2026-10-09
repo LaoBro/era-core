@@ -36,8 +36,11 @@ export function startGameStatusMonitor(): () => void {
       game.clearGameStatusHint();
       return;
     }
-    // 等待玩家输入（且无待处理的提交）→ 不是忙：清残留提示并退出
-    if (game.inputSubmittedAt === null && game.displayState.state === 'WaitInput') {
+    // 服务端停稳在「等输入」或「等定时器」（且无待处理的提交）→ 不是忙：清残留提示并退出。
+    // issue 07：判据改读 awaiting —— 两个维度任一存在就说明服务端不会自己卡住
+    // （等输入要玩家动作、定时等待由服务端计时器推进）；旧判据读 state === 'WaitInput'，
+    // 那既涵盖了这两类、也把「WaitInput」当成引擎模式在猜。
+    if (game.inputSubmittedAt === null && (game.awaiting.input != null || game.awaiting.wait != null)) {
       game.clearGameStatusHint();
       return;
     }

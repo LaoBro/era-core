@@ -105,3 +105,63 @@ describe('App: 视图切换不卸载 TerminalView（滚动位置不丢）', () =
     expect(wrapper.find('.settings-view').exists()).toBe(false);
   });
 });
+
+/**
+ * issue 07：输入可用性判据从「引擎状态字段」迁移到 v12 契约 `awaiting`。
+ *
+ * 覆盖两处消费者（都在挂载 App 时一并渲染）：
+ * - `TerminalView.showInputBar` → `.input-bar` 是否出现
+ * - `App.keyboardActive` → ⌨ 按钮是否 active
+ *
+ * 判据：`awaiting.input` 非空即「服务端在等你发输入」；定时等待 / 让路（只有 `wait`）
+ * 不再被误认为可输入；终态仍显示非模态状态行（InputBar 保留）。
+ */
+describe('App / TerminalView：输入可用性判据（issue 07 改读 awaiting）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    useGameStore().serverState = 'WaitInput';
+  });
+
+  function setAwaiting(awaiting: Record<string, unknown>): void {
+    const game = useGameStore();
+    game.displayState = { ...game.displayState, awaiting: awaiting as never };
+  }
+
+  const keyboardBtn = (wrapper: ReturnType<typeof mount>) => wrapper.find('[aria-label="手动输入"]');
+
+  it('awaiting.input 非空 → 输入栏出现 + ⌨ 按钮 active', async () => {
+    const wrapper = mount(App);
+    setAwaiting({ input: { type: 'IntValue' } });
+    await nextTick();
+
+    expect(wrapper.find('.input-bar').exists()).toBe(true);
+    expect(keyboardBtn(wrapper).classes()).toContain('active');
+  });
+
+  it('定时等待（只有 wait 维度，如 AWAIT 8000）→ 不渲染输入栏、⌨ 按钮不 active', async () => {
+    const wrapper = mount(App);
+    setAwaiting({ wait: { durationMs: 8000, interruptible: true } });
+    await nextTick();
+
+    expect(wrapper.find('.input-bar').exists()).toBe(false);
+    expect(keyboardBtn(wrapper).classes()).not.toContain('active');
+  });
+
+  it('零时长让路帧（durationMs=0）→ 同样不渲染输入栏（它不是「在等输入」）', async () => {
+    const wrapper = mount(App);
+    setAwaiting({ wait: { durationMs: 0 } });
+    await nextTick();
+
+    expect(wrapper.find('.input-bar').exists()).toBe(false);
+    expect(keyboardBtn(wrapper).classes()).not.toContain('active');
+  });
+
+  it('终态（ended）→ 保留非模态状态行（输入栏在），但 ⌨ 按钮不 active', async () => {
+    const wrapper = mount(App);
+    setAwaiting({ ended: { terminal: 'Quit' } });
+    await nextTick();
+
+    expect(wrapper.find('.input-bar').exists()).toBe(true);
+    expect(keyboardBtn(wrapper).classes()).not.toContain('active');
+  });
+});
