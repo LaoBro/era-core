@@ -21,6 +21,10 @@ PRINTL [9] Redraw probe V1 (net-zero)
 PRINTL [10] Redraw probe V2 (REDRAW 0)
 PRINTL [11] Redraw probe V3 (non-cancelling)
 PRINTL [12] Redraw probe V4 (real length)
+PRINTL [13] Yield frames (bare AWAIT)
+PRINTL [14] Yield frames (AWAIT 0)
+PRINTL [15] Yield idle (no redraw)
+PRINTL [16] Yield drain wait (termination)
 INPUT
 IF RESULT == 2
 	; issue-001/002：长回合入口（测试专用分支，既有测试只发 0/1，不受影响）。
@@ -58,6 +62,18 @@ ELSEIF RESULT == 11
 ELSEIF RESULT == 12
 	; spec v3 §4.5：V4 真实长度 —— 测 O(n²) 的实际字节量
 	CALL TEST_REDRAW_V4
+ELSEIF RESULT == 13
+	; spec v5 §7.2：无参 AWAIT 逐步产帧（见 erb/YIELDDRAIN.ERB 文件头）。
+	CALL TEST_YIELDFRAMES
+ELSEIF RESULT == 14
+	; spec v5 §7.2：AWAIT 0 同上。
+	CALL TEST_YIELDFRAMES0
+ELSEIF RESULT == 15
+	; spec v5 §7.2：画面无变化时不发帧。
+	CALL TEST_YIELDIDLE
+ELSEIF RESULT == 16
+	; spec v5 §7.2：drain 终止性 + 真 WAIT 输入能力。
+	CALL TEST_YIELDWAIT
 ELSEIF RESULT == 0
 	PRINTFORML You entered: {RESULT}
 	PRINTL Select again:

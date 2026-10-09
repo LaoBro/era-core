@@ -176,12 +176,24 @@ namespace MinorShift.Emuera.GameView
             if (initialTurn != null)
                 _io.WriteLine(initialTurn);
 
+            // spec §3.2 ④ 调用位置一：首帧之后。若脚本的第一个停稳点就是让路点
+            // （会话一开始就是脚本动作 = 无参 AWAIT），这里立即把它 drain 掉。
+            await DrainYieldsAsync();
+
             // 退出条件：外部取消 / Stop()（QUIT 经 GameExitException 路径）/ IO 关闭 /
             // 游戏已进入 Quit/Error 终态（部分 QUIT 路径不抛 GameExitException，StepAsync 正常返回
             // 而 IsStopped=false——此时若只依赖异常机制，循环会继续阻塞 ReadLineAsync 永不退出）。
             while (!externalCt.IsCancellationRequested && !IsStopped && _io.IsConnected
                    && !IsTerminalState(console.State))
             {
+                // spec §3.2 ④ 调用位置二：循环体开头。放在此处可覆盖主循环里所有跳回顶部的
+                // continue 路径（超时续跑 / 非法 jsonl / 非 input 命令）——它们都会经过这里。
+                await DrainYieldsAsync();
+                // drain 可能把脚本推到终态（QUIT 不抛 GameExitException 的那条路径）。循环条件
+                // 只在顶部求值，这里必须补判一次，否则会在终态上阻塞读输入。
+                if (IsTerminalState(console.State) || IsStopped || !_io.IsConnected)
+                    break;
+
                 string? line = null;
                 if (enableTimeout)
                 {
@@ -244,6 +256,52 @@ namespace MinorShift.Emuera.GameView
                     break;
             }
         }
+
+        /// <summary>
+        /// B4（spec v5 §3.2 ④）：让路点 drain —— 无参 <c>AWAIT</c> / <c>AWAIT 0</c>（零时长让路点）
+        /// 交付一帧后<b>同线程续跑</b>，直到脚本停在一个<b>真</b>等待上。
+        ///
+        /// <para>🔒 <b>终止性不变量</b>：本循环的终止点与改动前那次「连续执行」的终止点<b>完全相同</b> ——
+        /// 我们只是把「一次跑到底」切成「跑一段 → 发帧 → 续跑」，<b>没有改变控制流的终止性</b>。
+        /// 今天会死循环（无尽无参 <c>AWAIT</c> 且永不 WaitInput 于真输入）的脚本，改后照样死循环。</para>
+        ///
+        /// <para><b>让路帧参与抑制</b>（<c>allowSuppression: true</c>）：画面没变的那一轮不落 wire ——
+        /// 这正是闸住让路帧洪水的安全阀（spec §3.4）；画面真变了的那一轮是<b>必须交付</b>的内容。</para>
+        /// </summary>
+        private async Task DrainYieldsAsync()
+        {
+            while (IsYieldPoint() && !IsStopped)
+            {
+                if (!await WaitForInputAsync())
+                    return;
+                var turn = BuildTurn(allowSuppression: true);
+                if (turn != null)
+                    _io.WriteLine(turn);
+                // 同线程续跑：脚本执行与帧生成永远在同一线程、同一调用栈（IConsoleUI.Invoke 的无头实现
+                // 是同步内联），drain 期间没有人并发改动画面，故 BuildTurn 的 ComputeDiff 无撕裂风险。
+                console.EndYield();
+            }
+        }
+
+        /// <summary>
+        /// 让路点判据：State=WaitInput + <see cref="InputType.Void"/> + <b>无时长</b>。
+        ///
+        /// <para>这正是让路帧在 wire 上的可观测形态（spec §3.6：<c>state:"WaitInput"</c> +
+        /// <c>inputType:"Void"</c> + <c>Timelimit&lt;=0</c>）——故判据与实际形态同源，
+        /// 不引入第二处真相。刻意<b>不</b>再叠加内部标记 <c>InputRequest.IsYield</c>：
+        /// 它只由 <c>ConsoleStateManager.Await(time&lt;=0)</c> 置位、与 <c>Timelimit=0</c> 恒等，
+        /// 叠加它只会漏掉另一类零时长 Void 等待（<c>TWAIT 0,1</c>）——那类等待
+        /// <c>InputTimeoutMs</c> 返回 null（无超时续跑）又不被判为让路点 ⇒ server 循环
+        /// 阻塞在读输入上、脚本永久停住。</para>
+        ///
+        /// <para>🔒 <c>Timelimit &lt;= 0</c> 是安全阀，不可省：省掉会把<b>真</b>的定时等待
+        /// （<c>TWAIT t,1</c> / <c>AWAIT t</c>：Void 且 <c>Timelimit &gt; 0</c>）误判为让路点，
+        /// drain 会把它提前 <c>EndYield</c>，吞掉本次等待的输入 / 计时能力
+        /// （「画面无变化时不发帧」「超时回归」用例即为此闸门）。</para>
+        /// </summary>
+        private bool IsYieldPoint()
+            => console.State == ConsoleState.WaitInput
+               && console.CurrentRequest is { InputType: InputType.Void, Timelimit: <= 0 };
 
         protected override void OnInputRejected(string reason)
         {
