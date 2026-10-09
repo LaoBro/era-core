@@ -62,7 +62,13 @@
   ],
   "bgColor": "#000000",
   "state": "WaitInput",
+  "inputType": "EnterKey",
   "needValue": false,
-  "protocolVersion": 11,
+  "awaiting": {
+    "input": {
+      "type": "EnterKey"
+    }
+  },
+  "protocolVersion": 12,
   "generation": 0
 }

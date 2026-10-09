@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.UI.Game;
 using Xunit;
 
@@ -25,7 +26,9 @@ public class TerminalRendererClearDetectionTests
     }
 
     private static DisplaySnapshot Snapshot(params DisplayLine[] lines) =>
-        new(new List<DisplayLine>(lines), null, "WaitInput", null, false, 5, 0);
+        new(new List<DisplayLine>(lines), null, "WaitInput", null, false,
+            AwaitInfo.Of(new InputRequest { InputType = InputType.EnterKey }, ConsoleState.WaitInput, timedOut: false),
+            5, 0);
 
     // ---------- 子句 1：行数减少 → ClearLine ----------
 

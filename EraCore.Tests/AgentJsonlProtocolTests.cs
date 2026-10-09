@@ -75,7 +75,7 @@ public class AgentJsonlProtocolTests : IDisposable
 
         Assert.Equal("WaitInput", root.GetProperty("state").GetString());
         Assert.Equal("EnterKey", root.GetProperty("inputType").GetString());
-        Assert.Equal(11, root.GetProperty("protocolVersion").GetInt32()); // v11：PrintSegment.strikeout
+        Assert.Equal(12, root.GetProperty("protocolVersion").GetInt32()); // v12：awaiting 容器
 
         Assert.Equal(5000L, root.GetProperty("timeLimit").GetInt64());
         Assert.True(root.GetProperty("displayTime").GetBoolean());
@@ -197,7 +197,7 @@ public class AgentJsonlProtocolTests : IDisposable
 
         Assert.NotNull(json);
         using var doc = JsonDocument.Parse(json!);
-        Assert.Equal(11, doc.RootElement.GetProperty("protocolVersion").GetInt32()); // v11：PrintSegment.strikeout
+        Assert.Equal(12, doc.RootElement.GetProperty("protocolVersion").GetInt32()); // v12：awaiting 容器
     }
 
     [Fact]

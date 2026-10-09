@@ -18,6 +18,11 @@
   "state": "WaitInput",
   "inputType": "IntValue",
   "needValue": true,
-  "protocolVersion": 11,
+  "awaiting": {
+    "input": {
+      "type": "IntValue"
+    }
+  },
+  "protocolVersion": 12,
   "generation": 0
 }

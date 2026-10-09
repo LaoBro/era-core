@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.UI.Game;
 using Xunit;
 
@@ -361,7 +362,9 @@ public class ButtonRegionTrackerTests
     // ---------- 测试夹具 ----------
 
     private static DisplaySnapshot MakeSnapshot(params DisplayLine[] lines)
-        => new(new List<DisplayLine>(lines), null, "WaitInput", null, false, 3, 0);
+        => new(new List<DisplayLine>(lines), null, "WaitInput", null, false,
+            AwaitInfo.Of(new InputRequest { InputType = InputType.EnterKey }, ConsoleState.WaitInput, timedOut: false),
+            3, 0);
 
     private static DisplayLine MakeLineWithButton(int col, int width, long value)
         => new(new List<DisplayEntry> { MakeEntry(button: TestSnapshots.Button(value, true, 0, col, width)) }, null, true);

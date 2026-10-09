@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Primitives;
+using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.UI.Game;
 using Xunit;
@@ -50,7 +51,9 @@ public class TerminalRendererPipelineTests
     }
 
     private static DisplaySnapshot Snapshot(params DisplayLine[] lines) =>
-        new(new List<DisplayLine>(lines), null, "WaitInput", null, false, 5, 0);
+        new(new List<DisplayLine>(lines), null, "WaitInput", null, false,
+            AwaitInfo.Of(new InputRequest { InputType = InputType.EnterKey }, ConsoleState.WaitInput, timedOut: false),
+            5, 0);
 
     private static string CaptureOutput(Action action, BufferedVtScreen screen)
     {

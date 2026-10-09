@@ -24,7 +24,7 @@ namespace Emuera.Headless.Tests;
 public class DisplayStateSnapshotGoldenTests
 {
     private const string DefaultFontName = "MS Gothic";
-    private const int ExpectedProtocolVersion = 11; // v11：PrintSegment.strikeout
+    private const int ExpectedProtocolVersion = 12; // v12：awaiting 容器
 
     /// <summary>
     /// golden 序列化选项：与生产 DisplayState.JsonOpts 一致使用 WhenWritingNull，
@@ -38,13 +38,20 @@ public class DisplayStateSnapshotGoldenTests
 
     // ---------- 5 个场景构造 ----------
 
+    /// <summary>
+    /// WaitInput 态的快照必须带一个<b>真实请求</b>：v12 契约要求非终态帧的 <c>awaiting</c>
+    /// 至少一维必现（§1.2 规则 1）—— <c>currentRequest: null</c> 会产出 <c>"awaiting": {}</c>，
+    /// 那正是「没有任何东西能推进这个等待」的非法形态，不该被固化进 golden。
+    /// </summary>
+    private static InputRequest EnterKeyWait() => new() { InputType = InputType.EnterKey };
+
     /// <summary>场景 1：空屏（无显示行）。</summary>
     private static DisplaySnapshot BuildEmptyScreen() =>
         DisplayState.BuildSnapshot(
             new List<ConsoleDisplayLine>(),
             EmuColor.Black,
             ConsoleState.WaitInput,
-            currentRequest: null,
+            EnterKeyWait(),
             DefaultFontName);
 
     /// <summary>场景 2：单行单按钮。</summary>
@@ -57,7 +64,7 @@ public class DisplayStateSnapshotGoldenTests
             },
             EmuColor.Black,
             ConsoleState.WaitInput,
-            currentRequest: null,
+            EnterKeyWait(),
             DefaultFontName);
 
     /// <summary>场景 3：多行多按钮（含几何累加 + 空行）。</summary>
@@ -74,7 +81,7 @@ public class DisplayStateSnapshotGoldenTests
             },
             EmuColor.Black,
             ConsoleState.WaitInput,
-            currentRequest: null,
+            EnterKeyWait(),
             DefaultFontName);
 
     /// <summary>
@@ -93,7 +100,7 @@ public class DisplayStateSnapshotGoldenTests
             },
             EmuColor.Black,
             ConsoleState.WaitInput,
-            currentRequest: null,
+            EnterKeyWait(),
             DefaultFontName);
 
     /// <summary>场景 5：SET_BG 态——背景色非默认（DarkBlue #00008B）+ 带 inputType。</summary>

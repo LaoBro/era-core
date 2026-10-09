@@ -24,6 +24,9 @@ internal record DisplaySnapshot(
     string state,
     string? inputType,
     bool needValue,
+    // v12（spec §5.2 第 4 项）：GET /snapshot 也下发 awaiting ——「晚加入者拿到的第一张画面
+    // 不能是另一套契约形状」。⚠️ 快照**没有** timedOut（见类型注释），故 timedOut 固定传 false。
+    AwaitInfo awaiting,
     int protocolVersion,
     long generation,
     long? timeLimit = null,
@@ -406,10 +409,11 @@ internal sealed class DisplayState : IDisplayState
                     // 避免头部删除被 StructuralDiff 误判为 ClearScreenOp + Append 全量重印。
                     // bgImages 一并透传（StructuralDiff 目前不读，但保持快照字段语义完整）。
                     var effectivePrev = new DisplaySnapshot(
-                        effectivePrevLines, prev.bgColor, prev.state, prev.inputType,
-                        prev.needValue, prev.protocolVersion, prev.generation,
-                        prev.timeLimit, prev.displayTime, prev.timeUpMessage,
-                        prev.bgImages);
+                        lines: effectivePrevLines, bgColor: prev.bgColor, state: prev.state,
+                        inputType: prev.inputType, needValue: prev.needValue, awaiting: prev.awaiting,
+                        protocolVersion: prev.protocolVersion, generation: prev.generation,
+                        timeLimit: prev.timeLimit, displayTime: prev.displayTime,
+                        timeUpMessage: prev.timeUpMessage, bgImages: prev.bgImages);
                     tailOps = StructuralDiff(effectivePrev, current);
                 }
 
@@ -612,6 +616,14 @@ internal sealed class DisplayState : IDisplayState
             state: state.ToString(),
             inputType: currentRequest?.InputType.ToString(),
             needValue: currentRequest?.NeedValue ?? false,
+            // v12：与流上帧同源（同一工厂、同一 req/state）。timedOut 传 false —— 快照表示
+            // 「当前状态」，「上一帧是否超时触发」对晚加入者无意义（见 DisplaySnapshot 注释）。
+            //
+            // ⚠️ 与流上帧的唯一差别：快照可能在「脚本还在跑」的瞬态被取到（GET /snapshot 是
+            // 随时可调的端点）——此时两个维度都无值，序列化成 awaiting:{}。这不是契约违规：
+            // §1.2 规则 1 约束的是**停稳点**上的帧（流上的帧只在停稳点产出）。该瞬态在展开阶段
+            // 由仍保留的 state 字段区分；「Running 不再是可表示状态」是收缩阶段（09）的事。
+            awaiting: AwaitInfo.Of(currentRequest, state, timedOut: false),
             protocolVersion: TurnRecord.CurrentProtocolVersion,
             generation: generation,
             // ADR-0016：TINPUT timer 元数据——仅在 TINPUT 期间（Timelimit > 0）填充。

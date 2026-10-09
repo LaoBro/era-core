@@ -298,6 +298,17 @@ public class KestrelGameServerEndpointTests
 
         Assert.Equal(200, status);
         Assert.False(string.IsNullOrEmpty(body));
+
+        // v12（spec §5.2 第 4 项 / §7.4「GET /snapshot 同源」）：晚加入者拿到的第一张画面
+        // 必须与流上帧同形 —— awaiting 是快照端点上可读的同一个契约字段。
+        using var doc = JsonDocument.Parse(body);
+        Assert.True(doc.RootElement.TryGetProperty("awaiting", out var awaiting),
+            "v12 快照必须携带 awaiting（唯一契约字段）—— 未同步即为变异式 E");
+        Assert.Equal(JsonValueKind.Object, awaiting.ValueKind);
+        Assert.Equal(12, doc.RootElement.GetProperty("protocolVersion").GetInt32());
+        // 注：本断言只钉「同形」（键在场且是对象）。§1.2 规则 1 的「至少一维必现」约束的是
+        // **停稳点**上的帧；本端点在「脚本还在跑」的瞬态可以取到 awaiting:{}（无维可报，
+        // 展开阶段由 state 字段区分）。停稳点的深比对在 TurnAwaitingV12Tests.Snapshot_awaiting_matches_stream_shape。
     }
 
     // ---- GET /config ----

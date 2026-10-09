@@ -2232,15 +2232,14 @@ internal sealed class BridgeHost : IDisposable
     {
         try
         {
-            // NativeAOT：显式走源生成 TypeInfo（TurnOp/LineOp 基类已挂 [JsonConverter]，
-            // context 生成的 TurnRecord TypeInfo 自动使用自定义多态 converter，wire 与 options 重载一致）。
-            var errorTurn = JsonSerializer.Serialize(new TurnRecord(
-                state: "Error",
-                inputType: null,
-                needValue: false,
-                diff: null,
-                error: message
-            ), EmueraJsonContext.Default.TurnRecord);
+            // 🔴 致命错误帧 = 第二产出者（轴 A 的例外 B5，spec §2.1.3 / §5.2 第 5 项）：
+            // 必须与主流帧**共用同一条序列化路径**（含多态 converter + 源生成 resolver），
+            // 且形状是终态键 awaiting{ended:{terminal:"Error"}}（input / wait 不得同时出现）。
+            //
+            // 这里原先直接用 EmueraJsonContext.Default.TurnRecord —— 那是**没有 Converters** 的
+            // context，历史上只因 fatal turn 的 diff:null 才侥幸不炸；awaiting 一变成内嵌对象，
+            // 「改一行注册」已不足以保证正确。故改调 Core 的单一构造点（可被单测闸住）。
+            var errorTurn = AgentJsonlProtocol.BuildFatalTurn(message);
             // _jsBridge.PostTurn 内部 fire-and-forget（async void），异常被自身 catch 不抛——
             // 但 try/catch 兜底防御：PostTurn 之外的序列化失败也走 DisplayAlert fallback。
             _dispatcher.Dispatch(() => _jsBridge.PostTurn(errorTurn));

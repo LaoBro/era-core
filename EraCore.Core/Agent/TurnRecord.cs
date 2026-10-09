@@ -11,6 +11,9 @@ internal record TurnRecord(
     string? inputType,
     bool needValue,
     DisplayDiff? diff,
+    // v12：唯一契约字段（必填、非 nullable、每帧必现）——「服务端此刻在等什么」。
+    // 展开阶段（05）它与下面七个旧顶层字段并存；收缩阶段（09）删旧字段。
+    AwaitInfo awaiting,
     string? error = null,
     int? protocolVersion = null,
     long? timeLimit = null,
@@ -41,8 +44,10 @@ internal record TurnRecord(
     /// v11：PrintSegment 加 strikeout?——PRINT_SLIDER 实际用 ERB FONTSTYLE 位4（删除线，取消線）
     /// 绘制滑条轨道，v10 只实现 underline 导致删除线缺失、被 v10 修复提交误映射为 underline；
     /// 现按 ERB 位契约（位4=删除线、位8=下划线）对称补齐 strikeout 字段。
+    /// v12（issue 05）：新增 `awaiting`（唯一契约字段：input / wait 两个正交维度 + ended 互斥终态），
+    /// 描述「服务端此刻在等什么」；旧七个顶层字段暂时保留（展开阶段），09 删除。
     /// </summary>
-    internal const int CurrentProtocolVersion = 11;
+    internal const int CurrentProtocolVersion = 12;
 }
 
 /// <summary>

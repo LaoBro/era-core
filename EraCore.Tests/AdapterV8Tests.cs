@@ -242,7 +242,7 @@ public class AdapterV8Tests : IDisposable
         Assert.Equal("bg/forest.png", bg.GetProperty("src").GetString());
         Assert.Equal(1, bg.GetProperty("depth").GetInt32());
         Assert.Equal(0.5, bg.GetProperty("opacity").GetDouble());
-        Assert.Equal(11, doc.RootElement.GetProperty("protocolVersion").GetInt32());
+        Assert.Equal(12, doc.RootElement.GetProperty("protocolVersion").GetInt32());
 
         // v7 已知字段仍在——老客户端按 v7 解析不炸、忽略未知字段自然降级
         Assert.Equal("#000000", doc.RootElement.GetProperty("bgColor").GetString());
@@ -284,6 +284,6 @@ public class AdapterV8Tests : IDisposable
         Assert.Equal(0, crop.GetProperty("y").GetInt32());
         Assert.Equal(72, crop.GetProperty("imgWidth").GetInt32());
         Assert.Equal(36, crop.GetProperty("imgHeight").GetInt32());
-        Assert.Equal(11, doc.RootElement.GetProperty("protocolVersion").GetInt32());
+        Assert.Equal(12, doc.RootElement.GetProperty("protocolVersion").GetInt32());
     }
 }

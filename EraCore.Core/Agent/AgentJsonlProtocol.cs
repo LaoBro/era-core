@@ -37,8 +37,26 @@ namespace MinorShift.Emuera.GameView
         /// LineOp/TurnOp 抽象基类直接序列化只输出 type 鉴别符，diff 内容丢失
         /// （test_snapshot 抓到的 {"lineOps":[{"type":"append"}]} 空壳回归，2026.8.7）。
         /// </summary>
-        private static string SerializeTurn(TurnRecord turn)
+        internal static string SerializeTurn(TurnRecord turn)
             => JsonSerializer.Serialize(turn, (JsonTypeInfo<TurnRecord>)TurnJsonOptions.GetTypeInfo(typeof(TurnRecord)));
+
+        /// <summary>
+        /// 致命错误帧（轴 A 的例外 B5）：<b>不经过脚本</b>、不对应任何停稳点，由第二产出者
+        /// （<c>EraCore.Maui/BridgeHost.ShowError</c>）构造，形态是终态键
+        /// <c>awaiting.ended{terminal:"Error"}</c>（<c>input</c> / <c>wait</c> 不得同时出现）。
+        ///
+        /// <para>🔴 <b>必须与主流帧共用同一条序列化路径</b>（<see cref="SerializeTurn"/>，含多态
+        /// converter + 源生成 resolver）。MAUI 侧原先直接用 <c>EmueraJsonContext.Default.TurnRecord</c>
+        /// ——那是<b>没有 Converters</b> 的上下文，历史上只因 fatal turn 的 <c>diff:null</c> 才侥幸不炸；
+        /// <c>awaiting</c> 一变成内嵌对象，这条路径的风险就不再是「改一行注册」的量级。</para>
+        /// </summary>
+        internal static string BuildFatalTurn(string message) => SerializeTurn(new TurnRecord(
+            state: ConsoleState.Error.ToString(),
+            inputType: null,
+            needValue: false,
+            diff: null,
+            awaiting: AwaitInfo.Of(null, ConsoleState.Error, timedOut: false),
+            error: message));
 
         private readonly SessionIO _io;
         private readonly DisplayState _displayState;
@@ -52,14 +70,20 @@ namespace MinorShift.Emuera.GameView
         private bool _pendingTimeoutFlag;
 
         /// <summary>
-        /// issue-004（空转帧抑制）：上一个<b>已产出</b>回合的「状态 + 输入需求」指纹。
+        /// issue-004（空转帧抑制）：上一个<b>已产出</b>回合的指纹。
         /// 回合 diff 为空且指纹未变 = 画面没变、客户端也没什么新东西要知道 → 不产出回合。
         /// 仅在游戏循环线程（BuildTurn）访问，无并发。
+        ///
+        /// <para>v5-r2（spec §2.3）：指纹 = <b>形状</b>（哪个键出现：input / wait / ended）+
+        /// <b>两个维度各自的性质</b>（input.type / wait 的 durationMs + interruptible +
+        /// displayTime + timeUpMessage）。v11 那份「state + inputType + needValue」与它语义等价
+        /// 但更粗 —— 旧形态里 <c>input{type:A,timeLimit:3000}</c> vs <c>5000</c> 靠载荷里的
+        /// <c>timeLimit</c> 比较，新形态里直接是 <c>wait.durationMs</c>。</para>
         /// </summary>
         private bool _hasEmittedTurn;
-        private string? _emittedState;
-        private string? _emittedInputType;
-        private bool _emittedNeedValue;
+        private string? _emittedShape;
+        private string? _emittedInputProps;
+        private string? _emittedWaitProps;
 
         public AgentJsonlProtocol(EmueraConsole console, IConsoleUI ui, SessionIO io, DisplayState displayState)
             : base(console, ui)
@@ -104,7 +128,10 @@ namespace MinorShift.Emuera.GameView
                     state: "Quit",
                     inputType: null,
                     needValue: false,
-                    diff: null
+                    diff: null,
+                    // 终态：只剩 ended（§0.1 ① 那个「Quit 帧还带 inputType/timeLimit」的残留
+                    // bug 在新形态下结构性不可能构造出来）。
+                    awaiting: AwaitInfo.Of(null, ConsoleState.Quit, timedOut: false)
                 ));
                 Stop();
                 return quitTurn;
@@ -119,6 +146,10 @@ namespace MinorShift.Emuera.GameView
                     inputType: null,
                     needValue: false,
                     diff: null,
+                    // 运行期异常一律 fatal（Process 内部状态不可逆）⇒ awaiting 按终态构造。
+                    // 不照抄 console.State：异常可能发生在 Running 态，那时按停稳点判据
+                    // 会得到一个「既无 input 又无 wait」的非法等待（§1.2 规则 1）。
+                    awaiting: AwaitInfo.Of(null, ConsoleState.Error, timedOut: false),
                     error: ex.Message,
                     errorInfo: ErrorInfo.From(ex)
                 ));
@@ -358,18 +389,30 @@ namespace MinorShift.Emuera.GameView
             var inputType = req?.InputType.ToString();
             bool needValue = req?.NeedValue ?? false;
 
+            // v12：唯一契约字段（§2.2 的两条维度判据在工厂里，两个维度各自独立判定）。
+            var awaiting = AwaitInfo.Of(req, console.State, timedOut);
+
+            // v5-r2（§2.3）：指纹 = 「形状 + 两个维度各自的性质」——比 r1 的「kind + 一份载荷」更细，
+            // 且**更直白**：input 的 type 与 wait 的 durationMs 直接参与比较。
+            // 🔒 比较「性质」不得比较「实例」：每次等待都是新实例，比较实例会让抑制形同虚设
+            // （直接打破 IdleFrameSuppressionTests）。
+            string shape = DescribeShape(awaiting);
+            string? inputProps = awaiting.input?.type;
+            string? waitProps = DescribeWaitProps(awaiting.wait);
+
             if (allowSuppression && !isInitial && _hasEmittedTurn && IsEmptyDiff(diff)
-                && state == _emittedState && inputType == _emittedInputType && needValue == _emittedNeedValue)
+                && shape == _emittedShape && inputProps == _emittedInputProps && waitProps == _emittedWaitProps)
                 return null;
 
             _hasEmittedTurn = true;
-            _emittedState = state;
-            _emittedInputType = inputType;
-            _emittedNeedValue = needValue;
+            _emittedShape = shape;
+            _emittedInputProps = inputProps;
+            _emittedWaitProps = waitProps;
 
             // ADR-0016：TINPUT timer 字段——仅 TINPUT 期间（Timelimit > 0）填充。
             // displayTime 取 InputRequest.DisplayTime（ERB 可设 false 让前端不显示倒计时）。
             // timeUpMessage 仅在非空时携带。
+            // v12 展开阶段：这些旧顶层字段与 awaiting.wait 同源（同一个 req），09 删除。
             long? timeLimit = req is { Timelimit: > 0 } ? req.Timelimit : null;
             bool? displayTime = req is { Timelimit: > 0, DisplayTime: true } ? true : null;
             string? timeUpMessage = req is { Timelimit: > 0 } reqWithMes
@@ -382,6 +425,7 @@ namespace MinorShift.Emuera.GameView
                 inputType: inputType,
                 needValue: needValue,
                 diff: diff,
+                awaiting: awaiting,
                 error: error,
                 protocolVersion: isInitial ? TurnRecord.CurrentProtocolVersion : null,
                 timeLimit: timeLimit,
@@ -391,6 +435,28 @@ namespace MinorShift.Emuera.GameView
                 generation: console.LastButtonGeneration
             ));
         }
+
+        /// <summary>
+        /// 抑制指纹的「形状」部分（spec §2.3）：哪个键出现。
+        /// 终态带上 <c>terminal</c>——<c>Quit</c> 与 <c>Error</c> 都是终态但<b>不是</b>同一件事。
+        /// </summary>
+        private static string DescribeShape(AwaitInfo awaiting)
+        {
+            if (awaiting.ended is { } ended)
+                return "ended:" + ended.terminal;
+            return (awaiting.input != null ? "input" : "")
+                   + (awaiting.wait != null ? "+wait" : "");
+        }
+
+        /// <summary>
+        /// 抑制指纹的「wait 的性质」部分（spec §2.3）：durationMs + interruptible + displayTime + timeUpMessage。
+        /// 刻意<b>不</b>含 <c>timedOut</c>（一次性旗标，不是等待本身的性质；含它会让 B3 永远不可抑制）。
+        /// <c>wait</c> 缺省 = 无限期，返回 null（此时没有任何「wait 的性质」参与比较）。
+        /// </summary>
+        private static string? DescribeWaitProps(AwaitWait? wait)
+            => wait == null
+                ? null
+                : $"{wait.durationMs}|{wait.interruptible}|{wait.displayTime}|{wait.timeUpMessage}";
 
         /// <summary>
         /// issue-004：diff 是否为空 —— 无行级操作、无背景色变更、无背景图变更。

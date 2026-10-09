@@ -4,7 +4,7 @@
 > `EraCore.Core/Agent/DisplayState.cs` 是它的实现，前端 `EraCore.Web/src/types/protocol.ts`
 > 是它的镜像。三者不一致时以本文为准，并订正另两处。
 >
-> 当前协议版本：**`protocolVersion = 11`**（定义在 `TurnRecord.CurrentProtocolVersion`）。
+> 当前协议版本：**`protocolVersion = 12`**（定义在 `TurnRecord.CurrentProtocolVersion`）。
 >
 > 本文回答"**线上长什么样**"。为什么这么设计见
 > [`docs/adr/`](../adr/)；怎么调用见 [agent-integration.md](agent-integration.md)。
@@ -57,6 +57,57 @@
 > `timedOut` 与 `generation` 是仅有的两个"非 nullable 且非必填语义"的字段——
 > 它们每帧都出现，前端无需处理 undefined。
 
+### `awaiting` —— v12 的唯一契约字段（展开阶段：与上表旧字段并存）
+
+`awaiting` 每帧必现（非 nullable），回答**服务端此刻在等什么**。它是「两个正交维度 +
+一个互斥终态键」：
+
+| 键 | 性质 | 出现条件 | 载荷 |
+|---|---|---|---|
+| `input` | 正交维度 | 非终态，且**期待客户端发输入**（`inputType != Void`） | `type`（`InputType` 字符串，见 §3） |
+| `wait` | 正交维度 | 非终态，且这段等待**有上界**（`Timelimit >= 0`） | `durationMs`，可选 `interruptible` / `displayTime` / `timeUpMessage` / `timedOut` |
+| `ended` | **互斥键** | 终态（`Quit` / `Error`） | `terminal`（状态名）；出现时前两者**必不出现** |
+
+🔒 两条硬规则：
+
+1. `ended` 出现 ⇒ `input` / `wait` **必不出现**；
+2. `ended` 未出现 ⇒ `input` / `wait` **至少其一必现**（两者都空 = 这个等待既不等输入也不等
+   定时器，没有任何东西能推进它）。
+
+**`wait` 的三态（写死，不得再加第四个取值）：**
+
+| 形态 | 含义 | 客户端表现 |
+|---|---|---|
+| `wait` 缺省（`Timelimit < 0`，即 `InputRequest.Timelimit` 的默认值 -1） | **无限期**：没有定时器 | 无倒计时、无超时文案，`timedOut` 不出现 |
+| `wait.durationMs == 0` | **零时长让路点**（无参 `AWAIT` / `AWAIT 0`） | 无 UI 表现；语义是"**下一帧立刻到**" |
+| `wait.durationMs > 0` | **定时等待** | 倒计时；`interruptible` 为真时给"跳过"affordance |
+
+`interruptible` / `displayTime` / `timedOut` **仅在 `true` 时出现**（省略即 false），故零时长
+让路点在 wire 上就是最简形态 `{"wait":{"durationMs":0}}`——比定时等待只少一个数字。
+
+常见形态：
+
+```jsonc
+{"awaiting":{"input":{"type":"EnterKey"}}}                                  // WAIT：纯输入等待（无 wait）
+{"awaiting":{"input":{"type":"IntValue"},
+             "wait":{"durationMs":3000,"displayTime":true}}}                // TINPUT：两维同现 + 倒计时
+{"awaiting":{"wait":{"durationMs":8000,"interruptible":true}}}              // AWAIT 8000：可打断的定时等待
+{"awaiting":{"wait":{"durationMs":8000}}}                                   // TWAIT 8000,1：不可打断（该键不出现）
+{"awaiting":{"wait":{"durationMs":0}}}                                      // 无参 AWAIT：零时长让路点
+{"awaiting":{"ended":{"terminal":"Quit"}}}                                  // 终态：与 input / wait 互斥
+```
+
+> ⚠️ **展开阶段（issue 05）**：`awaiting` 入网时，上表里的 `state`/`inputType`/`needValue`/
+> `timeLimit`/`displayTime`/`timeUpMessage`/`timedOut` 七个顶层字段**暂时保留**（现有前端保持全绿），
+> 它们与 `awaiting` 同源。收缩阶段（issue 09）删除后，`awaiting` 成为唯一契约字段。
+>
+> ⚠️ `GET /snapshot` 也带 `awaiting` 且**形状相同**（见 §6）；但快照可能在"脚本还在跑"的瞬态被
+> 取到 —— 那时两维都无值（`awaiting:{}`，由仍保留的 `state` 字段区分）。流上的帧只在**停稳点**
+> 产出，故"至少一维必现"只约束流上的帧。
+>
+> 致命错误帧（MAUI `BridgeHost.ShowError`，不经过脚本）同样是终态形状
+> `{"awaiting":{"ended":{"terminal":"Error"}}}`，见 §7。
+
 ### 示例：initial turn
 
 ```json
@@ -64,8 +115,9 @@
   "state": "WaitInput",
   "inputType": "IntValue",
   "needValue": true,
+  "awaiting": { "input": { "type": "IntValue" } },
   "diff": null,
-  "protocolVersion": 11,
+  "protocolVersion": 12,
   "timedOut": false,
   "generation": 0
 }
@@ -78,6 +130,7 @@
   "state": "WaitInput",
   "inputType": "AnyKey",
   "needValue": false,
+  "awaiting": { "input": { "type": "AnyKey" } },
   "diff": {
     "lineOps": [
       { "type": "append", "newLines": [ /* DisplayLine[]，见 §4 */ ] }
@@ -128,10 +181,10 @@
 | `TWAIT t,1` —— 参考实现的定时等待 | > 0 | false | **否**（输入被吞掉，保持原语义） |
 | `AWAIT t` —— 回合内动画/渐变等待 | > 0 | true | **是**（任意输入提前结束等待） |
 
-`Skippable` **不进入协议**（它是服务端内部 `InputRequest` 字段）。客户端只能从
-"`state=WaitInput` + `inputType=Void` + 有 `timeLimit`"推断出这是动画等待，并据此
-自行决定是否启用跳过按钮。两种 `Void` 在 wire 上无法区分——这是当前的已知缺陷，
-见 §9。
+`Skippable` 自 v12 起**已上 wire**——就是 `awaiting.wait.interruptible`（见 §2）。
+客户端**不需要**再反向推断：`interruptible` 为真即可启用"跳过"affordance，
+缺省（不可打断）时不启用。旧顶层字段 `state`/`inputType`/`timeLimit` 的组合推断方式
+在收缩阶段（issue 09）删除。
 
 ---
 
@@ -255,6 +308,7 @@ Emuera 的显示模型是**追加式**的，故只需四类操作覆盖全部情
 | v9 | `SegmentImage.crop`——图集 sprite 裁切 |
 | v10 | `PrintSegment.underline` |
 | v11 | `PrintSegment.strikeout`——按 ERB `FONTSTYLE` 位契约对称补齐（位4=删除线、位8=下划线） |
+| v12 | `awaiting` 容器（`input` / `wait` 两个正交维度 + `ended` 互斥终态）取代"用 `state`+`inputType`+`timeLimit` 反向推断"；`wait.interruptible` 让 `Skippable` 首次上 wire。**展开阶段**七个旧顶层字段暂时保留，issue 09 删除 |
 
 > v2/v3 属重构期过渡态，未在生产协议中留存。
 
@@ -270,14 +324,17 @@ Emuera 的显示模型是**追加式**的，故只需四类操作覆盖全部情
   "state": "WaitInput",
   "inputType": "AnyKey",
   "needValue": false,
-  "protocolVersion": 11,
+  "awaiting": { "input": { "type": "AnyKey" } },
+  "protocolVersion": 12,
   "generation": 3,
   "timeLimit": null
 }
 ```
 
 与 `TurnRecord` 的差异：带 `lines` 全量而非 `diff`；**不带 `timedOut`**（快照表达"当前
-状态"而非"如何到达此状态"，晚加入者不关心上一帧是否刚超时）。
+状态"而非"如何到达此状态"，晚加入者不关心上一帧是否刚超时——这条不对称同样适用于
+`awaiting.wait.timedOut`：快照里它恒不出现）。`awaiting` 与流上帧**同形**
+（同一个工厂、同一个 `req`/`state`），故晚加入者拿到的第一张画面不是另一套契约形状。
 
 **晚加入流程**：`GET /snapshot` 建初始画面 → 订阅 `/ws` → 逐帧应用 `diff`。
 
@@ -434,7 +491,7 @@ frameKind: "response" | "tick" | "final"
 已知的现存偏差（本文与实现的差异，以本文为准去订正实现侧注释）：
 
 - `protocol.ts` 的 `DisplaySnapshot` 缺 `errorInfo` 相关说明，且注释中协议版本仍写 "v7"
-  （实际 v11）。
+  （实际 v12）。
 - `docs/guides/agent-integration.md` 的 JSONL 示例仍是 v1 形态（`text`/`buttons` 字段
   早已被 `diff` 取代），已订正并指向本文。
 

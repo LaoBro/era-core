@@ -19,6 +19,19 @@ namespace MinorShift.Emuera.GameView;
 [JsonSerializable(typeof(TurnRecord))]
 [JsonSerializable(typeof(DisplayDiff))]
 [JsonSerializable(typeof(DisplaySnapshot))]
+// v12：awaiting 容器及其三个可空子对象（spec §5.2 第 6 项 / §5.4）。
+// 均为**非多态**普通 record ⇒ 不需要新增 Converter，但必须都能被 resolver 解析
+// ——否则 MAUI 等直接走 context 的路径会在运行时炸（不是「改一行注册」的量级）。
+// v12：awaiting 容器及其三个可空子对象（spec §5.2 第 6 项 / §5.4）。
+// 均为**非多态**普通 record ⇒ 不需要新增 Converter，但必须都能被 resolver 解析
+// ——否则 MAUI 等直接走 context 的路径会在运行时炸（不是「改一行注册」的量级）。
+// 注：源生成器也会顺带为 TurnRecord 属性类型生成元数据（实测：删掉下面四行，
+// context-only 路径仍能序列化完整对象）。保留显式注册是**把意图写死**——本票的
+// 形状闸门是 FatalTurnShapeTests（致命帧必须走 Core 的单一构造点）。
+[JsonSerializable(typeof(AwaitInfo))]
+[JsonSerializable(typeof(AwaitInput))]
+[JsonSerializable(typeof(AwaitWait))]
+[JsonSerializable(typeof(AwaitEnded))]
 [JsonSerializable(typeof(DisplayLine))]
 [JsonSerializable(typeof(DisplayEntry))]
 [JsonSerializable(typeof(PrintSegment))]
