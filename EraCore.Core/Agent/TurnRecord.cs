@@ -140,6 +140,13 @@ internal record PrintOp(
 
 internal record NewLineOp(string? align) : TurnOp("newline");
 
+/// <summary>
+/// 清行（<c>CLEARLINE</c>）。<c>n</c> = <b>实际从 displayLineList 摘掉的显示行数</b>。
+///
+/// <para>🔴 不是脚本写的那个参数：脚本参数是<b>逻辑行</b>数，而一个逻辑行可占多个显示行
+/// （issue 13）。协议层（<see cref="ClearLineDiffOp"/> / <c>TestAdapter</c> / 前端 applyDiff）
+/// 一律按显示行解释 n，故必须在此处换算完毕。</para>
+/// </summary>
 internal record ClearLineOp(int n) : TurnOp("clearline");
 
 internal record ClearOp() : TurnOp("clear");

@@ -173,10 +173,22 @@ internal sealed class ConsolePrintManager
         }
     }
 
+    /// <summary>
+    /// <c>CLEARLINE n</c>：删掉末尾 <b>n 个逻辑行</b>。
+    ///
+    /// <para>🔴 issue 13：一个逻辑行可以占<b>多个显示行</b>（<c>HTML_PRINT</c> 一段多行文本、
+    /// 长 <c>PRINT</c> 折行）—— 只有首行 <c>IsLogicalLine=true</c>，其余是
+    /// 「表示の都合で改行された2行目以降」。故删 n 个逻辑行会连带删掉 <b>更多</b>显示行，
+    /// 二者只在 1:1 时相等。</para>
+    ///
+    /// <para>上报给协议的 <c>ClearLineOp.n</c> 必须是<b>实际消失的显示行数</b>——
+    /// 协议层（<c>DisplayState.ComputeDiff</c> → <c>ClearLineDiffOp.clearCount</c>、
+    /// <c>TestAdapter</c>、前端 applyDiff）一律按显示行解释这个数字。用 <c>argNum</c>
+    /// 会让 wire 自洽地算错：eraTW <c>@BADAPPLE</c> 每帧实际替换 55 行却只报 11 行，
+    /// 净增 0 掩盖了它 ⇒ 字符画前 44 行永远停在首帧（「只有下边一部分在动」）。</para>
+    /// </summary>
     public void DeleteLine(int argNum, bool suppressOp = false)
     {
-        if (!suppressOp)
-            _state._pendingOps.Enqueue(new ClearLineOp(argNum));
         // 可能移除 / 插入 / 头截断 displayLineList 行——无条件失效按钮索引
         // （即使本次未删任何行也只是虚高版本号，多一次重建，不影响正确性）。
         _state.buttonIndex.Invalidate();
@@ -186,6 +198,7 @@ internal sealed class ConsolePrintManager
         int delNum = 0;
         int num = argNum;
         bool deleted = false;
+        int removed = 0;   // issue 13：实际从 displayLineList 摘掉的行数（≠ argNum）
         while (delNum < num)
         {
             if (_state.displayLineList.Count == 0)
@@ -193,6 +206,7 @@ internal sealed class ConsolePrintManager
             ConsoleDisplayLine line = _state.displayLineList[^1];
             deleted = true;
             _state.displayLineList.RemoveAt(_state.displayLineList.Count - 1);
+            removed++;
             _state.lineNo--;
             if (line.IsLogicalLine)
             {
@@ -218,6 +232,11 @@ internal sealed class ConsolePrintManager
         if (_state.lineNo < 0)
             _state.lineNo += int.MaxValue;
         _state.lastDrawnLineNo = -1;
+        // issue 13：清空计数必须用**实际摘掉的显示行数** removed，不是逻辑参数 argNum。
+        // 位置仍排在下面的 ShiftHeadTurnOp 之前 —— 与改动前的 enqueue 顺序一致
+        // （DisplayState 按类型累积、与顺序无关；保序只为不惊动 TestAdapter 的模型）。
+        if (!suppressOp)
+            _state._pendingOps.Enqueue(new ClearLineOp(removed));
         if (_state.displayLineList.Count == Config.MaxLog)
         {
             _state.displayLineList.RemoveAt(0);
