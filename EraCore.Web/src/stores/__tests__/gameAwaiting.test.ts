@@ -9,7 +9,10 @@ import type { DisplaySnapshot } from '../../types/protocol';
  * v12 起 wire 上只剩 `awaiting`——状态层不再承载 `state` / `inputType` / `needValue`，
  * 七个旧顶层字段已退场（连「旧字段与 awaiting 冲突」这种用例都不再可能构造）。
  * 本组用例锁定：状态层把 `awaiting` 原样装进来，`serverState` 由它派生，
- * 倒计时 / 跳过 / 超时通知全部读 `awaiting.wait`，快照与流上帧同形。
+ * 倒计时 / 超时通知全部读 `awaiting.wait`，快照与流上帧同形。
+ *
+ * 🔴 issue 10 撤回：「跳过」派生量 `canSkipWait` 已随 `wait.interruptible` 退场
+ * （spec §10.1：定时等待一律不可打断），本组不再有与之相关的用例。
  */
 
 /** 造一个 v12 WS 帧（`awaiting` 必填）。 */
@@ -78,7 +81,7 @@ describe('useGameStore - v12 awaiting（状态层装载）', () => {
   });
 });
 
-describe('useGameStore - 倒计时 / 跳过提示判据（读 awaiting.wait）', () => {
+describe('useGameStore - 倒计时判据（读 awaiting.wait）', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
   });
@@ -103,7 +106,7 @@ describe('useGameStore - 倒计时 / 跳过提示判据（读 awaiting.wait）',
     game.reset();
   });
 
-  it('零时长让路（durationMs=0）→ 不启动倒计时、也不给跳过提示', () => {
+  it('零时长让路（durationMs=0）→ 不启动倒计时', () => {
     const game = useGameStore();
 
     game.applyTurn(v12Frame({ wait: { durationMs: 0 } }));
@@ -111,22 +114,20 @@ describe('useGameStore - 倒计时 / 跳过提示判据（读 awaiting.wait）',
     expect(game.tinputStartedAt).toBeNull();
     expect(game.tinputTimeLimit).toBeNull();
     expect(game.showTinputCountdown).toBe(false);
-    expect(game.canSkipWait).toBe(false);
   });
 
-  it('canSkipWait：可打断（interruptible=true）才为真；不可打断 / 无 wait 均为假', () => {
+  it('🔒 定时等待帧不再携带 interruptible（AWAIT t 与 TWAIT t,1 同形）', () => {
     const game = useGameStore();
 
-    game.applyTurn(v12Frame({ wait: { durationMs: 8000, interruptible: true } }));
-    expect(game.canSkipWait).toBe(true);
-
-    // TWAIT t,1：Skippable=false ⇒ interruptible 键不出现
     game.applyTurn(v12Frame({ wait: { durationMs: 8000 } }));
-    expect(game.canSkipWait).toBe(false);
 
-    // 纯输入等待：没有 wait 维度
-    game.applyTurn(v12Frame({ input: { type: 'IntValue' } }));
-    expect(game.canSkipWait).toBe(false);
+    expect(game.awaiting.wait).toEqual({
+      durationMs: 8000,
+      displayTime: null,
+      timeUpMessage: null,
+      timedOut: null,
+    });
+    expect(game.awaiting.wait).not.toHaveProperty('interruptible');
   });
 
   it('超时帧：wait.timedOut=true → timeoutNotice 用 wait.timeUpMessage（缺省用默认文案）', () => {
@@ -145,16 +146,14 @@ describe('useGameStore - 倒计时 / 跳过提示判据（读 awaiting.wait）',
     game.reset();
   });
 
-  it('定时等待结束（下一帧无 wait）→ 倒计时与跳过提示同时清空', () => {
+  it('定时等待结束（下一帧无 wait）→ 倒计时清空', () => {
     const game = useGameStore();
-    game.applyTurn(v12Frame({ wait: { durationMs: 8000, interruptible: true, displayTime: true } }));
+    game.applyTurn(v12Frame({ wait: { durationMs: 8000, displayTime: true } }));
     expect(game.showTinputCountdown).toBe(true);
-    expect(game.canSkipWait).toBe(true);
 
     game.applyTurn(v12Frame({ input: { type: 'AnyKey' } }));
 
     expect(game.showTinputCountdown).toBe(false);
-    expect(game.canSkipWait).toBe(false);
     expect(game.tinputStartedAt).toBeNull();
   });
 });

@@ -140,7 +140,7 @@ describe('App / TerminalView：输入可用性判据（issue 07 改读 awaiting�
 
   it('定时等待（只有 wait 维度，如 AWAIT 8000）→ 不渲染输入栏、⌨ 按钮不 active', async () => {
     const wrapper = mount(App);
-    setAwaiting({ wait: { durationMs: 8000, interruptible: true } });
+    setAwaiting({ wait: { durationMs: 8000 } });
     await nextTick();
 
     expect(wrapper.find('.input-bar').exists()).toBe(false);

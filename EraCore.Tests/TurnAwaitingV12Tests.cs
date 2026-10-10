@@ -114,7 +114,7 @@ public sealed class TurnAwaitingV12Tests
     /// <summary>一帧里「两个维度」的期望形状断言。</summary>
     private static void AssertShape(JsonElement frame,
         string? inputType = null, long? waitDurationMs = null,
-        bool? interruptible = null, bool? displayTime = null,
+        bool? displayTime = null,
         bool? timedOut = null, string? terminal = null)
     {
         AssertContract(frame);
@@ -130,8 +130,7 @@ public sealed class TurnAwaitingV12Tests
         if (waitDurationMs != null)
             Assert.Equal(waitDurationMs.Value, wait.GetProperty("durationMs").GetInt64());
 
-        // interruptible / displayTime：仅在 true 时出现（缺省即 false），绝不出现 false。
-        AssertFlagKey(wait, hasWait, "interruptible", interruptible);
+        // displayTime：仅在 true 时出现（缺省即 false），绝不出现 false。
         AssertFlagKey(wait, hasWait, "displayTime", displayTime);
         AssertFlagKey(wait, hasWait, "timedOut", timedOut);
 
@@ -149,7 +148,12 @@ public sealed class TurnAwaitingV12Tests
         Assert.Equal(expected.Value, el.GetBoolean());
     }
 
-    /// <summary>wait 三态里的「定时等待」形态：<c>interruptible</c> 键<b>必须不出现</b>。</summary>
+    /// <summary>
+    /// 某个 <c>wait</c> 可选键<b>必须不出现</b>（不是 false）。
+    ///
+    /// <para>issue 10 后 <c>interruptible</c> 已从契约里彻底撤回 —— 那条「可打断 ⇒ 键出现」
+    /// 的判别力也随之消失：现在<b>任何</b>帧上它都必须不出现。</para>
+    /// </summary>
     private static void AssertKeyAbsent(JsonElement frame, string key)
     {
         var a = Awaiting(frame);
@@ -178,10 +182,10 @@ public sealed class TurnAwaitingV12Tests
     }
 
     // ------------------------------------------------------------------
-    // ② 定时等待（可打断 AWAIT / 不可打断 TWAIT）
+    // ② 定时等待：AWAIT t 与 TWAIT t,1 在 wire 上逐字同形（issue 10 撤回）
     // ------------------------------------------------------------------
     [Fact]
-    public async Task Timed_await_is_interruptible_wait_without_input()
+    public async Task Timed_await_omits_interruptible_key_entirely()
     {
         using var harness = NewHarness(
             "@SYSTEM_TITLE\n" +
@@ -192,7 +196,9 @@ public sealed class TurnAwaitingV12Tests
 
         var frame = Parse((await host.Protocol.GetInitialTurnAsync())!);
 
-        AssertShape(frame, waitDurationMs: 8000, interruptible: true);
+        AssertShape(frame, waitDurationMs: 8000);
+        // 撤回后 AWAIT 与 TWAIT t,1 同待遇：定时等待一律不可打断 ⇒ 该键不出现。
+        AssertKeyAbsent(frame, "interruptible");
     }
 
     [Fact]
@@ -208,12 +214,36 @@ public sealed class TurnAwaitingV12Tests
         var frame = Parse((await host.Protocol.GetInitialTurnAsync())!);
 
         AssertShape(frame, waitDurationMs: 8000);
-        // 不可打断 ⇒ 该键「不出现」，而不是 false（前端据此判断有无「跳过」affordance）。
+        // 不可打断 ⇒ 该键「不出现」，而不是 false。
         AssertKeyAbsent(frame, "interruptible");
     }
 
+    /// <summary>
+    /// 同形闸门（issue 10 的核心断言）：<c>AWAIT 8000</c> 与 <c>TWAIT 8000,1</c> 产出的
+    /// <c>awaiting</c> <b>逐字相同</b>——定时等待在 wire 上不再有任何「可打断」标记。
+    ///
+    /// <para>撤回前必然红：<c>AWAIT</c> 会多出 <c>"interruptible":true</c>，
+    /// <see cref="JsonElement.DeepEquals"/> 立即判否。</para>
+    /// </summary>
+    [Fact]
+    public async Task Await_and_twait_produce_identical_awaiting()
+    {
+        using var harness = NewHarness(
+            "@SYSTEM_TITLE\n" +
+            "PRINTL TIMED_HEAD\n" +
+            "AWAIT 8000\n" +
+            "QUIT\n");
+        var host = await StartAsync(harness);
+
+        var frame = Awaiting(Parse((await host.Protocol.GetInitialTurnAsync())!));
+
+        // 逐字钉死：就是 TWAIT 8000,1 那一帧的形状，一个字节都不许多。
+        // 用同一字面量与 TWAIT 用例对照 ⇒ 「同形」不靠两边各自通过来间接证明。
+        Assert.Equal("{\"wait\":{\"durationMs\":8000}}", frame.GetRawText());
+    }
+
     // ------------------------------------------------------------------
-    // ③ 零时长让路：wait{durationMs:0}，无 input、无 interruptible
+    // ③ 零时长让路：wait{durationMs:0}，无 input
     //    —— 与定时等待同形，只差一个数字
     // ------------------------------------------------------------------
     [Fact]
@@ -330,7 +360,7 @@ public sealed class TurnAwaitingV12Tests
         var frame = Parse((await host.Protocol.GetInitialTurnAsync())!);
 
         Assert.Equal(V12, frame.GetProperty("protocolVersion").GetInt32());
-        AssertShape(frame, waitDurationMs: 8000, interruptible: true);
+        AssertShape(frame, waitDurationMs: 8000);
     }
 
     [Fact]

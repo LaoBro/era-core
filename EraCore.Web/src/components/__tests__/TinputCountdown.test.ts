@@ -1,20 +1,21 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import TinputCountdown from '../TinputCountdown.vue';
 import { useGameStore } from '../../stores/game';
-import { useConnectionStore } from '../../stores/connection';
 import type { AwaitInfo } from '../../types/protocol';
 
 /**
- * TinputCountdown 验收（issue 07）：定时等待覆盖层的两种呈现 —— 倒计时 + 「跳过」提示。
+ * TinputCountdown 验收（issue 07 的倒计时部分；issue 10 撤回「跳过」后的复审）。
  *
- * 判据全部来自 v12 契约 `awaiting.wait`：
+ * 判据来自 v12 契约 `awaiting.wait`：
  * - `showTinputCountdown`（带上界的等待 + displayTime=true）→ 进度条 + 剩余秒数
- * - `canSkipWait`（`interruptible === true` 且 `durationMs > 0`）→ 「跳过」按钮，点击提交空输入
+ * - 🔴 **任何帧都不再有「跳过」按钮** —— `wait.interruptible` 连同服务端
+ *   `InputRequest.Skippable` 一并撤回（spec §10.1：定时等待一律不可打断）。
+ *   实测它在 eraTW `@BADAPPLE` 上逐帧闪烁，是撤回的直接动因。
  *
- * 🔒 关键闸门：**零时长让路**（`durationMs: 0`）两者都不给——它不是「需要等的东西」，
+ * 🔒 关键闸门：**零时长让路**（`durationMs: 0`）不给任何覆盖层——它不是「需要等的东西」，
  * 而是「下一帧立刻到」。
  */
 
@@ -22,11 +23,8 @@ function mountCountdown() {
   const pinia = createPinia();
   setActivePinia(pinia);
   const game = useGameStore();
-  const conn = useConnectionStore();
-  conn.status = 'connected';
-  conn.sendInput = vi.fn();
   const wrapper = mount(TinputCountdown, { global: { plugins: [pinia] } });
-  return { wrapper, game, conn };
+  return { wrapper, game };
 }
 
 /** 直接写 awaiting（绕过协议解析——本组件只读派生量）。 */
@@ -39,28 +37,17 @@ function v12Frame(awaiting: unknown): string {
   return JSON.stringify({ generation: 1, protocolVersion: 12, diff: null, awaiting });
 }
 
-describe('TinputCountdown: 可打断的定时等待 → 「跳过」提示', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('interruptible=true（AWAIT t）→ 渲染跳过按钮；点击提交空输入提前结束等待', async () => {
-    const { wrapper, game, conn } = mountCountdown();
-    setAwaiting(game, { wait: { durationMs: 8000, interruptible: true } });
+describe('TinputCountdown: 定时等待不再有「跳过」affordance（issue 10 撤回）', () => {
+  it('AWAIT t（wait{durationMs:8000}）→ 不渲染跳过按钮，也不渲染整个覆盖层', async () => {
+    const { wrapper, game } = mountCountdown();
+    setAwaiting(game, { wait: { durationMs: 8000 } });
     await wrapper.vm.$nextTick();
 
-    const btn = wrapper.find('.tinput-skip');
-    expect(btn.exists()).toBe(true);
-    expect(btn.text()).toBe('跳过');
-
-    await btn.trigger('click');
-    expect(conn.sendInput).toHaveBeenCalledWith('');
-    // 乐观锁：提交后按钮禁用，防连点
-    expect(game.inputInFlight).toBe(true);
-    expect(wrapper.find('.tinput-skip').attributes('disabled')).toBeDefined();
+    expect(wrapper.find('.tinput-skip').exists()).toBe(false);
+    expect(wrapper.find('.tinput-countdown').exists()).toBe(false);
   });
 
-  it('interruptible 缺省（TWAIT t,1）→ 不给跳过按钮（该键不出现即不可打断）', async () => {
+  it('TWAIT t,1（同形）→ 同样不渲染跳过按钮', async () => {
     const { wrapper, game } = mountCountdown();
     setAwaiting(game, { wait: { durationMs: 8000 } });
     await wrapper.vm.$nextTick();
@@ -68,33 +55,36 @@ describe('TinputCountdown: 可打断的定时等待 → 「跳过」提示', () 
     expect(wrapper.find('.tinput-skip').exists()).toBe(false);
   });
 
-  it('旁观（canInput=false）→ 跳过按钮禁用，点击不提交', async () => {
-    const { wrapper, game, conn } = mountCountdown();
-    conn.controller = { kind: 'agent' };
-    setAwaiting(game, { wait: { durationMs: 8000, interruptible: true } });
-    await wrapper.vm.$nextTick();
-
-    const btn = wrapper.find('.tinput-skip');
-    expect(btn.attributes('disabled')).toBeDefined();
-    await btn.trigger('click');
-    expect(conn.sendInput).not.toHaveBeenCalled();
-  });
-
-  it('零时长让路（durationMs=0）→ 既无倒计时也无跳过按钮（整个覆盖层不渲染）', async () => {
+  it('零时长让路（durationMs=0）→ 整个覆盖层不渲染', async () => {
     const { wrapper, game } = mountCountdown();
     setAwaiting(game, { wait: { durationMs: 0 } });
     await wrapper.vm.$nextTick();
 
     expect(wrapper.find('.tinput-countdown').exists()).toBe(false);
+    expect(wrapper.find('.tinput-skip').exists()).toBe(false);
+  });
+
+  it('🔒 逐帧抖动不再可能：定时等待帧与让路帧交替时，覆盖层不出现/消失', async () => {
+    const { wrapper, game } = mountCountdown();
+
+    // @BADAPPLE 的两种帧形态交替：wait{durationMs:28}（领先）与 wait{durationMs:0}（追赶）。
+    // 撤回前「跳过」按钮只在前一形态出现 ⇒ 以 ~30fps 反复挂载/卸载 ⇒ 顶部闪烁。
+    for (const awaiting of [
+      { wait: { durationMs: 28 } } as AwaitInfo,
+      { wait: { durationMs: 0 } } as AwaitInfo,
+      { wait: { durationMs: 28 } } as AwaitInfo,
+      { wait: { durationMs: 0 } } as AwaitInfo,
+    ]) {
+      setAwaiting(game, awaiting);
+      await wrapper.vm.$nextTick();
+      expect(wrapper.find('.tinput-skip').exists()).toBe(false);
+      expect(wrapper.find('.tinput-countdown').exists()).toBe(false);
+    }
   });
 });
 
 describe('TinputCountdown: 倒计时（TINPUT）', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('带上界的等待 + displayTime=true → 渲染进度条与剩余秒数，且无跳过按钮（TINPUT 不可打断）', async () => {
+  it('带上界的等待 + displayTime=true → 渲染进度条与剩余秒数，且无跳过按钮', async () => {
     const { wrapper, game } = mountCountdown();
     game.applyTurn(v12Frame({
       input: { type: 'IntValue' },

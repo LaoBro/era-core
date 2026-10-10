@@ -149,7 +149,7 @@ describe('InputBar: 两路之外不渲染（兼容兜底已随收缩删除）+ �
 
   it('🔒 定时等待（只有 wait）→ 不渲染「游戏运行中」加载行（该分支与 DisplayState.state 均已删除）', async () => {
     const { wrapper, game } = mountInputBar();
-    setAwaiting(game, { wait: { durationMs: 8000, interruptible: true } });
+    setAwaiting(game, { wait: { durationMs: 8000 } });
     await wrapper.vm.$nextTick();
 
     expect(wrapper.find('.state-running').exists()).toBe(false);

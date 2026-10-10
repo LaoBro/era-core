@@ -66,7 +66,7 @@ public sealed class ScriptYieldSuspendTests
         => req == null
             ? "<null>"
             : $"{{ InputType={req.InputType}, Timelimit={req.Timelimit}, " +
-              $"IsYield={req.IsYield}, Skippable={req.Skippable} }}";
+              $"IsYield={req.IsYield} }}";
 
     /// <summary>当前画面文本（拼接全部显示行）。</summary>
     private static string ScreenText(EmueraConsole console)

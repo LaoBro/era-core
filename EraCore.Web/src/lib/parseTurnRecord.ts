@@ -104,7 +104,9 @@ function parseAwaitInput(raw: unknown, path: string): NonNullable<AwaitInfo['inp
 /**
  * 解析 `awaiting.wait` ——「是否有一段有上界的等待」维度。`durationMs` 必填 int
  * （三态：缺省键 = 无限期 / `0` = 零时长让路 / `>0` = 定时等待）；
- * 其余四个键可选，语义是 C# `WhenWritingNull`（仅 true / 有值时出现）。
+ * 其余三个键可选，语义是 C# `WhenWritingNull`（仅 true / 有值时出现）。
+ *
+ * 🔴 issue 10：`interruptible` 已从契约撤回（定时等待一律不可打断），此处不再解析它。
  */
 function parseAwaitWait(raw: unknown, path: string): NonNullable<AwaitInfo['wait']> {
   if (typeof raw !== 'object' || raw === null) {
@@ -113,7 +115,6 @@ function parseAwaitWait(raw: unknown, path: string): NonNullable<AwaitInfo['wait
   const obj = raw as Record<string, unknown>;
   return {
     durationMs: readIntRequired(obj.durationMs, `${path}.durationMs`),
-    interruptible: readBoolOrNull(obj.interruptible, `${path}.interruptible`),
     displayTime: readBoolOrNull(obj.displayTime, `${path}.displayTime`),
     timeUpMessage: readStringOrNull(obj.timeUpMessage, `${path}.timeUpMessage`),
     timedOut: readBoolOrNull(obj.timedOut, `${path}.timedOut`),

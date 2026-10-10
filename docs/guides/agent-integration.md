@@ -70,8 +70,11 @@ agent
 - **`diff` 是帧内增量**——`lineOps` 按序应用（`shift_head` → `clear_line_diff` →
   `clear_screen` → `append`）；`diff` 为 null/省略表示画面完全未变。
 - **`text` / `buttons` 字段已不存在**（v4/v5 起被 `diff` 与 `generation` 取代）。
-- **定时等待 / 让路看 `awaiting.wait`**：`durationMs > 0` 是定时等待（`interruptible` 为真时
-  给"跳过"affordance），`durationMs == 0` 是"下一帧立刻到"。`input` 缺省即"不接受输入"。
+- **定时等待 / 让路看 `awaiting.wait`**：`durationMs > 0` 是定时等待（`displayTime` 为真时
+  显示倒计时），`durationMs == 0` 是"下一帧立刻到"。`input` 缺省即"不接受输入"。
+  🔴 **定时等待一律不可打断**——客户端在 `awaiting.input` 缺省期间投的任何输入都会被
+  服务端吞掉（不推进、不报错），等待只由服务端定时器结束（`interruptible` 键已撤回，
+  见 issue 10）。
 
 参考 [`tests/emuera_server.py`](../../tests/emuera_server.py)（server 模式测试 helper）
 与 [`tests/test_jsonl.py`](../../tests/test_jsonl.py)（示例）。

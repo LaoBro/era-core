@@ -170,16 +170,21 @@ public class ScriptAwaitFrameTests
     }
 
     /// <summary>
-    /// 用例 2（可打断性验收）：长 <c>AWAIT</c> 期间收到客户端输入应<b>立即结束等待</b>，
-    /// 而不是干等到时限。走的是与超时续跑相同的 <c>SubmitTimeout</c> 路径。
+    /// 用例 2（不可打断性验收，issue 10）：长 <c>AWAIT</c> 期间收到客户端输入应<b>一律吞掉</b>
+    /// —— 不推进、不报错，等待只由定时器正常到期结束。
     ///
-    /// <para>为什么要这条：改动前 <c>DispatchInput</c> 的 switch 里根本没有
-    /// <see cref="InputType.Void"/> 分支 → 落 default 抛 <c>ArgumentOutOfRangeException</c>
-    /// → server 侧被 <c>StepAsync</c> 的 catch-all 判成 fatal 杀掉会话。AWAIT 进入等待输入态后
-    /// 这条路径对每个动画都可达，故必须有用例钉住。</para>
+    /// <para>为什么反过来钉：<see cref="InputType.Void"/> 的参考实现语义是
+    /// 「入力不能、待つしかない」（<c>PressEnterKey</c> 对 Void 直接 return）。era-core 曾为
+    /// <c>AWAIT</c> 开过 <c>Skippable</c> 后门（issue-003），实测在 eraTW <c>@BADAPPLE</c>
+    /// 上表现为顶部「跳过」图标逐帧闪烁；spec §10.1 的判据是
+    /// 「参考实现不能打断的指令，era-core 也不得能打断」，故该后门撤回。</para>
+    ///
+    /// <para><b>防假绿</b>：断言不是「最终能拿到 SKIP_DONE」（脚本跑完照样有），而是
+    /// 「从投输入到 SKIP_DONE 的耗时 ≥ 1.5s」——撤回前输入会走 <c>SubmitTimeout</c>
+    /// 立即续跑，耗时近 0 ⇒ 必然红。</para>
     /// </summary>
     [Fact]
-    public async Task Long_await_is_interrupted_by_client_input()
+    public async Task Long_await_swallows_client_input()
     {
         var registry = CreateRegistry();
         try
@@ -207,10 +212,12 @@ public class ScriptAwaitFrameTests
             watch.Stop();
 
             Assert.Contains(turns, t => t.Contains("SKIP_DONE", StringComparison.Ordinal));
-            // AWAIT 自身 3 秒；被打断后应远小于此。
-            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1.5),
-                $"从投输入到拿到 SKIP_DONE 耗时 {watch.Elapsed.TotalSeconds:F2}s —— " +
-                "AWAIT 未被输入打断（未打断时应 ≥ 3s）。\n实际回合：\n" + Describe(turns));
+            // AWAIT 自身 3 秒，投放输入时已过去约 0.2s。输入若被吞掉，剩余 ≈2.8s 只能靠定时器走完。
+            Assert.True(watch.Elapsed >= TimeSpan.FromSeconds(1.5),
+                $"从投输入到拿到 SKIP_DONE 只用了 {watch.Elapsed.TotalSeconds:F2}s —— " +
+                "AWAIT 被客户端输入提前结束了（定时等待必须不可打断）。\n实际回合：\n" + Describe(turns));
+            // 吞掉 ≠ 报错：不得回任何 error 帧。
+            Assert.DoesNotContain(turns, t => t.Contains("\"error\"", StringComparison.Ordinal));
         }
         finally
         {

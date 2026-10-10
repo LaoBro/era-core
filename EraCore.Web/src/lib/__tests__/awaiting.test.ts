@@ -11,6 +11,10 @@ import { isValueInputType } from '../awaiting';
  *
  * 为什么要在 TS 侧重新钉一遍（而不是「C# 已测过」）：前端是**独立消费方**——
  * `AwaitInfo` 落到 JS 后字段可选性语义（`WhenWritingNull`）与键出现与否，都只由解析器保证。
+ *
+ * 🔴 issue 10 撤回：`wait.interruptible` 已从契约移除（spec §10.1：定时等待一律不可打断），
+ * `AWAIT t` 与 `TWAIT t,1` 在 wire 上**逐字同形**——本组 ③ / ④ 由「可否打断」的差别
+ * 改为「同形」的相互印证。
  */
 
 /** 造一个 v12 帧：`awaiting` 为必填（wire 上已没有第二套输入状态可供降级）。 */
@@ -40,37 +44,43 @@ describe('parseTurnRecord - v12 awaiting 形态', () => {
         displayTime: true,
         timeUpMessage: '時間切れ',
         timedOut: true,
-        interruptible: true,
       },
     }));
     expect(turn.awaiting.input).toEqual({ type: 'IntValue' });
     expect(turn.awaiting.wait).toEqual({
       durationMs: 3000,
-      interruptible: true,
       displayTime: true,
       timeUpMessage: '時間切れ',
       timedOut: true,
     });
   });
 
-  it('③ AWAIT 8000：纯定时等待 + interruptible=true（可打断 ⇒ 给「跳过」affordance）', () => {
-    const turn = parseTurnRecord(v12Frame({ wait: { durationMs: 8000, interruptible: true } }));
+  it('③ AWAIT 8000：纯定时等待 —— wait 归一为三键全 null，无任何「可打断」标记', () => {
+    const turn = parseTurnRecord(v12Frame({ wait: { durationMs: 8000 } }));
     expect(turn.awaiting.input).toBeUndefined();
-    expect(turn.awaiting.wait!.durationMs).toBe(8000);
-    expect(turn.awaiting.wait!.interruptible).toBe(true);
+    expect(turn.awaiting.wait).toEqual({
+      durationMs: 8000,
+      displayTime: null,
+      timeUpMessage: null,
+      timedOut: null,
+    });
   });
 
-  it('④ TWAIT 8000,1：不可打断 ⇒ interruptible 键**不出现**（不是字面量 false）', () => {
-    const turn = parseTurnRecord(v12Frame({ wait: { durationMs: 8000 } }));
-    expect(turn.awaiting.wait!.interruptible ?? null).toBeNull();
-    expect(turn.awaiting.wait!.interruptible).not.toBe(false);
+  it('④ 旧服务端多送的 interruptible 键被解析器丢弃（已不是契约字段）', () => {
+    const turn = parseTurnRecord(v12Frame({ wait: { durationMs: 8000, interruptible: true } }));
+    expect(turn.awaiting.wait).toEqual({
+      durationMs: 8000,
+      displayTime: null,
+      timeUpMessage: null,
+      timedOut: null,
+    });
+    expect(turn.awaiting.wait).not.toHaveProperty('interruptible');
   });
 
   it('⑤ 零时长让路（无参 AWAIT / AWAIT 0）：wait.durationMs=0，wire 上最简形态', () => {
     const turn = parseTurnRecord(v12Frame({ wait: { durationMs: 0 } }));
     expect(turn.awaiting.wait).toEqual({
       durationMs: 0,
-      interruptible: null,
       displayTime: null,
       timeUpMessage: null,
       timedOut: null,

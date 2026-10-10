@@ -167,7 +167,7 @@ describe('shouldAdvanceOnTerminalClick——点击终端是否推进', () => {
   });
 
   it('服务端不期待输入（定时等待 / 让路 / 终态 / 空闲）→ 不推进', () => {
-    for (const awaiting of [NO_AWAIT, ENDED, { wait: { durationMs: 8000, interruptible: true } } as AwaitInfo, { wait: { durationMs: 0 } } as AwaitInfo]) {
+    for (const awaiting of [NO_AWAIT, ENDED, { wait: { durationMs: 8000 } } as AwaitInfo, { wait: { durationMs: 0 } } as AwaitInfo]) {
       expect(shouldAdvanceOnTerminalClick({ ...base, awaiting })).toBe(false);
       expect(shouldAdvanceOnTerminalClick({ ...base, isButton: true, awaiting })).toBe(false);
     }

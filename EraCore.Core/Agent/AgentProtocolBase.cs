@@ -93,42 +93,26 @@ namespace MinorShift.Emuera.GameView
                     OnInputRejected("当前等待原始鼠标/键盘事件，请通过鼠标点击或键盘输入");
                     break;
                 case InputType.Void:
-                    // 定时等待（AWAIT / TWAIT t,1）。参考实现语义是「入力不能、待つしかない」
-                    // —— PressEnterKey 对 Void 直接 return，输入被吞掉。
+                    // 定时等待（AWAIT / TWAIT t,1 / 零时长让路点）：**一律吞掉**
+                    // —— 不推进、不报错、不发 error，等待只由定时器正常到期结束。
                     //
-                    // 但 Void 此前根本不在本 switch 里：落到 default 会抛
+                    // 判据（spec §10.1，写死）：参考实现不能打断的指令，era-core 也不得能打断。
+                    // 参考实现里 Void 的语义是「入力不能、待つしかない」（PressEnterKey 对 Void
+                    // 直接 return），且 AWAIT 压根是 Sleep 态、不建立 InputRequest。
+                    // era-core 为「无头架构下能交付帧」把 AWAIT 落成了 WaitInput(Void)，
+                    // 形态不同，但**可观测行为必须相同** ⇒ 输入一律吞掉。
+                    //
+                    // 🔴 issue 10 撤回：这里曾按 `req.Skippable` 走 SubmitTimeout 提前结束
+                    // AWAIT 的等待（e71d5e6 还补了 MesSkip 的 scoped 置位）。那条后门是
+                    // era-core 自创语义，实测在 eraTW @BADAPPLE 上表现为前端「跳过」图标
+                    // 逐帧闪烁，且违背上述判据 ⇒ 连同 wire 上的 wait.interruptible 一并撤回。
+                    //
+                    // ⚠️ 本分支必须保留：Void 此前不在本 switch 里，落到 default 会抛
                     // ArgumentOutOfRangeException —— server 侧被 StepAsync 的 catch-all
-                    // 判成 fatal 并杀掉会话，CLI 侧直接 fatal 退出。改动前只有 TWAIT t,1
-                    // 能踩到；issue-003 让 AWAIT 也进入该状态后，每个动画都是雷，故必补。
+                    // 判成 fatal 杀掉会话，CLI 侧直接 fatal 退出。吞掉 ≠ 抛异常。
                     //
-                    // Skippable（仅 AWAIT 置位）：走与超时续跑相同的 SubmitTimeout 路径
-                    // 提前结束等待 —— issue-003 验收项「长动画期间按任意键可中断」。
-                    // 未置位则吞掉输入，保持参考实现语义。
-                    if (req.Skippable && req.Timelimit > 0)
-                    {
-                        // 请求侧快进仍用 \e（spec v5 §4.2，对齐优先于 API 优雅）。
-                        // 置位后再走续跑：本次 RunEmueraProgram 期间 MESSKIP() 为真，
-                        // 脚本里的 `SIF MESSKIP() RETURN` 由此从死代码变为可执行。
-                        // ——这正是「打断」与「只迈一步」的分水岭：不置位则脚本读到 0，
-                        // 动画只会往后走一帧然后再次等待。
-                        //
-                        // scoped 语义（§4.3）：MesSkip 不是「只由输入侧拥有」的状态（脚本
-                        // SKIPLOG 也写它，ScriptProc.cs:787），故这里只收回「本文自己写的
-                        // 那一置位」，且必须自己归零 —— 本路径绕过了 ConsoleInputHandler 既有
-                        // 的两处清零点（PressEnterKey 对 Void 在 :106 早退，循环后归零到不了）。
-                        // 不归零会让后续 10 处 CanSkip 输入被静默填默认值。try/finally 覆盖
-                        // SubmitTimeout 的异常路径。
-                        //
-                        // ⚠️ 已知范围边界（§4.4 ⚠️）：本路径是 SubmitTimeout() → EndTimerCore()
-                        // 的单次 RunEmueraProgram("")，不进 PressEnterKey 的跨 WaitInput while
-                        // 快进链（ConsoleInputHandler.cs:134-142）。故只承诺**单个续跑区间内**
-                        // 跳过：脚本若在两次等待之间夹了 WAIT，不承诺跨过去（有意收窄，避免
-                        // MesSkip 长期为真污染上述 CanSkip 分支）。
-                        if (input.Contains("\\e", StringComparison.Ordinal))
-                            console.MesSkip = true;
-                        try { console.SubmitTimeout(); }
-                        finally { console.MesSkip = false; }
-                    }
+                    // ⚠️ 快进不走这里：Void 等待上**不能启动**跳过（参考实现 PressEnterKey
+                    // 的 Void 早退在 \e 检测之前）。请求侧快进由值输入等待发起，见 issue 11。
                     break;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(input), req.InputType, $"未处理的输入类型: {req.InputType}");

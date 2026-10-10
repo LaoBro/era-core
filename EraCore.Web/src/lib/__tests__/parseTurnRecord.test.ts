@@ -271,7 +271,6 @@ describe('parseTurnRecord - TINPUT 计时元数据（awaiting.wait）', () => {
     const turn = parseTurnRecord(json);
     expect(turn.awaiting.wait).toEqual({
       durationMs: 0,
-      interruptible: null,
       displayTime: null,
       timeUpMessage: null,
       timedOut: null,

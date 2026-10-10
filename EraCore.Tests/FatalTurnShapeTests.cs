@@ -81,7 +81,7 @@ public sealed class FatalTurnShapeTests
         var turn = new TurnRecord(
             diff: null,
             awaiting: AwaitInfo.Of(
-                new InputRequest { InputType = InputType.Void, Timelimit = 3000, Skippable = true },
+                new InputRequest { InputType = InputType.Void, Timelimit = 3000 },
                 ConsoleState.WaitInput,
                 timedOut: true));
 
@@ -91,7 +91,8 @@ public sealed class FatalTurnShapeTests
         var awaiting = doc.RootElement.GetProperty("awaiting");
         var wait = awaiting.GetProperty("wait");
         Assert.Equal(3000, wait.GetProperty("durationMs").GetInt64());
-        Assert.True(wait.GetProperty("interruptible").GetBoolean());
+        // issue 10：interruptible 已从契约撤回 —— 定时等待不再有任何「可打断」标记。
+        Assert.False(wait.TryGetProperty("interruptible", out _));
         Assert.True(wait.GetProperty("timedOut").GetBoolean());
         Assert.False(awaiting.TryGetProperty("input", out _), "Void 不期待输入 ⇒ input 不得出现");
     }

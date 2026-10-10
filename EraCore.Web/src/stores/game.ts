@@ -754,17 +754,11 @@ export const useGameStore = defineStore('game', () => {
       tinputDisplayTime.value === true,
   );
 
-  /**
-   * issue 07：是否应给出「跳过」affordance —— 可打断的定时等待。
-   *
-   * 依据 `awaiting.wait.interruptible`（§2：`Skippable` 自 v12 起上 wire）。`TWAIT t,1`
-   * 不可打断 ⇒ 该键不出现；零时长让路也没有该键——这里再显式要求 `durationMs > 0`，
-   * 使「零时长让路帧不给跳过提示」由两重条件共同保证（不依赖 C# 单侧的置位习惯）。
-   */
-  const canSkipWait = computed<boolean>(() => {
-    const wait = displayState.value.awaiting.wait ?? null;
-    return wait !== null && wait.durationMs > 0 && wait.interruptible === true;
-  });
+  // 🔴 issue 10 撤回：这里曾有一个 `canSkipWait`（可打断的定时等待 ⇒ 给「跳过」affordance），
+  // 依据 `awaiting.wait.interruptible`。该键连同服务端 `InputRequest.Skippable` 一起撤回——
+  // 定时等待一律不可打断（spec §10.1：参考实现不能打断的指令，era-core 也不得能打断），
+  // 目标是消除 eraTW `@BADAPPLE` 上「跳过」按钮逐帧闪烁。定夺权回到脚本
+  // （`SIF MESSKIP()` / `INPUT` 的 `CanSkip`），那是 issue 11，与这里无关。
 
   /**
    * 接收一个 WS 帧（裸 JSON 字符串）并更新内部状态。
@@ -1700,8 +1694,6 @@ export const useGameStore = defineStore('game', () => {
     tinputTimeUpMessage,
     tinputRemainingMs,
     showTinputCountdown,
-    // issue 07：可打断的定时等待 → 「跳过」affordance
-    canSkipWait,
     // 显示变更信号：暴露给 TerminalDisplay watch
     lastDisplaySignal,
     // game-library spec ID10：Android 物理返回键退出确认

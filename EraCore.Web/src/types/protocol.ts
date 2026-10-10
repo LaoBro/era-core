@@ -168,14 +168,16 @@ export interface AwaitInput {
  * - `durationMs === 0` ⇒ **零时长让路点**（无参 `AWAIT` / `AWAIT 0`）：语义是「下一帧立刻到」
  * - `durationMs > 0` ⇒ **定时等待**：带倒计时元数据
  *
- * 四个可选键都是 C# `WhenWritingNull` 语义：**仅 true / 有值时出现**，缺省即 false/无。
- * ⚠️ 「不可打断」= `interruptible` **键不出现**，不是字面量 false——前端据此判断有无
- * 「跳过」affordance（C# 侧 bool→bool? 的隐式提升会把 false 写出来，是已知陷阱）。
+ * 三个可选键都是 C# `WhenWritingNull` 语义：**仅 true / 有值时出现**，缺省即 false/无。
+ *
+ * 🔴 issue 10 撤回：这里曾有过第四个键 `interruptible`（`AWAIT` 置位、`TWAIT t,1` 不置位），
+ * 前端据此渲染「跳过」按钮。它是 era-core 自创语义——参考实现里 `AWAIT` 是 Sleep 态、
+ * 不建立等待，输入无从打断（spec §10.1 判据：参考实现不能打断的指令，era-core 也不得能打断）。
+ * 实测在 eraTW `@BADAPPLE` 上表现为该按钮逐帧闪烁 ⇒ 字段与 UI 一并撤回。
+ * 现在**定时等待一律不可打断**：`AWAIT t` 与 `TWAIT t,1` 在 wire 上逐字同形。
  */
 export interface AwaitWait {
   durationMs: number;
-  /** 可否被客户端输入打断（仅 true 时出现；`AWAIT` 置位、`TWAIT t,1` 不置位）。 */
-  interruptible?: boolean | null;
   /** 是否显示倒计时（仅 true 时出现；ERB 可用 `TINPUT t,d,0` 要求不显示）。 */
   displayTime?: boolean | null;
   /** 超时文案（仅 `durationMs > 0` 时可能携带）。 */

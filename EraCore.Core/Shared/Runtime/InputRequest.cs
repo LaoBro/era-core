@@ -59,16 +59,15 @@ internal sealed class InputRequest
 	public bool DisplayTime;
 	public string TimeUpMes = null!;
 
-	/// <summary>
-	/// issue-003：定时等待（<see cref="InputType.Void"/>）可否被客户端输入打断。
-	///
-	/// 参考实现里 Void 的语义是「入力不能、待つしかない」——<c>PressEnterKey</c> 对 Void
-	/// 直接 return，输入被吞掉。本移植保留该语义作为<b>默认</b>（<c>TWAIT t,1</c>），
-	/// 仅 <c>AWAIT</c> 置位：issue-003 的验收要求长动画期间按任意键可中断。
-	///
-	/// 未置位时输入仍会被安全吞掉（不会走到 <c>DispatchInput</c> 的 default 分支抛异常）。
-	/// </summary>
-	public bool Skippable;
+	// 🔴 issue 10 撤回：这里曾有过一个 `Skippable` 字段（AWAIT 置位、TWAIT t,1 不置位），
+	// 并把 AWAIT 的定时等待变成了「可被客户端输入打断」。
+	//
+	// 它是 era-core 自创语义：D:/LaoBro/emuera.em 全仓 grep `Skippable` = 0 命中。
+	// 参考实现里 AWAIT 是 Sleep 态 —— 泵一次窗口事件后立即回 Running，压根不建立
+	// InputRequest、不进 WaitInput，输入无从打断。Void 的语义只有一条：「入力不能、待つしかない」。
+	//
+	// 撤回判据（spec §10.1，写死）：参考实现不能打断的指令，era-core 也不得能打断。
+	// 定夺权在脚本（SIF MESSKIP() RETURN / INPUT 的 CanSkip），不在引擎。
 
 	/// <summary>
 	/// 让路点：非真实等待。<c>InputType=Void</c> + <see cref="Timelimit"/><c>=0</c> +

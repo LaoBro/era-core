@@ -40,8 +40,8 @@ watch(
  * - `awaiting.input` 非空（服务端在等输入）：⌨ 手动唤出恒显示；自动时当前回合无按钮即显示
  *   （文本/数字类型 → 输入行；AnyKey/EnterKey → 「按任意键/回车继续」提示行，spec §6.3）
  * - `awaiting.ended`（终态 Quit / Error）：终端底部显示非模态状态行（spec §6.4），不常驻大条幅
- * - 其余（定时等待 / 让路 / 空闲）：不显示——定时等待与让路由倒计时行 / 跳过提示表达，
- *   连接状态由应用栏/顶部提示条表达
+ * - 其余（定时等待 / 让路 / 空闲）：不显示——定时等待由倒计时行表达（issue 10 后
+ *   「跳过」提示已撤回），连接状态由应用栏/顶部提示条表达
  */
 const showInputBar = computed<boolean>(() => {
   if (game.awaiting.input) {

@@ -66,10 +66,12 @@ internal sealed record AwaitInfo
             wait = req is { Timelimit: >= 0 } w
                 ? new AwaitWait(w.Timelimit)
                 {
-                    // interruptible / displayTime / timedOut 仅在 true 时序列化（WhenWritingNull ⇒ 缺省即 false）。
-                    // ⚠️ `interruptible = w.Skippable` 是错的：bool→bool? 的隐式提升会写出字面量 false，
-                    // 而契约要求「不可打断 ⇒ 该键**不出现**」（前端据此判断有无「跳过」affordance）。
-                    interruptible = w.Skippable ? true : null,
+                    // 🔴 issue 10 撤回：这里曾有一个 `interruptible = w.Skippable ? true : null`。
+                    // 它把「引擎替玩家结束定时等待」这套 era-core 自创语义搬上了 wire，前端据此
+                    // 渲染「跳过」按钮 —— 实测在 eraTW @BADAPPLE 上逐帧闪烁。参考实现无此语义
+                    // （spec §10.1）⇒ 字段与 wire 投影一并撤回，wire 上不再有任何「可打断」标记。
+                    //
+                    // displayTime / timedOut 仅在 true 时序列化（WhenWritingNull ⇒ 缺省即 false）。
                     displayTime = w.Timelimit > 0 && w.DisplayTime ? true : null,
                     // ⚠️ 空串与非空一样要「有值才出现」：WhenWritingNull 只抑制 null，
                     // 不归一的话 TINPUT 未设 TimeUpMes（默认 null! 但 ERB 常置 ""）时会写出
@@ -98,9 +100,6 @@ internal sealed record AwaitInput(string type);
 /// </summary>
 internal sealed record AwaitWait(long durationMs)
 {
-    /// <summary>可否被客户端输入打断（仅 true 时出现；<c>AWAIT</c> 置位、<c>TWAIT t,1</c> 不置位）。</summary>
-    public bool? interruptible { get; init; }
-
     /// <summary>是否显示倒计时（仅 true 时出现；ERB 可用 <c>TINPUT t,d,0</c> 要求不显示）。</summary>
     public bool? displayTime { get; init; }
 

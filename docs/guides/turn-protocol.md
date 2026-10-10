@@ -69,7 +69,7 @@
 | 键 | 性质 | 出现条件 | 载荷 |
 |---|---|---|---|
 | `input` | 正交维度 | 非终态，且**期待客户端发输入**（`inputType != Void`） | `type`（`InputType` 字符串，见 §3） |
-| `wait` | 正交维度 | 非终态，且这段等待**有上界**（`Timelimit >= 0`） | `durationMs`，可选 `interruptible` / `displayTime` / `timeUpMessage` / `timedOut` |
+| `wait` | 正交维度 | 非终态，且这段等待**有上界**（`Timelimit >= 0`） | `durationMs`，可选 `displayTime` / `timeUpMessage` / `timedOut` |
 | `ended` | **互斥键** | 终态（`Quit` / `Error`） | `terminal`（状态名）；出现时前两者**必不出现** |
 
 🔒 两条硬规则：
@@ -84,10 +84,15 @@
 |---|---|---|
 | `wait` 缺省（`Timelimit < 0`，即 `InputRequest.Timelimit` 的默认值 -1） | **无限期**：没有定时器 | 无倒计时、无超时文案，`timedOut` 不出现 |
 | `wait.durationMs == 0` | **零时长让路点**（无参 `AWAIT` / `AWAIT 0`） | 无 UI 表现；语义是"**下一帧立刻到**" |
-| `wait.durationMs > 0` | **定时等待** | 倒计时；`interruptible` 为真时给"跳过"affordance |
+| `wait.durationMs > 0` | **定时等待** | 倒计时（`displayTime` 为真时显示）；**不可打断**（见 §3 的 `Void`） |
 
-`interruptible` / `displayTime` / `timedOut` **仅在 `true` 时出现**（省略即 false），故零时长
+`displayTime` / `timedOut` **仅在 `true` 时出现**（省略即 false），故零时长
 让路点在 wire 上就是最简形态 `{"wait":{"durationMs":0}}`——比定时等待只少一个数字。
+
+> 🔴 issue 10 撤回：这里曾有过第四个可选键 `interruptible`（`AWAIT` 置位、`TWAIT t,1` 不置位），
+> 前端据此渲染"跳过"按钮。它是 era-core 自创语义（参考实现全仓无 `Skippable`），实测在 eraTW
+> `@BADAPPLE` 上表现为该按钮逐帧闪烁 ⇒ 字段与 UI 一并撤回。**定时等待一律不可打断**，
+> `AWAIT t` 与 `TWAIT t,1` 在 wire 上逐字同形，客户端不再有任何"可打断"标记可看。
 
 常见形态：
 
@@ -95,8 +100,7 @@
 {"awaiting":{"input":{"type":"EnterKey"}}}                                  // WAIT：纯输入等待（无 wait）
 {"awaiting":{"input":{"type":"IntValue"},
              "wait":{"durationMs":3000,"displayTime":true}}}                // TINPUT：两维同现 + 倒计时
-{"awaiting":{"wait":{"durationMs":8000,"interruptible":true}}}              // AWAIT 8000：可打断的定时等待
-{"awaiting":{"wait":{"durationMs":8000}}}                                   // TWAIT 8000,1：不可打断（该键不出现）
+{"awaiting":{"wait":{"durationMs":8000}}}                                   // AWAIT 8000 与 TWAIT 8000,1：同形，均不可打断
 {"awaiting":{"wait":{"durationMs":0}}}                                      // 无参 AWAIT：零时长让路点
 {"awaiting":{"ended":{"terminal":"Quit"}}}                                  // 终态：与 input / wait 互斥
 ```
@@ -176,17 +180,23 @@
 | `PrimitiveMouseKey` | 等待原始鼠标/键盘事件 | 走事件通道，非文本输入 |
 | `Void` | **不接受输入，只能等** | **否** |
 
-**`Void` 是本协议里最容易被误读的取值**，务必注意——它同时承担两种语义：
+**`Void` 是本协议里最容易被误读的取值**，务必注意——它的语义只有一条：**不接受输入，只能等**
+（参考实现的原话是「入力不能、待つしかない」，`PressEnterKey` 对 `Void` 直接 return）。
 
-| 场景 | `Timelimit` | `Skippable` | 客户端能否用输入打断 |
-|---|---|---|---|
-| `TWAIT t,1` —— 参考实现的定时等待 | > 0 | false | **否**（输入被吞掉，保持原语义） |
-| `AWAIT t` —— 回合内动画/渐变等待 | > 0 | true | **是**（任意输入提前结束等待） |
+| 场景 | `Timelimit` | 客户端能否用输入打断 |
+|---|---|---|
+| `TWAIT t,1` —— 参考实现的定时等待 | > 0 | **否**（输入被吞掉，保持原语义） |
+| `AWAIT t` —— 回合内动画/渐变等待 | > 0 | **否**（同上；参考实现里 `AWAIT` 是 Sleep 态，压根不建立 `InputRequest`） |
+| 无参 `AWAIT` / `AWAIT 0` —— 零时长让路点 | 0 | **否**（宿主立即续跑，不是"在等"） |
 
-`Skippable` 自 v12 起**已上 wire**——就是 `awaiting.wait.interruptible`（见 §2）。
-客户端**不需要**再反向推断：`interruptible` 为真即可启用"跳过"affordance，
-缺省（不可打断）时不启用。那个旧顶层字段 `state`/`inputType`/`timeLimit` 的组合推断方式
-已随七个顶层字段在 v12 删除。
+输入一律被**吞掉**：不推进、不报错、不发 `error`，等待只由服务端定时器正常到期结束。
+
+> 判据（spec §10.1，写死）：**参考实现不能打断的指令，era-core 也不得能打断。**
+> 定夺权在脚本（`SIF MESSKIP() RETURN` / `INPUT` 的 `CanSkip` 参数），不在引擎。
+>
+> 这里曾短暂把服务端内部字段 `InputRequest.Skippable` 上 wire 为 `awaiting.wait.interruptible`，
+> **已撤回**（issue 10）——它是 era-core 自创语义，参考实现全仓 grep `Skippable` = 0 命中。
+> 那条旧顶层字段 `state`/`inputType`/`timeLimit` 的组合推断方式也已随七个顶层字段在 v12 删除。
 
 ---
 
@@ -310,7 +320,7 @@ Emuera 的显示模型是**追加式**的，故只需四类操作覆盖全部情
 | v9 | `SegmentImage.crop`——图集 sprite 裁切 |
 | v10 | `PrintSegment.underline` |
 | v11 | `PrintSegment.strikeout`——按 ERB `FONTSTYLE` 位契约对称补齐（位4=删除线、位8=下划线） |
-| v12 | `awaiting` 容器（`input` / `wait` 两个正交维度 + `ended` 互斥终态）成为**唯一契约字段**，"用 `state`+`inputType`+`timeLimit` 反向推断"退场；七个旧顶层字段（`state`/`inputType`/`needValue`/`timeLimit`/`displayTime`/`timeUpMessage`/`timedOut`）**全部删除**；`wait.interruptible` 让 `Skippable` 首次上 wire |
+| v12 | `awaiting` 容器（`input` / `wait` 两个正交维度 + `ended` 互斥终态）成为**唯一契约字段**，"用 `state`+`inputType`+`timeLimit` 反向推断"退场；七个旧顶层字段（`state`/`inputType`/`needValue`/`timeLimit`/`displayTime`/`timeUpMessage`/`timedOut`）**全部删除**；`wait.interruptible` 曾让 `Skippable` 首次上 wire，**试设后撤回**（issue 10） |
 
 > v2/v3 属重构期过渡态，未在生产协议中留存。
 
@@ -407,7 +417,7 @@ agent 一次定位崩溃，而不必在长堆栈里手工挖类型与信息。
 产帧 ⟺ diff 非空
      ∨ awaiting 的【形状】与上一已产出帧不同（哪个键出现：input / wait / ended）
      ∨ input 的【性质】（type）与上一帧不同
-     ∨ wait 的【性质】（durationMs + interruptible + displayTime + timeUpMessage）与上一帧不同
+     ∨ wait 的【性质】（durationMs + displayTime + timeUpMessage）与上一帧不同
 ```
 
 - 🔒 **比较「性质」不得比较「实例」**——每次等待都是新实例，比较实例会让抑制形同虚设。

@@ -460,8 +460,8 @@ internal sealed class ConsoleStateManager
         {
             // 无参 AWAIT / AWAIT 0：零时长让路点。Timelimit=0 让 InputTimeoutMs 返回 null
             // （ConsoleInputHandler.WaitInput 只在 Timelimit>0 时 PresetTimer）⇒ 不装定时器、
-            // 不发 tick、不会被 SubmitTimeout 提前续跑。Skippable 保持 false：让路期间客户端
-            // 输入与定时等待同待遇（吞掉、不报错、不推进，spec §2.4）。
+            // 不发 tick、不会被 SubmitTimeout 提前续跑。让路期间客户端输入与定时等待
+            // 同待遇：吞掉、不报错、不推进（spec §10.1）。
             _console.WaitInput(new InputRequest
             {
                 InputType = InputType.Void,
@@ -474,10 +474,10 @@ internal sealed class ConsoleStateManager
         {
             InputType = InputType.Void,
             Timelimit = time,
-            // issue-003：与 TWAIT t,1 的唯一差别 —— AWAIT 建立的等待允许被输入打断
-            // （验收项「长动画期间按任意键可中断」）。TWAIT t,1 保持参考实现语义
-            // 「Void = 入力不能、待つしかない」（PressEnterKey 对 Void 直接 return）。
-            Skippable = true,
+            // 🔴 不置任何「可打断」标记：参考实现下 AWAIT 是 Sleep 态，不建立等待、
+            // 输入无从打断（spec §10.1）。era-core 为「无头架构下能交付帧」把它落成
+            // WaitInput(Void)，形态可以不同，但**可观测行为不得不同** ⇒ 输入一律吞掉，
+            // 等待只由定时器正常到期结束。与 TWAIT t,1 逐字同待遇（issue 10）。
         });
     }
 

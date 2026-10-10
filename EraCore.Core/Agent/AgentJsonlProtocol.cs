@@ -91,7 +91,7 @@ namespace MinorShift.Emuera.GameView
         /// 仅在游戏循环线程（BuildTurn）访问，无并发。
         ///
         /// <para>v5-r2（spec §2.3）：指纹 = <b>形状</b>（哪个键出现：input / wait / ended）+
-        /// <b>两个维度各自的性质</b>（input.type / wait 的 durationMs + interruptible +
+        /// <b>两个维度各自的性质</b>（input.type / wait 的 durationMs +
         /// displayTime + timeUpMessage）。v11 那份「state + inputType + needValue」与它语义等价
         /// 但更粗 —— 旧形态里 <c>input{type:A,timeLimit:3000}</c> vs <c>5000</c> 靠载荷里的
         /// <c>timeLimit</c> 比较，新形态里直接是 <c>wait.durationMs</c>。</para>
@@ -440,14 +440,17 @@ namespace MinorShift.Emuera.GameView
         }
 
         /// <summary>
-        /// 抑制指纹的「wait 的性质」部分（spec §2.3）：durationMs + interruptible + displayTime + timeUpMessage。
+        /// 抑制指纹的「wait 的性质」部分（spec §2.3）：durationMs + displayTime + timeUpMessage。
         /// 刻意<b>不</b>含 <c>timedOut</c>（一次性旗标，不是等待本身的性质；含它会让 B3 永远不可抑制）。
         /// <c>wait</c> 缺省 = 无限期，返回 null（此时没有任何「wait 的性质」参与比较）。
+        ///
+        /// <para>issue 10 后指纹里不再有 <c>interruptible</c> —— 该键已从契约撤回，
+        /// 「AWAIT 与 TWAIT t,1 同形」也因此反映在抑制判据上（两者不再因它产生假差异）。</para>
         /// </summary>
         private static string? DescribeWaitProps(AwaitWait? wait)
             => wait == null
                 ? null
-                : $"{wait.durationMs}|{wait.interruptible}|{wait.displayTime}|{wait.timeUpMessage}";
+                : $"{wait.durationMs}|{wait.displayTime}|{wait.timeUpMessage}";
 
         /// <summary>
         /// issue-004：diff 是否为空 —— 无行级操作、无背景色变更、无背景图变更。
