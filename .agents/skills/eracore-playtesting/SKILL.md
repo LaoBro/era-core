@@ -48,6 +48,20 @@ python -m eracore_agent acquire
 
 完成标准：`acquire` 的 stdout 含 `controller.kind == "agent"`，以及 `state` / `turn` / `turnsAdvanced`。先读确认再 `step`。
 
+### 1.1 方言 profile（`--profile`）——加载真实游戏时**必须**
+
+`--profile` 只对**本次新拉起**的 server 生效，取值 `v24pure`（默认）/ `snake` / `eratw`。
+
+```bash
+python -m eracore_agent start --game-dir "d:/era/eratw-sub-modding-develop" --profile eratw
+```
+
+- **eraTW 画蛇添足版必须 `--profile eratw`**。不带则 ERB 加载到一半就终止，`start` 返回
+  `awaiting.ended.terminal == "Error"` —— 排查见 §11。
+- **复用已有 server 时 profile 改不了**：CLI 有守卫，请求的 profile 与在跑 server 的记录
+  不一致会直接报错退出 ⇒ 换 profile 必须先 `stop` 再 `start`（不能指望 `start` 覆盖）。
+- `test_game` 不需要 profile（默认 `v24pure` 即可）。
+
 ## 2. 读取当前画面
 
 **始终先看画面再动手**。两种读法：
@@ -59,11 +73,25 @@ python -m eracore_agent view --tail 80       # 绝对行数逃生口：只返回
 ```
 
 - `view` 输出：`{state, inputType, needValue, generation, lines:[string], buttons:[{id,label}], pageRows, totalLines, truncated}`。
+  ⚠️ **v12 后 `state` / `inputType` / `needValue` 已不是游戏状态**（见 §2.1）——判定「游戏在等什么」
+  一律读 `awaiting`；`inputType` / `needValue` 恒 `null`，顶层 `state` 是**控制权**状态。
 - **截断以页为单位**：`pageRows` = 一屏行数，服务端按游戏 emuera.config 的窗口高度/行高换算（`/state` 的 `visibleRows`；旧 server 无此字段时兜底 40）。`totalLines` = console 全缓冲行数，`truncated` = 本次是否截断——据此判断"看到 N/总 M 行"。确认状态一般 2~3 页足够。
 - **按钮已过滤**：只保留当前有效代（同 `generation` 的按钮），翻页留在历史里的旧按钮不会混入。直接凭 `buttons[].label` 定位可交互项、用 `buttons[].id` 作为 `step --value` 的输入。
 - `--tail N` 只截断文本行；按钮已按代过滤，不受行数影响。
 - **防偷窥 / 排他**：`view` 会先 `acquire`（需成为 Controller 才能读），读后**保持持有**、不自动 release——直到任务完成主动 `release`，或 user 强行夺回（报 `CONTROL_LOST`）。若控制权被 user 持有则报 `CONTROL_HELD_BY_USER` 拒绝读取。
 - 需要全量渲染细节时另调 `GET /snapshot`（返回 `lines[].entries[].segments[]` / `button{col,width}` 等完整结构）——大多数 agent 回合用 `view` 就够。
+
+### 2.1 ⚠️ `state` 同名不同义（v12 收缩后的第一大坑）
+
+| 出处 | `state` 是 | 取值 |
+|---|---|---|
+| `view` / `acquire` / `step` 的紧凑视图 | **控制权状态** | `held` / … |
+| `status` | **游戏状态** | `WaitInput` / `Quit` / `Error` / … |
+| `start` 的返回 | 没有该字段 | 只有 `awaiting` / `protocolVersion` / `generation` |
+
+**游戏状态在 v12 后只由 `awaiting` 表达**：`{"input":{"type":...}}` = 等输入、
+`{"wait":{"durationMs":N}}` = 定时等待/让路、`{"ended":{"terminal":"Quit"|"Error"}}` = 终态。
+旧文档里"看 `state` 决定下一步"的说法已失效——照它做会把 `held` 当成游戏状态。
 
 ## 3. 回合循环
 
@@ -73,13 +101,14 @@ python -m eracore_agent step --value 123
 python -m eracore_agent step --value "0" --full # --full 输出完整 diff（默认即低噪紧凑视图）
 ```
 
-每步之后看 `state`：
+每步之后看**游戏状态 = `awaiting`**（不是顶层 `state`，见 §2.1）：
 
-| `state` | 下一步 |
-|---|---|
-| `WaitInput` | 按 `inputType` / `needValue` / 按钮值再 `step` |
-| `Quit` / `Error` | 走第 6 步收尾 |
-| 其它 | `status` 确认后再决定 |
+| `awaiting` | 含义 | 下一步 |
+|---|---|---|
+| `{"input":{"type":...}}` | 在等输入 | 按 `input.type` / 按钮 `id` 再 `step` |
+| `{"ended":{"terminal":"Quit"\|"Error"}}` | 终态 | 走第 6 步收尾 |
+| 只有 `wait`（无 `input`） | 定时等待 / 让路 | **不要 `step`**——输入会被吞掉，等它自己结束（见 §6.1） |
+| 其它 | 中间态 | `status` 确认后再决定 |
 
 完成标准：每一次 `step` 都对应自己刚提交的输入；不要在未读确认时连打。`acquire`/`step`/`advance` **默认输出低噪紧凑视图**（`lines`+`buttons`+`pageRows`/`totalLines`/`truncated` 元数据，最近 3 页），如需原始 diff 结构用 `--full`；`--pages N` 调页数、`--tail N` 用绝对行数（优先于 --pages）。
 
@@ -123,13 +152,27 @@ curl -sS "http://127.0.0.1:8080/control/wait"
 
 ## 6. 游戏结束
 
-`state` 为 `Quit` / `Error`，或收到 `game_ended`：会话会清掉 Controller，不必再 `release`。若 `.eracore-server.json` 里 `startedByAgent` 为真（这次 server 是你拉起的），立刻：
+`awaiting.ended.terminal` 为 `Quit` / `Error`（不是顶层 `state`，见 §2.1），或收到 `game_ended`：会话会清掉 Controller，不必再 `release`。若 `.eracore-server.json` 里 `startedByAgent` 为真（这次 server 是你拉起的），立刻：
 
 ```bash
 python -m eracore_agent stop
 ```
 
 完成标准：自己拉起的 server 已停，`.eracore-server.json` 已删除。MAUI 托管会话（`mauiHosted:true`）时 `stop` 只清本地记录，不杀用户会话。
+
+### 6.1 长动画脱身——没有"跳过"，只能等或拆会话
+
+定时等待（`awaiting` 只有 `wait`、没有 `input`）期间的客户端输入**一律被吞掉**：不推进、
+不报错。这是刻意为之（参考实现也不能打断）。
+
+叠加另两条事实，某些动画**没有干净退路**：
+
+- 脚本轮询式打断（`GETTEXTBOX()` / `GETKEYTRIGGERED()`）在 headless 下恒为空/0 ⇒ 脚本里的
+  退出分支永不命中；
+- 引擎侧快进（`\e` / `MESSKIP()`）只在**值输入等待**上能启动，定时等待上启动不了。
+
+⇒ eraTW 的 `@BADAPPLE` 是 6573 帧 / 约 3 分 37 秒，**中途无法打断**。要在动画期间脱身，
+只有 `stop`（拆会话）——别指望 `step` 能把它停下来，也不要以为卡住了。
 
 ## 7. 任务完成或把游戏交给用户
 
@@ -156,6 +199,77 @@ python -m eracore_agent start --game-dir <目录> --display-report auto # 跟随
 - `on` 时 `time.log` 写在**游戏目录**（`File:Preload:End` / `Proc:Init:ERB:End` 等各阶段累计毫秒数）；测完记得 `stop` 并删掉 time.log，别留在用户的游戏目录里。
 - 手动直起 server 也可（`EraCore.Cli.exe --server --port <p> --ExeDir <目录> --loading-report`，与 `--no-loading-report` 互斥），但会绕开 `.eracore-server.json`（无 token / 无 stop 清理），能用 start 就用 start。注意 Release 产物在 `bin-aot/Release/`（不是 `bin/Release/`）。
 - **MAUI 托管会话**（`mauiHosted:true`）：跟随 app 设置「启动日志覆盖」三态——跟随游戏 / 强制关（默认）/ 强制开。测量前先与用户确认 app 内设置。
+
+## 9. 录制原始帧（`record`）——定位渲染 / 协议问题
+
+`view` / `watch` 只给**某一瞬间**的画面，看不出**每帧搬运了几行**。连续帧的 `diff.lineOps`
+才是「画面只有一部分在更新」「行数恒定帧流」「帧间隔是否积压」这类问题的判据。
+
+```bash
+python -m eracore_agent record --seconds 2                      # 收 2 秒
+python -m eracore_agent record --seconds 3 --post-input 2 --out frames.jsonl
+```
+
+| 参数 | 说明 |
+|---|---|
+| `--seconds FLOAT` | 录制时长（默认 2.0） |
+| `--out PATH` | 原始帧落盘（JSONL，每行一帧）；缺省不落盘 |
+| `--post-input VALUE` | **连上 WS 后**再提交该输入再录制 —— 抓动画的**第 1 帧**（需控制权，会自动 `acquire`） |
+
+读法（stdout 的 `summary` + `rows`；人读表格走 stderr，stdout 仍只有 JSON）：
+
+| 字段 | 判据 |
+|---|---|
+| `net` | `append` 行数 − `clear_line_diff` 行数。**恒为 0** ⇒ 行数不变帧流（前端按行数变化触发的滚动/吸底全程不会触发） |
+| `lines` | 以录制起点 `GET /snapshot` 行数为基线、逐帧应用 lineOps 后的总行数 |
+| `gap` | 相邻帧到达间隔；与脚本里的 `AWAIT t` 对比即可判断服务端是否积压 |
+| `netConstant` / `linesConstant` | 上面两条的聚合布尔，先看这两个 |
+
+🔴 **必须先连 WS 再 `--post-input`**（CLI 已保证此顺序）：反序会漏掉第 1 帧，而那帧往往
+是唯一能看出「本帧到底打印了多少显示行」的一帧。
+🔴 `lines` 只在**没漏帧**时有意义；漏帧会让基线一直偏小。
+
+实测样例（eraTW `@BADAPPLE`）：
+
+```
+  0     18.7  {'append': 156}                              156    292
+  1     49.1  {'clear_line_diff': 11, 'append': 11}          0    292  (+30.5)
+  2     92.0  {'clear_line_diff': 11, 'append': 11}          0    292  (+42.9)
+```
+
+帧 0 一次性 `append 156`（100 空行 + 45 行字符画 + 10 行 UI），之后每帧只搬运 11 行、
+净增 0 —— 而字符画有 45 行 ⇒ 每帧只更新最后 1 行，前 44 行从第一帧起再没被写过。
+需要 `pip install websockets`。
+
+## 10. 全局设置（`settings`，ADR-0030）
+
+```bash
+python -m eracore_agent settings list [--adb]
+python -m eracore_agent settings get <key>
+python -m eracore_agent settings set <key> <value>       # perf / 诊断旋钮下次 load-game 生效
+python -m eracore_agent settings reset                   # 清 headless 内存 store，回出厂 auto
+```
+
+13 个键，`list` 看全量。`--adb` 走 Android MAUI 控制 server（同 §0.5）。
+
+## 11. 加载失败排查（`start` 后 `awaiting.ended.terminal == "Error"`）
+
+先看三处，**按这个顺序**——日志里往往什么都没有：
+
+1. **`status`**：`state` / `isRunning` / `threadAlive` / `lastError`。
+   ⚠️ `lastError` **经常是 `null`**，别据此判断"没出错"。
+2. **profile 对不对**（§1.1）——eraTW 没带 `--profile eratw` 就是这个症状，且极难从日志看出：
+   `agent.log` 只会停在 `LoadPendingParallel: merged=3840/3936` 之类的进度行上，**没有任何错误行**。
+3. **游戏目录**：`status` 的 `game.gameDir` 是否真是你要加载的那个。
+
+都没收获再翻 `logs`（§8）与 `time.log`（需 `--display-report on`，写在**游戏目录**里）。
+
+### 编码
+
+Windows PowerShell 下 `view` / `acquire` / `step` 的**中文输出是 GBK 乱码**（CLI 输出 UTF-8，
+控制台按 GBK 解码）。要读准中文文本行，别在 PowerShell 里硬看——直接取
+`GET /snapshot`（自己写几行 python `urllib` 拉 JSON），或先把控制台切到 UTF-8
+（`chcp 65001`）。
 
 ## 约束
 

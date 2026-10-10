@@ -596,6 +596,42 @@ def cmd_watch(_args) -> int:
     return watch_session(client)
 
 
+def cmd_record(args) -> int:
+    """record 子命令——录制 WS 原始帧并逐帧摘要 diff 形态（渲染/协议类问题的定位入口）。
+
+    `view` / `watch` 只给某一瞬间的画面，看不出**每帧搬运了几行**；本命令连 WS `/ws`
+    收连续帧，把 `diff.lineOps` 压成 `{append:K, clear_line_diff:K}`，并给出净增量、
+    逐帧总行数、帧间隔。落盘（--out）为原始帧 JSONL，可离线复核。
+
+    --post-input 先提交输入再收帧（需先 acquire，POST /input 要求 Controller），
+    用于抓被触发动画的**第 1 帧**——那帧的行数往往与后续帧不同，漏了就看不到全貌。
+    """
+    from .record import RecordError, format_rows, run_record
+
+    client, _record = _require_server()
+    if args.post_input is not None:
+        try:
+            client.acquire_control()
+        except EmueraHttpError as exc:
+            _fail_http(exc)
+    try:
+        result = run_record(client, args.seconds, args.out, args.post_input)
+    except RecordError as exc:
+        _die(str(exc))
+
+    # 人读表格走 stderr——stdout 只保留 JSON（CLI 全局契约）。
+    for row in format_rows(result["rows"]):
+        print(row, file=sys.stderr)
+    _emit({
+        "frameCount": result["frameCount"],
+        "seconds": result["seconds"],
+        "out": result["out"],
+        "summary": result["summary"],
+        "rows": result["rows"],
+    })
+    return 0
+
+
 def cmd_settings(args) -> int:
     """settings 子命令（ADR-0030）——list / get <key> / set <key> <value> / reset，走 /settings 端点。
 
@@ -700,6 +736,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     watch = sub.add_parser("watch", help="只读旁观终端输出")
     watch.set_defaults(func=cmd_watch)
+
+    record = sub.add_parser("record", help="录制 WS 原始帧并逐帧摘要 diff 形态（定位「每帧搬运几行」）")
+    record.add_argument("--seconds", type=float, default=2.0, help="录制时长（默认 2.0s）")
+    record.add_argument("--out", default=None, help="原始帧落盘路径（JSONL）；缺省不落盘")
+    record.add_argument("--post-input", default=None,
+                        help="连上 WS 后先提交该输入再录制（抓动画第 1 帧；需控制权）")
+    record.set_defaults(func=cmd_record)
 
     # ADR-0030：全局设置读写——list / get / set / reset，走 /settings 端点
     settings = sub.add_parser("settings", help="全局设置（ADR-0030）：list / get <key> / set <key> <value> / reset")
