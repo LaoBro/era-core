@@ -236,7 +236,7 @@ internal sealed class ConsolePrintManager
         // 位置仍排在下面的 ShiftHeadTurnOp 之前 —— 与改动前的 enqueue 顺序一致
         // （DisplayState 按类型累积、与顺序无关；保序只为不惊动 TestAdapter 的模型）。
         if (!suppressOp)
-            _state._pendingOps.Enqueue(new ClearLineOp(removed));
+            _state._pendingOps.Enqueue(new ClearLineOp(displayRows: removed));
         if (_state.displayLineList.Count == Config.MaxLog)
         {
             _state.displayLineList.RemoveAt(0);

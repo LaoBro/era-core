@@ -69,7 +69,7 @@ public class ClearLineOpDisplayRowCountTests : IDisposable
     private int DrainClearLineRows()
     {
         var ops = _console.DrainPendingOps();
-        return ops.OfType<ClearLineOp>().Sum(o => o.n);
+        return ops.OfType<ClearLineOp>().Sum(o => o.displayRows);
     }
 
     // ------------------------------------------------------------------

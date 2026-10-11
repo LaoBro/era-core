@@ -182,7 +182,8 @@ internal sealed class DisplayState : IDisplayState
             switch (op)
             {
                 case ClearOp: ClearAll = true; break;
-                case ClearLineOp clo: ClearLineCount += clo.n; break;
+                // displayRows = 引擎实际摘掉的显示行数（≠ 脚本写的逻辑行参数，issue 13）
+                case ClearLineOp clo: ClearLineCount += clo.displayRows; break;
                 case SetBgOp sbo: Bg = sbo.color; break;
                 case ShiftHeadTurnOp sho: ShiftHeadCount += sho.count; break;
             }

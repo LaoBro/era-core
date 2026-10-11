@@ -101,7 +101,7 @@ internal sealed class TestAdapter
     /// 消费增量 ops 更新状态。处理全部 op 类型：
     /// - PrintOp → 向当前行追加 entry（segments + button，含几何 col/width）
     /// - NewLineOp → 终止当前行（isLineEnd=true，记录 align），下一行开始
-    /// - ClearLineOp(n) → 从行列表末尾删除 n 行
+    /// - ClearLineOp(displayRows) → 从行列表末尾删除 displayRows 行（显示行，非逻辑行）
     /// - ClearOp → 清空全部行 + 重置 bgColor
     /// - SetBgOp → 更新 bgColor
     /// </summary>
@@ -128,7 +128,7 @@ internal sealed class TestAdapter
                     }
                     break;
                 case ClearLineOp clearline:
-                    var n = Math.Min(clearline.n, Lines.Count);
+                    var n = Math.Min(clearline.displayRows, Lines.Count);
                     if (n > 0)
                         Lines.RemoveRange(Lines.Count - n, n);
                     break;

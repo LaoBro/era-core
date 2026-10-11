@@ -141,13 +141,17 @@ internal record PrintOp(
 internal record NewLineOp(string? align) : TurnOp("newline");
 
 /// <summary>
-/// 清行（<c>CLEARLINE</c>）。<c>n</c> = <b>实际从 displayLineList 摘掉的显示行数</b>。
+/// 清行（<c>CLEARLINE</c>）。<c>displayRows</c> = <b>实际从 displayLineList 摘掉的显示行数</b>。
 ///
 /// <para>🔴 不是脚本写的那个参数：脚本参数是<b>逻辑行</b>数，而一个逻辑行可占多个显示行
 /// （issue 13）。协议层（<see cref="ClearLineDiffOp"/> / <c>TestAdapter</c> / 前端 applyDiff）
-/// 一律按显示行解释 n，故必须在此处换算完毕。</para>
+/// 一律按显示行解释它，故必须在此处换算完毕。</para>
+///
+/// <para>字段名刻意带单位：这里曾是裸 <c>int n</c>，两侧（引擎=逻辑行 / 协议=显示行）
+/// 各按各的理解，且 wire 输出自洽地错（净增 0），靠结构断言永远抓不到。
+/// 凡是跨越「引擎 ↔ 协议」边界的裸基元，都应当把单位写进名字。</para>
 /// </summary>
-internal record ClearLineOp(int n) : TurnOp("clearline");
+internal record ClearLineOp(int displayRows) : TurnOp("clearline");
 
 internal record ClearOp() : TurnOp("clear");
 
