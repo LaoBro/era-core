@@ -25,6 +25,7 @@ PRINTL [13] Yield frames (bare AWAIT)
 PRINTL [14] Yield frames (AWAIT 0)
 PRINTL [15] Yield idle (no redraw)
 PRINTL [16] Yield drain wait (termination)
+PRINTL [17] Anim paragraph (multi-row)
 INPUT
 IF RESULT == 2
 	; issue-001/002：长回合入口（测试专用分支，既有测试只发 0/1，不受影响）。
@@ -74,6 +75,9 @@ ELSEIF RESULT == 15
 ELSEIF RESULT == 16
 	; spec v5 §7.2：drain 终止性 + 真 WAIT 输入能力。
 	CALL TEST_YIELDWAIT
+ELSEIF RESULT == 17
+	; issue 13：多行段落动画（`erb/ANIMPARA.ERB` 文件头）—— 逻辑行 ≠ 显示行。
+	CALL TEST_ANIMPARA
 ELSEIF RESULT == 0
 	PRINTFORML You entered: {RESULT}
 	PRINTL Select again:
