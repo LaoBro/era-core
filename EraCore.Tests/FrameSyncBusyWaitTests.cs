@@ -140,6 +140,9 @@ public class FrameSyncBusyWaitTests : IDisposable
 
         public ITextBox TextBox => _inner.TextBox;
         public IPictureBox MainPicBox => _inner.MainPicBox;
+
+        public IInputHost Input => _inner.Input;
+        public IViewportProvider Viewport => _inner.Viewport;
     }
 
     private sealed class ConfigurableScrollBar : IScrollBar

@@ -165,9 +165,15 @@ internal sealed class ConsoleInputHandler
         {
             if (_state.State == ConsoleState.WaitInput && _state.inputReq!.NeedValue)
             {
-                EmuPoint point = _ui.MainPicBox.PointToClient(_ui.GetCursorPosition());
-                if (_ui.MainPicBox.ClientRectangle.Contains(point))
-                    _console.MoveMouse(point);
+                // ADR-0031 / spec-v3 M1：无 Geometry 能力的宿主不参与命中判定。
+                // 旧行为恒用 (0,0) 调用 MoveMouse —— HeadlessPictureBox.PointToClient 是恒等、
+                // EmuRectangle.Contains 又是左闭，于是每次都在左上角产生「幽灵命中」。
+                if (_ui.Input.Capabilities.Has(InputCapability.Geometry))
+                {
+                    EmuPoint point = _ui.MainPicBox.PointToClient(_ui.GetCursorPosition());
+                    if (_ui.MainPicBox.ClientRectangle.Contains(point))
+                        _console.MoveMouse(point);
+                }
             }
             _console.RefreshStrings(true);
         }
@@ -320,9 +326,15 @@ internal sealed class ConsoleInputHandler
             _console.RunEmueraProgram(null);
             if (_state.State == ConsoleState.WaitInput && _state.inputReq!.NeedValue)
             {
-                EmuPoint point = _ui.MainPicBox.PointToClient(_ui.GetCursorPosition());
-                if (_ui.MainPicBox.ClientRectangle.Contains(point))
-                    _console.MoveMouse(point);
+                // ADR-0031 / spec-v3 M1：无 Geometry 能力的宿主不参与命中判定。
+                // 旧行为恒用 (0,0) 调用 MoveMouse —— HeadlessPictureBox.PointToClient 是恒等、
+                // EmuRectangle.Contains 又是左闭，于是每次都在左上角产生「幽灵命中」。
+                if (_ui.Input.Capabilities.Has(InputCapability.Geometry))
+                {
+                    EmuPoint point = _ui.MainPicBox.PointToClient(_ui.GetCursorPosition());
+                    if (_ui.MainPicBox.ClientRectangle.Contains(point))
+                        _console.MoveMouse(point);
+                }
             }
         }
         finally

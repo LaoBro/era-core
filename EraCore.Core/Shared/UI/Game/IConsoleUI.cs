@@ -52,6 +52,16 @@ namespace MinorShift.Emuera.UI.Game
 		IScrollBar ScrollBar { get; }
 		ITextBox TextBox { get; }
 		IPictureBox MainPicBox { get; }
+
+		/// <summary>
+		/// 输入宿主（ADR-0031 决策 5 · Phase 1）。
+		/// <c>GetMousePosition</c> / <c>GetCursorPosition</c> / <c>IsActive</c> / <c>ProcessEvents</c>
+		/// 将逐步迁移至此；全部调用方切换完成后从本接口删除（Phase 2）。
+		/// </summary>
+		IInputHost Input { get; }
+
+		/// <summary>视口状态（ADR-0031 决策 4）。M3 起 <c>MoveMouse</c> 改走它，不再读 <c>ScrollBar</c>/<c>MainPicBox</c>。</summary>
+		IViewportProvider Viewport { get; }
 	}
 
 	internal interface IScrollBar

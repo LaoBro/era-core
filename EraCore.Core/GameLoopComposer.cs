@@ -21,11 +21,14 @@ internal static class GameLoopComposer
         ITerminalSetup terminalSetup,
         Func<EmueraConsole, IConsoleUI, ITerminalSetup, AgentProtocolBase?> buildProtocol,
         Func<AgentProtocolBase, Task> runLoop,
-        string? dialectProfileId = null)
+        string? dialectProfileId = null,
+        IInputHost? inputHost = null)
     {
         using (var scope = GlobalStatic.OpenScope(configData, dialectProfileId))
         {
-            var ui = new HeadlessConsole();
+            // ADR-0031 / spec-v3 M1：输入宿主注入点。缺省为 NullInputHost（无任何输入能力），
+            // 保证骨架阶段可观测行为与接入前一致。
+            var ui = new HeadlessConsole(inputHost);
             var console = new EmueraConsole(ui, terminalSetup);
 
             var protocol = buildProtocol(console, ui, terminalSetup);
