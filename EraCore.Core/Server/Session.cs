@@ -7,6 +7,7 @@ using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Terminal.Platform;
+using MinorShift.Emuera.UI.Game;
 
 namespace MinorShift.Emuera.Server;
 
@@ -66,6 +67,12 @@ internal sealed class Session : IDisposable
     private readonly bool _fullDiffOnFirstTurn;
     /// <summary>会话级方言 profile id（实现票 25）。null = v24pure（移植前行为）。</summary>
     private readonly string? _dialectProfileId;
+    /// <summary>
+    /// 会话级统一输入宿主（ADR-0031 / spec-v3 M2）。会话独占 —— 换游戏重建 Session 时
+    /// 旧宿主随会话一起丢弃，天然消除 <c>keytoggle</c> 时代的跨会话状态泄漏。
+    /// 仅声明 <see cref="InputCapability.KeyboardState"/>：<c>Geometry</c>/<c>Focus</c> 待 M4/M6。
+    /// </summary>
+    private readonly DefaultInputHost _inputHost = new();
     private EmueraConsole? _console;
     private DisplayState? _displayState;
     private AgentJsonlProtocol? _protocol;
@@ -160,7 +167,8 @@ internal sealed class Session : IDisposable
                         FinalizeEndedLoop();
                     }
                 },
-                _dialectProfileId);
+                _dialectProfileId,
+                _inputHost);
         }
         catch (OperationCanceledException) when (_cts.IsCancellationRequested || _disposed)
         {

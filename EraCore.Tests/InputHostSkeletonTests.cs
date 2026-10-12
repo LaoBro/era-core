@@ -173,5 +173,11 @@ public class InputHostSkeletonTests : IDisposable
         public void SubmitGeometry(EmuPoint point) { }
 
         public void NotifyFocusChanged(bool focused) { }
+
+        public void SubmitKey(int keycode, bool down) { }
+
+        public bool ConsumeTrigger(int keycode) => false;
+
+        public void ResetState() { }
     }
 }

@@ -270,6 +270,26 @@ public class KestrelGameServerEndpointTests
         Assert.True(doc.RootElement.GetProperty("received").GetBoolean());
     }
 
+    /// <summary>
+    /// spec-v3 §5.3「状态类」输入：只带 <c>keys</c> / <c>hoverValue</c>、<b>不带 value</b>，
+    /// 同样是合法输入（写 <c>IInputHost</c>，不派发、不产帧）。
+    /// 改动前 <c>value == null</c> 一律 400 —— 状态类通道会被门禁挡死，故本例是它的验收点。
+    /// </summary>
+    [Fact]
+    public async Task Input_accepts_state_only_frame_with_200()
+    {
+        using var server = CreateServer();
+        await LoadGame(server);
+
+        var (status, body) = await ExecuteResultAsync(
+            await server.HandlePostInputAsync(MakeJsonBodyContext(
+                "{\"keys\":[{\"code\":65,\"down\":true}],\"hoverValue\":\"42\"}")));
+
+        Assert.Equal(200, status);
+        using var doc = JsonDocument.Parse(body);
+        Assert.True(doc.RootElement.GetProperty("received").GetBoolean());
+    }
+
     // ---- GET /snapshot ----
 
     [Fact]

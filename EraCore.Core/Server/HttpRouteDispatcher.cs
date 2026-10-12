@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using MinorShift.Emuera.GameView;
 
 namespace MinorShift.Emuera.Server;
 
@@ -152,9 +153,42 @@ internal sealed class HttpRouteDispatcher
         var input = Parse<HttpInput>(request.BodyText);
         if (input == null)
             return InvalidJsonInput();
-        if (input.value == null)
+        // spec-v3 §5.3：状态类输入不带 value（只更新按键/悬停/坐标），同样是合法输入。
+        if (input.value == null && !input.HasInputState)
             return MissingInputValue();
-        return _protocol.PostInput(input.value, ResolveIdentity(request, input.token));
+        return _protocol.PostInputJsonl(BuildInputJsonl(input), ResolveIdentity(request, input.token));
+    }
+
+    /// <summary>
+    /// HTTP body → 协议循环消费的 input jsonl（与 WS 上行帧同源）。
+    /// 手工构造 <c>JsonObject</c> 而非 POCO 序列化：键名与 <c>JsonlCommand</c> 逐一对应，
+    /// 且 <c>token</c> 属于 HTTP 传输层、不进协议帧。
+    /// </summary>
+    private static string BuildInputJsonl(HttpInput i)
+    {
+        var obj = new JsonObject { ["type"] = "input" };
+        if (i.value != null)
+            obj["value"] = i.value;
+        if (i.button is { } b)
+            obj["button"] = b;
+        if (i.hoverValue is { } h)
+            obj["hoverValue"] = h;
+        if (i.focus is { } f)
+            obj["focus"] = f;
+        if (i.geometry is { } g)
+            obj["geometry"] = new JsonObject { ["x"] = g.x, ["y"] = g.y };
+        if (i.keys != null)
+        {
+            var arr = new JsonArray();
+            foreach (var k in i.keys)
+            {
+                if (k == null)
+                    continue;
+                arr.Add(new JsonObject { ["code"] = k.code, ["down"] = k.down });
+            }
+            obj["keys"] = arr;
+        }
+        return obj.ToJsonString();
     }
 
     private HttpResult HandleLoadGame(HttpRequestData request)
@@ -276,11 +310,23 @@ internal sealed class HttpRouteDispatcher
 
     // ---- 请求 body POCO（自 GameServerProtocol 移入，与解析同址）----
 
-    /// <summary>POST /input body。</summary>
+    /// <summary>
+    /// POST /input body。spec-v3 §5.1：<c>value</c> 之外的字段为可选状态捎带，
+    /// 与 WS 上行帧（<c>JsonlCommand</c>）同源 —— 这里只是 HTTP 的入口形状。
+    /// </summary>
     internal sealed class HttpInput
     {
         public string? value { get; set; }
         public string? token { get; set; }
+        public int? button { get; set; }
+        public string? hoverValue { get; set; }
+        public InputKeyEvent[]? keys { get; set; }
+        public InputGeometry? geometry { get; set; }
+        public bool? focus { get; set; }
+
+        /// <summary>是否携带状态字段（不含 value）。为 true 时即使 value 缺省也是合法输入（状态类）。</summary>
+        public bool HasInputState =>
+            button.HasValue || hoverValue != null || keys != null || geometry != null || focus.HasValue;
     }
 
     /// <summary>POST /control/acquire|release body（token 可选）。</summary>

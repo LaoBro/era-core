@@ -281,7 +281,11 @@ internal static partial class FunctionMethodCreator
 		}
 	}
 
+#if !HEADLESS
+	// HEADLESS 下 GETKEY/GETKEYTRIGGERED 改读统一输入宿主快照（ADR-0031 / spec-v3 M2），
+	// 本表不再参与编译；它同时是跨会话泄漏源（static），故不保留。
 	static readonly short[] keytoggle = new short[256];
+#endif
 
 	private sealed class GetKeyStateMethod : FunctionMethod
 	{
@@ -299,10 +303,26 @@ internal static partial class FunctionMethodCreator
 			if (keycode < 0 || keycode > 255)
 				return 0;
 #if HEADLESS
-			short s = 0;
+			// ADR-0031 / spec-v3 M2：改读统一输入宿主，不再恒 0。
+			// 无 KeyboardState 能力时返回 0 —— 与骨架前逐项一致（spec-v3 §8 L1'）。
+			//
+			// ⚠️ 语义严格照抄下方 #else 分支的原版实现，不增强：
+			//   GETKEY          : s < 0                                       → IsDown
+			//   GETKEYTRIGGERED : (s < 0) && (toggle != keytoggle[vk])         → ConsumeTrigger
+			// 唯一的差别是 keytoggle 从进程级 static 降为宿主级实例（消除跨会话泄漏）。
+			// 曾尝试用「时间窗口」放宽边沿以救触屏 E-min，已回退 —— 见 ADR-0031
+			// 「core 不模拟、不补偿、不放宽」。
+			IInputHost host = exm.Console.UIAdapter.Input;
+			if (!host.Capabilities.Has(InputCapability.KeyboardState))
+				return 0;
+			switch (Name)
+			{
+				case "GETKEY": return host.Current.Keys.IsDown((int)keycode) ? 1 : 0;
+				case "GETKEYTRIGGERED": return host.ConsumeTrigger((int)keycode) ? 1 : 0;
+			}
+			throw new ExeEE("異常な分岐");
 #else
 			short s = WinInput.GetKeyState((int)keycode);
-#endif
 			short toggle = keytoggle[keycode];
 			keytoggle[keycode] = (short)((s & 1) + 1);//初期値0、トグル状態に応じて1か2を代入。
 			switch (Name)
@@ -311,6 +331,7 @@ internal static partial class FunctionMethodCreator
 				case "GETKEYTRIGGERED": return (s < 0) && (toggle != keytoggle[keycode]) ? 1 : 0;//初回はtrue、2回目以降はトグル状態が前回と違う場合のみ1
 			}
 			throw new ExeEE("異常な分岐");
+#endif
 		}
 	}
 
@@ -344,8 +365,13 @@ internal static partial class FunctionMethodCreator
 		public override string GetStrValue(ExpressionMediator exm, List<AExpression> arguments)
 		{
 #if HEADLESS
-			// Headless 模式下无鼠标交互
-			return "";
+			// ADR-0031 / spec-v3 M2：读快照的悬停值。
+			//   Hover 能力     ⇒ 真悬停；
+			//   无 Hover 能力   ⇒ 「最近一次点击的按钮值」（E-min 补偿，前端随点击显式上报）。
+			// NullInputHost 下恒 null ⇒ 返回 ""，与骨架前逐项一致（spec-v3 §8 L1'）。
+			// ⚠️ Geometry 分支（M4）在此之上：那时先跑 MoveMouse 命中、未命中才回落悬停值，
+			//    本分支保持「只读快照」以便 M1 骨架不加未测代码。
+			return exm.Console.UIAdapter.Input.Current.HoverValue ?? "";
 #else
 			bool b = exm.Console.AlwaysRefresh;
 			Point point = exm.Console.UIAdapter.MainPicBox.PointToClient(exm.Console.UIAdapter.GetCursorPosition());

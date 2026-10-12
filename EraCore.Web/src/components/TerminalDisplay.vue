@@ -6,7 +6,11 @@ import { useUiStore, TOUCH_TARGET_MIN_PX } from '../stores/ui';
 import { useVirtualScroll } from '../composables/useVirtualScroll';
 import { usePinchZoom } from '../composables/usePinchZoom';
 import { isMauiEnvironment } from '../lib/mauiBridge';
-import { shouldSubmitButtonValue, shouldAdvanceOnTerminalClick, isLiveButton } from '../lib/inputRouting';
+import {
+  shouldSubmitButtonValue,
+  shouldAdvanceOnTerminalClick,
+  isLiveButton,
+} from '../lib/inputRouting';
 import {
   computeLineHitExpansions,
   computeLineExtras,

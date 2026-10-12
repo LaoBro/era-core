@@ -7,6 +7,23 @@ import { isMauiEnvironment, postInput } from '../lib/mauiBridge';
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
 /**
+ * input 帧的可选状态字段（spec-v3 §5.1，与 C# `JsonlCommand` 同名同形）。
+ * 全部可选——一个都不带时与改动前的 `{"type":"input","value":"..."}` 逐字节一致。
+ */
+export interface InputExtra {
+  /** 鼠标键：1=左 / 2=右 / 4=中（与 Win32 `VK_LBUTTON/RBUTTON/MBUTTON` 同值）。一次点击合成 down+up。 */
+  button?: number;
+  /** `MOUSEB()` 应返回的按钮值（E-min：点击即悬停）。 */
+  hoverValue?: string;
+  /** 键盘事件批（Win32 VK 键码 + 按下/松开）。keydown/keyup 必须成对。 */
+  keys?: { code: number; down: boolean }[];
+  /** console 局部坐标（左上基准）；M5 前不启用。 */
+  geometry?: { x: number; y: number };
+  /** 窗口焦点；M6 前不启用。 */
+  focus?: boolean;
+}
+
+/**
  * 自动重连最大尝试次数——达到后停止，UI 显示"连接失败"。
  *
  * 选 10 次的依据：1s → 2s → 4s → 8s → 16s → 30s → 30s → 30s → 30s → 30s ≈ 2.5 分钟，
@@ -625,11 +642,17 @@ export const useConnectionStore = defineStore('connection', () => {
    * `BridgeHost.OnInputFromJs` 识别 `{"type":"input","value":"..."}` 后（T08）入 `MauiBridgeIO.EnqueueInput`。
    * MAUI 模式下 status 由 useAppInit 标记为 'connected'（无 WS 但语义等价）。
    */
-  async function sendInput(value: string): Promise<void> {
-    const payload = JSON.stringify({ type: 'input', value });
-    // 提交输入即标记"游戏开始干活"——静默监控据此在长时间无帧时探测线程存活
-    // （慢回合计算期间前端 state 停留在旧 WaitInput，只有提交时刻能区分"在忙"与"在等人"）。
-    game.markInputSubmitted();
+  async function sendInput(value: string | null, extra?: InputExtra): Promise<void> {
+    // value === null ⇒ **状态类**（spec-v3 §5.3）：只上报按键/悬停，不提交 value。
+    // C# 侧据此跳过 DispatchInput（值等待下带空 value 会被 OnInputRejected 拒绝）。
+    const payload = JSON.stringify(value === null
+      ? { type: 'input', ...extra }
+      : { type: 'input', value, ...extra });
+    if (value !== null) {
+      // 提交输入即标记"游戏开始干活"——静默监控据此在长时间无帧时探测线程存活
+      // （慢回合计算期间前端 state 停留在旧 WaitInput，只有提交时刻能区分"在忙"与"在等人"）。
+      game.markInputSubmitted();
+    }
     if (isMauiEnvironment()) {
       postInput(payload);
       return;
@@ -640,7 +663,8 @@ export const useConnectionStore = defineStore('connection', () => {
       const resp = await fetch(`${httpBase}/input`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value }),
+        // HTTP body 与 WS/MAUI 上行帧同源（唯一差别是不带 `type`——它由路由隐含）。
+        body: JSON.stringify(value === null ? { ...extra } : { value, ...extra }),
       });
       if (resp.status === 409) {
         let body: { controller?: unknown; state?: unknown; reason?: unknown; code?: unknown; message?: unknown } = {};

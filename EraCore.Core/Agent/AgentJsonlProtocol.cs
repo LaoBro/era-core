@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
+using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Server;
 using MinorShift.Emuera.UI.Game;
@@ -290,11 +291,59 @@ namespace MinorShift.Emuera.GameView
                 if (cmd?.type != "input")
                     continue;
 
-                var stepTurn = await StepAsync(cmd.value ?? "");
+                // spec-v3 §5.1/§5.3：先把捎带的状态字段写进 IInputHost，再决定派发与否。
+                // 顺序要紧 —— 写状态必须**先于** DispatchInput，否则脚本本轮读到的仍是旧值。
+                ApplyInputState(cmd);
+
+                // 状态类（value 缺省）：只更新状态，不派发、不产帧。
+                if (cmd.value == null)
+                    continue;
+
+                var stepTurn = await StepAsync(cmd.value);
                 if (stepTurn != null)
                     _io.WriteLine(stepTurn);
                 else
                     break;
+            }
+        }
+
+        /// <summary>
+        /// spec-v3 §5.1：把 <c>input</c> 帧的可选状态字段写进统一输入宿主（<see cref="IInputHost"/>）。
+        /// <para>
+        /// 全部字段都是<b>可选</b>的：一个都不带时本方法是空操作（旧客户端行为不变）。
+        /// 宿主为 <see cref="NullInputHost"/> 时写入被丢弃 —— 骨架阶段无能力即无效果。
+        /// </para>
+        /// <para>
+        /// <c>button</c>（1/2/4 = 左/右/中）与 Win32 虚拟键码 <c>VK_LBUTTON/RBUTTON/MBUTTON</c>
+        /// 数值相同，故直接当键码用；一次点击合成 down+up 一对（电平归位，只留边沿戳）。
+        /// </para>
+        /// </summary>
+        private void ApplyInputState(JsonlCommand cmd)
+        {
+            IInputHost host = ui.Input;
+
+            if (cmd.focus is { } focused)
+                host.NotifyFocusChanged(focused);
+
+            if (cmd.geometry is { } g)
+                host.SubmitGeometry(new EmuPoint(g.x, g.y));
+
+            if (cmd.hoverValue != null)
+                host.SubmitHover(cmd.hoverValue);
+
+            if (cmd.button is { } button && button > 0 && button < 256)
+            {
+                host.SubmitKey(button, true);
+                host.SubmitKey(button, false);
+            }
+
+            if (cmd.keys == null)
+                return;
+            foreach (var k in cmd.keys)
+            {
+                if (k == null || k.code < 0 || k.code >= 256)
+                    continue;
+                host.SubmitKey(k.code, k.down);
             }
         }
 

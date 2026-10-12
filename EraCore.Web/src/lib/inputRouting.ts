@@ -26,6 +26,8 @@ export function isAnyKeyInput(inputType: string | null | undefined): boolean {
   return inputType === 'EnterKey' || inputType === 'AnyKey';
 }
 
+
+
 /**
  * 按钮当前是否「有效」（可被玩家点到并真正生效）。
  *

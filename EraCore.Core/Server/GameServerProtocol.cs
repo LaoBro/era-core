@@ -178,6 +178,25 @@ internal sealed class GameServerProtocol
     }
 
     /// <summary>
+    /// POST /input（spec-v3 §5.1 扩展形态）—— 入队一条<b>已构造好</b>的 input jsonl。
+    /// 与 <see cref="PostInput"/> 的唯一差别是调用方自行拼帧（携带按键/悬停/坐标等状态字段）。
+    /// </summary>
+    public HttpResult PostInputJsonl(string jsonl, ControlIdentity identity)
+    {
+        var session = _sessions.CurrentSession;
+
+        if (session == null)
+            return Json(new JsonObject { ["error"] = "No active session" }, 404);
+
+        var gate = session.Controller.CheckInput(identity, session.HasEnded);
+        if (gate.Status != ControlGateStatus.Allowed)
+            return ControlErrorResult(gate.Reason, "Input is allowed only for the current Controller", session);
+
+        session.IO.EnqueueInput(jsonl);
+        return Json(new JsonObject { ["received"] = true });
+    }
+
+    /// <summary>
     /// GET /state —— 当前会话状态 + gameDir + 窗口布局元信息（迁移自原 HandleGetStateAsync，见其注释）。
     /// </summary>
     public HttpResult GetState()

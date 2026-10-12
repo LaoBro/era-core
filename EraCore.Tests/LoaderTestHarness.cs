@@ -58,7 +58,11 @@ internal sealed class LoaderTestHarness : IDisposable
 	/// <param name="dialectProfile">
 	/// 可选：会话级方言 profile（实现票 16）。null（既有全部调用点）= <c>v24pure</c>，行为与今天逐位一致。
 	/// </param>
-	public LoaderTestHarness(string? gameDir = null, DialectProfile? dialectProfile = null)
+	/// <param name="inputHost">
+	/// 可选：注入统一输入宿主（ADR-0031）。null = <see cref="NullInputHost"/>（无任何输入能力），
+	/// 与骨架前行为逐项一致。M2 起脚本级 <c>GETKEY</c> / <c>MOUSEB</c> 测试经此驱动。
+	/// </param>
+	public LoaderTestHarness(string? gameDir = null, DialectProfile? dialectProfile = null, IInputHost? inputHost = null)
 	{
 		_ownsTempRoot = gameDir == null;
 		TempRoot = gameDir ?? Path.Combine(Path.GetTempPath(), "emuera-loader-test-" + Guid.NewGuid().ToString("N"));
@@ -79,7 +83,7 @@ internal sealed class LoaderTestHarness : IDisposable
 		_scope = GlobalStatic.OpenScope(new ConfigData(), dialectProfile);
 		EnsureEnginePreInit();
 
-		var ui = new HeadlessConsole();
+		var ui = new HeadlessConsole(inputHost);
 		Console = new EmueraConsole(ui, new NullTerminalSetup());
 		// EmueraConsole 构造可能触发 Program 静态 ctor（重置 GamePaths），故再 Resolve 一次。
 		GamePaths.Resolve(TempRoot, new FileSystemGameDirAccessor());
