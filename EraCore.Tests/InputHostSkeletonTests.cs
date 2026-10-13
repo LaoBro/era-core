@@ -115,19 +115,32 @@ public class InputHostSkeletonTests : IDisposable
     // === 视口（ADR-0031 决策 4）===
 
     [Fact]
-    public void HeadlessConsole_Viewport_MatchesConfigAndScrollBar()
+    public void HeadlessConsole_Viewport_MatchesConfigAndPictureBox()
     {
         var ui = new HeadlessConsole();
 
-        // M0 标定：H == Config.WindowY（ADR-0031 §8）。骨架阶段视口源必须与
-        // MoveMouse 现在读的 ScrollBar/MainPicBox 同源，否则会引入行为差异。
+        // M0 标定：H == Config.WindowY（ADR-0031 §8）。M3 起 MoveMouse 只读 Viewport，
+        // 故它必须与旧视口源 MainPicBox.Height / Config.LineHeight 同源，否则引入行为差异。
         Assert.Equal(Config.WindowY, ui.Viewport.VisibleHeight);
         Assert.Equal(ui.ClientHeight, ui.Viewport.VisibleHeight);
+        Assert.Equal(ui.MainPicBox.Height, ui.Viewport.VisibleHeight);
         Assert.Equal(Config.LineHeight, ui.Viewport.LineHeight);
+    }
 
-        // ScrollOffset 与既有 HeadlessScrollBar.Value 同源
-        Assert.Equal(ui.ScrollBar.Value, ui.Viewport.ScrollOffset);
+    [Fact]
+    public void HeadlessConsole_Viewport_ScrollOffsetIsDistanceFromBottom()
+    {
+        var ui = new HeadlessConsole();
+
+        // M3：语义由「ScrollBar.Value（底行号+1）」改为「距底偏移」。
+        // 后者才是不依赖总行数的宿主可答复量（ScrollController 的 lineCount 全是参数）。
+        // 换算 Maximum - Value：Maximum 由 VerticalScrollBarUpdate 维护为 displayLineList.Count。
+        ui.ScrollBar.Maximum = 100;
+        ui.ScrollBar.Value = 100;              // 跟随底部
         Assert.Equal(0, ui.Viewport.ScrollOffset);
+
+        ui.ScrollBar.Value = 92;               // 回看 8 行
+        Assert.Equal(8, ui.Viewport.ScrollOffset);
     }
 
     [Fact]

@@ -79,6 +79,11 @@ namespace MinorShift.Emuera.GameView
             _countdown = new CountdownRenderer(console, () => _scroll.ScrollOffset, () => _screen, () => _renderer.LastDrawnRows);
             _redraw = new CliRedrawCoordinator(_renderer, _scroll, () => _scrollStatusBar, _countdown, _buttons, () => _vtInput);
             _renderer.OnScrollAutoFollow = () => _redraw.Redraw(RedrawKind.ChromeOnly, true);
+
+            // ADR-0031 / spec-v3 M3（引擎-10 接线）：把 CLI 的**真实**滚动（ScrollController）
+            // 接成视口真相源。此前 MoveMouse 恒读 HeadlessConsole 的内部 ScrollBar，而 CLI 的
+            // 滚动只更新 ScrollController、从不回流到 ScrollBar ⇒ 几何判定与真实滚动脱节（缺口 F）。
+            (ui as HeadlessConsole)?.AttachViewport(_scroll);
         }
 
         private void CreateGameLoop()

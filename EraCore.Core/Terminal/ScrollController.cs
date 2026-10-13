@@ -1,4 +1,6 @@
 using System;
+using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.UI.Game;
 
 namespace MinorShift.Emuera.GameView
 {
@@ -17,8 +19,13 @@ namespace MinorShift.Emuera.GameView
     /// ScrollBy/ScrollTo/Clamp 在 offset 变化时 raise 事件，Reset() 静默（系统归零由调用方编排渲染）。
     /// 替代 AgentCliVtScreen 的 scroll 算术职责——screen 只保留 VT I/O。
     /// ADR-0006：滚动热键语义（ScrollAction → 算子）随 ApplyAction 一并收归本类，协议层只做一行转发。
+    /// <para>
+    /// ADR-0031 / spec-v3 M3（引擎-10）：实现 <see cref="IViewportProvider"/> ——
+    /// CLI 的<b>真实</b>滚动位置由此进入引擎几何判定（<c>ConsoleInputHandler.MoveMouse</c>），
+    /// 取代此前恒读 <c>ScrollBar.Value</c> 的脱节路径（缺口 F）。
+    /// </para>
     /// </summary>
-    internal sealed class ScrollController
+    internal sealed class ScrollController : IViewportProvider
     {
         private int _scrollVisibleLines;
         private int _scrollOffset;
@@ -29,8 +36,23 @@ namespace MinorShift.Emuera.GameView
             _scrollVisibleLines = Math.Max(1, scrollVisibleLines);
         }
 
-        /// <summary>当前视口偏移。0 = 跟随底部（正常模式）；>0 = 回看历史（Scroll Mode）。</summary>
+        /// <summary>当前视口偏移。0 = 跟随底部（正常模式）；&gt;0 = 回看历史（Scroll Mode）。</summary>
         internal int ScrollOffset => _scrollOffset;
+
+        // === IViewportProvider（ADR-0031 M3）===
+        // 语义直接就是「距底偏移」—— 与引擎侧 bottomLineNo = lineCount - ScrollOffset - 1 配套。
+        int IViewportProvider.ScrollOffset => _scrollOffset;
+
+        /// <summary>
+        /// 视口高度（像素）= 可视行数 × 行高。
+        /// <para>
+        /// ⚠️ 依赖 <c>Config</c>（需 <c>GlobalStatic</c> scope）。CLI 运行期恒在 scope 内；
+        /// 本组属性只被 <c>MoveMouse</c> 读取，纯算术的单元测试无需触碰。
+        /// </para>
+        /// </summary>
+        int IViewportProvider.VisibleHeight => _scrollVisibleLines * Config.LineHeight;
+
+        int IViewportProvider.LineHeight => Config.LineHeight;
 
         /// <summary>是否处于 Scroll Mode（offset > 0）。</summary>
         internal bool IsScrollMode => _scrollOffset > 0;

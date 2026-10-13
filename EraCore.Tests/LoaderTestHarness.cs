@@ -62,7 +62,11 @@ internal sealed class LoaderTestHarness : IDisposable
 	/// 可选：注入统一输入宿主（ADR-0031）。null = <see cref="NullInputHost"/>（无任何输入能力），
 	/// 与骨架前行为逐项一致。M2 起脚本级 <c>GETKEY</c> / <c>MOUSEB</c> 测试经此驱动。
 	/// </param>
-	public LoaderTestHarness(string? gameDir = null, DialectProfile? dialectProfile = null, IInputHost? inputHost = null)
+	/// <param name="viewport">
+	/// 可选：注入视口真相源（ADR-0031 决策 4 / M3）。null = <see cref="HeadlessConsole"/> 自身
+	/// （由内部 ScrollBar 派生，与 M3 前行为等价）。M3 起几何命中测试经此驱动。
+	/// </param>
+	public LoaderTestHarness(string? gameDir = null, DialectProfile? dialectProfile = null, IInputHost? inputHost = null, IViewportProvider? viewport = null)
 	{
 		_ownsTempRoot = gameDir == null;
 		TempRoot = gameDir ?? Path.Combine(Path.GetTempPath(), "emuera-loader-test-" + Guid.NewGuid().ToString("N"));
@@ -84,6 +88,9 @@ internal sealed class LoaderTestHarness : IDisposable
 		EnsureEnginePreInit();
 
 		var ui = new HeadlessConsole(inputHost);
+		// M3：宿主可把视口真相源换成自己的（CLI = ScrollController）。
+		if (viewport != null)
+			ui.AttachViewport(viewport);
 		Console = new EmueraConsole(ui, new NullTerminalSetup());
 		// EmueraConsole 构造可能触发 Program 静态 ctor（重置 GamePaths），故再 Resolve 一次。
 		GamePaths.Resolve(TempRoot, new FileSystemGameDirAccessor());

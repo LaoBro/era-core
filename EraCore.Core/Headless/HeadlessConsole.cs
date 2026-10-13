@@ -13,6 +13,8 @@ namespace MinorShift.Emuera.UI.Game
 		private readonly HeadlessTextBox _textBox;
 		private readonly HeadlessPictureBox _pictureBox;
 		private readonly IInputHost _inputHost;
+		/// <summary>宿主注入的视口真相源；null = 用自身（ScrollBar 派生）。</summary>
+		private IViewportProvider? _viewport;
 		private readonly int _clientWidth;
 		private readonly int _clientHeight;
 		private readonly int _lineHeight;
@@ -82,12 +84,29 @@ namespace MinorShift.Emuera.UI.Game
 		/// <summary>输入宿主（ADR-0031 决策 5 · Phase 1）。</summary>
 		public IInputHost Input => _inputHost;
 
-		public IViewportProvider Viewport => this;
+		/// <summary>
+		/// 视口状态。缺省是自身（由内部 ScrollBar 派生）；宿主可用
+		/// <see cref="AttachViewport"/> 换成自己的真相源（CLI = <c>ScrollController</c>）。
+		/// </summary>
+		public IViewportProvider Viewport => _viewport ?? this;
+
+		/// <summary>
+		/// M3：把视口真相源换成宿主侧实现（CLI 的 <c>ScrollController</c>）。
+		/// <para>
+		/// 为什么是<b>后置注入</b>而非构造参数：CLI 的 <c>ScrollController</c> 活在
+		/// <c>AgentCliProtocol</c> 里，而协议由 <c>GameLoopComposer</c> 的 <c>buildProtocol</c>
+		/// 回调构造 —— 晚于本对象的创建（鸡生蛋），只能在协议构造后回填。
+		/// </para>
+		/// </summary>
+		internal void AttachViewport(IViewportProvider viewport)
+			=> _viewport = viewport ?? throw new ArgumentNullException(nameof(viewport));
 
 		// === IViewportProvider（ADR-0031 决策 4）===
-		// ScrollOffset 与既有 HeadlessScrollBar.Value 同源 —— M3 之前 MoveMouse 仍读 ScrollBar，
-		// 取值必须一致，否则会引入行为差异。
-		int IViewportProvider.ScrollOffset => _scrollBar.Value;
+		// M3 起语义为「距底偏移」—— 原版 ScrollBar.Value 是「底行号 + 1」，它依赖总行数，
+		// 而宿主侧不持有 displayLineList（ScrollController 的 lineCount 全是参数）。
+		// 换算：Maximum 由 ConsoleRefreshHandler.VerticalScrollBarUpdate 维护为
+		// displayLineList.Count，故 Maximum - Value 即距底行数；跟随底部时 Value == Maximum ⇒ 0。
+		int IViewportProvider.ScrollOffset => _scrollBar.Maximum - _scrollBar.Value;
 
 		/// <summary>实测 == Config.WindowY（M0 标定：H=480=WindowY，ADR-0031 §8）。</summary>
 		int IViewportProvider.VisibleHeight => _clientHeight;

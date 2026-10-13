@@ -399,13 +399,21 @@ internal sealed class ConsoleInputHandler
         int pointY = point.Y;
         ConsoleDisplayLine curLine;
 
-        int bottomLineNo = _ui.ScrollBar.Value - 1;
-        if (_state.displayLineList.Count - 1 < bottomLineNo)
-            bottomLineNo = _state.displayLineList.Count - 1;
-        int topLineNo = bottomLineNo - (_ui.MainPicBox.Height / Config.LineHeight);
+        // ADR-0031 / spec-v3 M3（引擎-9）：视口源改走 IViewportProvider，不再读
+        // _ui.ScrollBar / _ui.MainPicBox —— 后者在 CLI 下与真实滚动脱节（缺口 F：
+        // CLI 的真实滚动在 ScrollController 里，从未同步回 ScrollBar）。
+        IViewportProvider viewport = _ui.Viewport;
+        int lineHeight = viewport.LineHeight > 0 ? viewport.LineHeight : Config.LineHeight;
+        int lineCount = _state.displayLineList.Count;
+
+        // 宿主报「距底偏移」，行数换算由引擎完成（宿主不持有 displayLineList）。
+        int bottomLineNo = lineCount - viewport.ScrollOffset - 1;
+        if (lineCount - 1 < bottomLineNo)
+            bottomLineNo = lineCount - 1;
+        int topLineNo = bottomLineNo - (viewport.VisibleHeight / lineHeight);
         if (topLineNo < 0)
             topLineNo = 0;
-        int relPointY = pointY - _ui.MainPicBox.Height;
+        int relPointY = pointY - viewport.VisibleHeight;
 
         if (_state.escapedParts == null || _state.escapedParts.Count == 0)
             ConsoleEscapedParts.GetPartsInRange(topLineNo, bottomLineNo, (int)_state.lastButtonGeneration, _state.escapedParts!);
@@ -414,7 +422,7 @@ internal sealed class ConsoleInputHandler
         Array.Sort(edepth);
         int eidx = 0;
         bool zeroTested = false;
-        var bottomLineBase = _ui.MainPicBox.Height - Config.LineHeight;
+        var bottomLineBase = viewport.VisibleHeight - lineHeight;
         while (eidx < edepth.Length)
         {
             var depth = edepth[eidx];
@@ -424,7 +432,7 @@ internal sealed class ConsoleInputHandler
                 zeroTested = true;
                 for (int i = bottomLineNo; i >= topLineNo; i--)
                 {
-                    relPointY += Config.LineHeight;
+                    relPointY += lineHeight;
                     curLine = _state.displayLineList[i];
                     for (int b = 0; b < curLine.Buttons.Length; b++)
                     {
@@ -466,7 +474,7 @@ internal sealed class ConsoleInputHandler
                     {
                         if (part is ConsoleDivPart div)
                         {
-                            var lineY = bottomLineBase + (div.Parent.ParentLine.LineNo - bottomLineNo - correction) * Config.LineHeight;
+                            var lineY = bottomLineBase + (div.Parent.ParentLine.LineNo - bottomLineNo - correction) * lineHeight;
                             var childPointing = div.TestChildHitbox(pointX, pointY, lineY);
                             if (childPointing != null)
                             {
