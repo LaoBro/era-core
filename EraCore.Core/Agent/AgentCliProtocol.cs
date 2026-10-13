@@ -52,10 +52,9 @@ namespace MinorShift.Emuera.GameView
         /// <summary>
         /// ADR-0031 / spec-v3 M4：VT 鼠标位置（终端行列）→ console 局部像素（左上基准）→ 输入宿主。
         /// <para>
-        /// 换算：<c>x = col × charWidth</c>（<c>charWidth = max(FontSize / 2, 1)</c>，与
-        /// <c>HeadlessRunner</c> 建议终端尺寸的表达式同源，保证两个方向互逆）；
-        /// <c>y = row × LineHeight</c>（终端行与游戏行 1:1 —— 见 <c>TerminalRenderer</c>
-        /// 的 <c>WriteLineAt(viewportRow = i)</c>）。
+        /// 换算见 <see cref="TerminalViewportGeometry"/> —— X 是列宽累加，
+        /// <b>Y 不是 <c>row × LineHeight</c></b>：CLI 顶部对齐渲染、引擎几何底部对齐，
+        /// 两者差一个常数偏移，不补会导致按钮命中系统性错位（真机实测「经常点不到」）。
         /// </para>
         /// <para>
         /// ⚠️ 只在宿主声明 <see cref="InputCapability.Geometry"/> 时才写 —— 否则
@@ -67,8 +66,12 @@ namespace MinorShift.Emuera.GameView
             IInputHost host = ui.Input;
             if (!host.Capabilities.Has(InputCapability.Geometry))
                 return;
-            int charWidth = Math.Max(Config.FontSize / 2, 1);
-            host.SubmitGeometry(new EmuPoint(col * charWidth, row * Config.LineHeight));
+
+            int x = TerminalViewportGeometry.PointXAtViewportCol(col);
+            int y = TerminalViewportGeometry.PointYAtViewportRow(
+                row, console.DisplayLineList.Count, _screen?.WindowHeight ?? 0, _scroll.ScrollOffset);
+
+            host.SubmitGeometry(new EmuPoint(x, y));
         }
 
         /// <summary>当前 Scroll Offset（IVtHost 门卫读取）。ADR-0009：从 ScrollController 读。</summary>
