@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Terminal.Platform;
@@ -47,6 +48,28 @@ namespace MinorShift.Emuera.GameView
         /// <summary>ADR-0010：primitive 鼠标输入分发，委托给 EmueraConsole。</summary>
         void IVtHost.InputMouseKey(int type, int result1, int result2, int result3, int result4, long result5)
             => console.InputMouseKey(type, result1, result2, result3, result4, result5);
+
+        /// <summary>
+        /// ADR-0031 / spec-v3 M4：VT 鼠标位置（终端行列）→ console 局部像素（左上基准）→ 输入宿主。
+        /// <para>
+        /// 换算：<c>x = col × charWidth</c>（<c>charWidth = max(FontSize / 2, 1)</c>，与
+        /// <c>HeadlessRunner</c> 建议终端尺寸的表达式同源，保证两个方向互逆）；
+        /// <c>y = row × LineHeight</c>（终端行与游戏行 1:1 —— 见 <c>TerminalRenderer</c>
+        /// 的 <c>WriteLineAt(viewportRow = i)</c>）。
+        /// </para>
+        /// <para>
+        /// ⚠️ 只在宿主声明 <see cref="InputCapability.Geometry"/> 时才写 —— 否则
+        /// <c>MoveMouse</c> 不会被调用，写了也无消费者（<c>NullInputHost</c> 本身也是空操作）。
+        /// </para>
+        /// </summary>
+        void IVtHost.SubmitPointerGeometry(int row, int col)
+        {
+            IInputHost host = ui.Input;
+            if (!host.Capabilities.Has(InputCapability.Geometry))
+                return;
+            int charWidth = Math.Max(Config.FontSize / 2, 1);
+            host.SubmitGeometry(new EmuPoint(col * charWidth, row * Config.LineHeight));
+        }
 
         /// <summary>当前 Scroll Offset（IVtHost 门卫读取）。ADR-0009：从 ScrollController 读。</summary>
         int IVtHost.ScrollOffset => _scroll.ScrollOffset;

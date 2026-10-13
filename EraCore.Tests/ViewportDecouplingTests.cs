@@ -1,6 +1,7 @@
 using System;
 using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.UI.Game;
 using Xunit;
@@ -73,17 +74,26 @@ public sealed class ViewportDecouplingTests : IDisposable
         Assert.True(vp.ScrollOffset > 0);
     }
 
+    /// <summary>
+    /// 🔴 <b>M4 修正的 M3 错误</b>：初稿写成 <c>_scrollVisibleLines × LineHeight</c>，
+    /// 那是把<b>终端</b>行数当成了游戏可视行数。
+    /// <c>_scrollVisibleLines</c> 由 CLI 以 <c>UpdateVisibleLines(WindowHeight - 2)</c> 注入
+    /// （终端高 29 ⇒ 27 行 ⇒ 513px），而几何判定在<b>游戏坐标系</b>里 —— 游戏只把
+    /// <c>WindowY / LineHeight</c> = 25 行渲染到终端前 25 行，其余 4 行是状态栏/倒计时。
+    /// 用 513 会让 <c>relPointY</c> 整体偏移 33px ≈ 1.7 行，命中判定系统性错位。
+    /// </summary>
     [Fact]
-    public void ScrollController_visible_height_is_lines_times_line_height()
+    public void ScrollController_visible_height_is_game_drawable_height()
     {
         var scroll = new ScrollController(scrollVisibleLines: 12);
         IViewportProvider vp = scroll;
 
         Assert.Equal(Config.LineHeight, vp.LineHeight);
-        Assert.Equal(12 * Config.LineHeight, vp.VisibleHeight);
+        Assert.Equal(Config.WindowY, vp.VisibleHeight);
 
+        // 终端 resize 只改滚动算术（MaxOffset），**不改**几何判定的视口高度。
         scroll.UpdateVisibleLines(30);
-        Assert.Equal(30 * Config.LineHeight, vp.VisibleHeight);
+        Assert.Equal(Config.WindowY, vp.VisibleHeight);
     }
 
     [Fact]
@@ -132,5 +142,26 @@ public sealed class ViewportDecouplingTests : IDisposable
         var ui = new HeadlessConsole();
 
         Assert.Throws<ArgumentNullException>(() => ui.AttachViewport(null!));
+    }
+
+    /// <summary>
+    /// M4：两处 pull 点（<c>ConsoleInputHandler.EndMacro</c> / <c>InputMouseKey</c>）经
+    /// <c>GetCursorPosition()</c> 取坐标再调 <c>MoveMouse</c> ⇒ 它必须反映<b>真实</b>鼠标位置，
+    /// 否则引擎恒拿到 <see cref="EmuPoint.Empty"/>，命中判定永远在左上角。
+    /// </summary>
+    [Fact]
+    public void HeadlessConsole_cursor_position_reflects_input_snapshot()
+    {
+        var host = new DefaultInputHost(InputCapability.Geometry);
+        var ui = new HeadlessConsole(host);
+
+        Assert.Equal(0, ui.GetCursorPosition().X);        // 未上报 ⇒ 骨架前的 Empty
+        Assert.Equal(0, ui.GetCursorPosition().Y);
+
+        host.SubmitGeometry(new EmuPoint(7, 9));
+
+        Assert.Equal(7, ui.GetCursorPosition().X);
+        Assert.Equal(9, ui.GetCursorPosition().Y);
+        Assert.Equal(7, ui.GetMousePosition().X);
     }
 }

@@ -71,7 +71,11 @@ internal static class HeadlessRunner
                         ((AgentCliProtocol)p).RunCliLoop();
                         return Task.CompletedTask;
                     },
-                    dialectProfileId);
+                    dialectProfileId,
+                    // ADR-0031 / spec-v3 M4：CLI 声明 Geometry 能力 —— VT 鼠标位置可换算成
+                    // console 局部像素（见 AgentCliProtocol.SubmitPointerGeometry），
+                    // 使 MOUSEX / MOUSEY / MOUSEB 在 CLI 上有真值而非恒 0 / ""。
+                    new DefaultInputHost(InputCapability.Geometry));
 
                 if (result == GameLoopResult.Aborted)
                 {

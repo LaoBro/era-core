@@ -65,8 +65,21 @@ namespace MinorShift.Emuera.UI.Game
 		public bool TextBoxPosChanged => false;
 		public bool TextBoxIgnoreScrollBarChanges { get; set; } = false;
 
-		public EmuPoint GetMousePosition() => EmuPoint.Empty;
-		public EmuPoint GetCursorPosition() => EmuPoint.Empty;
+		/// <summary>
+		/// M4：鼠标位置 = 输入宿主的坐标快照（console 局部，**左上基准**）。
+		/// 无 <see cref="InputCapability.Geometry"/> 能力 ⇒ 快照为 null ⇒ <see cref="EmuPoint.Empty"/>（骨架前行为）。
+		/// <para>
+		/// ⚠️ <c>MOUSEX/MOUSEY</c> <b>不</b>读本方法 —— 它们直接读快照并换算成左下基准
+		/// （<c>MY = rawY − H</c>，M0 标定），见 <c>Creator.Method.System.cs</c> 的 <c>MousePosMethod</c>。
+		/// </para>
+		/// </summary>
+		public EmuPoint GetMousePosition() => _inputHost.Current.CursorPosition ?? EmuPoint.Empty;
+
+		/// <summary>
+		/// M4：命中判定用的光标位置。两处 pull 点（<c>ConsoleInputHandler.EndMacro</c> /
+		/// <c>InputMouseKey</c>）经它取坐标再调 <c>MoveMouse</c>，故它必须反映<b>真实</b>鼠标位置。
+		/// </summary>
+		public EmuPoint GetCursorPosition() => _inputHost.Current.CursorPosition ?? EmuPoint.Empty;
 
 		/// <summary>
 		/// 脚本 <c>FORCE_QUIT</c> 系统命令（非重启路径退出的终止点）。

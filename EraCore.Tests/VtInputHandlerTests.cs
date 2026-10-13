@@ -15,6 +15,56 @@ namespace Emuera.Headless.Tests;
 /// </summary>
 public class VtInputHandlerTests
 {
+    // ---------- ADR-0031 M4：鼠标位置上报（Geometry 能力的入口） ----------
+
+    [Fact]
+    public void M4_mouse_event_reports_pointer_geometry()
+    {
+        var host = new FakeVtHost(scrollOffset: 0);
+        IVtEventSink handler = new VtInputHandler(host, new FakeTerminalInput());
+
+        handler.OnMouseEvent(row: 5, col: 3, buttonCode: 0, isPress: true);
+
+        Assert.Equal(1, host.SubmitPointerGeometryCalls);
+        Assert.Equal(5, host.LastPointerRow);
+        Assert.Equal(3, host.LastPointerCol);
+    }
+
+    /// <summary>
+    /// 位置上报必须覆盖**所有**鼠标事件，包括被路由丢弃的那些：松开（isPress=false）、
+    /// 非左键、滚轮。它们的共同点是「鼠标确实在那儿」，只是不该提交值 ——
+    /// 漏掉任何一种都会让 <c>MOUSEX/MOUSEY</c> 失真。
+    /// </summary>
+    [Fact]
+    public void M4_pointer_geometry_is_reported_even_when_click_is_dropped()
+    {
+        var host = new FakeVtHost(scrollOffset: 0);
+        IVtEventSink handler = new VtInputHandler(host, new FakeTerminalInput());
+
+        handler.OnMouseEvent(row: 1, col: 2, buttonCode: 0, isPress: false);   // 松开
+        handler.OnMouseEvent(row: 3, col: 4, buttonCode: 1, isPress: true);    // 非左键
+        handler.OnMouseEvent(row: 5, col: 6, buttonCode: 64, isPress: true);   // 滚轮
+
+        Assert.Equal(3, host.SubmitPointerGeometryCalls);
+        Assert.Equal(5, host.LastPointerRow);
+        Assert.Equal(6, host.LastPointerCol);
+        Assert.Equal(0, host.DispatchMouseClickCalls);
+    }
+
+    /// <summary>primitive 等待态下脚本同样能读 <c>MOUSEX/MOUSEY</c> ⇒ 上报必须在 primitive 分支<b>之前</b>。</summary>
+    [Fact]
+    public void M4_primitive_mouse_event_reports_geometry()
+    {
+        var host = new FakeVtHost(scrollOffset: 0, isWaitingPrimitive: true);
+        IVtEventSink handler = new VtInputHandler(host, new FakeTerminalInput());
+
+        handler.OnMouseEvent(row: 7, col: 8, buttonCode: 0, isPress: true);
+
+        Assert.Equal(1, host.SubmitPointerGeometryCalls);
+        Assert.Equal(7, host.LastPointerRow);
+        Assert.Equal(8, host.LastPointerCol);
+    }
+
     // ---------- C4：Scroll Mode 只读门卫 ----------
 
     [Fact]
@@ -442,6 +492,19 @@ public class VtInputHandlerTests
         }
 
         public void DispatchMouseMiss() => DispatchMouseMissCalls++;
+
+        // ADR-0031 / spec-v3 M4：鼠标位置上报。记录调用次数与最后一次坐标 ——
+        // 用于断言「每个鼠标事件（含 primitive / 滚轮 / Scroll Mode 下被丢弃的）都先更新位置」。
+        public int SubmitPointerGeometryCalls;
+        public int LastPointerRow = -1;
+        public int LastPointerCol = -1;
+
+        public void SubmitPointerGeometry(int row, int col)
+        {
+            SubmitPointerGeometryCalls++;
+            LastPointerRow = row;
+            LastPointerCol = col;
+        }
 
         public void PressPrimitiveKey(int keycode, int keydata, int keymod)
             => PressPrimitiveKeyCalls.Add((keycode, keydata, keymod));

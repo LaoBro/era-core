@@ -39,6 +39,13 @@ namespace MinorShift.Emuera.GameView
         /// <summary>鼠标点击未命中的分发（推进 AnyKey/EnterKey）。</summary>
         void DispatchMouseMiss();
 
+        /// <summary>
+        /// ADR-0031 / spec-v3 M4：鼠标位置上报（VT 终端行列，0-based）。
+        /// 与点击命中路径（<see cref="DispatchMouseClick"/>）<b>正交</b> —— 只回答「鼠标在哪」，
+        /// 不提交任何值、不推进任何等待态。无 Geometry 能力的宿主实现为空操作。
+        /// </summary>
+        void SubmitPointerGeometry(int row, int col);
+
         /// <summary>primitive 键盘输入分发（IsWaitingPrimitive=true 时由 OnKeyEvent 调用）。</summary>
         void PressPrimitiveKey(int keycode, int keydata, int keymod);
 

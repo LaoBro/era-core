@@ -345,10 +345,18 @@ internal static partial class FunctionMethodCreator
 		}
 		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
 		{
+			// ADR-0031 / spec-v3 M4：读统一输入宿主的坐标快照。
+			// 无 Geometry 能力 ⇒ 恒 0（spec-v3 §3.5 降级矩阵）。
+			// ⚠️ 这是**降级而非对齐**：原版不存在「无鼠标」状态，即便鼠标在窗口外也返回真值
+			// （M0 标定：屏幕四角实测 MX ∈ {-660, 1231, …}）。能上报真实坐标的宿主必须上报。
+			EmuPoint? point = exm.Console.UIAdapter.Input.Current.CursorPosition;
+			if (point == null)
+				return 0;
 			switch (Name)
 			{
-				case "MOUSEX": return exm.Console.GetMousePosition().X;
-				case "MOUSEY": return exm.Console.GetMousePosition().Y;
+				case "MOUSEX": return point.Value.X;
+				// M0 标定：宿主上报**左上基准**，`MOUSEX/Y` 输出**左下基准** ⇒ MY = rawY − H。
+				case "MOUSEY": return point.Value.Y - exm.Console.UIAdapter.Viewport.VisibleHeight;
 			}
 			throw new ExeEE("異常な名前");
 		}
@@ -365,13 +373,36 @@ internal static partial class FunctionMethodCreator
 		public override string GetStrValue(ExpressionMediator exm, List<AExpression> arguments)
 		{
 #if HEADLESS
-			// ADR-0031 / spec-v3 M2：读快照的悬停值。
-			//   Hover 能力     ⇒ 真悬停；
-			//   无 Hover 能力   ⇒ 「最近一次点击的按钮值」（E-min 补偿，前端随点击显式上报）。
-			// NullInputHost 下恒 null ⇒ 返回 ""，与骨架前逐项一致（spec-v3 §8 L1'）。
-			// ⚠️ Geometry 分支（M4）在此之上：那时先跑 MoveMouse 命中、未命中才回落悬停值，
-			//    本分支保持「只读快照」以便 M1 骨架不加未测代码。
-			return exm.Console.UIAdapter.Input.Current.HoverValue ?? "";
+			// ADR-0031 / spec-v3 M4：两条通道按能力位选择（spec-v3 §3.5 降级矩阵）。
+			//   Geometry ⇒ 跑 MoveMouse 像素命中判定（与下方 #else 原版分支逐行同形）；
+			//   否则     ⇒ 读快照悬停值；NullInputHost 下恒 null ⇒ ""（骨架前逐项一致）。
+			IConsoleUI ui = exm.Console.UIAdapter;
+			IInputHost host = ui.Input;
+			bool moved = false;
+
+			if (host.Capabilities.Has(InputCapability.Geometry) && host.Current.CursorPosition is { } point)
+			{
+				bool b = exm.Console.AlwaysRefresh;
+				exm.Console.AlwaysRefresh = true;
+				if (ui.MainPicBox.ClientRectangle.Contains(point))
+				{
+					exm.Console.MoveMouse(point);
+					moved = true;
+				}
+				exm.Console.AlwaysRefresh = b;
+			}
+
+			// ⚠️ 只在**本轮真的跑过**命中判定后才读 PointingSring —— 否则它会是上一轮的陈旧值
+			// （无 Geometry 时 MoveMouse 从不调用，那个陈旧值会被误当成悬停结果）。
+			if (moved && exm.Console.PointingSring != null)
+			{
+				if (!exm.Console.PointingSring.IsButton)
+					return "";
+				if (exm.Console.PointingSring.IsInteger)
+					return exm.Console.PointingSring.Input.ToString();
+				return exm.Console.PointingSring.Inputs;
+			}
+			return host.Current.HoverValue ?? "";
 #else
 			bool b = exm.Console.AlwaysRefresh;
 			Point point = exm.Console.UIAdapter.MainPicBox.PointToClient(exm.Console.UIAdapter.GetCursorPosition());

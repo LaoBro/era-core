@@ -95,6 +95,10 @@ internal sealed class VtInputHandler : IDisposable, IVtEventSink
 
     void IVtEventSink.OnMouseEvent(int row, int col, int buttonCode, bool isPress)
     {
+        // ADR-0031 / spec-v3 M4：先更新鼠标位置（Geometry 能力）—— 与下述命中/提交路径正交。
+        // 必须在 primitive 分支**之前**：primitive 等待态下脚本同样能读 MOUSEX/MOUSEY。
+        _host.SubmitPointerGeometry(row, col);
+
         if (_host.IsWaitingPrimitive)
         {
             DispatchPrimitiveMouseKey(row, col, buttonCode, isPress);

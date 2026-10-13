@@ -168,9 +168,13 @@ internal sealed class ConsoleInputHandler
                 // ADR-0031 / spec-v3 M1：无 Geometry 能力的宿主不参与命中判定。
                 // 旧行为恒用 (0,0) 调用 MoveMouse —— HeadlessPictureBox.PointToClient 是恒等、
                 // EmuRectangle.Contains 又是左闭，于是每次都在左上角产生「幽灵命中」。
-                if (_ui.Input.Capabilities.Has(InputCapability.Geometry))
+                // ⚠️ M4：**仅有能力位还不够**。宿主声明了 Geometry 但还**没上报过任何**坐标时
+                // GetCursorPosition() 返回 Empty ⇒ MoveMouse((0,0)) ⇒ 左上角幽灵命中
+                // （M1 刚修掉的那个问题会在 CLI 上复活）。故同时要求坐标非空。
+                if (_ui.Input.Capabilities.Has(InputCapability.Geometry)
+                    && _ui.Input.Current.CursorPosition is { } cursor)
                 {
-                    EmuPoint point = _ui.MainPicBox.PointToClient(_ui.GetCursorPosition());
+                    EmuPoint point = _ui.MainPicBox.PointToClient(cursor);
                     if (_ui.MainPicBox.ClientRectangle.Contains(point))
                         _console.MoveMouse(point);
                 }
@@ -329,9 +333,13 @@ internal sealed class ConsoleInputHandler
                 // ADR-0031 / spec-v3 M1：无 Geometry 能力的宿主不参与命中判定。
                 // 旧行为恒用 (0,0) 调用 MoveMouse —— HeadlessPictureBox.PointToClient 是恒等、
                 // EmuRectangle.Contains 又是左闭，于是每次都在左上角产生「幽灵命中」。
-                if (_ui.Input.Capabilities.Has(InputCapability.Geometry))
+                // ⚠️ M4：**仅有能力位还不够**。宿主声明了 Geometry 但还**没上报过任何**坐标时
+                // GetCursorPosition() 返回 Empty ⇒ MoveMouse((0,0)) ⇒ 左上角幽灵命中
+                // （M1 刚修掉的那个问题会在 CLI 上复活）。故同时要求坐标非空。
+                if (_ui.Input.Capabilities.Has(InputCapability.Geometry)
+                    && _ui.Input.Current.CursorPosition is { } cursor)
                 {
-                    EmuPoint point = _ui.MainPicBox.PointToClient(_ui.GetCursorPosition());
+                    EmuPoint point = _ui.MainPicBox.PointToClient(cursor);
                     if (_ui.MainPicBox.ClientRectangle.Contains(point))
                         _console.MoveMouse(point);
                 }

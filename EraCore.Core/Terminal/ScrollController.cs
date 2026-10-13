@@ -44,13 +44,21 @@ namespace MinorShift.Emuera.GameView
         int IViewportProvider.ScrollOffset => _scrollOffset;
 
         /// <summary>
-        /// 视口高度（像素）= 可视行数 × 行高。
+        /// 可绘制区高度（像素）= <c>Config.WindowY</c>。
+        /// <para>
+        /// 🔴 <b>不是 <c>_scrollVisibleLines × LineHeight</c></b>（M3 初稿的错误，M4 修正）：
+        /// <c>_scrollVisibleLines</c> 是<b>终端</b>行数（CLI 由 <c>UpdateVisibleLines(WindowHeight-2)</c>
+        /// 注入，WindowHeight 是终端高度 29），而几何判定发生在<b>游戏坐标系</b>
+        /// —— 游戏把 25 行渲染到终端前 25 行（<c>gameRows = WindowY / LineHeight</c>），
+        /// 其余行是状态栏/倒计时。用 27 行 × 19 = 513 会让 <c>relPointY</c> 整体偏移 33px ≈ 1.7 行，
+        /// 命中判定系统性错位。
+        /// </para>
         /// <para>
         /// ⚠️ 依赖 <c>Config</c>（需 <c>GlobalStatic</c> scope）。CLI 运行期恒在 scope 内；
         /// 本组属性只被 <c>MoveMouse</c> 读取，纯算术的单元测试无需触碰。
         /// </para>
         /// </summary>
-        int IViewportProvider.VisibleHeight => _scrollVisibleLines * Config.LineHeight;
+        int IViewportProvider.VisibleHeight => Config.WindowY;
 
         int IViewportProvider.LineHeight => Config.LineHeight;
 
