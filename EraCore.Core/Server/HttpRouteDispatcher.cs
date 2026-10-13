@@ -169,8 +169,6 @@ internal sealed class HttpRouteDispatcher
         var obj = new JsonObject { ["type"] = "input" };
         if (i.value != null)
             obj["value"] = i.value;
-        if (i.button is { } b)
-            obj["button"] = b;
         if (i.hoverValue is { } h)
             obj["hoverValue"] = h;
         if (i.focus is { } f)
@@ -318,7 +316,6 @@ internal sealed class HttpRouteDispatcher
     {
         public string? value { get; set; }
         public string? token { get; set; }
-        public int? button { get; set; }
         public string? hoverValue { get; set; }
         public InputKeyEvent[]? keys { get; set; }
         public InputGeometry? geometry { get; set; }
@@ -326,7 +323,7 @@ internal sealed class HttpRouteDispatcher
 
         /// <summary>是否携带状态字段（不含 value）。为 true 时即使 value 缺省也是合法输入（状态类）。</summary>
         public bool HasInputState =>
-            button.HasValue || hoverValue != null || keys != null || geometry != null || focus.HasValue;
+            hoverValue != null || keys != null || geometry != null || focus.HasValue;
     }
 
     /// <summary>POST /control/acquire|release body（token 可选）。</summary>

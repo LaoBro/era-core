@@ -12,16 +12,28 @@ namespace MinorShift.Emuera.GameView;
 /// </list>
 /// </para>
 /// </summary>
+/// <remarks>
+/// ⚠️ 曾有一个 <c>button</c> 字段（1/2/4 = 左/右/中）。<b>已删除</b>：它会把一次点击
+/// 合成 down+up 一对，而 <c>GETKEYTRIGGERED</c> 要求「此刻按着」（原版 <c>s &lt; 0</c>），
+/// 合成后电平立即归零 ⇒ 触发永远不成立。鼠标键现统一用 <c>keys</c> 的
+/// <c>code</c> = 1/2/4（= <c>VK_LBUTTON/RBUTTON/MBUTTON</c>），天然支持 down/up 分开发。
+/// </remarks>
 internal record JsonlCommand(
     string type,
     string? value,
-    int? button = null,
     string? hoverValue = null,
     InputKeyEvent[]? keys = null,
     InputGeometry? geometry = null,
     bool? focus = null);
 
-/// <summary>键盘事件（Win32 VK 键码 + 按下/松开）。前端按 ~50ms 合并成批，keydown/keyup 必须成对。</summary>
+/// <summary>
+/// 键鼠事件（Win32 VK 键码 + 按下/松开）。鼠标键用 1/2/4（= <c>VK_LBUTTON/RBUTTON/MBUTTON</c>）。
+/// <para>
+/// ⚠️ <b>逐条立即上报，不做时间合并</b>（spec-v3 §3.6）：down+up 若被合并进同一帧，
+/// 宿主按序处理后电平已归零 ⇒ 按键被压成零宽度脉冲 ⇒ 快速按键的触发整条丢失。
+/// 一帧含多条 <c>keys</c> 只用于「同时按下」的组合键，不是跨时间合并。
+/// </para>
+/// </summary>
 internal sealed record InputKeyEvent(int code, bool down);
 
 /// <summary>console 局部坐标（<b>左上基准</b>，ADR-0031 §8）。仅 <c>Geometry</c> 宿主发送；M5 前不启用。</summary>

@@ -11,12 +11,15 @@ export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 're
  * 全部可选——一个都不带时与改动前的 `{"type":"input","value":"..."}` 逐字节一致。
  */
 export interface InputExtra {
-  /** 鼠标键：1=左 / 2=右 / 4=中（与 Win32 `VK_LBUTTON/RBUTTON/MBUTTON` 同值）。一次点击合成 down+up。 */
-  button?: number;
-  /** `MOUSEB()` 应返回的按钮值（E-min：点击即悬停）。 */
-  hoverValue?: string;
-  /** 键盘事件批（Win32 VK 键码 + 按下/松开）。keydown/keyup 必须成对。 */
+  /**
+   * 键鼠事件（Win32 VK 键码 + 按下/松开）。鼠标键用 1/2/4（= `VK_LBUTTON/RBUTTON/MBUTTON`），
+   * 与键盘共用同一套 VK 编号，故不单开 `button` 字段 —— 后者只能表达"一次点击"，
+   * 无法把 down / up 分开发，而 `GETKEYTRIGGERED` 的原版语义要求"此刻按着"
+   * （见 spec-v3 §3.4 / ADR-0031 决策 5）。
+   */
   keys?: { code: number; down: boolean }[];
+  /** `MOUSEB()` 应返回的值 —— 真悬停（M5 打通）；**不用**它做点击补偿（E-min 已回退）。 */
+  hoverValue?: string;
   /** console 局部坐标（左上基准）；M5 前不启用。 */
   geometry?: { x: number; y: number };
   /** 窗口焦点；M6 前不启用。 */
@@ -687,6 +690,56 @@ export const useConnectionStore = defineStore('connection', () => {
     }
   }
 
+  // ---------- 状态类帧的串行发送队列（spec-v3 §3.6 约束二）----------
+  //
+  // 🔴 **为什么必须串行**：`mousedown` 必须先于 `mouseup` 抵达服务端，否则电平会
+  // **永久卡在 1**（脚本之后读到 `GETKEY(1)=1`，玩家却早松手了 —— 幽灵输入）。
+  // HTTP 并发请求在 HTTP/1.1 多连接 / HTTP/2 多路复用下**理论上会乱序**，
+  // 所以不能依赖「先发的先到」。
+  //
+  // 队列实现：一条 Promise 链，前一帧 settle 后才发下一帧。按键频率 ~10/s，
+  // 串行化没有任何性能代价。失败也不中断队列（`.catch` 兜住），
+  // 否则一次网络抖动会让后续所有键鼠事件永久卡住。
+  let stateQueue: Promise<void> = Promise.resolve();
+
+  /**
+   * 发送一条状态类帧的实际动作（不外调；失败由队列吞掉）。
+   * 与 <see cref="sendInput"/> 的差别：不带 value、不上 inputInFlight 锁。
+   */
+  async function postStateFrame(extra: InputExtra): Promise<void> {
+    const payload = JSON.stringify({ type: 'input', ...extra });
+    if (isMauiEnvironment()) {
+      postInput(payload);
+      return;
+    }
+    if (status.value !== 'connected') return;
+    const resp = await fetch(`${deriveHttpBase(serverUrl.value)}/input`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...extra }),
+    });
+    // 409（被 agent 接管）也算送达 —— 状态帧不需要重发，也不该弹错误。
+    if (resp.status === 409) {
+      try {
+        applyControlDenied(await resp.json() as Parameters<typeof applyControlDenied>[0]);
+      } catch {
+        // body 非 JSON —— 忽略，状态帧不因解析失败报错
+      }
+    }
+  }
+
+  /**
+   * 上报一条**状态类**输入（spec-v3 §5.3 / M2b）。只写宿主，不推进、不产帧、不上锁。
+   *
+   * ⚠️ 不返回 Promise：调用方（DOM 事件处理器）不应 await，也不该因它阻塞。
+   * 入队即返回，保序由队列保证。
+   */
+  function reportInputState(extra: InputExtra): void {
+    stateQueue = stateQueue
+      .then(() => postStateFrame(extra), () => postStateFrame(extra))
+      .catch(() => { /* 状态帧失败不得卡死队列 */ });
+  }
+
   return {
     status,
     serverUrl,
@@ -704,6 +757,7 @@ export const useConnectionStore = defineStore('connection', () => {
     disconnect,
     retryConnect,
     sendInput,
+    reportInputState,
     acquireControl,
     applyControlStatus,
     applyControlEvent,

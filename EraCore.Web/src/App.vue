@@ -4,6 +4,7 @@ import { useUiStore } from './stores/ui';
 import { useGameStore } from './stores/game';
 import { useConnectionStore } from './stores/connection';
 import { initAppState } from './composables/useAppInit';
+import { useKeyMouseInput } from './composables/useKeyMouseInput';
 import { prewarmMenuShadow } from './lib/prewarmMenuShadow';
 import { startGameStatusMonitor } from './composables/useGameStatusMonitor';
 import { isMauiEnvironment, loadGameFromPath, exitGame as exitGameBridge } from './lib/mauiBridge';
@@ -26,6 +27,13 @@ import SettingsView from './views/SettingsView.vue';
 const ui = useUiStore();
 const game = useGameStore();
 const conn = useConnectionStore();
+
+/**
+ * M2b：真实键鼠事件 → 统一输入宿主（`GETKEY` / `GETKEYTRIGGERED` 的输入源）。
+ * 旁观中（agent 持有控制权）不上报 —— 那属于别人的会话。
+ * ⚠️ 必须在 `setup` 顶层调用：它用 onMounted / onBeforeUnmount 管理监听生命周期。
+ */
+useKeyMouseInput(() => conn.canInput);
 
 function onControlHotkey(e: KeyboardEvent): void {
   if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 't') return;

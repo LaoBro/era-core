@@ -314,8 +314,10 @@ namespace MinorShift.Emuera.GameView
         /// 宿主为 <see cref="NullInputHost"/> 时写入被丢弃 —— 骨架阶段无能力即无效果。
         /// </para>
         /// <para>
-        /// <c>button</c>（1/2/4 = 左/右/中）与 Win32 虚拟键码 <c>VK_LBUTTON/RBUTTON/MBUTTON</c>
-        /// 数值相同，故直接当键码用；一次点击合成 down+up 一对（电平归位，只留边沿戳）。
+        /// 🔴 <b>不做任何合并、不补对称的 up</b>：<c>down</c> 与 <c>up</c> 由宿主（前端）
+        /// 分两条独立帧上报，本方法只做「把这一帧的内容写进宿主」一件事。
+        /// 曾在此把一次点击合成 down+up 一对 —— 那会让 <c>GETKEYTRIGGERED</c> 永远不成立
+        /// （它的原版语义要求「此刻按着」，见 <see cref="KeyStateSet"/> 注释）。
         /// </para>
         /// </summary>
         private void ApplyInputState(JsonlCommand cmd)
@@ -330,12 +332,6 @@ namespace MinorShift.Emuera.GameView
 
             if (cmd.hoverValue != null)
                 host.SubmitHover(cmd.hoverValue);
-
-            if (cmd.button is { } button && button > 0 && button < 256)
-            {
-                host.SubmitKey(button, true);
-                host.SubmitKey(button, false);
-            }
 
             if (cmd.keys == null)
                 return;
