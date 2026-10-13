@@ -68,8 +68,7 @@ namespace MinorShift.Emuera.GameView
                 return;
 
             int x = TerminalViewportGeometry.PointXAtViewportCol(col);
-            int y = TerminalViewportGeometry.PointYAtViewportRow(
-                row, console.DisplayLineList.Count, _screen?.WindowHeight ?? 0, _scroll.ScrollOffset);
+            int y = TerminalViewportGeometry.PointYAtViewportRow(row);
 
             host.SubmitGeometry(new EmuPoint(x, y));
         }
@@ -109,7 +108,14 @@ namespace MinorShift.Emuera.GameView
             // ADR-0031 / spec-v3 M3（引擎-10 接线）：把 CLI 的**真实**滚动（ScrollController）
             // 接成视口真相源。此前 MoveMouse 恒读 HeadlessConsole 的内部 ScrollBar，而 CLI 的
             // 滚动只更新 ScrollController、从不回流到 ScrollBar ⇒ 几何判定与真实滚动脱节（缺口 F）。
-            (ui as HeadlessConsole)?.AttachViewport(_scroll);
+            //
+            // M4 修正：视口不是 ScrollController 本身而是 CliViewport —— 后者才知道
+            // 「渲染了多少行」，从而给出正确的 VisibleHeight（= 渲染行数 × 行高）。
+            (ui as HeadlessConsole)?.AttachViewport(
+                new CliViewport(
+                    _scroll,
+                    () => console.DisplayLineList.Count,
+                    () => _screen?.WindowHeight ?? 0));
         }
 
         private void CreateGameLoop()

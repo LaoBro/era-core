@@ -9,12 +9,11 @@ using Xunit;
 namespace Emuera.Headless.Tests;
 
 /// <summary>
-/// ADR-0031 / spec-v3 **M3 视口解耦**接缝测试（视口侧）。
+/// ADR-0031 / spec-v3 **M3/M4 视口解耦**接缝测试（视口侧）。
 /// <para>
-/// M3 只做一件事：把 <c>ConsoleInputHandler.MoveMouse</c> 的视口来源从
+/// M3 把 <c>ConsoleInputHandler.MoveMouse</c> 的视口来源从
 /// <c>_ui.ScrollBar.Value</c> / <c>_ui.MainPicBox.Height</c> / <c>Config.LineHeight</c>
-/// 换成 <see cref="IViewportProvider"/>，并让 CLI 的 <see cref="ScrollController"/>
-/// 成为首个真实实现。几何命中端（<c>MoveMouse</c> 本身）见
+/// 换成 <see cref="IViewportProvider"/>。几何命中端（<c>MoveMouse</c> 本身）见
 /// <see cref="MoveMouseViewportTests"/> —— 它用 <c>LoaderTestHarness</c>，
 /// 后者自己开 <c>GlobalStatic</c> scope，不能与本类的类级 scope 嵌套。
 /// </para>
@@ -24,9 +23,13 @@ namespace Emuera.Headless.Tests;
 /// （<c>verticalScrollBarUpdate()</c> 里 <c>Maximum = displayLineList.Count</c>）。
 /// 而宿主侧根本不持有 <c>displayLineList</c> —— <c>ScrollController</c> 的
 /// <c>ScrollBy/ScrollTo/Clamp</c> 全都把 <c>lineCount</c> 当<b>参数</b>收。
-/// 沿用 <c>Value</c> 语义 ⇒ <c>ScrollController</c> 无法实现本接口
-/// ⇒ CLI 真实滚动永远进不了引擎（缺口 F）。故改为「距底偏移」，
-/// 行数换算交给持有 <c>displayLineList</c> 的引擎。
+/// 沿用 <c>Value</c> 语义 ⇒ 宿主无法回答 ⇒ CLI 真实滚动永远进不了引擎（缺口 F）。
+/// 故改为「距底偏移」，行数换算交给持有 <c>displayLineList</c> 的引擎。
+/// </para>
+/// <para>
+/// ⚠️ <b>为什么视口不是 <c>ScrollController</c> 而是 <see cref="CliViewport"/></b>（M4 修正）：
+/// 前者只能回答 <c>ScrollOffset</c>；<c>VisibleHeight</c> 需要 <c>lineCount</c> 与终端高度，
+/// 而它从不持有这两个数。硬让它实现接口 ⇒ 只能退回 <c>Config.WindowY</c> ⇒ 真机「顶部按钮点不到」。
 /// </para>
 /// </summary>
 public sealed class ViewportDecouplingTests : IDisposable
@@ -37,15 +40,19 @@ public sealed class ViewportDecouplingTests : IDisposable
 
     public void Dispose() => _scope.Dispose();
 
+    /// <summary>构造一个 CLI 视口：100 行内容、29 行终端。</summary>
+    private static CliViewport MakeViewport(ScrollController? scroll = null, int lineCount = 100, int terminalHeight = 29)
+        => new(scroll ?? new ScrollController(scrollVisibleLines: 10), () => lineCount, () => terminalHeight);
+
     // ===============================================================
-    // ① ScrollController 作为 IViewportProvider（spec-v3 §6 引擎-10）
+    // ① CliViewport（spec-v3 §6 引擎-10）
     // ===============================================================
 
     [Fact]
-    public void ScrollController_exposes_offset_as_distance_from_bottom()
+    public void CliViewport_exposes_offset_as_distance_from_bottom()
     {
         var scroll = new ScrollController(scrollVisibleLines: 10);
-        IViewportProvider vp = scroll;
+        var vp = MakeViewport(scroll);
 
         Assert.Equal(0, vp.ScrollOffset);            // 跟随底部
 
@@ -62,10 +69,10 @@ public sealed class ViewportDecouplingTests : IDisposable
     /// 改动前这条路径根本不存在。
     /// </summary>
     [Fact]
-    public void ScrollController_scroll_is_visible_without_scrollbar_sync()
+    public void CliViewport_scroll_is_visible_without_scrollbar_sync()
     {
         var scroll = new ScrollController(scrollVisibleLines: 10);
-        IViewportProvider vp = scroll;
+        var vp = MakeViewport(scroll);
 
         // 模拟用户 PgUp：ScrollAction → 算子 → offset
         scroll.ApplyAction(ScrollAction.PageUp, windowHeight: 24, lineCount: 100);
@@ -75,32 +82,33 @@ public sealed class ViewportDecouplingTests : IDisposable
     }
 
     /// <summary>
-    /// 🔴 <b>M4 修正的 M3 错误</b>：初稿写成 <c>_scrollVisibleLines × LineHeight</c>，
-    /// 那是把<b>终端</b>行数当成了游戏可视行数。
-    /// <c>_scrollVisibleLines</c> 由 CLI 以 <c>UpdateVisibleLines(WindowHeight - 2)</c> 注入
-    /// （终端高 29 ⇒ 27 行 ⇒ 513px），而几何判定在<b>游戏坐标系</b>里 —— 游戏只把
-    /// <c>WindowY / LineHeight</c> = 25 行渲染到终端前 25 行，其余 4 行是状态栏/倒计时。
-    /// 用 513 会让 <c>relPointY</c> 整体偏移 33px ≈ 1.7 行，命中判定系统性错位。
+    /// 视口高度 = <b>渲染行数 × 行高</b>，不是 <c>Config.WindowY</c>。
+    /// 终端 29 行 ⇒ 渲染 28 行 ⇒ 532px ≠ WindowY(480)。
     /// </summary>
     [Fact]
-    public void ScrollController_visible_height_is_game_drawable_height()
+    public void CliViewport_visible_height_is_rendered_lines_times_line_height()
     {
-        var scroll = new ScrollController(scrollVisibleLines: 12);
-        IViewportProvider vp = scroll;
+        var vp = MakeViewport();
 
         Assert.Equal(Config.LineHeight, vp.LineHeight);
-        Assert.Equal(Config.WindowY, vp.VisibleHeight);
+        Assert.Equal(28 * Config.LineHeight, vp.VisibleHeight);
+        Assert.NotEqual(Config.WindowY, vp.VisibleHeight);
+    }
 
-        // 终端 resize 只改滚动算术（MaxOffset），**不改**几何判定的视口高度。
-        scroll.UpdateVisibleLines(30);
-        Assert.Equal(Config.WindowY, vp.VisibleHeight);
+    /// <summary>内容不足一屏 ⇒ 视口高度随之收缩到内容高度。</summary>
+    [Fact]
+    public void CliViewport_visible_height_shrinks_with_short_content()
+    {
+        var vp = MakeViewport(lineCount: 4);
+
+        Assert.Equal(4 * Config.LineHeight, vp.VisibleHeight);
     }
 
     [Fact]
-    public void ScrollController_clamps_offset_and_keeps_it_non_negative()
+    public void CliViewport_clamps_offset_and_keeps_it_non_negative()
     {
         var scroll = new ScrollController(scrollVisibleLines: 10);
-        IViewportProvider vp = scroll;
+        var vp = MakeViewport(scroll);
 
         scroll.ScrollBy(-999, lineCount: 100);
         Assert.Equal(0, vp.ScrollOffset);
@@ -126,10 +134,11 @@ public sealed class ViewportDecouplingTests : IDisposable
     {
         var ui = new HeadlessConsole();
         var scroll = new ScrollController(scrollVisibleLines: 10);
+        var vp = MakeViewport(scroll);
 
-        ui.AttachViewport(scroll);
+        ui.AttachViewport(vp);
 
-        Assert.Same(scroll, ui.Viewport);
+        Assert.Same(vp, ui.Viewport);
         Assert.Equal(0, ui.Viewport.ScrollOffset);
 
         scroll.ScrollBy(5, lineCount: 100);

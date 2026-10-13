@@ -9,10 +9,15 @@ namespace Emuera.Headless.Tests;
 /// <summary>
 /// ADR-0031 / spec-v3 M4：CLI 终端行列 ↔ 游戏像素的换算。
 /// <para>
-/// 🔒 <b>本文件是「CLI 顶部对齐 vs 引擎底部对齐」这个坑的回归锚点</b>。
-/// M4 初稿写成 <c>y = row × LineHeight</c>，真机表现是「按钮经常点不到」——
-/// 因为 <c>relPointY</c> 整体平移了 <c>WindowY − renderedLines × LineHeight</c>，
-/// 底行算出来是 −5 而非 0。若有人再把 Y 退回「行号 × 行高」，这些测试会转红。
+/// 🔒 <b>本文件是「<c>VisibleHeight</c> 必须是渲染行数 × 行高、不能是 <c>Config.WindowY</c>」的回归锚点</b>。
+/// 真机表现：终端 33 行时按钮「经常点不到」。推导如下 ——
+/// <list type="bullet">
+/// <item>引擎用 <c>H</c> 同时算 <c>topLineNo = bottomLineNo − H/LH</c> 与 <c>relPointY = pointY − H</c>；</item>
+/// <item>若 <c>H</c> 固定 480（25 行）而终端渲染 32 行，多出的 7 行落到 <c>y &lt; 0</c>；</item>
+/// <item><c>ClientRectangle.Contains</c> 把 <c>y &lt; 0</c> 挡掉 ⇒ <c>MoveMouse</c> 不跑 ⇒ 顶部按钮永久点不到。</item>
+/// </list>
+/// 取 <c>H = 渲染行数 × LH</c> 后，<c>y = row × LH</c> 自洽：代入得
+/// <c>relPointY = (row − R)·LH + LH·(R − row) = 0</c>，<b>与 row 无关</b> ⇒ 恒定命中。
 /// </para>
 /// </summary>
 public sealed class TerminalViewportGeometryTests : IDisposable
@@ -23,13 +28,81 @@ public sealed class TerminalViewportGeometryTests : IDisposable
 
     public void Dispose() => _scope.Dispose();
 
-    private static int H => Config.WindowY;          // 480
     private static int LH => Config.LineHeight;      // 19
 
-    /// <summary>可绘制区底部那一行的 Y —— 内容最后一行必须落在这里。</summary>
-    private static int BottomRowY => H - LH;         // 461
+    // ---------- VisibleLines ----------
 
-    // ---------- X：列宽累加 ----------
+    [Fact]
+    public void VisibleLines_normal_mode_reserves_one_row()
+        => Assert.Equal(28, TerminalViewportGeometry.VisibleLines(terminalHeight: 29, scrollOffset: 0));
+
+    [Fact]
+    public void VisibleLines_scroll_mode_reserves_two_rows()
+        => Assert.Equal(27, TerminalViewportGeometry.VisibleLines(terminalHeight: 29, scrollOffset: 5));
+
+    /// <summary>VT 屏幕尚未建立 ⇒ 退化为游戏视口行数（<c>WindowY / LineHeight</c>）。</summary>
+    [Fact]
+    public void VisibleLines_without_screen_falls_back_to_game_viewport()
+        => Assert.Equal(Config.WindowY / LH, TerminalViewportGeometry.VisibleLines(terminalHeight: 0, scrollOffset: 0));
+
+    // ---------- StartLine ----------
+
+    /// <summary>内容多于一屏：终端第 0 行<b>不是</b>内容第 0 行。</summary>
+    [Fact]
+    public void StartLine_long_content_skips_earlier_lines()
+        => Assert.Equal(72, TerminalViewportGeometry.StartLine(lineCount: 100, terminalHeight: 29, scrollOffset: 0));
+
+    [Fact]
+    public void StartLine_short_content_is_zero()
+        => Assert.Equal(0, TerminalViewportGeometry.StartLine(lineCount: 4, terminalHeight: 29, scrollOffset: 0));
+
+    // ---------- RenderedLines ----------
+
+    [Fact]
+    public void RenderedLines_short_content_is_line_count()
+        => Assert.Equal(4, TerminalViewportGeometry.RenderedLines(lineCount: 4, terminalHeight: 29, scrollOffset: 0));
+
+    [Fact]
+    public void RenderedLines_long_content_is_capped_by_terminal()
+        => Assert.Equal(28, TerminalViewportGeometry.RenderedLines(lineCount: 100, terminalHeight: 29, scrollOffset: 0));
+
+    [Fact]
+    public void RenderedLines_empty_content_is_zero()
+        => Assert.Equal(0, TerminalViewportGeometry.RenderedLines(lineCount: 0, terminalHeight: 29, scrollOffset: 0));
+
+    // ---------- VisibleHeight ----------
+
+    [Fact]
+    public void VisibleHeight_is_rendered_lines_times_line_height()
+        => Assert.Equal(4 * LH,
+            TerminalViewportGeometry.VisibleHeightPixels(lineCount: 4, terminalHeight: 29, scrollOffset: 0));
+
+    /// <summary>
+    /// 🔒 <b>核心不变量</b>：终端比游戏窗口高时 <c>VisibleHeight</c> 必须<b>大于</b>
+    /// <c>Config.WindowY</c> —— 否则顶部若干行会被 <c>ClientRectangle</c> 挡掉。
+    /// </summary>
+    [Fact]
+    public void VisibleHeight_exceeds_WindowY_when_terminal_is_taller()
+    {
+        int h = TerminalViewportGeometry.VisibleHeightPixels(lineCount: 100, terminalHeight: 33, scrollOffset: 0);
+
+        Assert.Equal(32 * LH, h);
+        Assert.True(h > Config.WindowY, "终端 33 行 ⇒ 视口 32 行 = 608px，必须 > WindowY(480)");
+    }
+
+    [Fact]
+    public void VisibleHeight_never_collapses_to_zero()
+        => Assert.True(TerminalViewportGeometry.VisibleHeightPixels(lineCount: 0, terminalHeight: 29, scrollOffset: 0) >= 1);
+
+    // ---------- 行列 → 像素 ----------
+
+    [Fact]
+    public void PointY_is_row_times_line_height()
+    {
+        Assert.Equal(0, TerminalViewportGeometry.PointYAtViewportRow(0));
+        Assert.Equal(LH, TerminalViewportGeometry.PointYAtViewportRow(1));
+        Assert.Equal(3 * LH, TerminalViewportGeometry.PointYAtViewportRow(3));
+    }
 
     [Fact]
     public void PointX_is_column_times_char_width()
@@ -37,102 +110,29 @@ public sealed class TerminalViewportGeometryTests : IDisposable
         int charWidth = Math.Max(Config.FontSize / 2, 1);
 
         Assert.Equal(0, TerminalViewportGeometry.PointXAtViewportCol(0));
-        Assert.Equal(charWidth, TerminalViewportGeometry.PointXAtViewportCol(1));
         Assert.Equal(3 * charWidth, TerminalViewportGeometry.PointXAtViewportCol(3));
     }
 
-    // ---------- Y：内容块贴底 ----------
-
-    /// <summary>内容不足一屏：内容<b>最后一行</b>贴底，上方的行依次往上。</summary>
-    [Fact]
-    public void PointY_short_content_bottom_row_sits_on_drawable_bottom()
-    {
-        // lineCount=4，终端 29 行 ⇒ visibleLines=28 ⇒ startLine=0 ⇒ 行 0..3 渲染在终端 0..3
-        int y = TerminalViewportGeometry.PointYAtViewportRow(row: 3, lineCount: 4, terminalHeight: 29, scrollOffset: 0);
-
-        Assert.Equal(BottomRowY, y);                 // ⇒ MOUSEY = −19
-        Assert.Equal(-LH, y - H);
-    }
-
-    [Fact]
-    public void PointY_short_content_top_row_is_offset_by_rendered_height()
-    {
-        int y = TerminalViewportGeometry.PointYAtViewportRow(row: 0, lineCount: 4, terminalHeight: 29, scrollOffset: 0);
-
-        // 4 行内容 ⇒ 顶行距底部 3 行
-        Assert.Equal(BottomRowY - 3 * LH, y);
-    }
-
-    /// <summary>内容满屏（25 行）：顶行 ≈ −475，与原版「左上 MY ≈ −H」一致。</summary>
-    [Fact]
-    public void PointY_full_screen_top_row_matches_M0_calibration()
-    {
-        int rows = H / LH;                            // 25
-        int y = TerminalViewportGeometry.PointYAtViewportRow(row: 0, lineCount: rows, terminalHeight: 29, scrollOffset: 0);
-
-        Assert.Equal(BottomRowY - (rows - 1) * LH, y);
-        Assert.Equal(-475, y - H);                    // M0 标定：左上 MY ≈ −480
-    }
+    // ---------- 自洽性：渲染出来的每一行都必须落在可绘制区内 ----------
 
     /// <summary>
-    /// 内容多于一屏：<b>终端第 0 行不是内容第 0 行</b> —— 渲染从 <c>startLine</c> 开始。
-    /// 这正是「row × LineHeight」会错的地方之一。
+    /// 命中判定的前提是 <c>ClientRectangle.Contains(point)</c>。本测试把「渲染块」整体代入，
+    /// 断言<b>每一行</b>都在界内 —— 这是「按钮点得到」的机器检查。
     /// </summary>
-    [Fact]
-    public void PointY_long_content_uses_start_line()
+    [Theory]
+    [InlineData(4, 29, 0)]      // 内容不足一屏
+    [InlineData(100, 29, 0)]    // 内容多于一屏
+    [InlineData(100, 33, 0)]    // 终端高于游戏窗口（真机场景）
+    [InlineData(100, 33, 10)]   // 叠加 Scroll Mode
+    public void Every_rendered_row_falls_inside_drawable_area(int lineCount, int terminalHeight, int scrollOffset)
     {
-        // lineCount=100，终端 29 ⇒ visibleLines=28 ⇒ startLine=72 ⇒ 终端 0..27 渲染行 72..99
-        int y = TerminalViewportGeometry.PointYAtViewportRow(row: 0, lineCount: 100, terminalHeight: 29, scrollOffset: 0);
+        int rendered = TerminalViewportGeometry.RenderedLines(lineCount, terminalHeight, scrollOffset);
+        int h = TerminalViewportGeometry.VisibleHeightPixels(lineCount, terminalHeight, scrollOffset);
 
-        Assert.Equal(BottomRowY - 27 * LH, y);        // 行 72 距底 27 行
-    }
-
-    [Fact]
-    public void PointY_long_content_last_visible_row_sits_on_bottom()
-    {
-        int y = TerminalViewportGeometry.PointYAtViewportRow(row: 27, lineCount: 100, terminalHeight: 29, scrollOffset: 0);
-
-        Assert.Equal(BottomRowY, y);
-    }
-
-    /// <summary>Scroll Mode：视口上移，贴底的变成更早的行。</summary>
-    [Fact]
-    public void PointY_scroll_mode_shifts_which_line_is_at_bottom()
-    {
-        // offset=10 ⇒ visibleLines=27（多留状态栏）⇒ startLine=63 ⇒ 底行是行 89
-        int y = TerminalViewportGeometry.PointYAtViewportRow(row: 26, lineCount: 100, terminalHeight: 29, scrollOffset: 10);
-
-        Assert.Equal(BottomRowY, y);
-    }
-
-    /// <summary>
-    /// 点在内容<b>下方</b>的空白/状态栏 ⇒ <c>MOUSEY &gt; 0</c>。
-    /// 对应原版「输入框内 MY ∈ [0, +20]」—— 引擎不做内外判定，只做命中判定。
-    /// </summary>
-    [Fact]
-    public void PointY_below_content_is_positive_MOUSEY()
-    {
-        int y = TerminalViewportGeometry.PointYAtViewportRow(row: 32, lineCount: 26, terminalHeight: 33, scrollOffset: 0);
-
-        Assert.True(y - H > 0);
-    }
-
-    /// <summary>屏幕尚未建立（terminalHeight=0）⇒ 退化为游戏视口行数，不崩。</summary>
-    [Fact]
-    public void PointY_without_screen_falls_back_to_game_viewport()
-    {
-        int y = TerminalViewportGeometry.PointYAtViewportRow(row: 0, lineCount: 100, terminalHeight: 0, scrollOffset: 0);
-
-        int visibleLines = Math.Max(1, H / LH);
-        Assert.Equal(BottomRowY - (visibleLines - 1) * LH, y);
-    }
-
-    /// <summary>空内容（lineCount=0）不得产生负溢出或异常。</summary>
-    [Fact]
-    public void PointY_empty_content_is_clamped()
-    {
-        int y = TerminalViewportGeometry.PointYAtViewportRow(row: 0, lineCount: 0, terminalHeight: 29, scrollOffset: 0);
-
-        Assert.Equal(BottomRowY, y);
+        for (int row = 0; row < rendered; row++)
+        {
+            int y = TerminalViewportGeometry.PointYAtViewportRow(row);
+            Assert.True(y >= 0 && y < h, $"row={row} ⇒ y={y} 超出 [0, {h})");
+        }
     }
 }

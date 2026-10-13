@@ -20,12 +20,19 @@ namespace MinorShift.Emuera.GameView
     /// 替代 AgentCliVtScreen 的 scroll 算术职责——screen 只保留 VT I/O。
     /// ADR-0006：滚动热键语义（ScrollAction → 算子）随 ApplyAction 一并收归本类，协议层只做一行转发。
     /// <para>
-    /// ADR-0031 / spec-v3 M3（引擎-10）：实现 <see cref="IViewportProvider"/> ——
-    /// CLI 的<b>真实</b>滚动位置由此进入引擎几何判定（<c>ConsoleInputHandler.MoveMouse</c>），
-    /// 取代此前恒读 <c>ScrollBar.Value</c> 的脱节路径（缺口 F）。
+    /// ADR-0031 / spec-v3 M3：CLI 的<b>真实</b>滚动位置由本类进入引擎几何判定
+    /// （<c>ConsoleInputHandler.MoveMouse</c>），取代此前恒读 <c>ScrollBar.Value</c> 的脱节路径（缺口 F）。
+    /// <para>
+    /// ⚠️ <b>本类不实现 <see cref="MinorShift.Emuera.UI.Game.IViewportProvider"/></b>（M4 修正）：
+    /// 它只能回答 <c>ScrollOffset</c>，而 <c>VisibleHeight</c> 需要 <c>lineCount</c> 与终端高度 ——
+    /// 本类从不持有这两个数（<c>lineCount</c> 全是方法参数）。硬实现就只能退回
+    /// <c>Config.WindowY</c>，那正是真机「顶部按钮点不到」的根因。
+    /// 视口真相源是 <see cref="CliViewport"/>：它组合本类的 offset 与
+    /// <see cref="TerminalViewportGeometry"/> 现算的几何高度。
+    /// </para>
     /// </para>
     /// </summary>
-    internal sealed class ScrollController : IViewportProvider
+    internal sealed class ScrollController
     {
         private int _scrollVisibleLines;
         private int _scrollOffset;
@@ -36,31 +43,11 @@ namespace MinorShift.Emuera.GameView
             _scrollVisibleLines = Math.Max(1, scrollVisibleLines);
         }
 
-        /// <summary>当前视口偏移。0 = 跟随底部（正常模式）；&gt;0 = 回看历史（Scroll Mode）。</summary>
-        internal int ScrollOffset => _scrollOffset;
-
-        // === IViewportProvider（ADR-0031 M3）===
-        // 语义直接就是「距底偏移」—— 与引擎侧 bottomLineNo = lineCount - ScrollOffset - 1 配套。
-        int IViewportProvider.ScrollOffset => _scrollOffset;
-
         /// <summary>
-        /// 可绘制区高度（像素）= <c>Config.WindowY</c>。
-        /// <para>
-        /// 🔴 <b>不是 <c>_scrollVisibleLines × LineHeight</c></b>（M3 初稿的错误，M4 修正）：
-        /// <c>_scrollVisibleLines</c> 是<b>终端</b>行数（CLI 由 <c>UpdateVisibleLines(WindowHeight-2)</c>
-        /// 注入，WindowHeight 是终端高度 29），而几何判定发生在<b>游戏坐标系</b>
-        /// —— 游戏把 25 行渲染到终端前 25 行（<c>gameRows = WindowY / LineHeight</c>），
-        /// 其余行是状态栏/倒计时。用 27 行 × 19 = 513 会让 <c>relPointY</c> 整体偏移 33px ≈ 1.7 行，
-        /// 命中判定系统性错位。
-        /// </para>
-        /// <para>
-        /// ⚠️ 依赖 <c>Config</c>（需 <c>GlobalStatic</c> scope）。CLI 运行期恒在 scope 内；
-        /// 本组属性只被 <c>MoveMouse</c> 读取，纯算术的单元测试无需触碰。
-        /// </para>
+        /// 当前视口偏移。0 = 跟随底部（正常模式）；&gt;0 = 回看历史（Scroll Mode）。
+        /// 语义 = <b>距底偏移</b>，与引擎侧 <c>bottomLineNo = lineCount − ScrollOffset − 1</c> 配套。
         /// </summary>
-        int IViewportProvider.VisibleHeight => Config.WindowY;
-
-        int IViewportProvider.LineHeight => Config.LineHeight;
+        internal int ScrollOffset => _scrollOffset;
 
         /// <summary>是否处于 Scroll Mode（offset > 0）。</summary>
         internal bool IsScrollMode => _scrollOffset > 0;
