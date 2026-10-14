@@ -70,9 +70,11 @@ internal sealed class Session : IDisposable
     /// <summary>
     /// 会话级统一输入宿主（ADR-0031 / spec-v3 M2）。会话独占 —— 换游戏重建 Session 时
     /// 旧宿主随会话一起丢弃，天然消除 <c>keytoggle</c> 时代的跨会话状态泄漏。
-    /// 仅声明 <see cref="InputCapability.KeyboardState"/>：<c>Geometry</c>/<c>Focus</c> 待 M4/M6。
+    /// M2 声明 <see cref="InputCapability.KeyboardState"/>；M5a 追加 <see cref="InputCapability.Hover"/>
+    /// （Web 前端上报真实 <c>mouseenter</c>/<c>mouseleave</c> ⇒ <c>MOUSEB()</c> 有真悬停值）。
+    /// <c>Geometry</c>/<c>Focus</c> 待 M5b/M6。
     /// </summary>
-    private readonly DefaultInputHost _inputHost = new();
+    private readonly DefaultInputHost _inputHost = new(InputCapability.KeyboardState | InputCapability.Hover);
     private EmueraConsole? _console;
     private DisplayState? _displayState;
     private AgentJsonlProtocol? _protocol;

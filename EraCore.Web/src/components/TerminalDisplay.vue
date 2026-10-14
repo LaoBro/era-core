@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useGameStore } from '../stores/game';
 import { useConnectionStore } from '../stores/connection';
 import { useUiStore, TOUCH_TARGET_MIN_PX } from '../stores/ui';
@@ -436,6 +436,78 @@ function onButtonClick(entry: DisplayEntry): void {
   conn.sendInput(valueToWire(button.value));
 }
 
+// ---------- 真悬停上报（ADR-0031 / spec-v3 **M5a**） ----------
+//
+// ## 为什么必须放开 `disabled`
+//
+// Void 等待（`AWAIT` / `TWAIT t,1`）下 `awaiting.input` 为空 ⇒ 按钮原本 `:disabled`。
+//
+// 🔴 **实测事实（Edge，2026-10-15 —— 初稿在此写错过一次）**：原生 `disabled` 按钮
+// **仍派发** `mouseenter` / `mousemove`，**不派发** `mousedown` / `mouseup` / `click`。
+// ⇒ 所以放开 `disabled` 的理由**不是悬停**（悬停在 disabled 下本来就能上报），
+// 而是**按下**：`COMF413:135` 的出口需要 `GETKEYTRIGGERED(0x01)`（← mousedown），
+// 而按住/松开在这类元素上整条消失。
+//   判据因此锚在 `keys`（VK_LBUTTON）上，只断言 `hoverValue` 会漏掉这条（e2e 已验证）。
+// 另一半（`MOUSEB()`）由 M5a 的悬停上报提供。
+//
+// ## 为什么用 `aria-disabled` 而不是删掉 `disabled`
+//
+// ADR-0021 重开决策 6：直接删会让按钮不再置灰，玩家会以为「能点」，而它**并不能提交**。
+// `aria-disabled` 保留「不可提交」的语义与视觉弱化，同时让元素继续接收指针事件。
+// **可提交性仍由 `shouldSubmitButtonValue` 独占把关** —— 这里放开的只是「可感知性」。
+//
+// ## 上报口径
+//
+// - 只报**指针真实所在**的按钮。不用最近点击值冒充悬停（= E-min，ADR-0031 决策 5 已回退）。
+// - 清空用**空串**而非省略字段：服务端 `cmd.hoverValue != null` 判别，省略与 `null` 都等于
+//   「没有这一项」，清不掉；`""` 才会走到 `SubmitHover("")` ⇒ `MOUSEB()` 返回空串。
+// - 去重：值与上次相同就不发帧（鼠标在同一按钮内移动不产生请求）。
+// - 新回合清空：画面换了，旧悬停值必然不可信 ⇒ 宁可空也不能给脚本一个陈旧值。
+
+/** 按钮当前是否「可提交」——仅用于呈现（`aria-disabled`），判定仍走 `shouldSubmitButtonValue`。 */
+const canSubmitButtons = computed(() => conn.status === 'connected' && !!game.awaiting.input);
+
+/** 最近一次上报的悬停值（wire 口径：`''` = 无悬停）。用于去重。 */
+let lastHoverWire: string | null = null;
+
+function reportHover(value: string | null): void {
+  const wire = value ?? '';
+  if (lastHoverWire === wire) return;
+  lastHoverWire = wire;
+  conn.reportInputState({ hoverValue: wire });
+}
+
+function onButtonHover(entry: DisplayEntry): void {
+  if (!entry.button) return;
+  reportHover(valueToWire(entry.button.value));
+}
+
+function onButtonLeave(): void {
+  reportHover(null);
+}
+
+/**
+ * 移动兜底：覆盖两种 `mouseenter/leave` 抓不到的情形——
+ * - 新回合清空后指针未移动（行 DOM 可能被虚拟滚动重建，浏览器不保证补派发 enter）；
+ * - 指针从按钮移到空白但没触发 leave（同上）。
+ *
+ * 值直接从 `data-hover-value` 读，与目标是不是按钮本身无关（子元素 `closest` 命中即可）。
+ * 去重后开销等价于 mouseenter：同一按钮内移动零请求。
+ */
+function onTerminalMouseMove(e: MouseEvent): void {
+  const el = (e.target as HTMLElement | null)?.closest?.('.term-btn') as HTMLElement | null;
+  reportHover(el?.dataset.hoverValue ?? null);
+}
+
+// 新回合 = 新画面：旧悬停值作废（fail-safe，见文件头）。
+watch(() => game.currentTurnGeneration, () => reportHover(null));
+
+onBeforeUnmount(() => {
+  // 组件卸载即无画面可言，清掉宿主里的悬停值，避免跨会话残留。
+  lastHoverWire = null;
+  conn.reportInputState({ hoverValue: '' });
+});
+
 /**
  * 终端点击处理器——推进判定收敛到纯函数 inputRouting.shouldAdvanceOnTerminalClick。
  *
@@ -613,6 +685,7 @@ watch(() => game.inputInFlight, (inFlight) => {
     class="terminal"
     :style="terminalStyle"
     @click="onTerminalClick"
+    @mousemove="onTerminalMouseMove"
   >
     <div class="terminal-content" :style="contentStyle">
     <!-- v8 背景图层：fixed 定位、z-index 低于文本（见 bgLayerStyle/sortedBgImages 注释） -->
@@ -647,14 +720,21 @@ watch(() => game.inputInFlight, (inFlight) => {
           :style="lineStyle(item)"
         >
           <template v-for="(entry, entryIdx) in item.line.entries" :key="entryIdx">
+            <!-- M5a（ADR-0021 重开决策 6）：`aria-disabled` 取代原生 `disabled` ——
+                 实测后者**不派发** mousedown/mouseup/click（mouseenter 仍派发），
+                 于是 Void 下 `GETKEYTRIGGERED(0x01)` 永远拿不到触发，COMF413 卡死。
+                 可提交性由 onButtonClick → shouldSubmitButtonValue 独占把关，与此处无关。 -->
             <button
               v-if="entry.button"
               class="term-btn"
               :class="{ 'term-btn-touch': isTouchTarget(entry) }"
               :style="hitStyle(item, entryIdx)"
               :title="`点击提交: ${valueToWire(entry.button.value)}`"
-              :disabled="conn.status !== 'connected' || !game.awaiting.input"
+              :aria-disabled="!canSubmitButtons"
+              :data-hover-value="valueToWire(entry.button.value)"
               @click="onButtonClick(entry)"
+              @mouseenter="onButtonHover(entry)"
+              @mouseleave="onButtonLeave"
             >
               <SegmentRenderer
                 :segments="entry.segments"
@@ -786,7 +866,7 @@ watch(() => game.inputInFlight, (inFlight) => {
 }
 /* 触控盒自己管 hover / active 视觉（见下方 .term-btn-touch:xxx）——这里用 :not 排除，
    避免 0,4,0 的 hover 背景把热区矩形顶掉（那会让触控提示在桌面端忽隐忽现）。 */
-.term-btn:not(.term-btn-touch):hover:not(:disabled) {
+.term-btn:not(.term-btn-touch):hover:not([aria-disabled='true']) {
   /* 双声明：旧 WebView 无 color-mix → 落到满强度 */
   background: var(--term-btn-hover-bg);
   background: color-mix(in srgb, var(--term-btn-hover-bg) 60%, transparent);
@@ -795,7 +875,7 @@ watch(() => game.inputInFlight, (inFlight) => {
   text-decoration-color: var(--term-btn-hover-line);
   text-decoration-color: color-mix(in srgb, var(--term-btn-hover-line) 70%, transparent);
 }
-.term-btn:not(.term-btn-touch):active:not(:disabled) {
+.term-btn:not(.term-btn-touch):active:not([aria-disabled='true']) {
   background: var(--term-btn-active);
   background: color-mix(in srgb, var(--term-btn-active) 25%, transparent);
 }
@@ -867,21 +947,24 @@ watch(() => game.inputInFlight, (inFlight) => {
     text-decoration-color var(--motion-fast);
 }
 /* hover 只补下划线，不替换热区矩形——矩形是常驻的触控提示。 */
-.term-btn-touch:hover:not(:disabled) {
+.term-btn-touch:hover:not([aria-disabled='true']) {
   text-decoration: underline;
   text-underline-offset: 2px;
   text-decoration-color: var(--term-btn-hover-line);
   text-decoration-color: color-mix(in srgb, var(--term-btn-hover-line) 70%, transparent);
 }
 /* 按下时加强——触屏没有 hover，这是一过性反馈的唯一来源（确认感）。 */
-.term-btn-touch:active:not(:disabled) {
+.term-btn-touch:active:not([aria-disabled='true']) {
   /* 双声明：旧 WebView 无 color-mix → 落到满强度 */
   background: var(--term-btn-active);
   background: color-mix(in srgb, var(--term-btn-active) 30%, transparent);
   box-shadow: inset 0 0 0 1px var(--term-btn-active);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--term-btn-active) 55%, transparent);
 }
-.term-btn:disabled {
+/* M5a（ADR-0021 重开决策 6）：不可提交改用 `aria-disabled` 表达 ——
+   原生 `:disabled` 会让浏览器连 mouseenter/mousedown 都不派发，悬停报不上来。
+   这里只做视觉弱化（不给 hover/active 反馈、光标不变手型），不改变事件可达性。 */
+.term-btn[aria-disabled='true'] {
   cursor: default;
 }
 </style>

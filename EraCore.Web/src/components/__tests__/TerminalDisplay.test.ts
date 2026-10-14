@@ -8,7 +8,7 @@ import { useGameStore } from '../../stores/game';
 import { useConnectionStore } from '../../stores/connection';
 import { useUiStore } from '../../stores/ui';
 import { loadImageAndReadPixel } from '../../lib/imageLayout';
-import type { DisplaySnapshot, PrintSegment, BgImageState } from '../../types/protocol';
+import type { DisplaySnapshot, PrintSegment, BgImageState, AwaitInfo } from '../../types/protocol';
 
 vi.mock('../../lib/mauiBridge', () => ({
   isMauiEnvironment: () => true,
@@ -81,7 +81,12 @@ function line(segments: PrintSegment[]): DisplaySnapshot['lines'][number] {
   return { entries: [{ segments }], align: 'left', isLineEnd: true };
 }
 
-async function mountWith(lines: DisplaySnapshot['lines'][number][], bgImages: BgImageState[] = [], scale?: number) {
+async function mountWith(
+  lines: DisplaySnapshot['lines'][number][],
+  bgImages: BgImageState[] = [],
+  scale?: number,
+  awaiting?: AwaitInfo,
+) {
   const pinia = createPinia();
   setActivePinia(pinia);
   const game = useGameStore();
@@ -90,13 +95,15 @@ async function mountWith(lines: DisplaySnapshot['lines'][number][], bgImages: Bg
   const conn = useConnectionStore();
   conn.status = 'connected';
   conn.sendInput = vi.fn();
+  // M5a：悬停上报走同一 store，夹具统一 spy（既有用例不触发 hover，不受影响）
+  conn.reportInputState = vi.fn();
   // Pinia setup store 自动解包 ref——displayState 是值不是 Ref，直接整体赋值。
   // issue 07：路由判据改读 awaiting ⇒ 夹具必须给出 input 维度（否则按钮一律视为不可提交）。
   game.displayState = {
     ...game.displayState,
     lines,
     bgImages,
-    awaiting: { input: { type: 'IntValue' } },
+    awaiting: awaiting ?? { input: { type: 'IntValue' } },
   };
   game.currentTurnGeneration = 0;
   const wrapper = mount(TerminalDisplay, { global: { plugins: [pinia] } });
@@ -995,5 +1002,100 @@ describe('TerminalDisplay: 触控排版', () => {
       await wrapper.find('.term-mask').trigger('click', { clientX: 10, clientY: 5 });
       expect(conn.sendInput).toHaveBeenCalledWith('7');
     });
+  });
+});
+
+/**
+ * TerminalDisplay: 真悬停上报（ADR-0031 / spec-v3 **M5a**）。
+ *
+ * 判据锚在两件事上，缺一不可：
+ * 1. **可感知**：Void 等待下按钮仍能派发 `mouseenter` 并把按钮值上报给宿主 ——
+ *    这是 P0 ③（`COMF413:135` 依赖 `MOUSEB()`）在 Web 上解卡的前提。
+ *    前提是按钮**没有**原生 `disabled`（浏览器对 disabled 元素不派发鼠标事件）。
+ * 2. **不可提交**：放开的是「可感知性」，**不是**「可提交性」——
+ *    Void 下点击仍不得推进（issue 10 红线，ADR-0021 重开决策 6）。
+ *
+ * 另：清空用**空串**而非省略字段 —— 服务端 `cmd.hoverValue != null` 判别，
+ * 省略与 null 都等于「没有这一项」，清不掉。
+ */
+describe('TerminalDisplay: 真悬停上报（M5a）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** 一行、一个整数按钮（值 42）。 */
+  function hoverBtnLine(): DisplaySnapshot['lines'][number] {
+    return {
+      entries: [{ segments: [{ text: 'ClickMe' }], button: { value: 42, isInteger: true, generation: 0 } }],
+      align: 'left',
+      isLineEnd: true,
+    };
+  }
+
+  /** Void 等待：`input` 维度缺省（既不等输入，只等定时器）。 */
+  const VOID_AWAITING: AwaitInfo = {};
+
+  it('Void 下按钮用 aria-disabled 表达不可提交，且不带原生 disabled（否则收不到指针事件）', async () => {
+    const { wrapper } = await mountWith([hoverBtnLine()], [], undefined, VOID_AWAITING);
+    const btn = wrapper.find('.term-btn');
+
+    expect(btn.attributes('aria-disabled')).toBe('true');
+    // 关键：原生 disabled 会让浏览器不派发 mouseenter/mousedown ⇒ 悬停永远报不上来
+    expect(btn.attributes('disabled')).toBeUndefined();
+  });
+
+  it('Void 下 mouseenter 仍上报 hoverValue（放开 disabled 的全部目的）', async () => {
+    const { wrapper, conn } = await mountWith([hoverBtnLine()], [], undefined, VOID_AWAITING);
+
+    await wrapper.find('.term-btn').trigger('mouseenter');
+
+    expect(conn.reportInputState).toHaveBeenCalledWith({ hoverValue: '42' });
+  });
+
+  it('Void 下点击不提交（issue 10 红线——放开的是可感知性，不是可提交性）', async () => {
+    const { wrapper, conn } = await mountWith([hoverBtnLine()], [], undefined, VOID_AWAITING);
+
+    await wrapper.find('.term-btn').trigger('click');
+
+    expect(conn.sendInput).not.toHaveBeenCalled();
+  });
+
+  it('mouseleave 用空串清空（省略字段在服务端等于「没有这一项」，清不掉）', async () => {
+    const { wrapper, conn } = await mountWith([hoverBtnLine()]);
+
+    await wrapper.find('.term-btn').trigger('mouseenter');
+    await wrapper.find('.term-btn').trigger('mouseleave');
+
+    expect(conn.reportInputState).toHaveBeenLastCalledWith({ hoverValue: '' });
+  });
+
+  it('重复 mouseenter 去重（同一按钮内不重复发帧）', async () => {
+    const { wrapper, conn } = await mountWith([hoverBtnLine()]);
+
+    await wrapper.find('.term-btn').trigger('mouseenter');
+    await wrapper.find('.term-btn').trigger('mouseenter');
+
+    expect(conn.reportInputState).toHaveBeenCalledTimes(1);
+  });
+
+  it('新回合清空旧悬停值（画面已换，陈旧值会让脚本误命中）', async () => {
+    const { wrapper, game, conn } = await mountWith([hoverBtnLine()]);
+
+    await wrapper.find('.term-btn').trigger('mouseenter');
+    expect(conn.reportInputState).toHaveBeenLastCalledWith({ hoverValue: '42' });
+
+    game.currentTurnGeneration = 1;
+    await wrapper.vm.$nextTick();
+
+    expect(conn.reportInputState).toHaveBeenLastCalledWith({ hoverValue: '' });
+  });
+
+  it('可提交态下 mouseenter 正常上报（不只在 Void 下工作）', async () => {
+    const { wrapper, conn } = await mountWith([hoverBtnLine()]);
+
+    await wrapper.find('.term-btn').trigger('mouseenter');
+
+    expect(conn.reportInputState).toHaveBeenCalledWith({ hoverValue: '42' });
+    expect(wrapper.find('.term-btn').attributes('aria-disabled')).toBe('false');
   });
 });
