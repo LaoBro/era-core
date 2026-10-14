@@ -380,6 +380,17 @@ def main():
 
     results.append(
         (
+            "CLI bottom anchor (ConPTY)",
+            _run_script(
+                "CLI bottom anchor (ConPTY)",
+                [sys.executable, str(TESTS_DIR / "test_cli_bottom_anchor.py"), "--binary", str(binary_path)],
+                timeout=180,
+            ),
+        )
+    )
+
+    results.append(
+        (
             "VT-only fatal exit",
             _run_script(
                 "VT-only fatal exit",
