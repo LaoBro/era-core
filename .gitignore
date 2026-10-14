@@ -55,6 +55,10 @@ EraCore.Web/node_modules/*
 EraCore.Web/dist/*
 # issue 07：MAUI 专用 Vue 构建输出目录（VueBuild.targets VueOutDir=dist-maui）
 EraCore.Web/dist-maui/*
+# Playwright（e2e 真实浏览器测试）产物：失败截图 / trace / 报告
+EraCore.Web/test-results/*
+EraCore.Web/playwright-report/*
+EraCore.Web/.playwright/*
 docs/agents/*
 docs/adr/*
 docs/2026.6.16.mouse-input/spikes/*
