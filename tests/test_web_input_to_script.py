@@ -210,6 +210,66 @@ def run_same_frame(binary=None):
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def run_back_to_back(binary=None):
+    """**背靠背**发悬停帧与按下帧（不等待、不轮询）—— 模拟**触屏 tap**。
+
+    触屏没有"把指针移过去"这个独立动作：浏览器在 tap 时**合成** compatibility mouse
+    events（`mousemove → mouseenter → mousedown → mouseup → click`），
+    于是悬停帧与按下帧几乎同时出去（`e2e/touch-tap.spec.ts` 已实测顺序正确）。
+
+    于是问题只剩：两帧的**间隔**是否大于一个脚本圈（`AWAIT 1` = 1ms）。
+    这里直接测脚本侧能不能一次出口 —— 这决定触屏要不要点两次。
+
+    为什么「顺序发、每条等响应」就忠实于 Web 触屏：前端 `connection.ts:703-741` 的
+    `stateQueue` 正是「前一帧 settle 后才发下一帧」（`await fetch` 到响应），
+    故两帧到达间隔 ≈ 一次完整 HTTP 往返，必然 > 1ms。
+
+    ⚠️ **未验证**：MAUI / Android WebView 走 `postInput` **桥**（同步投递、无网络往返），
+    两帧间隔可能 < 1ms ⇒ **可能落在同一脚本圈** ⇒ 那类宿主上或需两次点击。
+    而 Android 恰是「触屏是主要输入方式」的主场景（`ui.ts:179`）—— 若要确认，
+    需在真机/模拟器上跑，本机无法诚实模拟（Python 侧做不到「顺序确定 + 间隔 <1ms」）。
+    """
+    temp_dir, game_dir = copy_test_game_with_erb(PROBE_ERB)
+    server = None
+    try:
+        server = start_server(game_dir, binary=binary)
+        run = ProbeRun(server)
+
+        status, _ = server.start_session()
+        check(status == 200, f"[背靠背] POST /load-game 成功（实得 {status}）")
+        if status != 200:
+            return
+        check(run.wait_for_text("COMF_PROBE_READY", 20), "[背靠背] 脚本进入 AWAIT 1 循环")
+
+        # 触屏形态：两条帧紧邻发出，不等任何稳定点
+        run.state_frame({"hoverValue": "42"})
+        run.state_frame({"keys": [{"code": 1, "down": True}]})
+
+        ok_once = run.wait_for_text("COMF_PROBE_OK", 3.0)
+
+        ok_twice = False
+        if not ok_once:
+            run.state_frame({"keys": [{"code": 1, "down": False}]})
+            time.sleep(0.2)
+            run.state_frame({"keys": [{"code": 1, "down": True}]})
+            ok_twice = run.wait_for_text("COMF_PROBE_OK", 5.0)
+
+        print(f"  [diag] 背靠背：一次点击即出口={ok_once}；补一次后出口={ok_twice}")
+        check(
+            ok_once,
+            "🔒 背靠背两帧（触屏形态）⇒ **一次点击即出口** —— 说明悬停帧的到达早于按下帧"
+            "至少一个脚本圈（HTTP 往返 > `AWAIT 1` 的 1ms）",
+        )
+    finally:
+        if server is not None:
+            try:
+                server.delete_session()
+            except Exception:
+                pass
+            server.close()
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def main():
     import argparse
 
@@ -221,6 +281,8 @@ def main():
     run_probe(args.binary)
     print("--- 同帧（悬停 + 按下挤在一起）---")
     run_same_frame(args.binary)
+    print("--- 背靠背（触屏 tap 形态）---")
+    run_back_to_back(args.binary)
 
     print(f"\n=== Web input→script test: {passed} passed, {failed} failed ===")
     sys.exit(1 if failed else 0)

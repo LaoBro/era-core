@@ -86,15 +86,32 @@ const inputReports: string[] = [];
 const keyReports: string[] = [];
 /** 焦点上报（M6）——`ISACTIVE` 的真值来源。 */
 const focusReports: boolean[] = [];
+/**
+ * 跨类型的**时序**日志（回答「悬停与按下谁先谁后」）：`hover:<值>` / `key:<code>:<down|up>` / `focus:<0|1>`。
+ *
+ * 为什么单列一条：分开的数组各自有序、跨类型无序，而「悬停帧是否早于按下帧」
+ * 正是 COMF413 一次点击能否出口的判据（见 `e2e/touch-tap.spec.ts` 与
+ * `tests/test_web_input_to_script.py` 的同帧锚点）。
+ */
+const timeline: string[] = [];
 
 conn.reportInputState = ((extra: {
   hoverValue?: string;
   keys?: { code: number; down: boolean }[];
   focus?: boolean;
 }) => {
-  if (extra.hoverValue !== undefined) hoverReports.push(extra.hoverValue);
-  if (extra.focus !== undefined) focusReports.push(extra.focus);
-  for (const k of extra.keys ?? []) keyReports.push(`${k.code}:${k.down ? 'down' : 'up'}`);
+  if (extra.hoverValue !== undefined) {
+    hoverReports.push(extra.hoverValue);
+    timeline.push(`hover:${extra.hoverValue}`);
+  }
+  if (extra.focus !== undefined) {
+    focusReports.push(extra.focus);
+    timeline.push(`focus:${extra.focus ? 1 : 0}`);
+  }
+  for (const k of extra.keys ?? []) {
+    keyReports.push(`${k.code}:${k.down ? 'down' : 'up'}`);
+    timeline.push(`key:${k.code}:${k.down ? 'down' : 'up'}`);
+  }
 }) as typeof conn.reportInputState;
 
 conn.sendInput = ((value: string) => {
@@ -133,6 +150,7 @@ conn.sendInput = ((value: string) => {
   inputReports.length = 0;
   keyReports.length = 0;
   focusReports.length = 0;
+  timeline.length = 0;
 };
 
 (window as unknown as Record<string, unknown>).__reports = {
@@ -140,4 +158,5 @@ conn.sendInput = ((value: string) => {
   input: inputReports,
   keys: keyReports,
   focus: focusReports,
+  timeline,
 };
