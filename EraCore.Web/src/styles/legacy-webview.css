@@ -73,9 +73,6 @@ html.legacy-webview .spectator-copy > * + * { margin-top: 2px; }
 /* components\StatusBanner.vue */
 html.legacy-webview .status-banner > * + * { margin-left: var(--space-2); }
 
-/* components\TerminalDisplay.vue */
-html.legacy-webview .terminal-empty > * + * { margin-top: var(--space-2); }
-
 /* components\TinputCountdown.vue */
 html.legacy-webview .tinput-countdown > * + * { margin-left: var(--space-2); }
 

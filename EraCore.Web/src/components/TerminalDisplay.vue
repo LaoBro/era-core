@@ -5,7 +5,6 @@ import { useConnectionStore } from '../stores/connection';
 import { useUiStore, TOUCH_TARGET_MIN_PX } from '../stores/ui';
 import { useVirtualScroll } from '../composables/useVirtualScroll';
 import { usePinchZoom } from '../composables/usePinchZoom';
-import { isMauiEnvironment } from '../lib/mauiBridge';
 import {
   shouldSubmitButtonValue,
   shouldAdvanceOnTerminalClick,
@@ -82,7 +81,6 @@ import type { ButtonValue, SegmentImage, DisplayLine, DisplayEntry } from '../ty
 const game = useGameStore();
 const conn = useConnectionStore();
 const ui = useUiStore();
-const isMaui = isMauiEnvironment();
 
 /**
  * Issue 12：从 store 派生有效布局值——null 时 fallback 到 Emuera 默认值。
@@ -485,7 +483,7 @@ const sortedBgImages = computed(() =>
 
 /** 背景层内联样式——fixed 相对视口，宽度对齐游戏窗口（contentStyle 同款宽度）。
     z-index:-1：在 .terminal-content 的 stacking context 内沉到文本之下（文本 z-index auto），
-    任何静态内容（含 terminal-empty）都浮在背景之上。 */
+    任何静态内容都浮在背景之上。 */
 const bgLayerStyle = computed<Record<string, string>>(() => ({
   position: 'fixed',
   top: '0',
@@ -628,24 +626,13 @@ watch(() => game.inputInFlight, (inFlight) => {
         draggable="false"
       />
     </div>
-    <div v-if="game.displayState.lines.length === 0" class="terminal-empty">
-      <template v-if="isMaui">
-        <!-- MAUI 模式：游戏列表负责选择并自动启动游戏，这里只展示当前启动状态。 -->
-        <p v-if="game.serverState === 'Loading'">游戏加载中，请稍候…</p>
-        <p v-else-if="game.gameDir && game.serverState === 'Idle'">游戏正在启动，请稍候…</p>
-        <p v-else-if="game.gameDir">游戏运行中，等待输出…</p>
-        <p v-else>请选择一个游戏</p>
-      </template>
-      <template v-else>
-        <!-- HTTP 模式：按 WS 连接状态分流 -->
-        <p v-if="conn.status === 'connected'">已连接，等待游戏输出…</p>
-        <p v-else>未连接服务器。请在顶部连接栏输入 WS URL 并点击「连接」。</p>
-      </template>
-      <p v-if="game.lastError" class="terminal-error">解析错误：{{ game.lastError }}</p>
-    </div>
+    <!-- 2026-10-14（§4.3）：原 .terminal-empty 空状态块已删除 —— 四处提示均为重复呈现
+         （加载/连接态 → TerminalView 的 StatusBanner overlay-status；解析错误 →
+         StatusBanner kind="error" + InputBar.errorText；选择游戏 → MAUI 游戏列表），
+         且不符合「顶部窄条、不常驻大条幅」的既有约定。
+         lines.length === 0 ⇒ spacer 高度为 0 ⇒ 空白屏，与原版 Emuera 启动初期一致。 -->
     <!-- 虚拟滚动：spacer 撑总高度，可见行用 translateY(offsetY) 定位 -->
     <div
-      v-else
       class="term-virtual-spacer"
       :style="{ height: `${vs.totalHeight.value}px` }"
     >
@@ -726,6 +713,18 @@ watch(() => game.inputInFlight, (inFlight) => {
   /* v8：相对定位 + z-index 1——浮在背景图层（z-index 0）之上 */
   position: relative;
   z-index: 1;
+  /* 贴底渲染（2026-10-14 spec §4.1 方案 A）：内容不足一屏时块贴容器底部、上方留白——
+     与原版 Emuera（GetLinePointY：末行恒锚可绘制区底部）一致，也让 Web 与已落地的
+     CLI 贴底（B1/B4）保持同构。
+     为什么安全（纯 CSS、零 JS 记账改动）：
+     - 内容高于 100% 时容器 auto 高度 = totalHeight，自由空间为负 ⇒ justify-content 不生效
+       ⇒ 满屏行为与改动前逐字节一致；
+     - 不需要 clientHeight ⇒ 天然跟随 resize / 旋屏 / 软键盘 / InputBar 出没，无需 ResizeObserver；
+     - 不碰 offsetOf / totalHeight / scrollTop 账本链 ⇒ 虚拟滚动既有测试全绿。 */
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
 }
 /* v8 背景图层——fixed 相对视口（滚动不随内容动，WinForms 主画布语义）；
    z-index 0 低于文本层；pointer-events:none 不拦截任何点击 */
@@ -742,6 +741,9 @@ watch(() => game.inputInFlight, (inFlight) => {
 .term-virtual-spacer {
   position: relative;
   width: 100%;
+  /* 贴底（§4.1）：父级 .terminal-content 改为 flex 列后，spacer 不得被 flex-shrink 压扁
+     （否则虚拟滚动总高度塌陷 ⇒ 可见行窗口错位）。 */
+  flex: none;
 }
 /* 虚拟滚动可见行窗口——translateY(offsetY) 定位，absolute 占满 spacer 宽度 */
 .term-virtual-window {
@@ -881,18 +883,5 @@ watch(() => game.inputInFlight, (inFlight) => {
 }
 .term-btn:disabled {
   cursor: default;
-}
-.terminal-empty {
-  color: var(--color-text-muted);
-  font-style: italic;
-  padding: var(--space-5);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.terminal-error {
-  color: var(--color-error);
-  font-style: normal;
-  font-size: var(--font-size-sm);
 }
 </style>

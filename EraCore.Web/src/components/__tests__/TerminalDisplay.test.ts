@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import TerminalDisplay from '../TerminalDisplay.vue';
@@ -299,29 +300,28 @@ describe('TerminalDisplay: image 掩膜渲染（Q6）', () => {
   });
 });
 
-describe('TerminalDisplay: MAUI 空状态', () => {
-  async function mountEmpty(gameDir: string | null, serverState: 'Idle' | 'Loading' | 'WaitInput') {
-    const { wrapper, game } = await mountWith([]);
-    game.gameDir = gameDir;
-    game.serverState = serverState;
-    await wrapper.vm.$nextTick();
-    return wrapper;
-  }
+// 2026-10-14（§4.3）：原「MAUI 空状态」三条已随 .terminal-empty 块删除 ——
+// 空屏现在是空白可绘制区（与原版 Emuera 一致），加载/连接态与解析错误由
+// TerminalView 的 StatusBanner + InputBar.errorText 呈现（见 §4.3 冗余论证）。
 
-  it('选择游戏后启动期间显示启动提示，不要求点击快速重开', async () => {
-    const wrapper = await mountEmpty('D:/games/mygame', 'Idle');
-    expect(wrapper.find('.terminal-empty').text()).toContain('游戏正在启动，请稍候…');
-    expect(wrapper.find('.terminal-empty').text()).not.toContain('快速重开');
+describe('TerminalDisplay: 贴底渲染样式契约', () => {
+  it('.terminal-content 必须含 min-height:100% + justify-content:flex-end', () => {
+    // 组件样式不注入测试 DOM（SFC style 在测试中生效需 vite 插件，happy-dom 也无布局），
+    // 故按源码契约断言（同 App.viewSwitch.test.ts 的 .view-hidden 断言）。
+    // 贴底是「与原版一致 + 与 CLI 已落地贴底同构」的关键，误删会让 Web 与 CLI 再次分家。
+    const src = readFileSync(`${process.cwd()}/src/components/TerminalDisplay.vue`, 'utf8');
+    const rule = /\.terminal-content\s*\{([^}]*)\}/.exec(src);
+    expect(rule, '.terminal-content 规则缺失').toBeTruthy();
+    const body = rule![1];
+    expect(body).toContain('min-height: 100%');
+    expect(body).toContain('justify-content: flex-end');
   });
 
-  it('Loading 状态显示加载提示', async () => {
-    const wrapper = await mountEmpty('D:/games/mygame', 'Loading');
-    expect(wrapper.find('.terminal-empty').text()).toContain('游戏加载中，请稍候…');
-  });
-
-  it('未选择游戏时显示选择游戏提示', async () => {
-    const wrapper = await mountEmpty(null, 'Idle');
-    expect(wrapper.find('.terminal-empty').text()).toContain('请选择一个游戏');
+  it('.term-virtual-spacer 必须是 flex:none（贴底改 flex 列后不得被压扁）', () => {
+    const src = readFileSync(`${process.cwd()}/src/components/TerminalDisplay.vue`, 'utf8');
+    const rule = /\.term-virtual-spacer\s*\{([^}]*)\}/.exec(src);
+    expect(rule, '.term-virtual-spacer 规则缺失').toBeTruthy();
+    expect(rule![1]).toContain('flex: none');
   });
 });
 
