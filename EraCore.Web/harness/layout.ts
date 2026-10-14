@@ -84,9 +84,16 @@ const hoverReports: string[] = [];
 const inputReports: string[] = [];
 /** 键鼠事件，wire 口径 `code:down|up`（VK_LBUTTON = 1）。 */
 const keyReports: string[] = [];
+/** 焦点上报（M6）——`ISACTIVE` 的真值来源。 */
+const focusReports: boolean[] = [];
 
-conn.reportInputState = ((extra: { hoverValue?: string; keys?: { code: number; down: boolean }[] }) => {
+conn.reportInputState = ((extra: {
+  hoverValue?: string;
+  keys?: { code: number; down: boolean }[];
+  focus?: boolean;
+}) => {
   if (extra.hoverValue !== undefined) hoverReports.push(extra.hoverValue);
+  if (extra.focus !== undefined) focusReports.push(extra.focus);
   for (const k of extra.keys ?? []) keyReports.push(`${k.code}:${k.down ? 'down' : 'up'}`);
 }) as typeof conn.reportInputState;
 
@@ -125,10 +132,12 @@ conn.sendInput = ((value: string) => {
   hoverReports.length = 0;
   inputReports.length = 0;
   keyReports.length = 0;
+  focusReports.length = 0;
 };
 
 (window as unknown as Record<string, unknown>).__reports = {
   hover: hoverReports,
   input: inputReports,
   keys: keyReports,
+  focus: focusReports,
 };

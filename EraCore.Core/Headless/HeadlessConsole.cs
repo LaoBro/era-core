@@ -44,7 +44,17 @@ namespace MinorShift.Emuera.UI.Game
 		public int ClientWidth => _clientWidth;
 		public int ClientHeight => _clientHeight;
 		public string Text { get; set; } = string.Empty;
-		public bool IsActive => true;
+
+		/// <summary>
+		/// ADR-0031 / spec-v3 M6：声明 <see cref="InputCapability.Focus"/> 的宿主读快照的真实焦点，
+		/// 否则恒 <c>true</c>（= 接入前行为，spec-v3 §3.5 降级矩阵）。
+		/// <para>
+		/// 它是 <c>ISACTIVE</c> 的真相源，同时也是 <c>GETKEY</c> / <c>GETKEYTRIGGERED</c> 的
+		/// <b>原版门卫</b>（<c>Creator.Method.System.cs:300</c> 的
+		/// <c>if (!IsActive) return 0;</c>）—— 失焦时按键一律读不到，这是原版语义，不是降级。
+		/// </para>
+		/// </summary>
+		public bool IsActive => !_inputHost.Capabilities.Has(InputCapability.Focus) || _inputHost.Current.Focused;
 
 		public void Refresh() { }
 		public void Invoke(Action action) => action?.Invoke();

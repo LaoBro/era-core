@@ -282,7 +282,36 @@ namespace MinorShift.Emuera.UI.Game
 
 			public void SubmitGeometry(EmuPoint point) => Update(s => s with { CursorPosition = point });
 
-			public void NotifyFocusChanged(bool focused) => Update(s => s with { Focused = focused });
+			/// <summary>
+			/// 焦点变更（ADR-0031 / spec-v3 M6）。
+			/// <para>
+			/// 🔴 <b>失焦必须清键</b>：窗口失焦后浏览器/系统会吞掉后续的 keyup / mouseup，
+			/// 若电平残留为 1，宿主就永久卡在「玩家一直按着」—— 这就是<b>幽灵按键</b>
+			/// （脚本侧表现为 <c>GETKEY</c> 恒 1、每圈都触发）。
+			/// </para>
+			/// <para>
+			/// 🔴 <b><c>_lastRead</c> 必须一并归零</b>：<see cref="ConsumeTrigger"/> 的判据是
+			/// 「版本号与上次读到不同」。清键后 <c>version</c> 回到 0，而 <c>_lastRead</c> 仍是
+			/// 旧值 <c>1</c> 时，重新聚焦后的首次按下会让 <c>version</c> 从 0 涨到 1 —— 恰好等于
+			/// 残留的 <c>_lastRead</c> ⇒ <c>GETKEYTRIGGERED</c> <b>漏掉一次触发</b>。
+			/// </para>
+			/// <para>
+			/// ⚠️ 线程：本方法由宿主线程（HTTP / UI）调用，而 <c>_lastRead</c> 只被引擎线程读写。
+			/// 与 <see cref="SubmitKey"/> 一样<b>刻意不加锁</b>（原版裸数组同款）；竞态窗口是
+			/// 「失焦恰逢一次 <c>GETKEYTRIGGERED</c> 读取」，后果限于一次触发的误判。
+			/// </para>
+			/// </summary>
+			public void NotifyFocusChanged(bool focused)
+			{
+				if (!focused)
+					Array.Clear(_lastRead);
+
+				Update(s => s with
+				{
+					Focused = focused,
+					Keys = focused ? s.Keys : KeyStateSet.Empty,
+				});
+			}
 
 			public void SubmitKey(int keycode, bool down) => Update(s => s with { Keys = s.Keys.WithDown(keycode, down) });
 

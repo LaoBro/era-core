@@ -18,7 +18,14 @@
  *    挡掉一条 mousedown ⇒ 电平永不置位 ⇒ 触发全丢；长定时等待（`AWAIT 8000`）
  *    期间没有帧来解锁，还会让电平卡住整段等待。
  * 4. **不参与 E-min / 悬停补偿**（ADR-0031 决策 5）
- *    只上报**真实**事件。`hoverValue` 等 M5 打通真悬停后再接。
+ *    只上报**真实**事件。悬停由 `TerminalDisplay` 在自己的 DOM 按钮上上报（M5a）。
+ *
+ * ## M6：焦点（`ISACTIVE` 的真值 + 失焦清键）
+ *
+ * `blur` / `focus` 与 `visibilitychange` 上报 `focus`，使引擎侧 `ISACTIVE` 有真值。
+ * 关键不是那个布尔值本身，而是**失焦必须让宿主清键**：失焦后浏览器会吞掉后续
+ * keyup / mouseup，电平若停在 1 就是幽灵按键。这里补发全量 up 是前端侧的一半，
+ * 宿主 `NotifyFocusChanged(false)` 清键是另一半（双保险，见 spec-v3 §3.5）。
  *
  * ## 输入框守卫
  *
@@ -91,14 +98,25 @@ export function useKeyMouseInput(enabled?: () => boolean): void {
   }
 
   /**
-   * 窗口失焦兜底：切标签页 / 点到浏览器外再松手时，浏览器不会派发后续的
-   * keyup / mouseup。若不补发，电平会永久停在 1 ⇒ 幽灵输入。
+   * 焦点丢失（`blur` / 标签页隐藏）：补发全量 up **并**上报 `focus:false`（合成一帧）。
+   *
+   * 补发 up 的理由不变 —— 浏览器在失焦后会吞掉后续的 keyup / mouseup，电平停在 1
+   * 就是幽灵输入。M6 追加的是把「窗口此刻不活跃」这件事本身告诉引擎：它既是
+   * `ISACTIVE` 的真值，也是引擎侧失焦清键的触发点。**双保险**（前端补发 + 宿主清键）：
+   * 任一环节失效都不会留下幽灵电平。
+   *
+   * ⚠️ 即便 `pressed` 为空也**必须**发这一帧（`focus:false` 本身是信息）——
+   * 旧实现第一行是 `if (pressed.size === 0) return;`，会把「没按键时失焦」整条吞掉。
    */
-  function releaseAll(): void {
-    if (pressed.size === 0) return;
+  function reportFocusLost(): void {
     const keys = [...pressed].map(code => ({ code, down: false }));
     pressed.clear();
-    useConnectionStore().reportInputState({ keys });
+    useConnectionStore().reportInputState(keys.length > 0 ? { keys, focus: false } : { focus: false });
+  }
+
+  /** 焦点恢复：上报 `focus:true`（宿主重新允许读取按键）。 */
+  function reportFocusGained(): void {
+    useConnectionStore().reportInputState({ focus: true });
   }
 
   function shouldReport(): boolean {
@@ -117,6 +135,18 @@ export function useKeyMouseInput(enabled?: () => boolean): void {
   const boundKeyUp = guard(onKeyUp as (e: never) => void);
   const boundMouseDown = guard(onMouseDown as (e: never) => void);
   const boundMouseUp = guard(onMouseUp as (e: never) => void);
+  const boundFocusLost = guard(reportFocusLost as (e: never) => void);
+  const boundFocusGained = guard(reportFocusGained as (e: never) => void);
+
+  /**
+   * 标签页显隐（M6）：`hidden` 等同于失焦（部分浏览器切标签页不派发 `blur`，
+   * 例如以窗口内标签形式呈现的 WebView），`visible` 视作重新聚焦。
+   */
+  function onVisibilityChange(): void {
+    if (!shouldReport()) return;
+    if (document.visibilityState === 'hidden') reportFocusLost();
+    else reportFocusGained();
+  }
 
   onMounted(() => {
     window.addEventListener('keydown', boundKeyDown as EventListener);
@@ -124,20 +154,18 @@ export function useKeyMouseInput(enabled?: () => boolean): void {
     window.addEventListener('mousedown', boundMouseDown as EventListener);
     // mouseup 挂在 window 而非某个元素：玩家可能拖到元素外才松手
     window.addEventListener('mouseup', boundMouseUp as EventListener);
-    window.addEventListener('blur', releaseAll);
+    window.addEventListener('blur', boundFocusLost as EventListener);
+    window.addEventListener('focus', boundFocusGained as EventListener);
     document.addEventListener('visibilitychange', onVisibilityChange);
   });
-
-  function onVisibilityChange(): void {
-    if (document.visibilityState === 'hidden') releaseAll();
-  }
 
   onBeforeUnmount(() => {
     window.removeEventListener('keydown', boundKeyDown as EventListener);
     window.removeEventListener('keyup', boundKeyUp as EventListener);
     window.removeEventListener('mousedown', boundMouseDown as EventListener);
     window.removeEventListener('mouseup', boundMouseUp as EventListener);
-    window.removeEventListener('blur', releaseAll);
+    window.removeEventListener('blur', boundFocusLost as EventListener);
+    window.removeEventListener('focus', boundFocusGained as EventListener);
     document.removeEventListener('visibilitychange', onVisibilityChange);
     pressed.clear();
   });

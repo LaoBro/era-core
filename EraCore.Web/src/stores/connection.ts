@@ -20,9 +20,9 @@ export interface InputExtra {
   keys?: { code: number; down: boolean }[];
   /** `MOUSEB()` 应返回的值 —— 真悬停（M5 打通）；**不用**它做点击补偿（E-min 已回退）。 */
   hoverValue?: string;
-  /** console 局部坐标（左上基准）；M5 前不启用。 */
+  /** console 局部坐标（左上基准）；M5b 前不启用（Web 尚无坐标语义）。 */
   geometry?: { x: number; y: number };
-  /** 窗口焦点；M6 前不启用。 */
+  /** 窗口焦点（M6）：`false` 会让宿主清键 —— 失焦不报会让电平卡在 1（幽灵按键）。 */
   focus?: boolean;
 }
 
