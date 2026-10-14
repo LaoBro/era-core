@@ -413,6 +413,17 @@ def main():
 
     results.append(
         (
+            "Web input → script (server)",
+            _run_script(
+                "Web input → script (server)",
+                [sys.executable, str(TESTS_DIR / "test_web_input_to_script.py"), "--binary", str(binary_path)],
+                timeout=180,
+            ),
+        )
+    )
+
+    results.append(
+        (
             "VT-only fatal exit",
             _run_script(
                 "VT-only fatal exit",
