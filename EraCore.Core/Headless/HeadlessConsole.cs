@@ -33,7 +33,11 @@ namespace MinorShift.Emuera.UI.Game
 			_clientHeight = Config.WindowY;
 			_lineHeight = Config.LineHeight;
 			_textBox = new HeadlessTextBox(Config.BackColor);
-			_pictureBox = new HeadlessPictureBox(_clientWidth, _clientHeight);
+			// 2026.10.14 贴底 spec §3.6：picbox 高度跟随视口而非恒为 WindowY ——
+			// ClientRectangle 是 MoveMouse 的门禁（ConsoleInputHandler / MOUSEB 读取路径），
+			// 贴底渲染下内容行 y = row × LineHeight 可达视口高度（终端 33 行 ⇒ 608px > 480），
+			// 恒 480 会把贴底内容整体挡掉 ⇒ MOUSEB 恒空。server 路径未附加视口 ⇒ 回落 WindowY。
+			_pictureBox = new HeadlessPictureBox(_clientWidth, () => Viewport.VisibleHeight);
 		}
 
 		public bool Created => true;
@@ -145,15 +149,26 @@ namespace MinorShift.Emuera.UI.Game
 
 	internal sealed class HeadlessPictureBox : IPictureBox
 	{
-		public int Width { get; }
-		public int Height { get; }
+		private readonly Func<int> _heightProvider;
 
-		/// <summary>构造时由 HeadlessConsole 注入 Config.WindowX/Y 快照（scope 内取值）。</summary>
-		internal HeadlessPictureBox(int width, int height)
+		public int Width { get; }
+
+		/// <param name="heightProvider">
+		/// 可绘制区高度（像素）。2026.10.14 贴底 spec §3.6：必须跟随
+		/// <see cref="IViewportProvider.VisibleHeight"/> 而非恒为 <c>Config.WindowY</c> ——
+		/// <c>ClientRectangle</c> 是 <c>MoveMouse</c> 的门禁（<c>ConsoleInputHandler</c> 两处 pull 点
+		/// 与 <c>MOUSEB</c> 读取路径），贴底渲染下内容行 <c>y = 终端绝对行 × LineHeight</c> 可达视口高度
+		/// （终端 33 行 ⇒ 608px &gt; WindowY 480），恒 480 会把贴底内容整体挡掉 ⇒ <c>MOUSEB</c> 恒空。
+		/// 未附加视口（server 路径）时回落 <c>Config.WindowY</c>，行为不变。
+		/// </param>
+		internal HeadlessPictureBox(int width, Func<int> heightProvider)
 		{
 			Width = width;
-			Height = height;
+			_heightProvider = heightProvider;
 		}
+
+		/// <summary>可绘制区高度（像素）—— 实时跟随视口，见构造参数备注。</summary>
+		public int Height => _heightProvider();
 
 		public EmuPoint PointToClient(EmuPoint point) => point;
 		public EmuRectangle ClientRectangle => new(0, 0, Width, Height);

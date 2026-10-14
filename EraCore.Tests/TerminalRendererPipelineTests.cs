@@ -89,11 +89,14 @@ public class TerminalRendererPipelineTests
         string output = CaptureOutput(() => renderer.FullRefresh("test"), screen);
 
         Assert.Contains("\x1b[2J\x1b[H", output);
-        Assert.Contains("\x1b[1;1H", output);
-        Assert.Contains("\x1b[2;1H", output);
-        Assert.Contains("\x1b[3;1H", output);
-        Assert.Contains("\x1b[4;1H", output);
+        // 贴底（2026.10.14 spec §3.1）：H=25 ⇒ visibleLines=24，3 行内容锚末行 23（0-based），
+        // 写屏行 21/22/23（1-based 22/23/24），光标恒置预留行 24（1-based 25）。
+        Assert.Contains("\x1b[22;1H", output);
+        Assert.Contains("\x1b[23;1H", output);
+        Assert.Contains("\x1b[24;1H", output);
+        Assert.Contains("\x1b[25;1H", output);
         Assert.Equal(3, renderer.LastDrawnRows);
+        Assert.Equal(23, renderer.LastContentRow);   // visibleLines − 1，与内容量无关
     }
 
     [Fact]
@@ -108,9 +111,44 @@ public class TerminalRendererPipelineTests
         string output = CaptureOutput(() => renderer.FlushBuffer(), screen);
 
         Assert.Contains("\x1b[2J\x1b[H", output);
-        Assert.Contains("\x1b[1;1H", output);
-        Assert.Contains("\x1b[2;1H", output);
+        Assert.Contains("\x1b[23;1H", output);
+        Assert.Contains("\x1b[24;1H", output);
         Assert.Equal(2, renderer.LastDrawnRows);
+        Assert.Equal(23, renderer.LastContentRow);
+    }
+
+    /// <summary>
+    /// B3（spec §3.4）：新行到达一律 FullRefresh（绝对定位），不再走光标相对增量 ——
+    /// 贴底后光标恒在预留行（末行），增量写在末行会触发终端滚动，ADR-0006 实测
+    /// ConPTY 下滚出视口的字节不重发 master ⇒ 后续行永远渲染不出来。
+    /// </summary>
+    [Fact]
+    public void FlushBuffer_new_lines_trigger_fullrefresh()
+    {
+        using var scope = GlobalStatic.OpenScope(new ConfigData());
+        var screen = new BufferedVtScreen(80, 25);
+        var src0 = MakeSource();
+        var src1 = MakeSource();
+        var src2 = MakeSource();
+        var displayState = new FakeDisplayState(
+            Snapshot(MakeLine(0, src0), MakeLine(1, src1)),
+            Snapshot(MakeLine(0, src0), MakeLine(1, src1), MakeLine(2, src2)));
+        var renderer = new TerminalRenderer(
+            new FakeButtonContext(), new ScrollController(1), screen, displayState);
+
+        renderer.FlushBuffer();
+        screen.Clear();
+
+        renderer.FlushBuffer();
+        string output = screen.GetOutput();
+
+        // 全刷信号：ClearScreen + 三行绝对定位（22/23/24）+ 光标 25
+        Assert.Contains("\x1b[2J\x1b[H", output);
+        Assert.Contains("\x1b[22;1H", output);
+        Assert.Contains("\x1b[23;1H", output);
+        Assert.Contains("\x1b[24;1H", output);
+        Assert.Contains("\x1b[25;1H", output);
+        Assert.Equal(3, renderer.LastDrawnRows);
     }
 
     [Fact]
@@ -174,7 +212,8 @@ public class TerminalRendererPipelineTests
         string output = screen.GetOutput();
 
         Assert.Contains("\x1b[2J\x1b[H", output);
-        Assert.Contains("\x1b[1;1H", output);
+        // 贴底：CLEARLINE 后仅剩 1 行 ⇒ 锚末行 23（0-based）= 1-based 24
+        Assert.Contains("\x1b[24;1H", output);
     }
 
     [Fact]
@@ -194,8 +233,11 @@ public class TerminalRendererPipelineTests
 
         string output = CaptureOutput(() => renderer.FullRefresh("test"), screen);
 
+        // Scroll Mode（offset>0）：visibleLines = 10−2 = 8，内容填满视口 ⇒ baseRow = 0
+        // （贴底 = 顶部对齐），与改动前一致。
         Assert.Contains("\x1b[1;1H", output);
         Assert.Equal(8, renderer.LastDrawnRows);
+        Assert.Equal(7, renderer.LastContentRow);   // visibleLines − 1
     }
 
     [Fact]

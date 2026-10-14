@@ -35,7 +35,7 @@ namespace MinorShift.Emuera.GameView
         /// <summary>距底偏移，直接来自 CLI 的真实滚动。</summary>
         public int ScrollOffset => _scroll.ScrollOffset;
 
-        /// <summary>渲染行数 × 行高 —— 不是 <c>Config.WindowY</c>，见类注释。</summary>
+        /// <summary>视口行数 × 行高（2026.10.14 贴底起与内容量无关）—— 不是 <c>Config.WindowY</c>，见类注释。</summary>
         public int VisibleHeight
             => TerminalViewportGeometry.VisibleHeightPixels(_lineCount(), _terminalHeight(), _scroll.ScrollOffset);
 

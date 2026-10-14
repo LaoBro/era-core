@@ -11,7 +11,8 @@ namespace MinorShift.Emuera.GameView
     /// 从 AgentCliProtocol 拆分以隔离终端输出逻辑。
     ///
     /// Phase 4-1（ADR-0014）：数据源从 <c>_console.DisplayLineList</c> 换成 <see cref="DisplayState.Current"/>。
-    /// delta 算法（<c>_lastRenderedLineNo</c> 比较、FullRefresh/FlushBuffer 的尾部 delta）保持不变。
+    /// delta 算法（<c>_lastRenderedLineNo</c> 比较、末行改写路径的尾部 delta）保持不变；
+    /// **新行路径**自 2026.10.14 贴底改造起改为一律 FullRefresh（见 <see cref="FlushBuffer(DisplaySnapshot)"/>）。
     /// 全屏事件（CLEAR/CLEARLINE/SET_BG）改用 snapshot 比对推断，脱离 <c>_pendingOps</c>（R1）。
     /// Phase 5-3：TryUpdate 消费式清空 _pendingOps，FlushBuffer 不再显式 drain。
     /// CLEARLINE+reprint 检测：count/LineNo 比对之外，额外比较旧末行位置的 <c>SourceLine</c> 引用
@@ -36,12 +37,18 @@ namespace MinorShift.Emuera.GameView
         private static readonly Dictionary<string, (int, int, int)> _bgRgbCache = new(StringComparer.Ordinal);
 
         /// <summary>
-        /// 最近一次 FullRefresh 绘制的可见内容行数（不含状态栏行）。
-        /// CountdownRenderer 经此推算倒计时行位置（drawnRows - 1），
-        /// 替代不可靠的 Console.CursorTop 探测（ConPTY 下间歇抛异常或返回错误值）。
+        /// 最近一次 FullRefresh 绘制的可见内容行数（不含状态栏行）。仅测试/诊断消费。
         /// -1 表示尚未渲染过。
         /// </summary>
         internal int LastDrawnRows { get; private set; } = -1;
+
+        /// <summary>
+        /// 最近一次 FullRefresh 的内容末行终端行号。贴底渲染下恒为 <c>visibleLines − 1</c>
+        /// （与内容量无关），CountdownRenderer 经它在恒定行覆盖倒计时/超时文案，
+        /// 替代不可靠的 Console.CursorTop 探测（ConPTY 下间歇抛异常或返回错误值）。
+        /// -1 表示尚未渲染过。
+        /// </summary>
+        internal int LastContentRow { get; private set; } = -1;
 
         /// <summary>
         /// auto-follow 回调：FlushBuffer 检测到新行且 offset>0 时，归零 offset + FullRefresh 后调用，
@@ -180,26 +187,24 @@ namespace MinorShift.Emuera.GameView
 
             if (currentLineNo > _lastRenderedLineNo)
             {
-                // ADR-0006：新输出到达时 auto-follow 归零 offset。增量分支假设光标在底部，
-                // offset>0 时光标在状态栏行，必须走 FullRefresh（绝对定位）。
+                // ADR-0006：新输出到达时 auto-follow 归零 offset。
+                // offset>0 时视口锚在历史切片，必须走 FullRefresh（绝对定位）重算布局。
                 if (screen != null && _scroll.ScrollOffset > 0)
                 {
                     _scroll.Reset();
                     FullRefresh(snapshot, "offset>0");
                     OnScrollAutoFollow?.Invoke();
                 }
-                // 内容超出视口时必须走 FullRefresh：WriteNewLinesSince 依赖 Console.WriteLine
-                // 的自然光标推进，但光标在底部行时 \n 会触发终端滚动，ConPTY 不会把滚出
-                // 视口的字节重新发送给 master，导致后续行永远渲染不出来。
-                // FullRefresh 用绝对定位（WriteLineAt）重绘整个可见区，不依赖滚动。
-                else if (screen != null && lines.Count > screen.WindowHeight - 1)
+                // 贴底渲染（2026.10.14 spec §3.4 / B3）：FullRefresh 把光标恒置预留行
+                // （终端末行），原光标相对增量（WriteNewLinesSince，本次已删）写在末行会触发
+                // 终端滚动 —— ADR-0006 实测 ConPTY 不会把滚出视口的字节重新发送给 master，
+                // 后续行永远渲染不出来。故新行一律绝对定位全刷：满屏路径与今天 overflow 分支
+                // 逐字节一致，稀疏路径成本 = R 行（标题/首屏行数少，可忽略）。
+                else if (screen != null)
                 {
-                    FullRefresh(snapshot, "overflow");
+                    FullRefresh(snapshot, "newline");
                 }
-                else
-                {
-                    WriteNewLinesSince(lines, _lastRenderedLineNo, _lastRenderedLastLine);
-                }
+                // screen == null：无 VT 屏无从渲染（VT-only 后调用方保证主循环内必非 null）。
             }
             else
             {
@@ -234,7 +239,10 @@ namespace MinorShift.Emuera.GameView
         /// <summary>全量重绘可见行（内部实现，接受快照）。
         /// ADR-0005 Issue 4：删除非 VT 降级分支，仅保留 VT 备用屏绝对定位路径。
         /// ADR-0006：读 ScrollController.ScrollOffset 计算 startLine + visibleLines。
-        /// ADR-0009：offset 从 ScrollController 读，visibleLines 内联算。</summary>
+        /// ADR-0009：offset 从 ScrollController 读，visibleLines 内联算。
+        /// 2026.10.14 贴底（spec §3.1）：内容块末行恒锚 <c>visibleLines-1</c>，
+        /// 写屏行号 = <c>baseRow + i</c>（<c>baseRow = visibleLines - drawnRows</c>），
+        /// 光标恒置预留行 <c>visibleLines</c>。</summary>
         private void FullRefresh(DisplaySnapshot snapshot, string reason = "?")
         {
             var lines = snapshot.lines;
@@ -245,6 +253,16 @@ namespace MinorShift.Emuera.GameView
             if (_currentBgHex != null)
                 WriteBgEscape(_currentBgHex);
 
+            int offset = _scroll.ScrollOffset;
+            // ADR-0009：visibleLines 内联算——offset=0 → consoleHeight-1（无状态栏），offset>0 → consoleHeight-2（底部留状态栏）。
+            int visibleLines = offset > 0
+                ? Math.Max(1, screen.WindowHeight - 2)
+                : Math.Max(1, screen.WindowHeight - 1);
+            // 贴底渲染（2026.10.14 渲染布局统一 spec §3.1）：内容块末行恒锚 visibleLines-1，
+            // 块占终端行 [visibleLines-drawnRows, visibleLines-1]，上方留白。空屏也给出该值，
+            // 供 CountdownRenderer 在恒定行定位（空屏显示倒计时的行为变化见 spec §3.2）。
+            LastContentRow = visibleLines - 1;
+
             if (lines.Count == 0)
             {
                 _lastRenderedLineNo = -1;
@@ -253,20 +271,19 @@ namespace MinorShift.Emuera.GameView
                 return;
             }
 
-            int offset = _scroll.ScrollOffset;
-            // ADR-0009：visibleLines 内联算——offset=0 → consoleHeight-1（无状态栏），offset>0 → consoleHeight-2（底部留状态栏）。
-            int visibleLines = offset > 0
-                ? Math.Max(1, screen.WindowHeight - 2)
-                : Math.Max(1, screen.WindowHeight - 1);
             // offset>0 时回看历史：startLine 向前移动 offset 行。
             int startLine = offset > 0
                 ? Math.Max(0, lines.Count - visibleLines - offset)
                 : Math.Max(0, lines.Count - visibleLines);
 
+            // 本次实际画几行（内容不足一屏时 < visibleLines）。贴底 ⇒ 块起始终端行 = 顶部留白行数。
+            int drawnRows = Math.Min(visibleLines, lines.Count - startLine);
+            int baseRow = visibleLines - drawnRows;
+
             for (int i = 0; i < visibleLines && (startLine + i) < lines.Count; i++)
             {
                 int lineIndex = startLine + i;
-                int viewportRow = i;
+                int viewportRow = baseRow + i;
                 var dl = lines[lineIndex];
                 // Phase 4-1：经 SourceLine 调 FormatLineForTerminal；CLI 对图片/矩形
                 // 按流宽度补空格占位（T-026，BuildTerminalLine 计入 textWidth），不再跳过。
@@ -278,8 +295,9 @@ namespace MinorShift.Emuera.GameView
                 screen.WriteLineAt(viewportRow, formatted.Length > 0 ? formatted : "");
             }
 
-            int drawnRows = Math.Min(visibleLines, lines.Count - startLine);
-            screen.SetCursor(drawnRows, 0);
+            // 光标恒置预留行（visibleLines）：输入回显位置 + 末行改写路径（EraseTerminalRows）
+            // 的锚点——其擦除 currentRow-1 恰为内容末行。
+            screen.SetCursor(visibleLines, 0);
             LastDrawnRows = drawnRows;
 
             _lastRenderedLineNo = lines[^1].LineNo;
@@ -331,29 +349,6 @@ namespace MinorShift.Emuera.GameView
                 Console.WriteLine(text);
             else
                 Console.Write(text);
-        }
-
-        // Phase 4-1（R3）：参数类型从 ConsoleDisplayLine 改为 DisplayLine
-        private void WriteNewLinesSince(
-            List<DisplayLine> lines,
-            int lastRenderedLineNo,
-            DisplayLine? lastRenderedLastLine)
-        {
-            int startIdx = -1;
-            for (int i = lines.Count - 1; i >= 0; i--)
-            {
-                if (lines[i].LineNo <= lastRenderedLineNo)
-                {
-                    startIdx = i + 1;
-                    break;
-                }
-            }
-            if (startIdx < 0) startIdx = 0;
-
-            // IsLineEnd=false 的上一行已在 FlushBuffer 入口由 FullRefresh 处理，
-            // 到此处的 lastRenderedLastLine.IsLineEnd 必为 true，光标在下一行行首。
-            for (int i = startIdx; i < lines.Count; i++)
-                WriteDisplayLine(lines[i]);
         }
     }
 }

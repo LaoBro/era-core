@@ -53,8 +53,15 @@ namespace MinorShift.Emuera.GameView
         /// ADR-0031 / spec-v3 M4：VT 鼠标位置（终端行列）→ console 局部像素（左上基准）→ 输入宿主。
         /// <para>
         /// 换算见 <see cref="TerminalViewportGeometry"/> —— X 是列宽累加，
-        /// <b>Y 不是 <c>row × LineHeight</c></b>：CLI 顶部对齐渲染、引擎几何底部对齐，
-        /// 两者差一个常数偏移，不补会导致按钮命中系统性错位（真机实测「经常点不到」）。
+        /// Y 是<b>终端绝对行</b> × <c>LineHeight</c>（左上基准，不锚内容块）。
+        /// </para>
+        /// <para>
+        /// 2026.10.14 贴底改造后三者自洽（spec §1.1）：内容块末行恒锚 <c>visibleLines − 1</c>、
+        /// <c>H = VisibleLines × LH</c>（视口高度，与内容量无关）⇒ 代入引擎 <c>MoveMouse</c> 得
+        /// <c>relPointY ≡ 0</c>（恒定命中），<c>MY = rawY − H</c> 顶行 <c>−H</c>、末行 <c>−LH</c>，
+        /// 同时符合 M0 标定 H1。配套的 <c>ClientRectangle</c> 门槛（picbox 高度跟随视口）见
+        /// <see cref="HeadlessConsole"/> 构造与 <c>HeadlessPictureBox</c> 备注 —— 不修则贴底内容行
+        /// <c>y ≥ WindowY</c> 被 <c>Contains</c> 挡掉，<c>MOUSEB</c> 恒空。
         /// </para>
         /// <para>
         /// ⚠️ 只在宿主声明 <see cref="InputCapability.Geometry"/> 时才写 —— 否则
@@ -101,7 +108,7 @@ namespace MinorShift.Emuera.GameView
                 input => DispatchInput(input),
                 _input.Clear,
                 _displayState);
-            _countdown = new CountdownRenderer(console, () => _scroll.ScrollOffset, () => _screen, () => _renderer.LastDrawnRows);
+            _countdown = new CountdownRenderer(console, () => _scroll.ScrollOffset, () => _screen, () => _renderer.LastContentRow);
             _redraw = new CliRedrawCoordinator(_renderer, _scroll, () => _scrollStatusBar, _countdown, _buttons, () => _vtInput);
             _renderer.OnScrollAutoFollow = () => _redraw.Redraw(RedrawKind.ChromeOnly, true);
 

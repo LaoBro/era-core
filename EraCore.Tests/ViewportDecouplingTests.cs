@@ -28,8 +28,9 @@ namespace Emuera.Headless.Tests;
 /// </para>
 /// <para>
 /// ⚠️ <b>为什么视口不是 <c>ScrollController</c> 而是 <see cref="CliViewport"/></b>（M4 修正）：
-/// 前者只能回答 <c>ScrollOffset</c>；<c>VisibleHeight</c> 需要 <c>lineCount</c> 与终端高度，
-/// 而它从不持有这两个数。硬让它实现接口 ⇒ 只能退回 <c>Config.WindowY</c> ⇒ 真机「顶部按钮点不到」。
+/// 前者只能回答 <c>ScrollOffset</c>；<c>VisibleHeight</c> 需要终端高度（2026.10.14 贴底起
+/// 只需终端高度，与内容量无关），而它从不持有。硬让它实现接口 ⇒ 只能退回 <c>Config.WindowY</c>
+/// ⇒ 真机「顶部按钮点不到」。
 /// </para>
 /// </summary>
 public sealed class ViewportDecouplingTests : IDisposable
@@ -82,11 +83,11 @@ public sealed class ViewportDecouplingTests : IDisposable
     }
 
     /// <summary>
-    /// 视口高度 = <b>渲染行数 × 行高</b>，不是 <c>Config.WindowY</c>。
-    /// 终端 29 行 ⇒ 渲染 28 行 ⇒ 532px ≠ WindowY(480)。
+    /// 视口高度 = <b>视口行数 × 行高</b>，不是 <c>Config.WindowY</c>。
+    /// 终端 29 行 ⇒ 视口 28 行 ⇒ 532px ≠ WindowY(480)。
     /// </summary>
     [Fact]
-    public void CliViewport_visible_height_is_rendered_lines_times_line_height()
+    public void CliViewport_visible_height_is_viewport_rows_times_line_height()
     {
         var vp = MakeViewport();
 
@@ -95,13 +96,16 @@ public sealed class ViewportDecouplingTests : IDisposable
         Assert.NotEqual(Config.WindowY, vp.VisibleHeight);
     }
 
-    /// <summary>内容不足一屏 ⇒ 视口高度随之收缩到内容高度。</summary>
+    /// <summary>
+    /// 2026.10.14 贴底起视口高度<b>不随内容量收缩</b>（贴底前 = 渲染行数 × 行高，
+    /// 稀疏画面下 <c>MY = rawY − H</c> 会随内容增减漂移，标定记录 §5.4）。
+    /// </summary>
     [Fact]
-    public void CliViewport_visible_height_shrinks_with_short_content()
+    public void CliViewport_visible_height_ignores_short_content()
     {
         var vp = MakeViewport(lineCount: 4);
 
-        Assert.Equal(4 * Config.LineHeight, vp.VisibleHeight);
+        Assert.Equal(28 * Config.LineHeight, vp.VisibleHeight);
     }
 
     [Fact]
