@@ -222,12 +222,27 @@ def run_back_to_back(binary=None):
 
     为什么「顺序发、每条等响应」就忠实于 Web 触屏：前端 `connection.ts:703-741` 的
     `stateQueue` 正是「前一帧 settle 后才发下一帧」（`await fetch` 到响应），
-    故两帧到达间隔 ≈ 一次完整 HTTP 往返，必然 > 1ms。
+    故两帧到达间隔 ≈ 一次完整 HTTP 往返。
 
-    ⚠️ **未验证**：MAUI / Android WebView 走 `postInput` **桥**（同步投递、无网络往返），
-    两帧间隔可能 < 1ms ⇒ **可能落在同一脚本圈** ⇒ 那类宿主上或需两次点击。
-    而 Android 恰是「触屏是主要输入方式」的主场景（`ui.ts:179`）—— 若要确认，
-    需在真机/模拟器上跑，本机无法诚实模拟（Python 侧做不到「顺序确定 + 间隔 <1ms」）。
+    🔴 **但这是环境依赖，不是代码保证** —— 前端**没有**任何显式间隔（无 delay、无节流），
+    间隔完全来自前一条 POST 的往返。而且真正的判据不只是「间隔 > 1ms」，而是
+    「第二帧到达时，脚本**已经推进过至少一圈**」：
+
+    - 服务端主循环每轮只 `ReadLineAsync` **一行**，但 `continue` 后立刻再读；
+    - `AWAIT 1` **不是让路点**（`IsYieldPoint()` 要求 `Timelimit <= 0`）⇒ `DrainYieldsAsync`
+      **不会**推进脚本，脚本只在 **1ms 超时**（`CancelAfter(1)`）时推进一圈。
+
+    ⇒ 两行只要落进同一个 1ms 窗口，就是「同圈」⇒ 悬停来不及被脚本记入 `MOUSE_OVER`。
+    实测（localhost）**5/5 一次即出口**（往返 ≳ 1ms，稳定跨圈）；但换更快的通道就不保证。
+
+    ⚠️ **最可能翻车的是 MAUI / Android WebView**：走 `postInput` **桥**（同步投递、无网络往返）
+    ⇒ 两帧间隔 → 0 ⇒ 大概率同圈 ⇒ **可能需要两次点击**。而 Android 恰是
+    「触屏是主要输入方式」的主场景（`ui.ts:179`）。本机无法诚实模拟
+    （Python 侧做不到「顺序确定 + 间隔 <1ms」）⇒ 需真机/模拟器确认。
+
+    💡 若要在 MAUI 上做结构性加固，杠杆在**发送侧的最小间隔**（不是客户端 delay 拍脑袋，
+    而是「同一批状态帧之间保证跨过一个事件循环轮次」）；⚠️ 但它也**无法普遍保证** ——
+    脚本圈长由脚本自己决定（`AWAIT 1` / `TWAIT t,1` / 让路点各不相同）。
     """
     temp_dir, game_dir = copy_test_game_with_erb(PROBE_ERB)
     server = None
