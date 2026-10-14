@@ -424,6 +424,17 @@ def main():
 
     results.append(
         (
+            "CLI COMF413 probe (ConPTY)",
+            _run_script(
+                "CLI COMF413 probe (ConPTY)",
+                [sys.executable, str(TESTS_DIR / "test_cli_comf413_probe.py"), "--binary", str(binary_path)],
+                timeout=120,
+            ),
+        )
+    )
+
+    results.append(
+        (
             "VT-only fatal exit",
             _run_script(
                 "VT-only fatal exit",
