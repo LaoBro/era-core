@@ -33,7 +33,10 @@ UNRECOGNIZED_MARKERS = ("无法解析的标识符", "无法解析的行", "識�
 UNDEFINED_FUNC_MARKERS = ("未定义函数", "定義されていない関数")
 # warnLevel≥2 行前缀（emuera-zhs.xml 的警告形态：`警告Lv2:<loc>:<msg>`）。
 LEVEL2_PREFIX = "警告Lv2:"
-# 加载未稳定的瞬态 state——轮询首屏时跳过（加载异步：Initializing → Running → 稳定输入态）。
+# 加载未稳定的瞬态——轮询首屏时跳过。
+# v12 前：snapshot 顶层 state ∈ ("Initializing", "Running")；
+# v12 起（issue 09）：state 字段退场，未稳定瞬态表现为 awaiting 双空（awaiting:{}），
+# 停稳点判据见 emuera_server.awaiting_is_settled（input 或 ended 出现）。
 UNSETTLED_STATES = ("Initializing", "Running")
 
 
@@ -127,11 +130,14 @@ def snapshot_lines(snap):
 def run_game_smoke(game_dir, profile, binary, settle_timeout=120):
     """启动 server（带 profile）→ load-game → 轮询首屏至稳定。
 
-    加载是异步的：POST /load-game 后前几次 /snapshot 可能仍是 `Initializing` / `Running`（见
-    UNSETTLED_STATES）；轮询到稳定态再取 lines/state 作为解析 smoke 与 playtest 的输入。
-    返回 dict（含 lines/state/load_status）。
+    加载是异步的：POST /load-game 后前几次 /snapshot 可能仍在脚本执行瞬态
+    （v12 起 awaiting 双空 awaiting:{}——「既不等输入也不等定时器」，见
+    UNSETTLED_STATES 的 v12 等价判据）；轮询到停稳点（awaiting.input 或
+    awaiting.ended 出现）再取 lines/state 作为解析 smoke 与 playtest 的输入。
+    返回 dict（含 lines/state/load_status；state 经 turn_state 从 awaiting 推导，
+    语义等同旧顶层 state 字段）。
     """
-    from emuera_server import start_server  # 延迟导入：仅运行期需要
+    from emuera_server import start_server, turn_state, awaiting_is_settled  # 延迟导入：仅运行期需要
 
     extra_args = ["--profile", profile] if profile else []
     server = start_server(str(game_dir), binary=binary, extra_args=extra_args)
@@ -144,10 +150,9 @@ def run_game_smoke(game_dir, profile, binary, settle_timeout=120):
             status, body = server.get_snapshot(timeout=120)
             if status == 200:
                 snap = json.loads(body)
-                state = snap.get("state")
-                result["state"] = state
+                result["state"] = turn_state(snap)
                 result["lines"] = snapshot_lines(snap)
-                if state and state not in UNSETTLED_STATES:
+                if awaiting_is_settled(snap):
                     break
             time.sleep(0.3)
     finally:

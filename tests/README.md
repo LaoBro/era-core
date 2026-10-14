@@ -125,14 +125,21 @@ EraCore.Cli.exe --server --port <port> --ExeDir <game-dir>
 
 T-024 后 stdin 管道 JSONL 模式已废弃，`AgentJsonlProtocol` 仅由 server 模式的 `Session` 通过 `HttpSessionIO` 驱动。turn 走 `diff` 增量（无顶层 `text`/`ops`）。
 
+**v12（issue 05 / 09）起 wire 契约**：七个旧顶层字段（`state` / `inputType` / `needValue` /
+`timeLimit` / `displayTime` / `timeUpMessage` / `timedOut`）已退场，唯一必填契约字段是
+`awaiting`（三键：`input` / `wait` / `ended`，互斥终态 `ended` 优先）。测试侧用
+`emuera_server.turn_state()` / `awaiting_input_type()` 等 helper 做语义桥接（`state=="WaitInput"`
+↔ `awaiting.input`，`state=="Quit"` ↔ `awaiting.ended.terminal`），`PROTOCOL_VERSION` 常量与
+`TurnRecord.CurrentProtocolVersion` 同步（当前 12）。
+
 测试流程：
 
 1. `POST /load-game` 建立会话。
 2. `GET /turn` 读取初始 turn。
-3. 校验 `state`、`inputType`、`needValue`、`protocolVersion`、`diff`。
-4. 校验按钮包含 `label` 和整数 `value`。
+3. 校验 `protocolVersion`、`awaiting`、`diff`；校验旧顶层字段（`state`/`inputType`/…）不出现。
+4. 校验按钮包含 `label` 和整数 `value`（append op 内嵌 button，含 `col`/`width` 几何）。
 5. `POST /input {"value":"0"}` 推进游戏。
-6. 验证第二轮菜单和最终 `Quit` 状态。
+6. 验证第二轮菜单和最终 `Quit` 状态（`awaiting.ended.terminal == "Quit"`）。
 
 ## CLI 交互模式（ConPTY smoke test）
 

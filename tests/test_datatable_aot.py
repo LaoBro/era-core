@@ -26,7 +26,7 @@ _project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _project_dir)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from emuera_server import TEST_GAME_DIR, diff_text, start_server
+from emuera_server import TEST_GAME_DIR, diff_text, start_server, turn_state
 
 
 passed = [0]
@@ -122,8 +122,8 @@ def run(server, game_dir):
 
     status, body = server.get_snapshot(timeout=40)
     snap = json.loads(body)
-    check(snap.get("state") == "WaitInput",
-          f"game reached WaitInput (got {snap.get('state')!r})")
+    check(turn_state(snap) == "WaitInput",
+          f"game reached WaitInput (awaiting.input), got {turn_state(snap)!r}")
 
     text = snapshot_text_full(snap)
     for line in [
@@ -143,7 +143,7 @@ def run(server, game_dir):
     st, body = server.post_input("0")
     st, turn_body = server.get_turn(timeout=40)
     turn = json.loads(turn_body)
-    check(turn.get("state") == "Quit", f"after input -> Quit (got {turn.get('state')!r})")
+    check(turn_state(turn) == "Quit", f"after input -> Quit (awaiting.ended), got {turn_state(turn)!r}")
 
 
 def snapshot_text_full(snap):

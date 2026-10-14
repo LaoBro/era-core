@@ -26,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
-from emuera_server import TEST_GAME_DIR, copy_test_game_with_erb, start_server
+from emuera_server import TEST_GAME_DIR, copy_test_game_with_erb, start_server, turn_state
 
 passed = 0
 failed = 0
@@ -66,8 +66,8 @@ def test_at_quit_survival():
 
         s, body = server.get_turn(timeout=10)
         check(s == 200, f"initial GET /turn returns 200, got {s}")
-        check(json.loads(body).get("state") == "WaitInput",
-              f"initial state is WaitInput, got {json.loads(body).get('state')}")
+        check(turn_state(json.loads(body)) == "WaitInput",
+              f"initial state is WaitInput (awaiting.input), got {turn_state(json.loads(body))}")
 
         # 2. 提交 @QUIT → DoSystemCommand → _ui.Close() → GameExitException
         s, _ = server.post_input("@QUIT")
@@ -89,8 +89,8 @@ def test_at_quit_survival():
         s, body = server.get_turn(timeout=10)
         check(s == 200, f"second session GET /turn returns 200, got {s}")
         if s == 200:
-            check(json.loads(body).get("state") == "WaitInput",
-                  f"second session state is WaitInput, got {json.loads(body).get('state')}")
+            check(turn_state(json.loads(body)) == "WaitInput",
+                  f"second session state is WaitInput (awaiting.input), got {turn_state(json.loads(body))}")
     finally:
         if server is not None:
             server.delete_session()
@@ -115,8 +115,8 @@ def test_force_quit_survival():
 
         s, body = server.get_turn(timeout=10)
         check(s == 200, f"initial GET /turn returns 200, got {s}")
-        check(json.loads(body).get("state") == "WaitInput",
-              f"initial state is WaitInput, got {json.loads(body).get('state')}")
+        check(turn_state(json.loads(body)) == "WaitInput",
+              f"initial state is WaitInput (awaiting.input), got {turn_state(json.loads(body))}")
 
         # 2. 提交 "0" → 脚本继续执行 FORCE_QUIT → _ui.ExitApplication() → GameExitException
         s, _ = server.post_input("0")
@@ -138,8 +138,8 @@ def test_force_quit_survival():
         s, body = server.get_turn(timeout=10)
         check(s == 200, f"second session GET /turn returns 200, got {s}")
         if s == 200:
-            check(json.loads(body).get("state") == "WaitInput",
-                  f"second session state is WaitInput, got {json.loads(body).get('state')}")
+            check(turn_state(json.loads(body)) == "WaitInput",
+                  f"second session state is WaitInput (awaiting.input), got {turn_state(json.loads(body))}")
     finally:
         if server is not None:
             server.delete_session()

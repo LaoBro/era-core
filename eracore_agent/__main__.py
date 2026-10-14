@@ -18,7 +18,13 @@ from .config import (
     resolve_path,
     save_server_record,
 )
-from .emuera_client import EmueraClient, EmueraHttpError
+from .emuera_client import (
+    EmueraClient,
+    EmueraHttpError,
+    frame_input_type,
+    frame_need_value,
+    frame_state,
+)
 from .maui import cmd_maui_status, cmd_maui_games, cmd_maui_load
 
 
@@ -53,9 +59,10 @@ def _emit_compact(client, payload, compact: bool, pages: int = 3, tail: int | No
     except EmueraHttpError:
         _emit(payload)
         return
-    # 用 turn/diff 的顶层 inputType/needValue 兜底；紧凑视图自身已带 state/generation。
-    view["inputType"] = (payload or {}).get("inputType") or view.get("inputType")
-    view["needValue"] = (payload or {}).get("needValue")
+    # v12：turn/snapshot 顶层已无 inputType/needValue——用 payload 的 awaiting.input 兜底，
+    # 紧凑视图自身三键也由 awaiting 推导（见 emuera_client 的桥接 helper）。
+    view["inputType"] = frame_input_type(payload) or view.get("inputType")
+    view["needValue"] = frame_need_value(payload)
     if carry:
         view.update(carry)
     # 目标 1：错误 turn 的异常信息（error/errorInfo）是诊断核心，低噪投影不得丢弃。
@@ -64,6 +71,21 @@ def _emit_compact(client, payload, compact: bool, pages: int = 3, tail: int | No
         if key in (payload or {}) and payload.get(key) is not None:
             view[key] = payload[key]
     _emit(view)
+
+
+def _turn_view(turn) -> dict:
+    """turn 输出视图：wire 原样 + 旧语义三键（state/inputType/needValue）。
+
+    v12（issue 09）起这三键不在 wire 上，由 awaiting 推导（见 emuera_client 桥接 helper）。
+    agent 的输出契约（消费方是 LLM/脚本）不随协议版本漂移——故在原 turn 上补齐而非删改。
+    """
+    if not isinstance(turn, dict):
+        return turn
+    view = dict(turn)
+    view["state"] = frame_state(turn)
+    view["inputType"] = frame_input_type(turn)
+    view["needValue"] = frame_need_value(turn)
+    return view
 
 
 def _base_url(record) -> str:
@@ -327,7 +349,7 @@ def cmd_start(args) -> int:
         except EmueraHttpError as exc:
             _fail_http(exc)
         turn = _read_turn(client)
-        _emit(turn)
+        _emit(_turn_view(turn))
         return 0
 
     try:
@@ -336,9 +358,10 @@ def cmd_start(args) -> int:
         _emit(state)
         return 0
     _emit({
-        "state": snapshot.get("state"),
-        "inputType": snapshot.get("inputType"),
-        "needValue": snapshot.get("needValue"),
+        # v12（issue 09）：snapshot 顶层 state/inputType/needValue 退场，改由 awaiting 推导
+        "state": frame_state(snapshot),
+        "inputType": frame_input_type(snapshot),
+        "needValue": frame_need_value(snapshot),
         "protocolVersion": snapshot.get("protocolVersion"),
         "diff": None,
     })
@@ -427,8 +450,11 @@ _AUTO_ADVANCE_TYPES = {"EnterKey", "AnyKey"}
 
 
 def _is_auto_advanceable(state: dict) -> bool:
-    """是否需要真实输入之外的空输入推进（EnterKey/AnyKey 且 needValue=false）。"""
-    return state.get("needValue") is False and state.get("inputType") in _AUTO_ADVANCE_TYPES
+    """是否需要真实输入之外的空输入推进（EnterKey/AnyKey 且 needValue=false）。
+
+    v12：needValue/inputType 不在顶层，由 awaiting.input 推导（见 emuera_client 桥接 helper）。
+    """
+    return frame_need_value(state) is False and frame_input_type(state) in _AUTO_ADVANCE_TYPES
 
 
 def cmd_advance(args) -> int:

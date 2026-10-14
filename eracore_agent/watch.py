@@ -4,7 +4,7 @@ import sys
 import threading
 from typing import Any, Dict, List, Optional
 
-from .emuera_client import EmueraClient, EmueraHttpError
+from .emuera_client import EmueraClient, EmueraHttpError, frame_input_type, frame_need_value, frame_state
 
 
 IMAGE_PLACEHOLDER = "〔图〕"
@@ -64,10 +64,11 @@ def _print_screen(text: str) -> None:
 
 
 def _merge_status(snapshot: Dict[str, Any], control: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    # v12（issue 09）：snapshot 顶层 state/inputType/needValue 退场，改由 awaiting 推导。
     return {
-        "state": snapshot.get("state"),
-        "inputType": snapshot.get("inputType"),
-        "needValue": snapshot.get("needValue"),
+        "state": frame_state(snapshot),
+        "inputType": frame_input_type(snapshot),
+        "needValue": frame_need_value(snapshot),
         "controller": (control or {}).get("controller"),
         "controlState": (control or {}).get("state"),
     }
@@ -136,12 +137,11 @@ def watch_session(client: EmueraClient) -> int:
                     if isinstance(diff, dict) and diff.get("lineOps"):
                         lines = apply_line_ops(lines, diff["lineOps"])
                     if isinstance(frame, dict):
-                        if "state" in frame:
-                            status["state"] = frame.get("state")
-                        if "inputType" in frame:
-                            status["inputType"] = frame.get("inputType")
-                        if "needValue" in frame:
-                            status["needValue"] = frame.get("needValue")
+                        # v12：帧为 TurnRecord——state/inputType/needValue 不在顶层，
+                        # 由 awaiting 推导（见 emuera_client 桥接 helper）。
+                        status["state"] = frame_state(frame)
+                        status["inputType"] = frame_input_type(frame)
+                        status["needValue"] = frame_need_value(frame)
                     _print_screen(render_screen(lines, status))
         except websockets.exceptions.ConnectionClosed as exc:
             if exc.code == 4004:

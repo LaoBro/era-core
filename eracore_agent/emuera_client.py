@@ -10,6 +10,41 @@ from urllib.parse import urlencode
 DEFAULT_PAGE_ROWS = 40
 
 
+# ===== v12 awaiting 语义桥接（issue 05 / 09）=====
+#
+# v12 起 turn / snapshot 顶层不再有 state / inputType / needValue（TINPUT 计时元数据移入
+# awaiting.wait），唯一契约字段是 `awaiting`（三键：input / wait / ended）。agent 的输出
+# 视图与状态显示沿用旧语义键（state / inputType / needValue），统一经此处从 awaiting 推导，
+# 与 tests/emuera_server.py 的桥接 helper 同口径。
+
+def awaiting_of(frame: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """取 turn / snapshot 的 awaiting 对象（缺失时为空 dict）。"""
+    return (frame or {}).get("awaiting") or {}
+
+
+def frame_state(frame: Optional[Dict[str, Any]]) -> Optional[str]:
+    """awaiting → 旧顶层 state：ended.terminal（Quit/Error）/ input 出现 → WaitInput / 其余 None。"""
+    aw = awaiting_of(frame)
+    ended = aw.get("ended")
+    if ended is not None:
+        return ended.get("terminal")
+    if aw.get("input") is not None:
+        return "WaitInput"
+    return None
+
+
+def frame_input_type(frame: Optional[Dict[str, Any]]) -> Optional[str]:
+    """awaiting → 旧顶层 inputType（awaiting.input.type，无输入时为 None）。"""
+    aw = awaiting_of(frame)
+    inp = aw.get("input")
+    return inp.get("type") if inp is not None else None
+
+
+def frame_need_value(frame: Optional[Dict[str, Any]]) -> bool:
+    """awaiting → 旧顶层 needValue：期待输入即需要值。"""
+    return awaiting_of(frame).get("input") is not None
+
+
 class EmueraHttpError(Exception):
     """Raised when the server returns an HTTP error or cannot be reached."""
 
@@ -189,9 +224,9 @@ class EmueraClient:
                 buttons.append({"id": val, "label": label})
 
         return {
-            "state": snap.get("state"),
-            "inputType": snap.get("inputType"),
-            "needValue": snap.get("needValue"),
+            "state": frame_state(snap),
+            "inputType": frame_input_type(snap),
+            "needValue": frame_need_value(snap),
             "generation": snap.get("generation"),
             "lines": lines,
             "buttons": buttons,
@@ -253,3 +288,10 @@ class EmueraClient:
             raise EmueraHttpError(exc.code, _parse_json(raw), raw) from exc
         except urllib.error.URLError as exc:
             raise EmueraHttpError(0, {"error": "CONNECTION_FAILED", "message": str(exc.reason)}) from exc
+        except OSError as exc:
+            # Windows 实测（agent stop 偶发退出 1）：服务端 HttpListener 关掉一条连接时，
+            # urlopen 可能直接抛 ConnectionResetError（WinError 10054）而非包进 URLError
+            # （Python 3.14 起 URLError 不再总包 OSError）。裸抛会击穿 _probe /
+            # cmd_stop 的 EmueraHttpError 兜底 → 进程级 traceback、.eracore-server.json
+            # 残留。统一按「连接不可用」收敛，与上方 URLError 同码同语义。
+            raise EmueraHttpError(0, {"error": "CONNECTION_FAILED", "message": str(exc)}) from exc

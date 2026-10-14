@@ -4,11 +4,11 @@ Verifies:
 1. No active session → 404 with error message.
 2. Active session → 200 with DisplaySnapshot JSON structure:
    - lines[] (each with entries[], align, isLineEnd)
-   - bgColor (string|null), state (string), inputType (string|null), needValue (bool)
-   - protocolVersion == 7
-3. Snapshot content matches turn diff content (after applying diff, state matches snapshot).
+   - bgColor (string|null), awaiting (object: input/wait/ended, v12 起取代 state/inputType/needValue)
+   - protocolVersion == 12
+3. Snapshot content matches turn diff content (after applying diff, awaiting matches snapshot).
 4. Button geometry (col/width) present in snapshot entries.
-5. Session ended (Quit) → 200 with state="Quit" (not 404).
+5. Session ended (Quit) → 200 with awaiting.ended.terminal=="Quit" (not 404).
 
 plan C (v5): migrated from v4 truncate/replace_all to clear_line_diff/clear_screen.
 - First turn: diff is null → snapshot is the sole source of truth; compare snapshot with itself (trivially true).
@@ -31,7 +31,14 @@ _project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _project_dir)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from emuera_server import PROTOCOL_VERSION, TEST_GAME_DIR, diff_text, snapshot_text, start_server
+from emuera_server import (
+    PROTOCOL_VERSION,
+    TEST_GAME_DIR,
+    diff_text,
+    snapshot_text,
+    start_server,
+    turn_state,
+)
 
 
 VALID_ALIGN = {"left", "center", "right"}
@@ -50,12 +57,13 @@ def validate_snapshot_structure(snap, passed, failed, label="snapshot"):
     """Validate DisplaySnapshot JSON structure field by field."""
     check("lines" in snap and isinstance(snap["lines"], list),
           f"{label} has lines[] list", passed, failed)
-    check("state" in snap and isinstance(snap["state"], str),
-          f"{label} has state string", passed, failed)
+    # v12（issue 09）：state / inputType / needValue 退场，唯一契约字段是 awaiting
+    check("awaiting" in snap and isinstance(snap["awaiting"], dict),
+          f"{label} has awaiting object", passed, failed)
+    for legacy in ("state", "inputType", "needValue", "timeLimit", "displayTime", "timeUpMessage", "timedOut"):
+        check(legacy not in snap, f"{label} has no legacy field {legacy} (v12: removed)", passed, failed)
     check("protocolVersion" in snap and snap["protocolVersion"] == PROTOCOL_VERSION,
           f"{label} protocolVersion == {PROTOCOL_VERSION}", passed, failed)
-    check("needValue" in snap and isinstance(snap["needValue"], bool),
-          f"{label} has needValue bool", passed, failed)
 
     for i, line in enumerate(snap.get("lines", [])):
         check("entries" in line and isinstance(line["entries"], list),
@@ -126,11 +134,11 @@ def main():
 
         validate_snapshot_structure(snap, passed, failed, "active-snapshot")
 
-        # state 应与 turn 一致（都是 WaitInput）
-        check(snap.get("state") == turn.get("state"),
-              f"snapshot state matches turn state: {snap.get('state')}", passed, failed)
-        check(snap.get("state") == "WaitInput",
-              f"snapshot state is WaitInput, got {snap.get('state')}", passed, failed)
+        # awaiting 应与 turn 一致（都是 input 维度 → WaitInput）
+        check(turn_state(snap) == turn_state(turn),
+              f"snapshot awaiting matches turn awaiting: {turn_state(snap)}", passed, failed)
+        check(turn_state(snap) == "WaitInput",
+              f"snapshot awaiting implies WaitInput, got {turn_state(snap)}", passed, failed)
 
         # --- Test 3: Snapshot content matches turn diff content ---
         # Phase 5: first turn diff is null → snapshot is the sole source.
@@ -161,8 +169,8 @@ def main():
         check("You entered: 0" in diff_text(turn2),
               "post-input turn diff contains 'You entered: 0'", passed, failed)
 
-        # --- Test 5: Session ended → 200 + state="Quit" ---
-        print("\n[5] GET /snapshot after session ended → 200 + state=Quit")
+        # --- Test 5: Session ended → 200 + awaiting.ended.terminal=="Quit" ---
+        print("\n[5] GET /snapshot after session ended → 200 + awaiting.ended=Quit")
         # test_game: [0]→[0]→Quit. 已输入 0 一次，再输入 0 应到 Quit
         server.post_input("0")
         # 等待 session 结束
@@ -186,8 +194,8 @@ def main():
         check(status == 200, f"ended-session snapshot returns 200 (not 404), got {status}", passed, failed)
         if status == 200:
             snap3 = json.loads(snap3_body)
-            check(snap3.get("state") in ("Quit", "Error"),
-                  f"ended-session snapshot state is Quit/Error, got {snap3.get('state')}", passed, failed)
+            check(turn_state(snap3) in ("Quit", "Error"),
+                  f"ended-session snapshot awaiting.ended is Quit/Error, got {turn_state(snap3)}", passed, failed)
             check(snap3.get("protocolVersion") == PROTOCOL_VERSION,
                   f"ended-session snapshot protocolVersion == {PROTOCOL_VERSION}", passed, failed)
             validate_snapshot_structure(snap3, passed, failed, "ended-snapshot")

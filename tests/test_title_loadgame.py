@@ -23,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
-from emuera_server import copy_test_game_with_erb, diff_text, snapshot_text, start_server
+from emuera_server import copy_test_game_with_erb, diff_text, snapshot_text, start_server, turn_state
 
 passed = 0
 failed = 0
@@ -66,7 +66,7 @@ try:
     initial_status, initial_body = server.get_turn(timeout=10)
     check(initial_status == 200, f"initial GET /turn returns 200, got {initial_status}")
     initial = json.loads(initial_body)
-    check(initial.get("state") == "WaitInput", f"initial state is WaitInput, got {initial.get('state')}")
+    check(turn_state(initial) == "WaitInput", f"initial state is WaitInput (awaiting.input), got {turn_state(initial)}")
 
     snap_status, snap_body = server.get_snapshot(timeout=10)
     check(snap_status == 200, f"GET /snapshot for title returns 200, got {snap_status}")
@@ -79,9 +79,9 @@ try:
     turn_status, turn_body = server.get_turn(timeout=10)
     check(turn_status == 200, f"GET /turn after LOADGAME returns 200, got {turn_status}")
     turn = json.loads(turn_body)
-    check(turn.get("state") == "WaitInput",
-          f"after LOADGAME state is WaitInput (load screen), got {turn.get('state')}")
-    check(turn.get("state") != "Error", "after LOADGAME is NOT Error")
+    check(turn_state(turn) == "WaitInput",
+          f"after LOADGAME state is WaitInput (load screen), got {turn_state(turn)}")
+    check(turn_state(turn) != "Error", "after LOADGAME is NOT Error")
 
     # Load screen must show empty save slots ("----"). Snapshot is the full
     # screen, so the title menu may still be visible above the load screen —

@@ -27,7 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
-from emuera_server import copy_test_game_with_erb, diff_text, start_server
+from emuera_server import copy_test_game_with_erb, diff_text, start_server, turn_state
 
 # 原行独有子串：THROW+空格+引号。错误消息两处 THROW 关键字（THROWが / THROW内容：）均不匹配。
 RAW_MARKER = 'THROW "fatal-test-marker"'
@@ -68,7 +68,7 @@ def wait_error_turn(server, timeout=30):
             return None, ""
         turn = json.loads(body)
         text = diff_text(turn)
-        if turn.get("state") == "Error" or "fatal-test-marker" in text:
+        if turn_state(turn) == "Error" or "fatal-test-marker" in text:
             return turn, text
         time.sleep(0.5)
     return None, ""
@@ -91,7 +91,7 @@ def run_readback_success(binary):
         turn, text = wait_error_turn(server)
         check(turn is not None, "error turn received within 30s")
         if turn is not None:
-            check(turn.get("state") == "Error", f"turn state==Error, got {turn.get('state')!r}")
+            check(turn_state(turn) == "Error", f"turn state==Error (awaiting.ended), got {turn_state(turn)!r}")
             # 加载收尾后缓存恒空——原行文本只能来自磁盘按需回读
             check(RAW_MARKER in text,
                   "error output contains raw source line marker (disk readback)")

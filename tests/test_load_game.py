@@ -28,7 +28,7 @@ _project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _project_dir)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from emuera_server import TEST_GAME_DIR, start_server
+from emuera_server import TEST_GAME_DIR, start_server, turn_state
 
 
 passed = [0]
@@ -184,8 +184,8 @@ def main():
             # protocolVersion 不固定具体值——TurnRecord 协议会演进（ADR-0016 v7）
             check("protocolVersion" in turn and isinstance(turn["protocolVersion"], int),
                   f"has int protocolVersion: {turn.get('protocolVersion')}")
-            check(turn.get("state") == "WaitInput",
-                  f"turn state==WaitInput, got {turn.get('state')}")
+            check(turn_state(turn) == "WaitInput",
+                  f"turn state==WaitInput (awaiting.input), got {turn_state(turn)}")
 
         # --- Test 8: /load-game 后 GET /state 返回新 gameDir + isRunning ---
         print("\n[8] /load-game 后 GET /state → gameDir + isRunning")
@@ -234,8 +234,8 @@ def main():
         check(s == 200, f"GET /turn after failed load-game still 200 (old session alive), got {s}")
         if s == 200:
             turn = json.loads(turn_body)
-            check(turn.get("state") in ("WaitInput", "Quit", "Error"),
-                  f"old turn state is valid, got {turn.get('state')}")
+            check(turn_state(turn) in ("WaitInput", "Quit", "Error"),
+                  f"old turn state is valid, got {turn_state(turn)}")
 
     finally:
         if server is not None:

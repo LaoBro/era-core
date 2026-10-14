@@ -8,7 +8,11 @@ import json
 # TurnOp 加 set_bg_image/remove_bg_image/clear_bg_image。
 # v9（issue 07）：SegmentImage 加 crop?（裁切矩形几何）。
 # v10：PrintSegment 加 underline?；v11：PrintSegment 加 strikeout?（PRINT_SLIDER 实际用删除线）。
-PROTOCOL_VERSION = 11
+# v12（issue 05 / 09）：七个旧顶层字段（state / inputType / needValue / timeLimit /
+# displayTime / timeUpMessage / timedOut）退场，wire 上只剩唯一契约字段 `awaiting`
+# （input / wait / ended 三键，见 AwaitInfo.cs）。本文件的断言侧桥接 helper 见下方
+# turn_state / awaiting_input_type / awaiting_wait。
+PROTOCOL_VERSION = 12
 
 import os
 import shutil
@@ -24,6 +28,62 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 TEST_GAME_DIR = PROJECT_DIR / "test_game"
+
+
+# ===== v12 awaiting 语义桥接（wire 旧字段 → awaiting）=====
+#
+# v12（issue 09）起 turn / snapshot 顶层不再有 state / inputType / needValue /
+# timeLimit / timedOut，只剩 `awaiting`（AwaitInfo.cs 三键）：
+#   awaiting.input  = {type: "IntValue"|"EnterKey"|...}  期待客户端发输入
+#   awaiting.wait   = {durationMs, displayTime?, timeUpMessage?, timedOut?}  有上界等待
+#   awaiting.ended  = {terminal: "Quit"|"Error"}         互斥终态
+# 下列 helper 让测试断言保持旧语义写法（state == "WaitInput" 等），一处映射、处处复用。
+
+def awaiting_of(frame):
+    """取 turn / snapshot 的 awaiting 对象（缺失时为空 dict）。"""
+    return frame.get("awaiting") or {}
+
+
+def turn_state(frame):
+    """v12 语义桥接：从 awaiting 推导旧顶层 `state` 值。
+
+    - awaiting.ended  → "Quit" / "Error"（terminal 原值）
+    - awaiting.input  → "WaitInput"
+    - 其余（仅 wait / 双空）→ None（旧口径的 Running/瞬态，等待由 input 维度表达）
+    """
+    aw = awaiting_of(frame)
+    ended = aw.get("ended")
+    if ended is not None:
+        return ended.get("terminal")
+    if aw.get("input") is not None:
+        return "WaitInput"
+    return None
+
+
+def awaiting_input_type(frame):
+    """v12 语义桥接：旧顶层 `inputType`（awaiting.input.type，无输入时为 None）。"""
+    aw = awaiting_of(frame)
+    inp = aw.get("input")
+    return inp.get("type") if inp is not None else None
+
+
+def awaiting_need_value(frame):
+    """v12 语义桥接：旧顶层 `needValue`——期待输入即需要值（needValue = input 维度出现）。"""
+    return awaiting_of(frame).get("input") is not None
+
+
+def awaiting_wait(frame):
+    """v12 语义桥接：旧顶层 TINPUT 计时元数据所在对象（awaiting.wait，无上界等待为 None）。"""
+    return awaiting_of(frame).get("wait")
+
+
+def awaiting_is_settled(frame):
+    """帧是否处于停稳点（旧口径的「稳定 state」）：input 或 ended 出现即稳定。
+
+    双空（awaiting:{}）只可能出现在 GET /snapshot 的「脚本还在跑」瞬态。
+    """
+    aw = awaiting_of(frame)
+    return aw.get("input") is not None or aw.get("ended") is not None
 
 
 def find_binary(project_dir=None):

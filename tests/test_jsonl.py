@@ -1,13 +1,15 @@
-"""Test: JSONL protocol v5 turn structure (diff model) via server mode.
+"""Test: JSONL protocol v12 turn structure (diff model + awaiting) via server mode.
 
 Verifies:
-1. Initial turn has protocolVersion: 7 and diff: null (first turn, no previous snapshot).
-2. v1 fields (text, buttons) are NOT present.
-3. Step turns carry diff.lineOps with append/clear_line_diff/clear_screen ops.
-4. append ops carry newLines[] with entries[].segments[] (per-segment style) + optional button.
-5. clear_line_diff ops carry clearCount (int); clear_screen has no fields.
-6. Step turns have no protocolVersion field.
-7. Final turn has no protocolVersion.
+1. Initial turn has protocolVersion: 12 and diff: null (first turn, no previous snapshot).
+2. v1 fields (text, buttons) are NOT present; v12 收缩后旧顶层字段（state / inputType /
+   needValue / timeLimit / displayTime / timeUpMessage / timedOut）同样不出现。
+3. awaiting 是唯一契约字段：WaitInput ↔ awaiting.input，Quit/Error ↔ awaiting.ended。
+4. Step turns carry diff.lineOps with append/clear_line_diff/clear_screen ops.
+5. append ops carry newLines[] with entries[].segments[] (per-segment style) + optional button.
+6. clear_line_diff ops carry clearCount (int); clear_screen has no fields.
+7. Step turns have no protocolVersion field.
+8. Final turn has no protocolVersion.
 
 plan C (v5): migrated from v4 truncate/replace_all to clear_line_diff/clear_screen.
 - First-turn content checks use GET /snapshot (diff is null on first turn).
@@ -28,7 +30,14 @@ _project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _project_dir)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from emuera_server import PROTOCOL_VERSION, TEST_GAME_DIR, diff_text, snapshot_text, start_server
+from emuera_server import (
+    PROTOCOL_VERSION,
+    TEST_GAME_DIR,
+    diff_text,
+    snapshot_text,
+    start_server,
+    turn_state,
+)
 
 
 VALID_LINE_OP_TYPES = {"append", "clear_line_diff", "clear_screen"}
@@ -95,7 +104,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", help="Path to Emuera binary (exe or dll)")
     parser.add_argument("--game-dir", default="test_game", help="Path to game directory")
-    parser.add_argument("--suite-name", default="JSONL v5 diff", help="Test suite name shown in the summary")
+    parser.add_argument("--suite-name", default="JSONL v12 diff+awaiting", help="Test suite name shown in the summary")
     args = parser.parse_args()
 
     passed = [0]
@@ -120,11 +129,13 @@ def main():
         turn1 = json.loads(body)
         diff1 = turn1.get("diff")
         lineops1_count = len(diff1.get("lineOps", [])) if diff1 else 0
-        print(f"Turn 1: state={turn1.get('state')} inputType={turn1.get('inputType')} diff.lineOps={lineops1_count}")
-        check(turn1.get("state") == "WaitInput", "Turn 1 is WaitInput", passed, failed)
+        print(f"Turn 1: state={turn_state(turn1)} inputType={turn1.get('awaiting', {}).get('input', {}).get('type')} diff.lineOps={lineops1_count}")
+        check(turn_state(turn1) == "WaitInput", "Turn 1 is WaitInput (awaiting.input)", passed, failed)
         check("text" not in turn1, "Turn 1 has no text field (v2)", passed, failed)
         check("buttons" not in turn1, "Turn 1 has no buttons field (v2)", passed, failed)
         check("ops" not in turn1, "Turn 1 has no ops field (v5: removed)", passed, failed)
+        for legacy in ("state", "inputType", "needValue", "timeLimit", "displayTime", "timeUpMessage", "timedOut"):
+            check(legacy not in turn1, f"Turn 1 has no legacy field {legacy} (v12: removed)", passed, failed)
         check(turn1.get("protocolVersion") == PROTOCOL_VERSION, f"Turn 1 has protocolVersion == {PROTOCOL_VERSION}", passed, failed)
         check(diff1 is None, "Turn 1 diff is null (first turn, no previous snapshot)", passed, failed)
         check_diff(turn1, passed, failed, "Turn 1")
@@ -146,8 +157,8 @@ def main():
         turn2 = json.loads(body)
         diff2 = turn2.get("diff")
         lineops2_count = len(diff2.get("lineOps", [])) if diff2 else 0
-        print(f"\nTurn 2: state={turn2.get('state')} inputType={turn2.get('inputType')} diff.lineOps={lineops2_count}")
-        check(turn2.get("state") == "WaitInput", "Turn 2 is WaitInput", passed, failed)
+        print(f"\nTurn 2: state={turn_state(turn2)} inputType={turn2.get('awaiting', {}).get('input', {}).get('type')} diff.lineOps={lineops2_count}")
+        check(turn_state(turn2) == "WaitInput", "Turn 2 is WaitInput (awaiting.input)", passed, failed)
         check("text" not in turn2, "Turn 2 has no text field (v2)", passed, failed)
         check("buttons" not in turn2, "Turn 2 has no buttons field (v2)", passed, failed)
         check("protocolVersion" not in turn2, "Turn 2 has no protocolVersion field", passed, failed)
@@ -163,7 +174,7 @@ def main():
         turn3 = json.loads(body)
         diff3 = turn3.get("diff")
         lineops3_count = len(diff3.get("lineOps", [])) if diff3 else 0
-        print(f"\nTurn 3: state={turn3.get('state')} inputType={turn3.get('inputType')} diff.lineOps={lineops3_count}")
+        print(f"\nTurn 3: state={turn_state(turn3)} inputType={turn3.get('awaiting', {}).get('input', {}).get('type')} diff.lineOps={lineops3_count}")
         check("text" not in turn3, "Turn 3 has no text field (v2)", passed, failed)
         check("buttons" not in turn3, "Turn 3 has no buttons field (v2)", passed, failed)
         check("protocolVersion" not in turn3, "Turn 3 has no protocolVersion field", passed, failed)
@@ -171,7 +182,7 @@ def main():
 
         check("You entered: 0" in diff_text(turn3), "Turn 3 diff shows second input result", passed, failed)
         check("Agent Test End" in diff_text(turn3), "Turn 3 diff shows end message", passed, failed)
-        check(turn3.get("state") == "Quit", "Turn 3 state is Quit", passed, failed)
+        check(turn_state(turn3) == "Quit", "Turn 3 state is Quit (awaiting.ended.terminal)", passed, failed)
     finally:
         if server is not None:
             try:

@@ -9,7 +9,7 @@ from pathlib import Path
 TESTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TESTS_DIR))
 
-from emuera_server import TEST_GAME_DIR, start_server
+from emuera_server import TEST_GAME_DIR, start_server, turn_state
 
 TOKEN = "control-test-agent"
 OTHER = "other-agent"
@@ -259,7 +259,9 @@ def test_acquire_drain(server):
     assert_json(status, body, 200)
     status, body = server.request("GET", f"/turn?token={TOKEN}", timeout=10)
     own = assert_json(status, body, 200)
-    assert "state" in own
+    # v12（issue 09）：turn 顶层 state 退场，唯一契约字段是 awaiting——等待语义由其表达。
+    assert "awaiting" in own, own
+    assert turn_state(own) is not None, own
 
 
 def test_inflight_turn_lost_on_steal(server):

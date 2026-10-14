@@ -109,6 +109,8 @@ def main():
 
     if args.playtest:
         expect_state = (fixture.get("expectState") if fixture else None) or "WaitInput"
+        # smoke["state"] 由 turn_state 从 awaiting 推导（v12：awaiting.input → WaitInput，
+        # awaiting.ended → Quit/Error），语义等同旧顶层 state 字段。
         check(smoke["state"] == expect_state,
               f"进入输入循环（state={smoke['state']}，期望 {expect_state}）")
 

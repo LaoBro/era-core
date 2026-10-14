@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
-from emuera_server import copy_test_game_with_erb, diff_text, find_binary, snapshot_text, start_server
+from emuera_server import copy_test_game_with_erb, diff_text, find_binary, snapshot_text, start_server, turn_state
 
 passed = 0
 failed = 0
@@ -100,7 +100,7 @@ def _run_flow(server, game_dir, tag):
     initial_status, initial_body = server.get_turn(timeout=10)
     check(initial_status == 200, f"[{tag}] initial GET /turn returns 200, got {initial_status}")
     initial = json.loads(initial_body)
-    check(initial.get("state") == "WaitInput", f"[{tag}] initial state is WaitInput, got {initial.get('state')}")
+    check(turn_state(initial) == "WaitInput", f"[{tag}] initial state is WaitInput (awaiting.input), got {turn_state(initial)}")
     snap_status, snap_body = server.get_snapshot(timeout=10)
     check(snap_status == 200 and "JumpTableE2E" in snapshot_text(json.loads(snap_body)),
           f"[{tag}] initial snapshot contains test start")
@@ -110,7 +110,7 @@ def _run_flow(server, game_dir, tag):
     text = diff_text(turn)
     check(status == 200 and "Big:7" in text, f"[{tag}] int fast-path dispatch hit CASE 7")
     check("AfterBig" in text, f"[{tag}] execution continued past ENDSELECT")
-    check(turn.get("state") == "WaitInput", f"[{tag}] state is WaitInput after block 1")
+    check(turn_state(turn) == "WaitInput", f"[{tag}] state is WaitInput after block 1 (awaiting.input)")
 
     # 块 2：无 CASEELSE → 未命中直接跳 ENDSELECT（块体不执行）
     status, turn = _drive(server, "300")
@@ -123,7 +123,7 @@ def _run_flow(server, game_dir, tag):
     text = diff_text(turn)
     check(status == 200 and "Str:c" in text, f"[{tag}] string dispatch hit CASE c")
     check("AfterStr" in text, f"[{tag}] execution continued past string ENDSELECT")
-    check(turn.get("state") == "Quit", f"[{tag}] final state is Quit, got {turn.get('state')}")
+    check(turn_state(turn) == "Quit", f"[{tag}] final state is Quit (awaiting.ended), got {turn_state(turn)}")
 
 
 def _run_reload_flow(server, game_dir, tag):
@@ -147,7 +147,7 @@ def _run_reload_flow(server, game_dir, tag):
     status, turn = _drive(server, "zz")
     text = diff_text(turn)
     check(status == 200 and "StrFallback" in text, f"[{tag}] after reload string fallback")
-    check(turn.get("state") == "Quit", f"[{tag}] after reload final state is Quit, got {turn.get('state')}")
+    check(turn_state(turn) == "Quit", f"[{tag}] after reload final state is Quit (awaiting.ended), got {turn_state(turn)}")
 
 
 def _run_mode(binary, game_dir, lazy, tag):

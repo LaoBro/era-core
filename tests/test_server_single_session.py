@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
-from emuera_server import PROTOCOL_VERSION, TEST_GAME_DIR, start_server
+from emuera_server import PROTOCOL_VERSION, TEST_GAME_DIR, start_server, turn_state
 
 passed = 0
 failed = 0
@@ -55,7 +55,7 @@ try:
     initial_turn_status, initial_turn_body = server.get_turn(timeout=10)
     check(initial_turn_status == 200, f"initial GET /turn returns 200, got {initial_turn_status}")
     initial_turn = json.loads(initial_turn_body)
-    check(initial_turn.get("state") == "WaitInput", f"initial turn state is WaitInput, got {initial_turn.get('state')}")
+    check(turn_state(initial_turn) == "WaitInput", f"initial turn state is WaitInput (awaiting.input), got {turn_state(initial_turn)}")
     check("text" not in initial_turn, "initial turn has no text field (v2)")
     check("ops" not in initial_turn, "initial turn has no ops field (v5: removed)")
     check(initial_turn.get("protocolVersion") == PROTOCOL_VERSION, f"initial turn protocolVersion == PROTOCOL_VERSION, got {initial_turn.get('protocolVersion')}")
@@ -68,17 +68,18 @@ try:
     turn_status, turn_body = server.get_turn(timeout=10)
     check(turn_status == 200, f"GET /turn after input returns 200, got {turn_status}")
     turn = json.loads(turn_body)
-    check(turn.get("state") == "WaitInput", f"turn state is WaitInput, got {turn.get('state')}")
+    check(turn_state(turn) == "WaitInput", f"turn state is WaitInput (awaiting.input), got {turn_state(turn)}")
     check("text" not in turn, "turn has no text field (v2)")
     check("ops" not in turn, "turn has no ops field (v5: removed)")
     check("diff" in turn, "step turn contains diff field (v5)")
 
     # Phase 0-1b: GET /snapshot 端点接线薄护栏——确保端点 wiring 未断，
-    # JSON 形状（state / lines / button.col+width）与 C# golden 一致。
+    # JSON 形状（awaiting / lines / button.col+width）与 C# golden 一致。
     snap_status, snap_body = server.get_snapshot(timeout=10)
     check(snap_status == 200, f"GET /snapshot with active session returns 200, got {snap_status}")
     snap = json.loads(snap_body)
-    check("state" in snap and isinstance(snap["state"], str), "snapshot has state string")
+    check("awaiting" in snap and isinstance(snap["awaiting"], dict), "snapshot has awaiting object (v12)")
+    check(turn_state(snap) == "WaitInput", f"snapshot awaiting implies WaitInput, got {turn_state(snap)}")
     check("lines" in snap and isinstance(snap["lines"], list), "snapshot has lines[] list")
     check(snap.get("protocolVersion") == PROTOCOL_VERSION, f"snapshot protocolVersion == PROTOCOL_VERSION, got {snap.get('protocolVersion')}")
     # 验证按钮几何存在（至少一个按钮有 col + width 整数字段）

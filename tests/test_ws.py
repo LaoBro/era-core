@@ -4,8 +4,9 @@ Verifies the PRD "WebSocket 传输实现" wire contract end-to-end against a liv
 Emuera.Headless server:
 
 1. Gate: connecting /ws with no active session is rejected/closed.
-2. Initial frame over WS is TurnRecord v7 JSON (protocolVersion == PROTOCOL_VERSION, diff is null on first turn,
-   no legacy text/buttons/ops) — identical to GET /turn's response body.
+2. Initial frame over WS is TurnRecord v12 JSON (protocolVersion == PROTOCOL_VERSION, diff is null on first turn,
+   no legacy text/buttons/ops; awaiting is the sole contract field — state/inputType/needValue removed in v12)
+   — identical to GET /turn's response body.
 3. Frame format consistency: WS first frame == HTTP GET /turn first frame.
 4. Input round-trip: send {"type":"input","value":"..."} -> receive next turn (no protocolVersion).
 5. Fan-out: 2 WS clients + one input -> both receive the same next turn (OutputHub broadcast).
@@ -32,7 +33,7 @@ _project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _project_dir)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from emuera_server import PROTOCOL_VERSION, TEST_GAME_DIR, diff_text, start_server
+from emuera_server import PROTOCOL_VERSION, TEST_GAME_DIR, diff_text, start_server, turn_state
 
 try:
     import asyncio
@@ -138,7 +139,7 @@ async def test_initial_frame(server, passed, failed):
     try:
         turn = await recv_json(ws)
         check(turn.get("protocolVersion") == PROTOCOL_VERSION, "WS initial frame protocolVersion == PROTOCOL_VERSION", passed, failed)
-        check(turn.get("state") == "WaitInput", f"WS initial state WaitInput, got {turn.get('state')}", passed, failed)
+        check(turn_state(turn) == "WaitInput", f"WS initial state WaitInput (awaiting.input), got {turn_state(turn)}", passed, failed)
         check("text" not in turn, "WS initial frame has no text field (v2)", passed, failed)
         check("buttons" not in turn, "WS initial frame has no buttons field (v2)", passed, failed)
         check("ops" not in turn, "WS initial frame has no ops field (v5: removed)", passed, failed)
@@ -178,7 +179,7 @@ async def test_input_roundtrip(server, passed, failed):
         await ws.send(json.dumps({"type": "input", "value": "0"}))
         nxt = await recv_json(ws)
         check("protocolVersion" not in nxt, "step turn has no protocolVersion", passed, failed)
-        check(nxt.get("state") == "WaitInput", f"step turn state WaitInput, got {nxt.get('state')}", passed, failed)
+        check(turn_state(nxt) == "WaitInput", f"step turn state WaitInput (awaiting.input), got {turn_state(nxt)}", passed, failed)
         check_diff(nxt, passed, failed, "WS step")
         check("You entered: 0" in diff_text(nxt), "step turn diff shows input result", passed, failed)
     finally:
