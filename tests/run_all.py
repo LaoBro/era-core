@@ -391,6 +391,17 @@ def main():
 
     results.append(
         (
+            "CLI mouse geometry (ConPTY)",
+            _run_script(
+                "CLI mouse geometry (ConPTY)",
+                [sys.executable, str(TESTS_DIR / "test_cli_mouse_geometry.py"), "--binary", str(binary_path)],
+                timeout=180,
+            ),
+        )
+    )
+
+    results.append(
+        (
             "VT-only fatal exit",
             _run_script(
                 "VT-only fatal exit",
