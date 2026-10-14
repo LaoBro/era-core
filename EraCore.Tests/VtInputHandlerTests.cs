@@ -65,6 +65,78 @@ public class VtInputHandlerTests
         Assert.Equal(8, host.LastPointerCol);
     }
 
+    // ---------- ADR-0031 / spec-v3 M4b：鼠标键电平上报（KeyboardState 能力的入口） ----------
+
+    /// <summary>
+    /// SGR <c>cb</c> → Win32 VK：0=左(<c>0x01</c>) / 1=中(<c>0x04</c>) / 2=右(<c>0x02</c>)，
+    /// 与原版 WinForms <c>MouseButtons</c> 口径一致（spec §9 缺口 4）。
+    /// </summary>
+    [Theory]
+    [InlineData(0, 0x01)]
+    [InlineData(1, 0x04)]
+    [InlineData(2, 0x02)]
+    public void M4b_mouse_button_is_reported_as_win32_vk(int buttonCode, int expectedVk)
+    {
+        var host = new FakeVtHost(scrollOffset: 0);
+        IVtEventSink handler = new VtInputHandler(host, new FakeTerminalInput());
+
+        handler.OnMouseEvent(row: 0, col: 0, buttonCode: buttonCode, isPress: true);
+        handler.OnMouseEvent(row: 0, col: 0, buttonCode: buttonCode, isPress: false);
+
+        Assert.Equal([(expectedVk, true), (expectedVk, false)], host.SubmitPointerKeyCalls);
+    }
+
+    /// <summary>带修饰位的 <c>cb</c>（如 Ctrl+左键 = 16）仍取低两位 ⇒ 映射到左键。</summary>
+    [Fact]
+    public void M4b_modifier_bits_do_not_break_button_mapping()
+    {
+        var host = new FakeVtHost(scrollOffset: 0);
+        IVtEventSink handler = new VtInputHandler(host, new FakeTerminalInput());
+
+        handler.OnMouseEvent(row: 0, col: 0, buttonCode: 4 | 0, isPress: true);   // Shift+左键
+        handler.OnMouseEvent(row: 0, col: 0, buttonCode: 16 | 2, isPress: true); // Ctrl+右键
+
+        Assert.Equal([(0x01, true), (0x02, true)], host.SubmitPointerKeyCalls);
+    }
+
+    /// <summary>
+    /// 滚轮（<c>cb=64/65</c>）与 X10 的「释放」标记（<c>cb&amp;3==3</c>）**不**合成键 ——
+    /// 滚轮有独立路径，若不排除会被 <c>&amp;3==0</c> 误判成左键电平。
+    /// </summary>
+    [Fact]
+    public void M4b_wheel_and_release_marker_do_not_produce_keys()
+    {
+        var host = new FakeVtHost(scrollOffset: 0);
+        IVtEventSink handler = new VtInputHandler(host, new FakeTerminalInput());
+
+        handler.OnMouseEvent(row: 0, col: 0, buttonCode: 64, isPress: true);
+        handler.OnMouseEvent(row: 0, col: 0, buttonCode: 65, isPress: true);
+        handler.OnMouseEvent(row: 0, col: 0, buttonCode: 64 | 4, isPress: true);  // Shift+滚轮
+        handler.OnMouseEvent(row: 0, col: 0, buttonCode: 3, isPress: false);
+
+        Assert.Empty(host.SubmitPointerKeyCalls);
+    }
+
+    /// <summary>
+    /// 键电平必须覆盖被路由丢弃的四类事件，且发生在 primitive / Scroll 门卫**之前**：
+    /// 原版任何时刻都能读到真实键状态，而 <c>GETKEYTRIGGERED</c> 要求「此刻按着」——
+    /// 只在「会被提交」的路径上报会让按下跨越门卫时丢失触发。
+    /// </summary>
+    [Fact]
+    public void M4b_key_state_is_reported_before_gates()
+    {
+        var primitive = new FakeVtHost(scrollOffset: 0, isWaitingPrimitive: true);
+        IVtEventSink primitiveHandler = new VtInputHandler(primitive, new FakeTerminalInput());
+        primitiveHandler.OnMouseEvent(row: 0, col: 0, buttonCode: 0, isPress: true);
+        Assert.Equal([(0x01, true)], primitive.SubmitPointerKeyCalls);
+
+        var scrolled = new FakeVtHost(scrollOffset: 3);
+        IVtEventSink scrolledHandler = new VtInputHandler(scrolled, new FakeTerminalInput());
+        scrolledHandler.OnMouseEvent(row: 0, col: 0, buttonCode: 0, isPress: true);
+        scrolledHandler.OnMouseEvent(row: 0, col: 0, buttonCode: 0, isPress: false);
+        Assert.Equal([(0x01, true), (0x01, false)], scrolled.SubmitPointerKeyCalls);
+    }
+
     // ---------- C4：Scroll Mode 只读门卫 ----------
 
     [Fact]
@@ -505,6 +577,13 @@ public class VtInputHandlerTests
             LastPointerRow = row;
             LastPointerCol = col;
         }
+
+        // ADR-0031 / spec-v3 M4b：鼠标键电平上报。记录全部 (vk, down) 对 ——
+        // 用于断言映射正确、且上报发生在 primitive / Scroll 门卫**之前**。
+        public readonly List<(int virtualKey, bool down)> SubmitPointerKeyCalls = new();
+
+        public void SubmitPointerKey(int virtualKey, bool down)
+            => SubmitPointerKeyCalls.Add((virtualKey, down));
 
         public void PressPrimitiveKey(int keycode, int keydata, int keymod)
             => PressPrimitiveKeyCalls.Add((keycode, keydata, keymod));

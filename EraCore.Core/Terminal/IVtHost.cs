@@ -46,6 +46,22 @@ namespace MinorShift.Emuera.GameView
         /// </summary>
         void SubmitPointerGeometry(int row, int col);
 
+        /// <summary>
+        /// ADR-0031 / spec-v3 M4b：鼠标键电平上报（Win32 虚拟键码，<c>0x01</c>/<c>0x04</c>/<c>0x02</c>）。
+        /// <para>
+        /// 与 <see cref="SubmitPointerGeometry"/> 同构 —— <b>正交</b>于点击提交路径
+        /// （<see cref="DispatchMouseClick"/>）：只回答「这个键此刻按着没有」，
+        /// 不提交任何值、不推进任何等待态。
+        /// </para>
+        /// <para>
+        /// 为什么必须有这条：脚本侧 <c>GETKEY</c> / <c>GETKEYTRIGGERED</c> 读的是
+        /// <c>IInputHost</c> 的键状态，而 VT 路径此前<b>从不</b>写它 ⇒ CLI 上恒 0。
+        /// <c>COMF413:135</c> 的出口要 <c>GETKEYTRIGGERED(0x01)</c>，缺这一环就仍卡死。
+        /// 无 <c>KeyboardState</c> 能力的宿主实现为空操作。
+        /// </para>
+        /// </summary>
+        void SubmitPointerKey(int virtualKey, bool down);
+
         /// <summary>primitive 键盘输入分发（IsWaitingPrimitive=true 时由 OnKeyEvent 调用）。</summary>
         void PressPrimitiveKey(int keycode, int keydata, int keymod);
 

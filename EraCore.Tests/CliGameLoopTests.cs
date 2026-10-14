@@ -103,8 +103,9 @@ public class CliGameLoopTests
         public void ProcessKeyFromVt(ConsoleKeyInfo key) { }
         public void DispatchMouseClick(object value, bool isInteger) { }
         public void DispatchMouseMiss() { }
-        // ADR-0031 M4：本 fake 不声明 Geometry 能力，位置上报无消费者。
+        // ADR-0031 M4/M4b：本 fake 不声明能力位，位置/键上报无消费者。
         public void SubmitPointerGeometry(int row, int col) { }
+        public void SubmitPointerKey(int virtualKey, bool down) { }
         public void PressPrimitiveKey(int keycode, int keydata, int keymod) { }
         public void InputMouseKey(int type, int result1, int result2, int result3, int result4, long result5) { }
     }

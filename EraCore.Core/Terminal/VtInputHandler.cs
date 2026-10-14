@@ -95,6 +95,14 @@ internal sealed class VtInputHandler : IDisposable, IVtEventSink
 
     void IVtEventSink.OnMouseEvent(int row, int col, int buttonCode, bool isPress)
     {
+        // ADR-0031 / spec-v3 M4b：鼠标键**电平**（KeyboardState 能力）。
+        // 与位置上报同样是「正交通道」，且必须在 primitive 与 Scroll 门卫**之前**：
+        // 原版任何时刻（滚动态 / primitive 等待 / 非左键 / 松开）都能读到真实键状态，
+        // 而「能否提交」是另一回事。缺这一条则 CLI 上 GETKEY / GETKEYTRIGGERED 恒 0
+        // ⇒ COMF413:135 的出口（GETKEYTRIGGERED(0x01)）永远不成立。
+        if (TryMapMouseButton(buttonCode, out int virtualKey))
+            _host.SubmitPointerKey(virtualKey, isPress);
+
         // ADR-0031 / spec-v3 M4：先更新鼠标位置（Geometry 能力）—— 与下述命中/提交路径正交。
         // 必须在 primitive 分支**之前**：primitive 等待态下脚本同样能读 MOUSEX/MOUSEY。
         _host.SubmitPointerGeometry(row, col);
@@ -125,6 +133,36 @@ internal sealed class VtInputHandler : IDisposable, IVtEventSink
             _host.DispatchMouseClick(hit.Value.Value, hit.Value.IsInteger);
         else
             _host.DispatchMouseMiss();
+    }
+
+    /// <summary>
+    /// SGR <c>cb</c> → Win32 虚拟键码（<c>VK_LBUTTON</c>=0x01 / <c>VK_RBUTTON</c>=0x02 /
+    /// <c>VK_MBUTTON</c>=0x04，与原版 WinForms <c>MouseButtons</c> 口径一致，见 spec §9 缺口 4）。
+    /// <para>
+    /// <c>cb</c> 位划分：bit0-1 = 按钮号，bit2-4 = 修饰键（Shift/Meta/Ctrl），bit6 = 滚轮标志。
+    /// 用 <c>&amp; 3</c> 取按钮号对带修饰的 <c>cb</c> 同样成立（如 Ctrl+左键 = 16 → 左键）。
+    /// </para>
+    /// <para>
+    /// 返回 <c>false</c> 的情形：滚轮（<c>cb=64/65</c>，有独立路径，不合成键）、
+    /// <c>cb&amp;3==3</c>（X10 协议的「释放」标记，SGR 下用终结符 <c>m</c> 表达，不应出现）。
+    /// </para>
+    /// </summary>
+    private static bool TryMapMouseButton(int buttonCode, out int virtualKey)
+    {
+        if ((buttonCode & 64) != 0)
+        {
+            virtualKey = 0;
+            return false;
+        }
+
+        virtualKey = (buttonCode & 3) switch
+        {
+            0 => 0x01,   // VK_LBUTTON
+            1 => 0x04,   // VK_MBUTTON
+            2 => 0x02,   // VK_RBUTTON
+            _ => 0,
+        };
+        return virtualKey != 0;
     }
 
     private void DispatchPrimitiveMouseKey(int row, int col, int buttonCode, bool isPress)

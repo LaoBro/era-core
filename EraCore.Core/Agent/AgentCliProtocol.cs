@@ -80,6 +80,22 @@ namespace MinorShift.Emuera.GameView
             host.SubmitGeometry(new EmuPoint(x, y));
         }
 
+        /// <summary>
+        /// ADR-0031 / spec-v3 M4b：VT 鼠标键 → <c>IInputHost</c> 键状态。
+        /// <para>
+        /// ⚠️ 只在宿主声明 <see cref="InputCapability.KeyboardState"/> 时才写 —— 与
+        /// <see cref="IVtHost.SubmitPointerGeometry"/> 同一门卫口径：能力位先声明，通道才通电。
+        /// </para>
+        /// </summary>
+        void IVtHost.SubmitPointerKey(int virtualKey, bool down)
+        {
+            IInputHost host = ui.Input;
+            if (!host.Capabilities.Has(InputCapability.KeyboardState))
+                return;
+
+            host.SubmitKey(virtualKey, down);
+        }
+
         /// <summary>当前 Scroll Offset（IVtHost 门卫读取）。ADR-0009：从 ScrollController 读。</summary>
         int IVtHost.ScrollOffset => _scroll.ScrollOffset;
 

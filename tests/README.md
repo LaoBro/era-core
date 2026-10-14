@@ -187,6 +187,7 @@ spec §7 判据表的 CLI 列全部机械化，合计 27 条断言（`run_all.py
 | `test_cli_bottom_anchor.py`（18） | 内容末行位置 / 上方留白 / 满屏不变 | 29 与 33 行两种终端各跑一遍 |
 | `test_cli_mouse_geometry.py`（5） | `MY` 顶行 `−H`（−608）/ 末行 `−LH`（−19）、点击按钮取值 42 | ERB `PRINTFORML MY={MOUSEY()}` 把引擎换算结果打印出来，Python 从重建屏幕抓值 |
 | `test_cli_button_click.py`（4） | 点击渲染行提交、点击第 0 行不提交 | 首个真正点击按钮的 E2E；走 `OnMouseEvent → HitTest(SGR 绝对行)` |
+| `test_cli_mouse_keystate.py`（7） | 按住左键 ⇒ `GETKEY(1)` 置位 + `GETKEYTRIGGERED(1)` 成立；**60ms 快速单击**同样成立 | 2026-10-15 M4b：VT 鼠标事件接入 `IInputHost` 键状态。**翻掉了下面第 2 条旧限制** |
 
 两个踩坑（已写进代码注释）：
 
@@ -196,8 +197,12 @@ spec §7 判据表的 CLI 列全部机械化，合计 27 条断言（`run_all.py
    故测试改 `emuera.config` 的 `ウィンドウ高さ` 来切换终端尺寸，并断言实测 H 与期望一致
    （环境变化会响，不会静默假绿）。
 2. **`{MOUSEY}` 会报错**（`MOUSEY` 是方法）⇒ 用 `{MOUSEY()}`。而 `MOUSEB()` 在回合推进后
-   命中区被清空、读到空串，等待期读取又需自定义 `DO/AWAIT` 循环且 CLI 点击不走
-   `GETKEYTRIGGERED` ⇒ `MOUSEB` 的判据以「点击按钮行 ⇒ `RESULT` = 42」表达。
+   命中区被清空、读到空串，等待期读取又需自定义 `DO/AWAIT` 循环
+   ⇒ `MOUSEB` 的判据以「点击按钮行 ⇒ `RESULT` = 42」表达。
+   <br>⚠️ 2026-10-15 更正：原文此处还写着「CLI 点击**不走** `GETKEYTRIGGERED`」——
+   M4b 后这句**已不成立**（`test_cli_mouse_keystate.py` 就是它的判据）。
+   `MOUSEB` 仍用「点击取值」表达，是为了绕开「等待期读值需自建 `DO/AWAIT` 循环」，
+   不是因为 `GETKEYTRIGGERED` 不可用。
 
 ## Web 前端布局验证（Playwright，真实浏览器）
 
