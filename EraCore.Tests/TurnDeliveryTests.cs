@@ -11,8 +11,13 @@ namespace MinorShift.Emuera.Tests;
 
 /// <summary>
 /// TurnDelivery 深模块单测：注入 fake ITurnSink + IControlSignal，用 TCS 确定性编排分支。
-/// 可确定性钳制的分支在此覆盖；依赖真实调度交叠的「读 turn 同时易主」类竞态保留在
-/// SessionWaitForTurnTests（真实对象接线回归）兜底——两层互补。
+/// 可确定性钳制的分支在此覆盖；SessionWaitForTurnTests 用真实对象接线兜底。
+/// <para>
+/// ⚠️ <b>分层原则（2026-10-15 修订）</b>：确定性用例断言<b>具体分支</b>（如「已取出的 turn 必须回滚」），
+/// 真实接线用例只断言<b>不变式</b>（如「回合不许丢」）。此前 Session 层那条竞态用例断言了
+/// 赛跑<b>胜负</b>（drain 那一刻是否已看到回滚），而那个时点本就无排序保证 ⇒ 负载高时偶发假红。
+/// 分支覆盖下沉到本文件（<c>Turn_ready_concurrently_with_steal_is_rolled_back_for_next_drain</c>）。
+/// </para>
 /// </summary>
 public class TurnDeliveryTests
 {
@@ -185,6 +190,44 @@ public class TurnDeliveryTests
         Assert.Equal(TurnWaitStatus.Closed, r.Status);
         // 已取出但未交付的 turn 经 UnreadOutput 回滚（会话已拆，无新持有者 drain，丢弃无害）
         Assert.Contains("T", sink.UnreadLog);
+    }
+
+    /// <summary>
+    /// 「turn 已落到等待方手里」与「控制权易主」交叠时，那个 turn 必须被<b>回滚</b>，
+    /// 留给下一位持有者 drain —— 不丢、也不交付给已失守的一方。
+    /// <para>
+    /// 🔒 <b>确定性编排</b>（不开线程赛跑）：<c>ProvideTurn</c> 与 <c>FireOwnerChanged</c> 在同一线程上
+    /// 先后执行，而 <c>ProvideTurn</c> 会<b>同步</b>完成 <c>ReadOutputAsync</c> 的 TCS ⇒ 等待方
+    /// 必然走 <c>if (readTask.IsCompleted) → await readTask → UnreadOutput</c> 这一支，不存在第二种交错。
+    /// </para>
+    /// <para>
+    /// 与 <c>SessionWaitForTurnTests.Steal_racing_a_queued_turn_never_loses_that_turn</c> 的分工：
+    /// 那条用真 Session + 真 <c>DrainOnAcquire</c>，是<b>真实接线回归</b>，但它断言不了
+    /// 「drain 那一刻回滚是否已完成」（drain 在 <c>AcquireControl</c> 内同步跑，回滚要等等待线程
+    /// 被唤醒后跑到 rollback 点）⇒ 那条只断言「回合不丢」。本用例把<b>回滚本身</b>钉死。
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Turn_ready_concurrently_with_steal_is_rolled_back_for_next_drain()
+    {
+        var (delivery, sink, signal) = Create();
+        signal.Current = ControlIdentity.Agent("agent-1");
+
+        var wait = delivery.WaitForTurnAsync(5000, ControlIdentity.Agent("agent-1"), CancellationToken.None);
+        await Task.Yield();
+
+        sink.ProvideTurn("raced");
+        signal.FireOwnerChanged();
+
+        var r = await wait;
+
+        Assert.Equal(TurnWaitStatus.ControlLost, r.Status);
+        Assert.Contains("raced", sink.UnreadLog);   // 已取出但未交付 ⇒ 必须回滚
+
+        // 下一位持有者 drain 时能拿到它（复用真实接线那条测试的语义，此处确定性）
+        var (advanced, last) = delivery.DrainOnAcquire();
+        Assert.Equal(1, advanced);
+        Assert.Equal("raced", last);
     }
 
     [Fact]
