@@ -369,6 +369,17 @@ def main():
 
     results.append(
         (
+            "CLI button click (ConPTY)",
+            _run_script(
+                "CLI button click (ConPTY)",
+                [sys.executable, str(TESTS_DIR / "test_cli_button_click.py"), "--binary", str(binary_path)],
+                timeout=120,
+            ),
+        )
+    )
+
+    results.append(
+        (
             "VT-only fatal exit",
             _run_script(
                 "VT-only fatal exit",

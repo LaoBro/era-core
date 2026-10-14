@@ -213,7 +213,7 @@ public class ButtonRegionTrackerTests
             new DisplayLine(new List<DisplayEntry> { MakeEntry(button: null) }, null, true));
 
         var tracker = new ButtonRegionTracker();
-        tracker.UpdateFromSnapshot(snapshot, scrollOffset: 0, viewportHeight: 1);
+        tracker.UpdateFromSnapshot(snapshot, scrollOffset: 0, terminalHeight: 2);
 
         Assert.Equal(0, tracker.RegionCount);
     }
@@ -221,12 +221,13 @@ public class ButtonRegionTrackerTests
     [Fact]
     public void UpdateFromSnapshot_single_button_registered()
     {
-        // 单行单按钮：col=2, width=4 → Region(Row=0, Left=2, Right=5, Value=1L, IsInteger=true)
+        // 单行单按钮：col=2, width=4；terminalHeight=2 ⇒ 视口 1 行、内容 1 行 ⇒ baseRow=0
+        // → Region(Row=0, Left=2, Right=5, Value=1L, IsInteger=true)
         var snapshot = MakeSnapshot(
             new DisplayLine(new List<DisplayEntry> { MakeEntry(button: TestSnapshots.Button(1L, true, 0, 2, 4)) }, null, true));
 
         var tracker = new ButtonRegionTracker();
-        tracker.UpdateFromSnapshot(snapshot, scrollOffset: 0, viewportHeight: 1);
+        tracker.UpdateFromSnapshot(snapshot, scrollOffset: 0, terminalHeight: 2);
 
         Assert.Equal(1, tracker.RegionCount);
         var hit = tracker.HitTest(row: 0, col: 2);
@@ -245,7 +246,7 @@ public class ButtonRegionTrackerTests
             new DisplayLine(new List<DisplayEntry> { MakeEntry(button: TestSnapshots.Button("ok", false, 0, 0, 4)) }, null, true));
 
         var tracker = new ButtonRegionTracker();
-        tracker.UpdateFromSnapshot(snapshot, scrollOffset: 0, viewportHeight: 1);
+        tracker.UpdateFromSnapshot(snapshot, scrollOffset: 0, terminalHeight: 2);
 
         var hit = tracker.HitTest(row: 0, col: 0);
         Assert.True(hit.HasValue);
@@ -256,14 +257,15 @@ public class ButtonRegionTrackerTests
     [Fact]
     public void UpdateFromSnapshot_multiple_lines_row_indexed_by_viewport_position()
     {
-        // 3 行，每行一个按钮；viewport=3，scrollOffset=0
+        // 3 行，每行一个按钮；terminalHeight=4 ⇒ 视口 3 行，scrollOffset=0
+        // 内容填满视口 ⇒ baseRow = 0 ⇒ Row 仍为 0/1/2（与贴底前一致）
         var snapshot = MakeSnapshot(
             MakeLineWithButton(0, 2, 7L),
             MakeLineWithButton(0, 2, 8L),
             MakeLineWithButton(0, 2, 9L));
 
         var tracker = new ButtonRegionTracker();
-        tracker.UpdateFromSnapshot(snapshot, scrollOffset: 0, viewportHeight: 3);
+        tracker.UpdateFromSnapshot(snapshot, scrollOffset: 0, terminalHeight: 4);
 
         // Row=0/1/2 对应快照第 0/1/2 行
         Assert.Equal(7L, tracker.HitTest(row: 0, col: 0)!.Value.Value);
@@ -274,9 +276,10 @@ public class ButtonRegionTrackerTests
     [Fact]
     public void UpdateFromSnapshot_scrollOffset_shifts_visible_window()
     {
-        // 5 行，viewport=2，scrollOffset=1 → 仅显示最后 2 行的前一行（视口第 0 行）
-        // ButtonRegionTracker.UpdateFromSnapshot 内 startLine = max(0, 5 - 2 - 1) = 2
+        // 5 行，terminalHeight=4 + scrollOffset=1 ⇒ VisibleLines = 4-2 = 2
+        // startLine = TerminalViewportGeometry.StartLine(5, 4, 1) = max(0, 5 - 2 - 1) = 2
         // 视口第 0 行 = 快照第 2 行；视口第 1 行 = 快照第 3 行
+        // Scroll Mode 下内容填满视口 ⇒ baseRow = 0（贴底 = 顶部对齐）
         var snapshot = MakeSnapshot(
             MakeLineWithButton(0, 2, 10L),
             MakeLineWithButton(0, 2, 11L),
@@ -285,7 +288,7 @@ public class ButtonRegionTrackerTests
             MakeLineWithButton(0, 2, 14L));
 
         var tracker = new ButtonRegionTracker();
-        tracker.UpdateFromSnapshot(snapshot, scrollOffset: 1, viewportHeight: 2);
+        tracker.UpdateFromSnapshot(snapshot, scrollOffset: 1, terminalHeight: 4);
 
         Assert.Equal(2, tracker.RegionCount);
         Assert.Equal(12L, tracker.HitTest(row: 0, col: 0)!.Value.Value);
@@ -297,14 +300,99 @@ public class ButtonRegionTrackerTests
     {
         var snapshot1 = MakeSnapshot(MakeLineWithButton(0, 2, 1L));
         var tracker = new ButtonRegionTracker();
-        tracker.UpdateFromSnapshot(snapshot1, scrollOffset: 0, viewportHeight: 1);
+        tracker.UpdateFromSnapshot(snapshot1, scrollOffset: 0, terminalHeight: 2);
         Assert.Equal(1, tracker.RegionCount);
 
         // 第二次 UpdateFromSnapshot 应先清空再构建
         var snapshot2 = MakeSnapshot(
             new DisplayLine(new List<DisplayEntry> { MakeEntry(button: null) }, null, true));
-        tracker.UpdateFromSnapshot(snapshot2, scrollOffset: 0, viewportHeight: 1);
+        tracker.UpdateFromSnapshot(snapshot2, scrollOffset: 0, terminalHeight: 2);
         Assert.Equal(0, tracker.RegionCount);
+    }
+
+    // ---------- 贴底（2026.10.14 spec §3.3）：Row 必须是终端绝对行 ----------
+
+    /// <summary>
+    /// 🔒 稀疏画面：内容 1 行、终端 29 行 ⇒ 视口 28 行、baseRow = 27。
+    /// 按钮必须登记在终端行 27（渲染器写屏行），而不是行 0 —— 否则 SGR mouse 报绝对行 27 时
+    /// <c>HitTest</c> 落空，贴底后按钮点不到。
+    /// </summary>
+    [Fact]
+    public void UpdateFromSnapshot_bottom_anchors_sparse_content()
+    {
+        var snapshot = MakeSnapshot(MakeLineWithButton(0, 2, 42L));
+
+        var tracker = new ButtonRegionTracker();
+        tracker.UpdateFromSnapshot(snapshot, scrollOffset: 0, terminalHeight: 29);
+
+        Assert.Equal(1, tracker.RegionCount);
+        // 与 TerminalViewportGeometry 的贴底基准行一致（= TerminalRenderer 的 baseRow）
+        int baseRow = TerminalViewportGeometry.BaseRow(1, 29, 0);
+        Assert.Equal(27, baseRow);
+        // 按钮区域 col=[0,1]（MakeLineWithButton(col:0, width:2)）
+        Assert.True(tracker.HitTest(row: baseRow, col: 0).HasValue);
+        Assert.Equal(42L, tracker.HitTest(row: 27, col: 0)!.Value.Value);
+        // 顶部留白行不应命中（贴底前按钮登记在 row 0，正是这里的差异点）
+        Assert.False(tracker.HitTest(row: 0, col: 0).HasValue);
+        Assert.False(tracker.HitTest(row: 26, col: 0).HasValue);
+    }
+
+    /// <summary>
+    /// 稀疏多行：3 行内容 / 终端 29 行 ⇒ baseRow = 25 ⇒ 行 25/26/27，逐行对应内容 0/1/2。
+    /// </summary>
+    [Fact]
+    public void UpdateFromSnapshot_bottom_anchored_rows_are_absolute()
+    {
+        var snapshot = MakeSnapshot(
+            MakeLineWithButton(0, 2, 7L),
+            MakeLineWithButton(0, 2, 8L),
+            MakeLineWithButton(0, 2, 9L));
+
+        var tracker = new ButtonRegionTracker();
+        tracker.UpdateFromSnapshot(snapshot, scrollOffset: 0, terminalHeight: 29);
+
+        int baseRow = TerminalViewportGeometry.BaseRow(3, 29, 0);
+        Assert.Equal(25, baseRow);
+        Assert.Equal(7L, tracker.HitTest(row: 25, col: 0)!.Value.Value);
+        Assert.Equal(8L, tracker.HitTest(row: 26, col: 0)!.Value.Value);
+        Assert.Equal(9L, tracker.HitTest(row: 27, col: 0)!.Value.Value);
+        Assert.False(tracker.HitTest(row: 24, col: 0).HasValue);
+        Assert.False(tracker.HitTest(row: 28, col: 0).HasValue);
+    }
+
+    /// <summary>
+    /// 命中区行号集合与 <c>TerminalRenderer</c> 的写屏行号集合**逐行一致** —— 二者的差集
+    /// 就是"看得见但点不到 / 点得到但看不见"的按钮。这里用同一份几何（BaseRow/RenderedLines）
+    /// 推出渲染行，断言与 tracker 登记的行完全相同。
+    /// </summary>
+    [Theory]
+    [InlineData(3, 29, 0)]     // 稀疏
+    [InlineData(28, 29, 0)]    // 刚好填满
+    [InlineData(100, 29, 0)]   // 满屏（baseRow=0）
+    [InlineData(100, 33, 10)]  // Scroll Mode（baseRow=0）
+    public void UpdateFromSnapshot_rows_match_renderer_write_rows(int lineCount, int terminalHeight, int scrollOffset)
+    {
+        var lines = new DisplayLine[lineCount];
+        for (int i = 0; i < lineCount; i++)
+            lines[i] = MakeLineWithButton(0, 2, (long)i);
+        var snapshot = MakeSnapshot(lines);
+
+        var tracker = new ButtonRegionTracker();
+        tracker.UpdateFromSnapshot(snapshot, scrollOffset, terminalHeight);
+
+        int startLine = TerminalViewportGeometry.StartLine(lineCount, terminalHeight, scrollOffset);
+        int rendered = TerminalViewportGeometry.RenderedLines(lineCount, terminalHeight, scrollOffset);
+        int baseRow = TerminalViewportGeometry.BaseRow(lineCount, terminalHeight, scrollOffset);
+
+        Assert.Equal(rendered, tracker.RegionCount);
+        for (int i = 0; i < rendered; i++)
+        {
+            int renderRow = baseRow + i;                    // TerminalRenderer 写屏行
+            int expectedValue = startLine + i;              // 该行对应的内容行号（= 按钮值）
+            var hit = tracker.HitTest(row: renderRow, col: 0);
+            Assert.True(hit.HasValue, $"渲染行 {renderRow} 应有命中区");
+            Assert.Equal((long)expectedValue, hit!.Value.Value);
+        }
     }
 
     // ---------- Phase 4 align 偏移回归 ----------
@@ -326,7 +414,7 @@ public class ButtonRegionTrackerTests
         var snapshot = MakeSnapshot(line);
 
         var tracker = new ButtonRegionTracker();
-        tracker.UpdateFromSnapshot(snapshot, scrollOffset: 0, viewportHeight: 1);
+        tracker.UpdateFromSnapshot(snapshot, scrollOffset: 0, terminalHeight: 2);
 
         Assert.Equal(1, tracker.RegionCount);
         // col=2（相对）在绝对列 12 之前——不应命中
@@ -351,7 +439,7 @@ public class ButtonRegionTrackerTests
         var snapshot = MakeSnapshot(line);
 
         var tracker = new ButtonRegionTracker();
-        tracker.UpdateFromSnapshot(snapshot, scrollOffset: 0, viewportHeight: 1);
+        tracker.UpdateFromSnapshot(snapshot, scrollOffset: 0, terminalHeight: 2);
 
         var hit = tracker.HitTest(row: 0, col: 2);
         Assert.True(hit.HasValue);

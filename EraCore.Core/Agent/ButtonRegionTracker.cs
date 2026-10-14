@@ -49,19 +49,28 @@ namespace MinorShift.Emuera.GameView
         /// <summary>
         /// 从 DisplaySnapshot 构建命中区（Phase 3-3 / Q13）。
         /// value-based——从快照 entries[j].button 取 col/width/value/isInteger。
-        /// scrollOffset/viewportHeight 决定可见行切片，Row=i 是视口内行号。
         /// align 偏移：DisplayLine.AlignOffset（CLI 渲染专用）加到 button.col 上得到 PTY 绝对列——
         /// 与 SGR mouse 的 Cb 列匹配。Web 路径 AlignOffset 为 0（JSON 反序列化默认），col 保持相对。
+        /// <para>
+        /// 2026.10.14 贴底（spec §3.3）：<c>Row</c> 是<b>终端绝对行</b> = <c>baseRow + i</c>，
+        /// 不再是视口内相对行号。SGR mouse 上报的正是终端绝对行（<c>VtInputHandler</c>），
+        /// 而 <c>TerminalRenderer</c> 把内容第 i 行写在 <c>baseRow + i</c> ⇒ 三者必须逐行一致，
+        /// 否则贴底后按钮点不到（稀疏画面下偏差 = 顶部留白行数）。
+        /// 视口几何（起始行 / 渲染行数 / 贴底基准行）统一取自 <see cref="TerminalViewportGeometry"/>，
+        /// 不再在本方法内自算。
+        /// </para>
         /// </summary>
-        public void UpdateFromSnapshot(DisplaySnapshot snapshot, int scrollOffset, int viewportHeight)
+        /// <param name="terminalHeight">终端总行数（<c>AgentCliVtScreen.WindowHeight</c>）。
+        /// 视口行数由 <see cref="TerminalViewportGeometry.VisibleLines"/> 推导，不由调用方自算。</param>
+        public void UpdateFromSnapshot(DisplaySnapshot snapshot, int scrollOffset, int terminalHeight)
         {
             _regions.Clear();
 
-            int startLine = scrollOffset > 0
-                ? System.Math.Max(0, snapshot.lines.Count - viewportHeight - scrollOffset)
-                : System.Math.Max(0, snapshot.lines.Count - viewportHeight);
+            int startLine = TerminalViewportGeometry.StartLine(snapshot.lines.Count, terminalHeight, scrollOffset);
+            int rendered = TerminalViewportGeometry.RenderedLines(snapshot.lines.Count, terminalHeight, scrollOffset);
+            int baseRow = TerminalViewportGeometry.BaseRow(snapshot.lines.Count, terminalHeight, scrollOffset);
 
-            for (int i = 0; i < viewportHeight && (startLine + i) < snapshot.lines.Count; i++)
+            for (int i = 0; i < rendered; i++)
             {
                 var line = snapshot.lines[startLine + i];
                 int alignOffset = line.AlignOffset;
@@ -71,7 +80,7 @@ namespace MinorShift.Emuera.GameView
                     {
                         int absLeft = c + alignOffset;
                         _regions.Add(new Region(
-                            Row: i,
+                            Row: baseRow + i,
                             Left: absLeft,
                             Right: absLeft + w - 1,
                             Value: btn.value,

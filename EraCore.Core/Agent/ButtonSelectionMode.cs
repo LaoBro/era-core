@@ -185,11 +185,12 @@ namespace MinorShift.Emuera.GameView
             _lastRegionGeneration = currentGen;
 
             // 单次调用：直接调 tracker.UpdateFromSnapshot，不经 RecordLineRegions 转发。
+            // 2026.10.14 贴底（spec §3.3）：视口行数 / 起始行 / 贴底基准行收敛到
+            // TerminalViewportGeometry —— 原先此处自算 `viewportHeight = windowHeight - 1`
+            // 是第六处重复公式，且与渲染侧的 baseRow 无关联，贴底后必然错位。
             var snapshot = _displayState.Current;
-            int windowHeight = _getScreen()!.WindowHeight;
-            // 视口高度 = windowHeight - 1（保留最后一行给倒计时/输入行），与旧路径 visibleLines 上限一致。
-            int viewportHeight = Math.Max(1, windowHeight - 1);
-            vtInput.Tracker.UpdateFromSnapshot(snapshot, _scroll.ScrollOffset, viewportHeight);
+            int terminalHeight = _getScreen()!.WindowHeight;
+            vtInput.Tracker.UpdateFromSnapshot(snapshot, _scroll.ScrollOffset, terminalHeight);
         }
 
         /// <summary>
@@ -202,9 +203,14 @@ namespace MinorShift.Emuera.GameView
             var lines = _console.DisplayLineList;
             if (lines == null || lines.Count == 0) return result;
 
-            int windowHeight = _getScreen()!.WindowHeight;
-            int visibleLines = Math.Min(Math.Max(windowHeight - 1, 1), lines.Count);
-            int startLine = Math.Max(0, lines.Count - visibleLines);
+            int terminalHeight = _getScreen()!.WindowHeight;
+            // 2026.10.14 贴底（spec §3.3）：几何收敛到 TerminalViewportGeometry（第四/五处重复公式）。
+            // 本方法只在 offset==0 时被调用（SyncButtonState 在 offset>0 时提前返回）。
+            int startLine = TerminalViewportGeometry.StartLine(lines.Count, terminalHeight, 0);
+            int rendered = TerminalViewportGeometry.RenderedLines(lines.Count, terminalHeight, 0);
+            // ButtonPos.Row 必须是终端绝对行（见 UpdateFromSnapshot 注释）：SGR mouse 上报绝对行，
+            // TerminalRenderer 把内容第 i 行写在 baseRow + i。
+            int baseRow = TerminalViewportGeometry.BaseRow(lines.Count, terminalHeight, 0);
 
             long currentGen = _console.LastButtonGeneration;
             // 整数输入语义下（IntValue/IntButton/AnyValue），字符串按钮提交后会被
@@ -216,7 +222,7 @@ namespace MinorShift.Emuera.GameView
                 || reqType == InputType.AnyValue;
             var seenKeys = new HashSet<string>();
 
-            for (int i = 0; i < visibleLines; i++)
+            for (int i = 0; i < rendered; i++)
             {
                 int lineIndex = startLine + i;
                 var line = lines[lineIndex];
@@ -237,7 +243,7 @@ namespace MinorShift.Emuera.GameView
                     {
                         string key = btn.IsInteger ? btn.Input.ToString() : btn.Inputs;
                         if (seenKeys.Add(key))
-                            result.Add(new ButtonPos(i, column, column + segmentWidth - 1, btn, key));
+                            result.Add(new ButtonPos(baseRow + i, column, column + segmentWidth - 1, btn, key));
                     }
                     column += segmentWidth;
                 }
@@ -246,10 +252,13 @@ namespace MinorShift.Emuera.GameView
         }
 
         /// <summary>
-        /// 重绘指定 viewport 行的按钮内容（含选中高亮）。
+        /// 重绘指定终端行的按钮内容（含选中高亮）。
         /// ADR-0005 Issue 4：删除非 VT FullRefresh 退化分支，仅保留 VT 绝对定位单行重绘。
+        /// 2026.10.14 贴底（spec §3.3）：<paramref name="row"/> 是<b>终端绝对行</b>
+        /// （= <c>baseRow + i</c>，来自 <c>ButtonPos.Row</c>）—— 贴底前它是视口内相对行号。
+        /// 本方法反解出内容行索引（<c>i = row − baseRow</c>）后按绝对行写屏。
         /// </summary>
-        private void RedrawButtonLine(int viewportRow)
+        private void RedrawButtonLine(int row)
         {
             var screen = _getScreen()!;
             int savedRow, savedCol;
@@ -257,15 +266,15 @@ namespace MinorShift.Emuera.GameView
             catch (Exception) { /* 光标位置探测失败，用 0,0 */ savedRow = 0; savedCol = 0; }
 
             var lines = _console.DisplayLineList;
-            int windowHeight = screen.WindowHeight;
-            int visibleLines = Math.Min(Math.Max(windowHeight - 1, 1), lines.Count);
-            int startLine = Math.Max(0, lines.Count - visibleLines);
-            int lineIndex = startLine + viewportRow;
+            int terminalHeight = screen.WindowHeight;
+            int startLine = TerminalViewportGeometry.StartLine(lines.Count, terminalHeight, 0);
+            int baseRow = TerminalViewportGeometry.BaseRow(lines.Count, terminalHeight, 0);
+            int lineIndex = startLine + (row - baseRow);
             if (lineIndex >= 0 && lineIndex < lines.Count)
             {
                 string formatted = TerminalLineFormatter.FormatLineForTerminal(
                     lines[lineIndex], _console.SelectingButton, _console.CharWidthConfig, ansiEnabled: true);
-                screen.WriteLineAt(viewportRow, formatted.Length > 0 ? formatted : "");
+                screen.WriteLineAt(row, formatted.Length > 0 ? formatted : "");
             }
 
             screen.SetCursor(savedRow, savedCol);
