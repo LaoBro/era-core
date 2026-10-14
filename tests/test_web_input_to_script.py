@@ -156,6 +156,60 @@ def run_probe(binary=None):
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def run_same_frame(binary=None):
+    """**同帧**情形（悬停与按下挤在同一条帧里）⇒ 预期不出口，需再按一次。
+
+    这是「为什么必须分帧」的锚点，也是 Web 与 CLI 的分界所在：
+
+    - Web 上，`mouseenter` 与 `mousedown` 是**两个浏览器事件**、走**两条帧**，
+      且物理顺序必然是「先进入元素、后按下」⇒ 悬停帧天然早于按下帧。
+    - 但若有人图省事把 `hoverValue` 与 `keys` 合并成一条帧（协议上完全合法），
+      `MOUSE_OVER` 取的是**上一圈**的值 ⇒ 悬停来不及被脚本记下，出口不成立。
+
+    前端当前不会产生这种形态（`TerminalDisplay` 报悬停、`useKeyMouseInput` 报键，各发各的帧）。
+    本用例守的就是「**将来别合并**」。
+    """
+    temp_dir, game_dir = copy_test_game_with_erb(PROBE_ERB)
+    server = None
+    try:
+        server = start_server(game_dir, binary=binary)
+        run = ProbeRun(server)
+
+        status, _ = server.start_session()
+        check(status == 200, f"[同帧] POST /load-game 成功（实得 {status}）")
+        if status != 200:
+            return
+        check(run.wait_for_text("COMF_PROBE_READY", 20), "[同帧] 脚本进入 AWAIT 1 循环")
+
+        # 一次「点击」的两种内容挤在同一帧：悬停值 + 按下。
+        status, _ = run.state_frame({"hoverValue": "42", "keys": [{"code": 1, "down": True}]})
+        check(status == 200, f"[同帧] 单帧被接受（实得 {status}）")
+
+        ok_same_frame = run.wait_for_text("COMF_PROBE_OK", 3.0)
+        check(
+            not ok_same_frame,
+            "[同帧] 🔒 悬停与按下挤在同一帧时**不**出口 —— `MOUSE_OVER` 取上一圈的值，"
+            "而该圈的触发已被消费 ⇒ 正是「必须分帧」的锚点",
+        )
+
+        # 悬停此时已被脚本记下 ⇒ 再按一次即出口（证明差的就是「悬停先到一圈」）
+        run.state_frame({"keys": [{"code": 1, "down": False}]})
+        time.sleep(0.3)
+        run.state_frame({"keys": [{"code": 1, "down": True}]})
+        check(
+            run.wait_for_text("COMF_PROBE_OK", 5.0),
+            "[同帧] 补一次按下后出口成立（差的确实只是「悬停先到一圈」）",
+        )
+    finally:
+        if server is not None:
+            try:
+                server.delete_session()
+            except Exception:
+                pass
+            server.close()
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def main():
     import argparse
 
@@ -165,6 +219,8 @@ def main():
 
     print("--- Web 输入帧 → 脚本侧可观测值（COMF413 等价探针）---")
     run_probe(args.binary)
+    print("--- 同帧（悬停 + 按下挤在一起）---")
+    run_same_frame(args.binary)
 
     print(f"\n=== Web input→script test: {passed} passed, {failed} failed ===")
     sys.exit(1 if failed else 0)
