@@ -35,14 +35,14 @@ public class ErbIrLoadPipelineTests
 	{
 		using var root = new TempRoot();
 		var (env, irPath, pending, firstDirs, erbFileCount) = BuildFixtures(root.Root);
-		var pipeline = new ErbIrLoadPipeline(env);
+		var pipeline = new ErbIrLoadPipeline(env, IrLoadContext.FromCurrent(env));
 
 		var result = pipeline.Prepare(irEnabled: false, irPath, pending, firstDirs, erbFileCount, irFirstDirs: null, irFileList: null);
 
 		Assert.False(result.Enabled);
 		Assert.False(result.Hit);
 		Assert.Null(result.State);
-		Assert.Null(result.AllFiles);
+		// 命中轮全集（AllFiles）现随 State 生灭（第四刀）——State 为 null 即无全集。
 		Assert.Same(pending, result.Pending);
 		Assert.Same(firstDirs, result.FirstDirs);
 		Assert.Equal(erbFileCount, result.ErbFileCount);
@@ -56,13 +56,13 @@ public class ErbIrLoadPipelineTests
 		using var root = new TempRoot();
 		var (env, irPath, pending, firstDirs, erbFileCount) = BuildFixtures(root.Root);
 
-		var buildRound = new ErbIrLoadPipeline(env);
+		var buildRound = new ErbIrLoadPipeline(env, IrLoadContext.FromCurrent(env));
 		var miss = buildRound.Prepare(true, irPath, pending, firstDirs, erbFileCount, irFirstDirs: null, irFileList: null);
 
 		Assert.True(miss.Enabled);
 		Assert.False(miss.Hit);
 		Assert.False(miss.State!.Available);
-		Assert.Null(miss.AllFiles);
+		Assert.Null(miss.State!.AllFiles); // 全集只对命中轮存在（miss 轮 State 非 null 但无全集）
 		Assert.True(buildRound.CollectIr, "miss 轮必须开增量写器（生成期收集 IR blob）");
 
 		buildRound.Complete(irPath, miss.Fingerprint, miss.FirstDirs, miss.Pending, miss.Hit, irSidecarLegacy: false);
@@ -70,14 +70,14 @@ public class ErbIrLoadPipelineTests
 		Assert.False(buildRound.CollectIr, "收尾后写器必须关闭（CollectIr 转 false）");
 		Assert.True(File.Exists(irPath), "Complete 落盘后 IR 文件存在");
 
-		var hitRound = new ErbIrLoadPipeline(env);
+		var hitRound = new ErbIrLoadPipeline(env, IrLoadContext.FromCurrent(env));
 		var hit = hitRound.Prepare(true, irPath, pending, firstDirs, erbFileCount, irFirstDirs: null, irFileList: null);
 
 		Assert.True(hit.Hit);
 		Assert.True(hit.State!.Available);
 		Assert.NotNull(hit.State.ReadStream); // issues/05 句柄常驻：命中轮开常驻读句柄
-		Assert.NotNull(hit.AllFiles); // issues/17 A′：命中轮全集
-		Assert.Contains(pending[0].Filename, hit.AllFiles!);
+		Assert.NotNull(hit.State!.AllFiles); // issues/17 A′：命中轮全集（第四刀后归 IrState）
+		Assert.Contains(pending[0].Filename, hit.State!.AllFiles!);
 		Assert.False(hitRound.CollectIr, "命中轮不开写器");
 
 		hit.State.CloseHandle();
@@ -88,7 +88,7 @@ public class ErbIrLoadPipelineTests
 	{
 		using var root = new TempRoot();
 		var (env, irPath, pending, firstDirs, erbFileCount) = BuildFixtures(root.Root);
-		var pipeline = new ErbIrLoadPipeline(env);
+		var pipeline = new ErbIrLoadPipeline(env, IrLoadContext.FromCurrent(env));
 
 		pipeline.Prepare(true, irPath, pending, firstDirs, erbFileCount, irFirstDirs: null, irFileList: null);
 		Assert.True(pipeline.CollectIr);
@@ -102,7 +102,7 @@ public class ErbIrLoadPipelineTests
 		pipeline.Abort(); // 幂等
 
 		// 放弃后下一轮仍必须是 miss（自愈语义：没有半截缓存可被误读为命中）
-		var next = new ErbIrLoadPipeline(env).Prepare(true, irPath, pending, firstDirs, erbFileCount, irFirstDirs: null, irFileList: null);
+		var next = new ErbIrLoadPipeline(env, IrLoadContext.FromCurrent(env)).Prepare(true, irPath, pending, firstDirs, erbFileCount, irFirstDirs: null, irFileList: null);
 		Assert.False(next.Hit);
 	}
 
@@ -112,7 +112,7 @@ public class ErbIrLoadPipelineTests
 		using var root = new TempRoot();
 		var (env, irPath, pending, firstDirs, erbFileCount) = BuildFixtures(root.Root);
 
-		var buildRound = new ErbIrLoadPipeline(env);
+		var buildRound = new ErbIrLoadPipeline(env, IrLoadContext.FromCurrent(env));
 		var miss = buildRound.Prepare(true, irPath, pending, firstDirs, erbFileCount, irFirstDirs: null, irFileList: null);
 		Assert.True(buildRound.CollectIr);
 
@@ -120,7 +120,7 @@ public class ErbIrLoadPipelineTests
 			new List<IrBlob> { IrBlob.Valid("@MAIN", 42, new[] { new IrLine(43, "RETURN") }) });
 		buildRound.Complete(irPath, miss.Fingerprint, miss.FirstDirs, miss.Pending, miss.Hit, irSidecarLegacy: false);
 
-		var hit = new ErbIrLoadPipeline(env).Prepare(true, irPath, pending, firstDirs, erbFileCount, irFirstDirs: null, irFileList: null);
+		var hit = new ErbIrLoadPipeline(env, IrLoadContext.FromCurrent(env)).Prepare(true, irPath, pending, firstDirs, erbFileCount, irFirstDirs: null, irFileList: null);
 		Assert.True(hit.Hit);
 
 		var entry = Assert.Single(hit.State!.Index);
@@ -143,12 +143,12 @@ public class ErbIrLoadPipelineTests
 		using var root = new TempRoot();
 		var (env, irPath, pending, firstDirs, erbFileCount) = BuildFixtures(root.Root);
 
-		var buildRound = new ErbIrLoadPipeline(env);
+		var buildRound = new ErbIrLoadPipeline(env, IrLoadContext.FromCurrent(env));
 		var miss = buildRound.Prepare(true, irPath, pending, firstDirs, erbFileCount, irFirstDirs: null, irFileList: null);
 		buildRound.Complete(irPath, miss.Fingerprint, miss.FirstDirs, miss.Pending, miss.Hit, irSidecarLegacy: false);
 
 		// 命中轮：无写器 → Complete 是空操作（本地路径下 legacy 自愈门控关闭），既有 IR 不得被改写
-		var hitRound = new ErbIrLoadPipeline(env);
+		var hitRound = new ErbIrLoadPipeline(env, IrLoadContext.FromCurrent(env));
 		var hit = hitRound.Prepare(true, irPath, pending, firstDirs, erbFileCount, irFirstDirs: null, irFileList: null);
 		Assert.True(hit.Hit);
 		Assert.False(hitRound.CollectIr);
@@ -156,7 +156,7 @@ public class ErbIrLoadPipelineTests
 		hitRound.Complete(irPath, hit.Fingerprint, hit.FirstDirs, hit.Pending, hit.Hit, irSidecarLegacy: false);
 		hit.State!.CloseHandle();
 
-		var again = new ErbIrLoadPipeline(env).Prepare(true, irPath, pending, firstDirs, erbFileCount, irFirstDirs: null, irFileList: null);
+		var again = new ErbIrLoadPipeline(env, IrLoadContext.FromCurrent(env)).Prepare(true, irPath, pending, firstDirs, erbFileCount, irFirstDirs: null, irFileList: null);
 		Assert.True(again.Hit, "命中轮收尾不得破坏既有 IR");
 		again.State!.CloseHandle();
 	}
@@ -174,7 +174,7 @@ public class ErbIrLoadPipelineTests
 			erbDir, analysisMode: false, analysisFiles: new List<string>(), debugMode: false)
 		{ DirAccessor = new FileSystemGameDirAccessor() };
 
-		var pending = ErbIrLoadPipeline.BuildPendingList(env, null, out var firstDirs, out var erbFileCount);
+		var pending = ErbIrLoadPipeline.BuildPendingList(env, IrLoadContext.FromCurrent(env), null, out var firstDirs, out var erbFileCount);
 		Assert.NotEmpty(pending);
 
 		var irPath = ErbIrCache.GetIrCachePath(tempRoot);

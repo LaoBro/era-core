@@ -32,6 +32,11 @@ namespace MinorShift.Emuera.Tests;
 /// 更深的调用层级分布需要新语料，而本票的验收项要求「未新建语料」——故更深分布由既有逐标签
 /// <c>depth=</c> 断言承接（<see cref="ErbLoaderTests"/>、<see cref="UncalledSweepEquivalenceTests"/>）。
 /// </para>
+/// <para>
+/// <b>第四刀增补</b>（ADR-0027 决策二.4 / issue 05）：<see cref="Golden_ir_and_lazy_matrix_matches_across_ir_modes"/>
+/// 把「IR 三态 × 懒加载开关」纳入同一套判据——IR off/miss/hit/invalidated 逐位相等；
+/// lazy 开关的差异只允许是 ADR-0025 决策六定义的「未调用函数告警是否发射」那一类（③④ 仍逐位相等）。
+/// </para>
 /// </summary>
 [Collection("LoaderTests")]
 public class GoldenOutputSnapshotTests
@@ -93,6 +98,12 @@ public class GoldenOutputSnapshotTests
 		}
 		Assert.True(ok, "LoadErbDir failed\n" + Dump(h));
 
+		return Project(h, before, diagRaw, labelDic);
+	}
+
+	/// <summary>四件套投影（① 警告序列 / ② FNF 决策行 / ③ 深度普查 / ④ diag 形状）——两套采集共用。</summary>
+	private static LoadCapture Project(LoaderTestHarness h, int before, List<string> diagRaw, LabelDictionary labelDic)
+	{
 		var lines = h.Console.DisplayLineList.Skip(before)
 			.Select(l => l?.ToString() ?? "")
 			.Where(s => s.Length > 0)
@@ -133,7 +144,7 @@ public class GoldenOutputSnapshotTests
 
 		// ④ diag：三行 → (序号, 键, 值) 投影；ms 值不进断言（只有形状）。
 		var diagPairs = new List<string>();
-		foreach (var (line, idx) in diagRaw.Select((l, i) => (l, i)))
+		foreach (var line in diagRaw)
 		{
 			var payload = line[(line.IndexOf("parsescript_diag", StringComparison.Ordinal) + "parsescript_diag".Length)..].Trim();
 			var space = payload.IndexOf(' ');
@@ -144,6 +155,83 @@ public class GoldenOutputSnapshotTests
 		}
 
 		return new LoadCapture(warnings, fnfRows, histogram, diagPairs);
+	}
+
+	/// <summary>IR 磁盘缓存三态（矩阵维度之一）。</summary>
+	private enum IrMode
+	{
+		/// <summary>IR 关闭（<c>IrDiskCacheLoad=false</c>）：纯源路径。</summary>
+		Off,
+		/// <summary>IR 启用 + 首轮（无缓存文件）→ miss 建库。</summary>
+		Miss,
+		/// <summary>第二轮命中（缓存由前置轮建立、源未变）。</summary>
+		Hit,
+		/// <summary>缓存存在但源已变（重写语料 → mtime 变 → 指纹失配）→ 判废重建。</summary>
+		Invalidated,
+	}
+
+	/// <summary>
+	/// 矩阵采集：<c>IR 三态</c> × <c>lazy 开关</c>，只采集**最后一轮**的四件套。
+	/// 除这两维外其余配置与 <see cref="CaptureAsync"/> 逐字对齐（否则矩阵内部不可比）。
+	/// <para>
+	/// 前提耦合（由 <see cref="ErbIrLoadPipeline.ShouldUseIrCache"/> 决定，真值表见 ErbIrCacheTests）：
+	/// IR 参与要求 <c>lazy=true</c>——故 <c>lazy=false</c> 下 IR 三态**退化为 IR off**。
+	/// 矩阵因此把「lazy=off × IR miss」也采一格，用来断言这条退化（而非假设）。
+	/// </para>
+	/// </summary>
+	private static async Task<LoadCapture> CaptureMatrixAsync(bool lazy, IrMode irMode, Action<LoaderTestHarness> writeCorpus)
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		writeCorpus(h);
+		var data = ConfigData.Current!;
+		data.GetConfigItem(ConfigCode.IgnoreUncalledFunction).SetValue(false);
+		data.GetConfigItem(ConfigCode.FunctionNotCalledWarning).SetValue(DisplayWarningFlag.ONCE);
+		data.GetConfigItem(ConfigCode.FunctionNotFoundWarning).SetValue(DisplayWarningFlag.ONCE);
+		data.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
+		data.GetConfigItem(ConfigCode.DisplayReport).SetValue(true);
+		data.GetConfigItem(ConfigCode.LazyFunctionLoad).SetValue(lazy);
+		data.GetConfigItem(ConfigCode.IrDiskCacheLoad).SetValue(irMode != IrMode.Off);
+		await h.PreloadAsync();
+
+		// 前置轮：Hit/Invalidated 需先建库（否则采集轮无从命中）
+		if (irMode is IrMode.Hit or IrMode.Invalidated)
+		{
+			bool pre = await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line)
+				.LoadErbDir(h.ErbDir, displayReport: false, new LabelDictionary());
+			Assert.True(pre, "矩阵前置轮 LoadErbDir 失败（建库轮）\n" + Dump(h));
+			if (irMode == IrMode.Invalidated)
+			{
+				// 重写同一语料：内容不变、mtime 变 → 指纹（含逐文件 mtime）失配 → 判废重建。
+				writeCorpus(h);
+				await h.PreloadAsync();
+			}
+		}
+
+		var diagRaw = new List<string>();
+		void Sink(EmueraLog.Level _, string line)
+		{
+			if (!line.Contains("parsescript_diag", StringComparison.Ordinal))
+				return;
+			lock (diagRaw)
+				diagRaw.Add(Normalize(line, h.TempRoot));
+		}
+
+		var before = h.Console.DisplayLineCount;
+		var labelDic = new LabelDictionary();
+		EmueraLog.SetPlatformSink(Sink);
+		bool ok;
+		try
+		{
+			ok = await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line)
+				.LoadErbDir(h.ErbDir, displayReport: false, labelDic);
+		}
+		finally
+		{
+			EmueraLog.SetPlatformSink(null);
+		}
+		Assert.True(ok, "矩阵采集轮 LoadErbDir 失败\n" + Dump(h));
+		return Project(h, before, diagRaw, labelDic);
 	}
 
 	/// <summary>剔除临时根绝对路径（每次运行不同），使快照只含稳定内容。</summary>
@@ -301,5 +389,89 @@ public class GoldenOutputSnapshotTests
 
 		Assert.NotEqual(clean.Warnings, tampered.Warnings);
 	}
+
+	// ===== 矩阵：IR 三态 × 懒加载开关（ADR-0027 第四刀验收项 2/3）=====
+
+	/// <summary>
+	/// 6 格矩阵 = IR{off, miss, hit, invalidated} × lazy{off, on} 中有意义的 6 格。
+	/// <para>
+	/// 断言分三层（全部由 2026-10-16 实测标定，非假设）：
+	/// </para>
+	/// <list type="number">
+	/// <item><b>IR 三态逐位相等</b>（验收项 2 的严格形式）：同一 lazy 值下 off/miss/hit/invalidated
+	/// 四格的 ①警告序列 ②FNF 决策 ③depth 普查 ④diag 形状**全等**——IR 只换物化后背（源 ↔ blob），
+	/// 不改可观测输出。</item>
+	/// <item><b>lazy=off 的退化钉子</b>：<see cref="ErbIrLoadPipeline.ShouldUseIrCache"/> 要求 lazy
+	/// ⇒ lazy=off 下 IR 三态退化为 IR off，故这两格必须逐位相等（把前提耦合钉成测试而非注释）。</item>
+	/// <item><b>lazy 开关的差异被钉住</b>（验收项 3）：③④ 两态逐位相等；①② 的差异**不断言相等**——
+	/// ADR-0025 决策六明文「警告延迟到物化时发射是本决策的**定义性行为**」「警告分歧文档化但不断言相等」。
+	/// 故此处断言差异的**确切内容**：lazy=on 的警告序列 = lazy=off 中「未调用」行的有序子集
+	/// （未调用函数不被解析 ⇒ 其 BREAK/FNF 系解析告警不发射），且 FNF 行为空。</item>
+	/// </list>
+	/// </summary>
+	[Fact]
+	public async Task Golden_ir_and_lazy_matrix_matches_across_ir_modes()
+	{
+		Action<LoaderTestHarness> corpus = h => ErbLoaderEquivalenceCorpus.WriteFnfWarningCorpus(h);
+
+		// ── ① IR 三态逐位相等（lazy=on；IR 参与的前提）──
+		var lazyOnIrOff = await CaptureMatrixAsync(lazy: true, IrMode.Off, corpus);
+		foreach (var mode in new[] { IrMode.Miss, IrMode.Hit, IrMode.Invalidated })
+		{
+			var cell = await CaptureMatrixAsync(lazy: true, mode, corpus);
+			AssertSameFourTuple(lazyOnIrOff, cell, $"lazy=on ir={mode} 应与 ir=Off 逐位相等（IR 只换物化后背）");
+		}
+
+		// ── ② lazy=off 退化：IR 不参与（ShouldUseIrCache 要求 lazy）⇒ 与 IR off 逐位相等 ──
+		var lazyOffIrOff = await CaptureMatrixAsync(lazy: false, IrMode.Off, corpus);
+		var lazyOffIrMiss = await CaptureMatrixAsync(lazy: false, IrMode.Miss, corpus);
+		AssertSameFourTuple(lazyOffIrOff, lazyOffIrMiss,
+			"lazy=off 下 IR 不参与（ShouldUseIrCache 要求 lazy）⇒ IR 开关不改变任何可观测输出");
+
+		// ── ③ lazy 开关：③④ 逐位相等（④ 的 ms 值屏蔽，ADR-0024 判读规则），
+		//    ①② 差异钉成 ADR-0025 决策六的定义性形态 ──
+		Assert.Equal(lazyOffIrOff.DepthHistogram, lazyOnIrOff.DepthHistogram);
+		Assert.Equal(MaskWallClock(lazyOffIrOff.DiagPairs), MaskWallClock(lazyOnIrOff.DiagPairs));
+
+		var uncalledOnly = lazyOffIrOff.Warnings
+			.Where(w => w.Contains("一度も呼び出されません", StringComparison.Ordinal))
+			.ToList();
+		Assert.True(uncalledOnly.Count > 0, "语料应含未调用标签的告警（否则本对比失去意义）");
+		Assert.Equal(uncalledOnly, lazyOnIrOff.Warnings); // 惰性 = 未调用函数不被解析 ⇒ 只剩免解析导出的告警
+		Assert.Empty(lazyOnIrOff.FnfRows);                // FNF 系告警同样依赖解析
+		Assert.NotEqual(lazyOffIrOff.Warnings, lazyOnIrOff.Warnings); // 差异确实存在（防空转）
+	}
+
+	/// <summary>四件套逐位相等断言（④ 的 ms 值屏蔽——墙钟噪声，ADR-0024 判读规则；失败时打印两侧全文）。</summary>
+	private static void AssertSameFourTuple(LoadCapture expected, LoadCapture actual, string because)
+	{
+		// ms 只保证形状（整数文本），不进逐位比较。
+		Assert.True(AllMsAreIntShaped(expected.DiagPairs), "expected 侧 ms 字段必须是整数文本（形状保证）");
+		Assert.True(AllMsAreIntShaped(actual.DiagPairs), "actual 侧 ms 字段必须是整数文本（形状保证）");
+
+		var expDiag = MaskWallClock(expected.DiagPairs).ToList();
+		var actDiag = MaskWallClock(actual.DiagPairs).ToList();
+		bool same = expected.Warnings.SequenceEqual(actual.Warnings)
+			&& expected.FnfRows.SequenceEqual(actual.FnfRows)
+			&& expected.DepthHistogram.SequenceEqual(actual.DepthHistogram)
+			&& expDiag.SequenceEqual(actDiag);
+		Assert.True(same,
+			$"{because}\n-- warnings --\n{string.Join("\n", expected.Warnings)}\n  vs\n{string.Join("\n", actual.Warnings)}" +
+			$"\n-- fnf --\n{string.Join("\n", expected.FnfRows)}\n  vs\n{string.Join("\n", actual.FnfRows)}" +
+			$"\n-- depth --\n{string.Join("\n", expected.DepthHistogram)}\n  vs\n{string.Join("\n", actual.DepthHistogram)}" +
+			$"\n-- diag --\n{string.Join("\n", expDiag)}\n  vs\n{string.Join("\n", actDiag)}");
+	}
+
+	/// <summary>把 `_ms=&lt;数字&gt;` 归一为 `_ms=&lt;ms&gt;`：墙钟噪声不进比较（ADR-0024 判读规则）。</summary>
+	private static IEnumerable<string> MaskWallClock(IEnumerable<string> diagPairs)
+		=> diagPairs.Select(p => Regex.Replace(p, @"_ms=\d+", "_ms=<ms>"));
+
+	/// <summary>ms 字段必须是整数文本（形状保证——计数/形状稳定，ms 值抖动）。</summary>
+	private static bool AllMsAreIntShaped(IEnumerable<string> diagPairs)
+		=> diagPairs.All(p =>
+		{
+			var m = Regex.Match(p, @"_ms=(.+)$");
+			return !m.Success || long.TryParse(m.Groups[1].Value, out _);
+		});
 
 }

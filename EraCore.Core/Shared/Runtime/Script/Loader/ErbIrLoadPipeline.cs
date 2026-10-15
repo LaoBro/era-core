@@ -40,6 +40,26 @@ internal sealed class IrState
 	public Dictionary<(string File, string Label, int LineNo), IrIndexEntry> Index = null!;
 	/// <summary>逻辑文件名 → 该文件内按 @ 出现序的索引条目（TryGenerateFromIr 用，免 O(n·files) 逐文件扫全表）。</summary>
 	public Dictionary<string, List<IrIndexEntry>> ByFile = new(StringComparer.OrdinalIgnoreCase);
+	/// <summary>
+	/// issues/17 A′：命中轮的待载文件全集（逻辑名，与 <see cref="ByFile"/> 同比较器）。
+	/// <para>
+	/// 用途：补出"该文件确实没有函数"这一信息。IR 索引只记录<b>有函数</b>的文件
+	///（<see cref="ErbIrCache.IrCacheWriter.AppendFile"/> 对 <c>blobs.Count == 0</c> 直接 return），
+	/// 故 0 函数/空文件/纯注释文件在命中轮查不到条目，旧判据下只能回落读源——SAF 下每文件约 25ms，
+	/// 真机 25 个文件累计 ~620ms，且因主循环按序 <c>await</c> 而串行阻塞整条流水线。
+	/// </para>
+	/// <para>
+	/// 正确性：指纹已把文件集合纳入（<see cref="IrLoadContext.ComputeContentFingerprint"/>），
+	/// 文件增删必改 fp 必 miss 重建——故"命中轮 pending 全集"与"建库轮实际处理过的文件集合"必然一致。
+	/// 仅命中（<see cref="Available"/>）时非 null。
+	/// </para>
+	/// <para>
+	/// ADR-0027 第四刀（issue 05）：原为 <c>ErbLoader._irAllFiles</c> 独立宿主字段——它只对应当前
+	/// <see cref="IrState"/>，作为独立字段存活需两道人工同步（赋值 + <c>ResetIrState</c> 置空），
+	/// 属"清理滞后"异味；收进本对象后随 <c>_ir</c> 一起生灭，赋值点与失效点各只剩一处。
+	/// </para>
+	/// </summary>
+	public HashSet<string>? AllFiles;
 
 	/// <summary>读单个函数 blob：优先常驻句柄 seek+局部读；句柄缺失（异常路径）临时开流读一次。</summary>
 	public IrBlob ReadBlob(in IrIndexEntry entry)
@@ -89,8 +109,8 @@ internal sealed class ErbIrLoadPipeline
 	internal static bool ShouldUseIrCache(bool irDiskCacheConfigured, bool lazyFunctionLoad, bool analysisMode)
 		=> irDiskCacheConfigured && lazyFunctionLoad && !analysisMode;
 
-	/// <summary>IR 缓存文件路径（以引擎目录为基座，content-URI 经 <see cref="ErbIrCache.GetIrCachePath"/> 镜像到 app 私有存储）。</summary>
-	internal static string IrCachePath() => ErbIrCache.GetIrCachePath(Program.ExeDir);
+	// IR 缓存文件路径取得点已随第四刀（ADR-0027 决策二.4）迁至 IrLoadContext.IrCachePath()——
+	// 原先本处硬编码 Program.ExeDir，是 IR 路径里唯一无法注入的 ambient；现在装载入口一次快照携带。
 
 	/// <summary>
 	/// issue 09：ERB 待载清单构建（唯一路径——<see cref="ErbLoader.LoadErbDir"/> 与启动 IR 命中预判定共用同一语义）。
@@ -102,8 +122,12 @@ internal sealed class ErbIrLoadPipeline
 	/// 缓存空（命中轮/预判定）时 <see cref="Preload.GetFilesFromCache"/> 返回 null →
 	/// 走 <see cref="Preload.EnumerateFilesFromTree"/>（与缓存键同源的 Preload 语义全树枚举——
 	/// launch7 真机实测 Config.GetFiles 的 SAF 通配/displayName 差异会丢文件/路径变形，弃用）。
+	/// <para>
+	/// ADR-0027 第四刀：扫描深度（<c>SearchSubdirectory</c>）经 <paramref name="ctx"/> 显式传入，
+	/// 本方法内不再直读 <c>Config.Config.*</c>。
+	/// </para>
 	/// </summary>
-	internal static List<(string Filename, string File)> BuildPendingList(LoaderEnv env, List<string>? firstDirOverride, out List<string> firstDirs, out int erbFileCount,
+	internal static List<(string Filename, string File)> BuildPendingList(LoaderEnv env, IrLoadContext ctx, List<string>? firstDirOverride, out List<string> firstDirs, out int erbFileCount,
 		IReadOnlyList<(string Logical, string RelToRoot)>? fileListOverride = null)
 	{
 		// S0-M3（2026-09-05）：命中轮清单枚举计时——预判定 / LoadErbDir 各打一条，配合 Preload 的
@@ -157,7 +181,7 @@ internal sealed class ErbIrLoadPipeline
 		{
 			var scanSw = Stopwatch.StartNew();
 			firstDirFull = env.DirAccessor.GetDirectories(env.ErbDir, "*#*",
-				Config.Config.SearchSubdirectory ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly) ?? [];
+				ctx.Fingerprint.SearchSubdirectory ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly) ?? [];
 			scanSw.Stop();
 			firstDirScanMs = scanSw.ElapsedMilliseconds;
 			// 存 IR 的清单用相对名（GetRelativePathFromRoot 形态，'\' 分隔）——跨授权重授稳定；
@@ -219,24 +243,30 @@ internal sealed class ErbIrLoadPipeline
 	/// 命中 → 调用方可跳过 <see cref="Preload.LoadTreesAsync"/> 的内容读取（物化走 blob、源回退走懒读）；
 	/// 未命中 / IR 关闭（<see cref="ShouldUseIrCache"/>）/ 任何异常 → false，调用方走完整 Preload。
 	/// 与 LoadErbDir 内判定共享 BuildPendingList + 指纹逻辑（顺序无关），LoadErbDir 会再次核对。
+	/// <para>
+	/// ADR-0027 第四刀：本方法是**独立的装载入口**（启动内容 Preload 门控，早于 <c>LoadErbDir</c>），
+	/// 故它自行在入口快照一次 <see cref="IrLoadContext"/>——与第一刀「两个装载入口各构造一次策略」同款；
+	/// 方法体内不再直读 <c>Config.Config.*</c>。
+	/// </para>
 	/// </summary>
 	internal static bool IsIrHitRound(LoaderEnv env)
 	{
 		try
 		{
-			if (!ShouldUseIrCache(Config.Config.IrDiskCacheLoad, Config.Config.LazyFunctionLoad, env.AnalysisMode))
+			var ctx = IrLoadContext.FromCurrent(env);
+			if (!ctx.ShouldUseIrCache)
 			{
 				// issue 09 真机排障（2026-09-05 launch5 分析）：静默 false 曾使「未命中」无法与旧构建区分——
 				// 此处显式记录，任何 false 分支都有日志可查（hit / 关闭 / 异常三态齐全）。
 				EmueraLog.Info("ErbIrCache",
-					$"pre-hit check skipped: ir-disabled (irDisk={Config.Config.IrDiskCacheLoad} lazy={Config.Config.LazyFunctionLoad} analysis={env.AnalysisMode})");
+					$"pre-hit check skipped: ir-disabled (irDisk={ctx.IrDiskCacheConfigured} lazy={ctx.LazyFunctionLoad} analysis={ctx.AnalysisMode})");
 				return false;
 			}
-			var irPath = IrCachePath();
+			var irPath = ctx.IrCachePath();
 			// issues/12 M4：优先读 IR 头存 firstDir 清单替代 SAF 通配扫描（读侧受回退旋钮门控，
 			// FALSE = 恒扫描）；无 v2 IR / 损坏 → null → 照旧扫描。清单正确性由 fp（含清单）判定。
 			List<string>? irFirstDirs =
-				Config.Config.IrFirstDirList && ErbIrCache.TryReadFirstDirs(irPath, out var irFd) ? irFd : null;
+				ctx.FirstDirListEnabled && ErbIrCache.TryReadFirstDirs(irPath, out var irFd) ? irFd : null;
 			// issues/13 M5：清单 sidecar（有序 pending 对 + 全树清单）。读侧受旋钮 + 形态门双门控。
 			// issues/15 §0.3：形态门由 ErbIrCache.UseFileListSidecar 统一给出——Android legacy
 			// （真实路径）也开，因为其"本地路径"是 FUSE 挂载，枚举与 SAF 同量级（真机 569ms）；
@@ -244,19 +274,19 @@ internal sealed class ErbIrLoadPipeline
 			List<(string Logical, string RelToRoot)>? irFileList = null;
 			List<string>? irTreeRels = null;
 			List<string>? irCsvTreeRels = null;
-			if (Config.Config.IrFileListCache && ErbIrCache.UseFileListSidecar(env.ErbDir)
+			if (ctx.FileListCacheEnabled && ErbIrCache.UseFileListSidecar(env.ErbDir)
 				&& ErbIrCache.TryReadFileListFull(irPath, out var flPending, out var flTree, out var flCsv, out _))
 			{
 				irFileList = flPending;
 				irTreeRels = flTree;
 				irCsvTreeRels = flCsv;
 			}
-		var pending = BuildPendingList(env, irFirstDirs, out var firstDirsUsed, out _, irFileList);
+		var pending = BuildPendingList(env, ctx, irFirstDirs, out var firstDirsUsed, out _, irFileList);
 		// S0-M6（空档取证，2026-09-09）：BPL#1 done → pre-hit 行之间真机实测 ~1.4s 无日志盲区——
 		// 三步分账：fp（content URI 走 stat 降级，预期纯内存毫秒级）/ TryLoad（IR 索引区 ~14647 条
 		// entry 读取）/ SeedTreeMemo（逐条 CombinePath 播种，与 BPL replay 同款开销模式）。
 		var fpSw = System.Diagnostics.Stopwatch.StartNew();
-		long fp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic, firstDirsUsed);
+		long fp = ctx.ComputeContentFingerprint(pending, firstDirsUsed);
 		fpSw.Stop();
 		var tryLoadSw = System.Diagnostics.Stopwatch.StartNew();
 		bool hit = ErbIrCache.TryLoad(irPath, fp, out _);
@@ -286,9 +316,9 @@ internal sealed class ErbIrLoadPipeline
 				$"pre-hit check hit={hit} files={pending.Count} fp={fp:x16} " +
 				$"firstDirSrc={(irFirstDirs != null ? $"ir({irFirstDirs.Count})" : "scan")} " +
 				$"fileListSrc={(irFileList != null ? $"ir({irFileList.Count})" : "enum")} " +
-				$"ic={Config.Config.IgnoreCase} rf={Config.Config.UseRenameFile} rp={Config.Config.UseReplaceFile} " +
-				$"ra={(int)Config.Config.ReduceArgumentOnLoad} " +
-				$"t3={Config.Config.SystemIgnoreTripleSymbol} rename={ParserMediator.RenameDic.Count}");
+				$"ic={ctx.Fingerprint.IgnoreCase} rf={ctx.Fingerprint.UseRenameFile} rp={ctx.Fingerprint.UseReplaceFile} " +
+				$"ra={(int)ctx.Fingerprint.ReduceArgumentOnLoad} " +
+				$"t3={ctx.Fingerprint.SystemIgnoreTripleSymbol} rename={ctx.RenameDic?.Count ?? 0}");
 			return hit;
 		}
 		catch (Exception ex)
@@ -315,10 +345,9 @@ internal sealed class ErbIrLoadPipeline
 		internal readonly bool Enabled;
 		/// <summary>本轮是否命中 IR（= 新建 <see cref="IrState.Available"/>）。</summary>
 		internal readonly bool Hit;
-		/// <summary>新建的 IR 会话状态（<see cref="Enabled"/> 时非 null，交回宿主持有供运行期物化）。</summary>
+		/// <summary>新建的 IR 会话状态（<see cref="Enabled"/> 时非 null，交回宿主持有供运行期物化；
+		/// 命中轮待载全集见 <see cref="IrState.AllFiles"/>）。</summary>
 		internal readonly IrState? State;
-		/// <summary>命中轮待载文件全集（仅 <see cref="Hit"/> 时非 null；issues/17 A′）。</summary>
-		internal readonly HashSet<string>? AllFiles;
 		/// <summary>本轮内容指纹（日志口径）。</summary>
 		internal readonly long Fingerprint;
 		/// <summary>最终待载清单。</summary>
@@ -328,13 +357,12 @@ internal sealed class ErbIrLoadPipeline
 		/// <summary>最终 ERB 文件计数。</summary>
 		internal readonly int ErbFileCount;
 
-		internal IrPrepareResult(bool enabled, bool hit, IrState? state, HashSet<string>? allFiles, long fingerprint,
+		internal IrPrepareResult(bool enabled, bool hit, IrState? state, long fingerprint,
 			List<(string Filename, string File)> pending, List<string> firstDirs, int erbFileCount)
 		{
 			Enabled = enabled;
 			Hit = hit;
 			State = state;
-			AllFiles = allFiles;
 			Fingerprint = fingerprint;
 			Pending = pending;
 			FirstDirs = firstDirs;
@@ -343,11 +371,18 @@ internal sealed class ErbIrLoadPipeline
 	}
 
 	private readonly LoaderEnv env;
+	/// <summary>本轮装载的 IR 显式上下文（ADR-0027 第四刀）：开关 / 指纹配置 / Rename 表 / 缓存路径基座
+	/// 一次快照，本类方法体内不再直读 <c>Config.Config.*</c> 与 <c>Program.ExeDir</c>。</summary>
+	private readonly IrLoadContext ctx;
 	/// <summary>IR 生成期增量写器（按文件批量落盘，内存 O(单文件大小)，design §5.1）。仅生成 IR（未命中/失效）时非空。</summary>
 	private ErbIrCache.IrCacheWriter? _writer;
 
-	/// <summary>每次装载创建一个实例（决策二：不跨装载存活）。</summary>
-	internal ErbIrLoadPipeline(LoaderEnv env) => this.env = env;
+	/// <summary>每次装载创建一个实例（决策二：不跨装载存活）；<paramref name="ctx"/> 由调用方在装载入口快照。</summary>
+	internal ErbIrLoadPipeline(LoaderEnv env, IrLoadContext ctx)
+	{
+		this.env = env;
+		this.ctx = ctx;
+	}
 
 	/// <summary>
 	/// 装载期判定与建库：命中 → 建 <see cref="IrState"/>（索引驻留 + 常驻读句柄 + 命中全集）；
@@ -359,11 +394,10 @@ internal sealed class ErbIrLoadPipeline
 		List<string>? irFirstDirs, IReadOnlyList<(string Logical, string RelToRoot)>? irFileList)
 	{
 		if (!irEnabled)
-			return new IrPrepareResult(false, false, null, null, 0, pending, firstDirs, erbFileCount);
+			return new IrPrepareResult(false, false, null, 0, pending, firstDirs, erbFileCount);
 
-		long irFp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic, firstDirs);
+		long irFp = ctx.ComputeContentFingerprint(pending, firstDirs);
 		IrState state;
-		HashSet<string>? allFiles = null;
 		if (ErbIrCache.TryLoad(irPath, irFp, out var index))
 		{
 			var ir = new IrState { Available = true, Path = irPath, Index = index };
@@ -383,9 +417,10 @@ internal sealed class ErbIrLoadPipeline
 			state = ir;
 			// issues/17 A′：命中轮全集。比较器与 IrState.ByFile 一致（OrdinalIgnoreCase），
 			// 保证 Contains 与 TryGetValue 同口径——否则会出现"两边都查不到/口径不一"的静默错判。
-			allFiles = new HashSet<string>(pending.Count, StringComparer.OrdinalIgnoreCase);
+			// 第四刀：随 IrState 一同生灭（原宿主独立字段 _irAllFiles 已删）。
+			ir.AllFiles = new HashSet<string>(pending.Count, StringComparer.OrdinalIgnoreCase);
 			foreach (var (logical, _) in pending)
-				allFiles.Add(logical);
+				ir.AllFiles.Add(logical);
 		}
 		else
 		{
@@ -396,15 +431,15 @@ internal sealed class ErbIrLoadPipeline
 				// fp 永不收敛）→ 丢弃全量重扫，重算 fp 与清单；收尾 Complete 重写 sidecar。
 				EmueraLog.Info("ErbIrCache",
 					$"ir miss with ir-firstDirs({irFirstDirs?.Count ?? 0})/ir-fileList({irFileList?.Count ?? 0}) → discard and rescan");
-				pending = BuildPendingList(env, null, out firstDirs, out erbFileCount);
-				irFp = ErbIrCache.ComputeContentFingerprint(pending, ParserMediator.RenameDic, firstDirs);
+				pending = BuildPendingList(env, ctx, null, out firstDirs, out erbFileCount);
+				irFp = ctx.ComputeContentFingerprint(pending, firstDirs);
 			}
 			state = new IrState { Available = false, Path = irPath, Index = [] };
 			// 未命中/失效 → 本轮生成 IR：开增量写器（tmp + 头占位），AppendFile 逐文件落盘。
 			_writer = new ErbIrCache.IrCacheWriter(irPath);
 		}
 		EmueraLog.Info("ErbIrCache", $"ir hit={state.Available} files={pending.Count} fp={irFp:x16}");
-		return new IrPrepareResult(true, state.Available, state, allFiles, irFp, pending, firstDirs, erbFileCount);
+		return new IrPrepareResult(true, state.Available, state, irFp, pending, firstDirs, erbFileCount);
 	}
 
 	/// <summary>

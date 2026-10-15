@@ -77,9 +77,15 @@ internal static class ErbIrCache
 	/// ErbIrCacheTests.Fingerprint_is_invariant_under_input_order）。
 	/// v2（issues/12 M4）：firstDir 清单同样按集合语义（Ordinal 排序）进哈希——任何 <c>*#*</c>
 	/// 目录增删 → fp 变 → 命中轮 miss → 全扫重建自愈。建库轮写入序（权威加载序）不进哈希。
+	/// <para>
+	/// <b>ADR-0027 第四刀（issue 05）</b>：配置输入集原为方法体内直读 <c>Config.Config.*</c>，现改为
+	/// 显式入参 <paramref name="config"/>（<see cref="IrFingerprintConfig"/>，装载入口一次快照）——
+	/// 「指纹读了哪些配置」从此是本函数的签名可见事实，而非方法体内部细节。这与
+	/// <see cref="IrLoadContext"/> 同源：IR 路径不再有散落的 ambient 直读。
+	/// </para>
 	/// </summary>
 	internal static long ComputeContentFingerprint(IReadOnlyList<(string Logical, string Physical)> files,
-		IReadOnlyDictionary<string, string>? renameDic, IReadOnlyList<string>? firstDirs = null)
+		IReadOnlyDictionary<string, string>? renameDic, IReadOnlyList<string>? firstDirs, in IrFingerprintConfig config)
 	{
 		ulong h = Fnv1a64Init;
 		// 文件集合：每文件（逻辑名, 长度, mtime）——脚本增删/改名/改动 → 指纹变化
@@ -103,18 +109,19 @@ internal static class ErbIrCache
 				h = Fnv1a(h, d);
 		}
 		// 解析相关配置集（design.md §6 白名单）：影响预解析/函数签名/比较的配置。
-		h = Fnv1a(h, Config.Config.IgnoreCase ? "IC1" : "IC0");
-		h = Fnv1a(h, Config.Config.UseRenameFile ? "RF1" : "RF0");
-		h = Fnv1a(h, Config.Config.UseReplaceFile ? "RP1" : "RP0");
-		h = Fnv1a(h, ((int)Config.Config.ReduceArgumentOnLoad).ToString(System.Globalization.CultureInfo.InvariantCulture));
+		// 第四刀后取自显式入参（<see cref="IrFingerprintConfig"/>）——逐位保持原输入集与顺序。
+		h = Fnv1a(h, config.IgnoreCase ? "IC1" : "IC0");
+		h = Fnv1a(h, config.UseRenameFile ? "RF1" : "RF0");
+		h = Fnv1a(h, config.UseReplaceFile ? "RP1" : "RP0");
+		h = Fnv1a(h, ((int)config.ReduceArgumentOnLoad).ToString(System.Globalization.CultureInfo.InvariantCulture));
 		// 注意：曾经把 NeedReduceArgumentOnLoad（NR）也哈希进来，现已移除——NR 现在**由本指纹的
 		// 命中结果反推**（ONCE：命中⇒NR=false，未命中⇒NR=true，见 ConfigData.ApplyReduceArgumentOnLoad），
 		// 若仍参与哈希即构成循环依赖。移除是安全的：NR 只决定"何时解析参数"（加载期预解析 vs 首次执行），
 		// 不改变 blob 内容（blob = 源文本 + 由 @/# 行得出的签名）。
-		h = Fnv1a(h, Config.Config.SystemIgnoreTripleSymbol ? "T3" : "T0");
+		h = Fnv1a(h, config.SystemIgnoreTripleSymbol ? "T3" : "T0");
 		// SearchSubdirectory（issues/12 M4 起）：firstDir 清单是扫描结果的存储形态，其口径受本配置影响
 		//（TopDirectoryOnly 只扫 erb 根级 *#*）——不改则清单跨配置陈旧、firstDir 优先序漂移。
-		h = Fnv1a(h, Config.Config.SearchSubdirectory ? "SS1" : "SS0");
+		h = Fnv1a(h, config.SearchSubdirectory ? "SS1" : "SS0");
 		// Rename 宏表内容（_Replace/_Rename 预处理依赖；按 key 排序保证同表同序）。
 		if (renameDic is { Count: > 0 })
 		{

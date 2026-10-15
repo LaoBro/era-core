@@ -52,9 +52,9 @@ public class ErbFileListCacheTests
 				{ DirAccessor = accessor };
 
 				// 建库轮：扫描 → fp → IR + sidecar（镜像 LoadErbDir Complete 的写侧逻辑）
-				var pending = ErbIrLoadPipeline.BuildPendingList(env, null, out var firstDirs, out _);
+				var pending = ErbIrLoadPipeline.BuildPendingList(env, IrLoadContext.FromCurrent(env), null, out var firstDirs, out _);
 				Assert.Equal(2, pending.Count);
-				long fp = ErbIrCache.ComputeContentFingerprint(pending.Select(p => (p.Filename, p.File)).ToList(), null, firstDirs);
+				long fp = ErbIrCache.ComputeContentFingerprint(pending.Select(p => (p.Filename, p.File)).ToList(), null, firstDirs, IrFingerprintConfig.FromCurrent());
 				string irPath = ErbIrCache.GetIrCachePath(Root);
 				Directory.CreateDirectory(Path.GetDirectoryName(irPath)!);
 				using (var writer = new ErbIrCache.IrCacheWriter(irPath))

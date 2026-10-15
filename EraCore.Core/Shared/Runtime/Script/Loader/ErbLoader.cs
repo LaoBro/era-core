@@ -72,21 +72,9 @@ internal sealed class ErbLoader
 	/// </summary>
 	private ErbIrLoadPipeline? _irPipeline;
 
-	/// <summary>
-	/// issues/17 A′：命中轮的待载文件全集（逻辑名，与 <see cref="IrState.ByFile"/> 同比较器）。
-	/// <para>
-	/// 用途：补出"该文件确实没有函数"这一信息。IR 索引只记录<b>有函数</b>的文件
-	///（<see cref="ErbIrCache.IrCacheWriter.AppendFile"/> 对 <c>blobs.Count == 0</c> 直接 return），
-	/// 故 0 函数/空文件/纯注释文件在命中轮查不到条目，旧判据下只能回落读源——SAF 下每文件约 25ms，
-	/// 真机 25 个文件累计 ~620ms，且因主循环按序 <c>await</c> 而串行阻塞整条流水线。
-	/// </para>
-	/// <para>
-	/// 正确性：<c>fp = ComputeContentFingerprint(pending, …)</c> 已把文件集合纳入内容指纹，
-	/// 文件增删必改 fp 必 miss 重建——故"命中轮 pending 全集"与"建库轮实际处理过的文件集合"必然一致。
-	/// 仅命中（<see cref="IrState.Available"/>）时非 null；<see cref="ResetIrState"/> 清空。
-	/// </para>
-	/// </summary>
-	private HashSet<string>? _irAllFiles;
+	// issues/17 A′ 的「命中轮待载文件全集」已随第四刀（ADR-0027 决策二.4）收进 IrState.AllFiles——
+	// 它只对应当前 _ir，作为宿主独立字段存活需两道人工同步（赋值 + ResetIrState 置空），
+	// 属"清理滞后"异味；收进对象后随 _ir 一起生灭。
 
 	// ===== S0-M2 取证探针（2026-09-05，diagnostic-knobs issues/11）：加载窗 blob I/O 分账 =====
 	// parsescript 段内所有 blob 读取都经 ReadBlobMeasured（ComputeSignature / ReparseFunctionFromIr
@@ -125,7 +113,7 @@ internal sealed class ErbLoader
 	/// reload / 加载失败 / 部分重载的既有 <c>_ir = null</c> 置空处统一走这里）。流水线实例一并回收，
 	/// 其生成期写器经 <see cref="ErbIrLoadPipeline.Abort"/> 清 tmp（异常路径不留下半截缓存）。
 	/// <para>
-	/// ADR-0033 决策二：<c>_ir</c>/<c>_irAllFiles</c> 是宿主持有的跨装载状态、写器是流水线内部状态——
+	/// ADR-0033 决策二：<c>_ir</c>（含 <see cref="IrState.AllFiles"/>）是宿主持有的跨装载状态、写器是流水线内部状态——
 	/// 故本方法不迁入流水线，而是两者的**统一失效点**（流水线不反向触碰宿主字段）。
 	/// </para>
 	/// </summary>
@@ -135,7 +123,7 @@ internal sealed class ErbLoader
 		_ir = null;
 		_irPipeline?.Abort();
 		_irPipeline = null;
-		_irAllFiles = null; // issues/17 A′：全集只对应当前 _ir，随之一并失效
+		// issues/17 A′ 的「命中轮全集」现为 IrState.AllFiles——随 _ir 置空自动失效，无需单独清理。
 	}
 
 	// erb-loader-parallel 03 / 06-K1：并行度常量上限与其决策点已随第一刀（ADR-0027 决策二.1）迁入
@@ -188,17 +176,20 @@ internal sealed class ErbLoader
 		// 见 ErbIrCache 的 GetIrCachePath 注释）。启动进入文件读取前一次性判定：命中 IR（Available=true，
 		// 索引驻留）→ 本轮免源扫描直建桩；未命中/失效 → B1 源路径跑本轮，收尾重建 IR。
 		// 指纹基于 pending 文件集合 + firstDir 清单 + 解析相关配置（design §6）。
-		string irPath = ErbIrLoadPipeline.IrCachePath();
-		bool irEnabled = ErbIrLoadPipeline.ShouldUseIrCache(Config.Config.IrDiskCacheLoad, Config.Config.LazyFunctionLoad, env.AnalysisMode);
+		// ADR-0027 第四刀（issue 05）：IR 路径的 ambient（开关 / 读侧旋钮 / 指纹配置 / Rename 表 / 缓存路径基座）
+		// 在此**一次快照**为显式上下文，此后本方法与流水线内各处只问对象（形状同第一刀的 ErbLoadStrategy）。
+		var irCtx = IrLoadContext.FromCurrent(env);
+		string irPath = irCtx.IrCachePath();
+		bool irEnabled = irCtx.ShouldUseIrCache;
 		// issues/12 M4：命中轮清单构建前先读 IR 头存 firstDir 清单（读侧受回退旋钮门控，FALSE = 恒扫描；
 		// 无 v2 IR / 损坏 → null → 照旧扫描）——与 IsIrHitRound 预判定同源同拨。
 		List<string>? irFirstDirs =
-			irEnabled && Config.Config.IrFirstDirList && ErbIrCache.TryReadFirstDirs(irPath, out var loadFd) ? loadFd : null;
+			irEnabled && irCtx.FirstDirListEnabled && ErbIrCache.TryReadFirstDirs(irPath, out var loadFd) ? loadFd : null;
 		// issues/13 M5：sidecar 清单（与 IsIrHitRound 同源同拨；陈旧自愈见下方 discard-rescan 分支）。
 		// issues/14 B：legacy 标记供命中轮收尾自愈重写（CSV 尾段缺失 → CSV 冷枚举一次后升级格式）。
 		List<(string Logical, string RelToRoot)>? irFileList = null;
 		bool irSidecarLegacy = false;
-		if (irEnabled && Config.Config.IrFileListCache && SafPath.IsContentUri(env.ErbDir)
+		if (irEnabled && irCtx.FileListCacheEnabled && SafPath.IsContentUri(env.ErbDir)
 			&& ErbIrCache.TryReadFileListFull(irPath, out var loadFl, out _, out _, out var loadLegacy))
 		{
 			irFileList = loadFl;
@@ -206,7 +197,7 @@ internal sealed class ErbLoader
 		}
 		// issue 09：待载清单构建唯一路径（缓存命中轮与启动 IR 预判定共用；命中轮无缓存 →
 		// Preload 语义枚举，见 <see cref="ErbIrLoadPipeline.BuildPendingList"/>）。
-		List<(string Filename, string File)> pending = ErbIrLoadPipeline.BuildPendingList(env, irFirstDirs, out List<string> firstDirs, out int erbFileCount, irFileList);
+		List<(string Filename, string File)> pending = ErbIrLoadPipeline.BuildPendingList(env, irCtx, irFirstDirs, out List<string> firstDirs, out int erbFileCount, irFileList);
 		List<string> isOnlyEvent = [];
 		noError = true;
 		var starttime = DateTime.Now;
@@ -221,13 +212,12 @@ internal sealed class ErbLoader
 			ResetIrState();
 			// ADR-0033：装载期判定与建库（命中建状态 / miss 自愈重扫 / miss 开写器）整体内化到流水线。
 			// 结果对象带回**最终** pending/firstDirs/erbFileCount（miss 自愈兜底可能重建过清单），宿主只并入。
-			_irPipeline = new ErbIrLoadPipeline(env);
+			_irPipeline = new ErbIrLoadPipeline(env, irCtx);
 			var irPrep = _irPipeline.Prepare(irEnabled, irPath, pending, firstDirs, erbFileCount, irFirstDirs, irFileList);
 			pending = irPrep.Pending;
 			firstDirs = irPrep.FirstDirs;
 			erbFileCount = irPrep.ErbFileCount;
 			_ir = irPrep.State;
-			_irAllFiles = irPrep.AllFiles;
 			// ReduceArgumentOnLoad=ONCE 的"上次启动以来源有没有变"判据寄生到 IR 指纹：
 			// 命中 = 指纹一致 = 源未变（本地路径下指纹含逐文件 mtime）→ 跳过全量参数解析；
 			// 未命中（首次运行／源变更／IR 未启用）→ 强制全量参数解析。必须在任何参数解析之前
@@ -666,7 +656,7 @@ internal sealed class ErbLoader
 				TryGenerateFromIr(filename, irEntries, art);
 				return;
 			}
-			if (_irAllFiles?.Contains(filename) == true)
+			if (irHit.AllFiles?.Contains(filename) == true)
 			{
 				Interlocked.Increment(ref _irNoFuncFiles); // issues/17 取证：A′ 新省下的文件数
 				return; // 空产物——IR 已证明此文件无函数，无需读源

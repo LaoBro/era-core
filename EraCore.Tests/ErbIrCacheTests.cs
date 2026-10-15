@@ -42,8 +42,8 @@ public class ErbIrCacheTests
 	public void Fingerprint_is_invariant_under_input_order()
 	{
 		using var _ = OpenScope();
-		var forward = ErbIrCache.ComputeContentFingerprint(Files, null);
-		var reversed = ErbIrCache.ComputeContentFingerprint(Files.AsEnumerable().Reverse().ToList(), null);
+		var forward = ErbIrCache.ComputeContentFingerprint(Files, null, null, IrFingerprintConfig.FromCurrent());
+		var reversed = ErbIrCache.ComputeContentFingerprint(Files.AsEnumerable().Reverse().ToList(), null, null, IrFingerprintConfig.FromCurrent());
 		Assert.Equal(forward, reversed);
 	}
 
@@ -51,10 +51,10 @@ public class ErbIrCacheTests
 	public void Fingerprint_changes_when_file_set_changes()
 	{
 		using var _ = OpenScope();
-		var baseline = ErbIrCache.ComputeContentFingerprint(Files, null);
-		var withExtraFile = ErbIrCache.ComputeContentFingerprint(Files.Append(("ERB\\D.ERB", "content://x/D")).ToList(), null);
+		var baseline = ErbIrCache.ComputeContentFingerprint(Files, null, null, IrFingerprintConfig.FromCurrent());
+		var withExtraFile = ErbIrCache.ComputeContentFingerprint(Files.Append(("ERB\\D.ERB", "content://x/D")).ToList(), null, null, IrFingerprintConfig.FromCurrent());
 		var withRenamedFile = ErbIrCache.ComputeContentFingerprint(
-			Files.Select(f => f.Logical == "ERB\\C.ERB" ? ("ERB\\X.ERB", f.Physical) : f).ToList(), null);
+			Files.Select(f => f.Logical == "ERB\\C.ERB" ? ("ERB\\X.ERB", f.Physical) : f).ToList(), null, null, IrFingerprintConfig.FromCurrent());
 		Assert.NotEqual(baseline, withExtraFile);
 		Assert.NotEqual(baseline, withRenamedFile);
 	}
@@ -63,8 +63,8 @@ public class ErbIrCacheTests
 	public void Fingerprint_changes_when_rename_table_changes()
 	{
 		using var _ = OpenScope();
-		var baseline = ErbIrCache.ComputeContentFingerprint(Files, null);
-		var withRename = ErbIrCache.ComputeContentFingerprint(Files, new Dictionary<string, string> { ["%ARG"] = "1" });
+		var baseline = ErbIrCache.ComputeContentFingerprint(Files, null, null, IrFingerprintConfig.FromCurrent());
+		var withRename = ErbIrCache.ComputeContentFingerprint(Files, new Dictionary<string, string> { ["%ARG"] = "1" }, null, IrFingerprintConfig.FromCurrent());
 		Assert.NotEqual(baseline, withRename);
 	}
 
@@ -81,13 +81,76 @@ public class ErbIrCacheTests
 
 		config.ApplyReduceArgumentOnLoad(ReduceArgumentOnLoadFlag.NO, irHit: false);
 		Assert.False(config.NeedReduceArgumentOnLoad);
-		long nrOff = ErbIrCache.ComputeContentFingerprint(Files, null);
+		long nrOff = ErbIrCache.ComputeContentFingerprint(Files, null, null, IrFingerprintConfig.FromCurrent());
 
 		config.ApplyReduceArgumentOnLoad(ReduceArgumentOnLoadFlag.YES, irHit: false);
 		Assert.True(config.NeedReduceArgumentOnLoad);
-		long nrOn = ErbIrCache.ComputeContentFingerprint(Files, null);
+		long nrOn = ErbIrCache.ComputeContentFingerprint(Files, null, null, IrFingerprintConfig.FromCurrent());
 
 		Assert.Equal(nrOff, nrOn);
+	}
+
+	// ===== ADR-0027 第四刀（issue 05）：指纹「先钉后改」 =====
+	// 把指纹的**输入集与取值**在参数化改造（ambient 直读 → 显式入参）之前钉成常量。
+	// 失效的代价是静默的：指纹变 ⇒ 既有 era_ir.dat 判废 ⇒ 回退源重建（不报错，只是每次启动都慢），
+	// 用户侧无从察觉。故这两条钉子必须先落地，改造后必须**原样通过**。
+
+	/// <summary>
+	/// 指纹取值钉：固定输入 + 默认配置下的三格取值（无清单 / 含 firstDir 清单 / 含 Rename 表）。
+	/// <para>
+	/// 覆盖当前实现的全部输入维度与哈希顺序（文件集合 → firstDir → 6 个解析配置位 → Rename 表）。
+	/// 参数化改造后本钉必须原样通过——它证明「输入集与顺序逐位未变」，即磁盘缓存兼容性未被破坏。
+	/// 若**有意**改指纹（如新增参与项），请连同本常量与 <c>ErbIrCache.FormatVersion</c> 一并更新，
+	/// 并在提交信息里写明「接受一次整库重建」。
+	/// </para>
+	/// <para>
+	/// 语料的 physical 是 content-URI（无 stat）⇒ 长度/mtime 降级 0，取值与文件系统无关、恒稳定。
+	/// </para>
+	/// </summary>
+	[Fact]
+	public void Fingerprint_values_are_frozen()
+	{
+		using var _ = OpenScope();
+		// 格 ①：仅文件集合
+		Assert.Equal(-7992931611168955136L, ErbIrCache.ComputeContentFingerprint(Files, null, null, IrFingerprintConfig.FromCurrent()));
+		// 格 ②：文件集合 + firstDir 清单（v2 尾区）
+		Assert.Equal(-5293043459770073430L, ErbIrCache.ComputeContentFingerprint(Files, null, ["1#A", "2#B"], IrFingerprintConfig.FromCurrent()));
+		// 格 ③：文件集合 + Rename 表
+		Assert.Equal(2309398294545790836L, ErbIrCache.ComputeContentFingerprint(
+			Files, new Dictionary<string, string> { ["%ARG"] = "1" }, null, IrFingerprintConfig.FromCurrent()));
+	}
+
+	/// <summary>
+	/// 配置位参与性钉（6/6）：<see cref="ErbIrCache.ComputeContentFingerprint"/> 读取的 6 个解析相关配置位
+	/// **每一位**都必须改变指纹（含 <see cref="ReduceArgumentOnLoadFlag"/> 的枚举取值）。参数化改造最可能
+	/// 的失误正是「漏传某一位」或「传错类型」——表现是「改了该配置但 IR 仍判命中」⇒ 复用陈旧 blob
+	/// （静默语义漂移，比判废更坏）。每条同时断言「拨回后指纹复原」，确保没有额外副作用。
+	/// </summary>
+	[Fact]
+	public void Fingerprint_all_six_parsed_config_bits_are_participants()
+	{
+		using var _ = OpenScope();
+		var data = ConfigData.Current!;
+
+		void AssertBit<T>(ConfigCode code, T flipped, T restored)
+		{
+			long baseline = ErbIrCache.ComputeContentFingerprint(Files, null, null, IrFingerprintConfig.FromCurrent());
+			data.GetConfigItem(code).SetValue(flipped);
+			long changed = ErbIrCache.ComputeContentFingerprint(Files, null, null, IrFingerprintConfig.FromCurrent());
+			data.GetConfigItem(code).SetValue(restored);
+			long back = ErbIrCache.ComputeContentFingerprint(Files, null, null, IrFingerprintConfig.FromCurrent());
+			Assert.NotEqual(baseline, changed);
+			Assert.Equal(baseline, back);
+		}
+
+		AssertBit(ConfigCode.IgnoreCase, !Config.IgnoreCase, Config.IgnoreCase);
+		AssertBit(ConfigCode.UseRenameFile, !Config.UseRenameFile, Config.UseRenameFile);
+		AssertBit(ConfigCode.UseReplaceFile, !Config.UseReplaceFile, Config.UseReplaceFile);
+		AssertBit(ConfigCode.SystemIgnoreTripleSymbol, !Config.SystemIgnoreTripleSymbol, Config.SystemIgnoreTripleSymbol);
+		AssertBit(ConfigCode.SearchSubdirectory, !Config.SearchSubdirectory, Config.SearchSubdirectory);
+		var rao = Config.ReduceArgumentOnLoad;
+		AssertBit(ConfigCode.ReduceArgumentOnLoad,
+			rao == ReduceArgumentOnLoadFlag.YES ? ReduceArgumentOnLoadFlag.NO : ReduceArgumentOnLoadFlag.YES, rao);
 	}
 
 	[Theory]
@@ -238,9 +301,9 @@ public class ErbIrCacheTests
 			// 两来源指纹恒等（长度/mtime 对 content-URI 均降级 0 → 集合一致即指纹一致）
 			Assert.Equal(
 				ErbIrCache.ComputeContentFingerprint(
-					fromConfig.Select(kv => (kv.Key, kv.Value)).ToList(), null),
+					fromConfig.Select(kv => (kv.Key, kv.Value)).ToList(), null, null, IrFingerprintConfig.FromCurrent()),
 				ErbIrCache.ComputeContentFingerprint(
-					fromCache.Select(kv => (kv.Key, kv.Value)).ToList(), null));
+					fromCache.Select(kv => (kv.Key, kv.Value)).ToList(), null, null, IrFingerprintConfig.FromCurrent()));
 		}
 		finally
 		{
@@ -270,9 +333,9 @@ public class ErbIrCacheTests
 
 		// 建一个合法（空函数集）IR：指纹来自同一清单构建路径——BuildPendingList 即 IsIrHitRound 内部所用。
 		// issues/12 M4：指纹含 firstDir 清单、IR 写入清单区（IsIrHitRound 读侧与 fp 口径逐位一致）。
-		var pending = ErbIrLoadPipeline.BuildPendingList(env, null, out var firstDirs, out _);
+		var pending = ErbIrLoadPipeline.BuildPendingList(env, IrLoadContext.FromCurrent(env), null, out var firstDirs, out _);
 		Assert.NotEmpty(pending);
-		long fp = ErbIrCache.ComputeContentFingerprint(pending, null, firstDirs);
+		long fp = ErbIrCache.ComputeContentFingerprint(pending, null, firstDirs, IrFingerprintConfig.FromCurrent());
 		string irPath = ErbIrCache.GetIrCachePath(tempRoot);
 		Directory.CreateDirectory(Path.GetDirectoryName(irPath)!);
 		using (var writer = new ErbIrCache.IrCacheWriter(irPath))
@@ -310,7 +373,7 @@ public class ErbIrCacheTests
 			var env = new LoaderEnv(
 				erbDir, erbDir, analysisMode: false, analysisFiles: new List<string>(), debugMode: false)
 			{ DirAccessor = accessor };
-			var pending = ErbIrLoadPipeline.BuildPendingList(env, null, out _, out _);
+			var pending = ErbIrLoadPipeline.BuildPendingList(env, IrLoadContext.FromCurrent(env), null, out _, out _);
 			Assert.Single(pending);
 			Assert.Equal("MAIN.ERB", pending[0].Filename);
 
@@ -369,8 +432,8 @@ public class ErbIrCacheTests
 			var cacheLogical = fromCache.Select(x => x.Logical).ToHashSet(StringComparer.Ordinal);
 			Assert.Equal(treeLogical, cacheLogical);
 			Assert.Equal(
-				ErbIrCache.ComputeContentFingerprint(fromTree, null),
-				ErbIrCache.ComputeContentFingerprint(fromCache, null));
+				ErbIrCache.ComputeContentFingerprint(fromTree, null, null, IrFingerprintConfig.FromCurrent()),
+				ErbIrCache.ComputeContentFingerprint(fromCache, null, null, IrFingerprintConfig.FromCurrent()));
 		}
 		finally
 		{
@@ -432,14 +495,14 @@ public class ErbIrCacheTests
 	public void Fingerprint_includes_firstDir_set_order_invariant()
 	{
 		using var _ = OpenScope();
-		var noDirs = ErbIrCache.ComputeContentFingerprint(Files, null);
-		var forward = ErbIrCache.ComputeContentFingerprint(Files, null, ["1#A", "2#B"]);
-		var reversed = ErbIrCache.ComputeContentFingerprint(Files, null, ["2#B", "1#A"]);
+		var noDirs = ErbIrCache.ComputeContentFingerprint(Files, null, null, IrFingerprintConfig.FromCurrent());
+		var forward = ErbIrCache.ComputeContentFingerprint(Files, null, ["1#A", "2#B"], IrFingerprintConfig.FromCurrent());
+		var reversed = ErbIrCache.ComputeContentFingerprint(Files, null, ["2#B", "1#A"], IrFingerprintConfig.FromCurrent());
 		// 集合语义：清单顺序无关（SAF 扫描序不稳定，与文件集合同款钉子）
 		Assert.Equal(forward, reversed);
 		// 任何 *#* 目录增删 → fp 变 → 命中轮 miss → 全扫重建自愈
 		Assert.NotEqual(noDirs, forward);
-		Assert.NotEqual(forward, ErbIrCache.ComputeContentFingerprint(Files, null, ["1#A"]));
+		Assert.NotEqual(forward, ErbIrCache.ComputeContentFingerprint(Files, null, ["1#A"], IrFingerprintConfig.FromCurrent()));
 	}
 
 	[Fact]
@@ -474,11 +537,11 @@ public class ErbIrCacheTests
 		try
 		{
 			// 建库轮：扫描路径取清单
-			var scanned = ErbIrLoadPipeline.BuildPendingList(env, null, out var scanDirs, out _);
+			var scanned = ErbIrLoadPipeline.BuildPendingList(env, IrLoadContext.FromCurrent(env), null, out var scanDirs, out _);
 			Assert.Equal(3, scanDirs.Count);
 			// 命中轮：同一清单走 override（清 memo 模拟冷缓存）
 			Preload.Clear();
-			var fromIr = ErbIrLoadPipeline.BuildPendingList(env, scanDirs, out var irDirs, out _);
+			var fromIr = ErbIrLoadPipeline.BuildPendingList(env, IrLoadContext.FromCurrent(env), scanDirs, out var irDirs, out _);
 			// override 与扫描的待载清单逐位一致（含 firstDir 嵌套子目录文件）+ 清单原样透传
 			Assert.Equal(scanned, fromIr);
 			Assert.Equal(scanDirs, irDirs);
@@ -514,7 +577,7 @@ public class ErbIrCacheTests
 			var env = new LoaderEnv(
 				erbDir, erbDir, analysisMode: false, analysisFiles: new List<string>(), debugMode: false)
 			{ DirAccessor = accessor };
-			var pending = ErbIrLoadPipeline.BuildPendingList(env, new List<string> { "1#EV" }, out var firstDirs, out _);
+			var pending = ErbIrLoadPipeline.BuildPendingList(env, IrLoadContext.FromCurrent(env), new List<string> { "1#EV" }, out var firstDirs, out _);
 			Assert.Equal(2, pending.Count);
 			// Filename 相对 firstDir（既有语义：firstDir 段的枚举源即 <see cref="Preload.EnumerateFilesFromTree"/> 的 per-dir 视角）
 			Assert.Equal("A.ERB", pending[0].Filename); // firstDir 文件在前
@@ -548,10 +611,10 @@ public class ErbIrCacheTests
 		{ DirAccessor = new FileSystemGameDirAccessor() };
 
 		// 建库轮：扫描清单 + fp（含清单）→ 写 IR（含清单区）
-		var pending = ErbIrLoadPipeline.BuildPendingList(env, null, out var firstDirs, out _);
+		var pending = ErbIrLoadPipeline.BuildPendingList(env, IrLoadContext.FromCurrent(env), null, out var firstDirs, out _);
 		var dir = Assert.Single(firstDirs);
 		Assert.Equal("1#EV", dir);
-		long fp = ErbIrCache.ComputeContentFingerprint(pending, null, firstDirs);
+		long fp = ErbIrCache.ComputeContentFingerprint(pending, null, firstDirs, IrFingerprintConfig.FromCurrent());
 		string irPath = ErbIrCache.GetIrCachePath(tempRoot);
 		Directory.CreateDirectory(Path.GetDirectoryName(irPath)!);
 		using (var writer = new ErbIrCache.IrCacheWriter(irPath))
@@ -704,7 +767,7 @@ public class ErbIrCacheTests
 		{
 			var env = new LoaderEnv(erbDir, erbDir, analysisMode: false, analysisFiles: new List<string>(), debugMode: false)
 			{ DirAccessor = accessor };
-			var scanned = ErbIrLoadPipeline.BuildPendingList(env, null, out var firstDirs, out _);
+			var scanned = ErbIrLoadPipeline.BuildPendingList(env, IrLoadContext.FromCurrent(env), null, out var firstDirs, out _);
 			Assert.Single(scanned); // stub 平铺：仅 TOP.ERB（.ERB 过滤）
 
 			// 建库轮收尾写 sidecar（与 LoadErbDir Complete 同构：pending rel 对 + 树清单）
@@ -718,7 +781,7 @@ public class ErbIrCacheTests
 
 			Assert.True(ErbIrCache.TryReadFileList(irPath, out var flPending, out var flTree));
 			Assert.Equal(treeRels, flTree);
-			var replayed = ErbIrLoadPipeline.BuildPendingList(env, null, out _, out _, flPending);
+			var replayed = ErbIrLoadPipeline.BuildPendingList(env, IrLoadContext.FromCurrent(env), null, out _, out _, flPending);
 			Assert.Equal(scanned.Count, replayed.Count);
 			for (int i = 0; i < scanned.Count; i++)
 			{
@@ -726,8 +789,8 @@ public class ErbIrCacheTests
 				Assert.Equal(scanned[i].File, replayed[i].File);
 			}
 			Assert.Equal(
-				ErbIrCache.ComputeContentFingerprint(scanned.Select(p => (p.Filename, p.File)).ToList(), null, firstDirs),
-				ErbIrCache.ComputeContentFingerprint(replayed.Select(p => (p.Filename, p.File)).ToList(), null, firstDirs));
+				ErbIrCache.ComputeContentFingerprint(scanned.Select(p => (p.Filename, p.File)).ToList(), null, firstDirs, IrFingerprintConfig.FromCurrent()),
+				ErbIrCache.ComputeContentFingerprint(replayed.Select(p => (p.Filename, p.File)).ToList(), null, firstDirs, IrFingerprintConfig.FromCurrent()));
 		}
 		finally
 		{
@@ -755,7 +818,7 @@ public class ErbIrCacheTests
 		Preload.Clear();
 		try
 		{
-			var scanned = ErbIrLoadPipeline.BuildPendingList(env, null, out var firstDirs, out _);
+			var scanned = ErbIrLoadPipeline.BuildPendingList(env, IrLoadContext.FromCurrent(env), null, out var firstDirs, out _);
 			Assert.Equal(3, scanned.Count);
 
 			var irPath = Path.Combine(Path.GetTempPath(), "emuera-fllocal-" + Guid.NewGuid().ToString("N"), "era_ir.dat");
@@ -768,7 +831,7 @@ public class ErbIrCacheTests
 
 			Assert.True(ErbIrCache.TryReadFileList(irPath, out var flPending, out var flTree));
 			Assert.Equal(treeRels, flTree);
-			var replayed = ErbIrLoadPipeline.BuildPendingList(env, null, out _, out _, flPending);
+			var replayed = ErbIrLoadPipeline.BuildPendingList(env, IrLoadContext.FromCurrent(env), null, out _, out _, flPending);
 			Assert.Equal(scanned.Count, replayed.Count);
 			for (int i = 0; i < scanned.Count; i++)
 			{
