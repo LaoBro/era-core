@@ -498,16 +498,6 @@ public class ErbLoaderTests
 
 	// ===== erb-loader-parallel Issue 08：ParseScript 未调用遍历并行化（else / callform 两分支同票同套）=====
 
-	/// <summary>else 分支等价性语料：未调用函数真解析（IgnoreUncalledFunction:NO）+ FNC ONCE + FNF ONCE + nestCheck 警告。
-	/// 注意 harness 语义：CALL 解析查 GlobalStatic.LabelDictionary（与传入 labelDic 分离），语料不可 CALL 已定义函数。</summary>
-	private static void WriteUncalledSweepCorpus(LoaderTestHarness h)
-	{
-		h.WriteErb("A.ERB", "@EVENTTRAIN\nRETURN\n"
-			+ "@UNCALLED_A\nBREAK\nCALL NOEXIST_FUNC\nRETURN\n");
-		// B 文件内两个 FNF：首个发射、同文件第二个被 ONCE 去重（ignoredFNFWarningCount 路径）
-		h.WriteErb("B.ERB", "@UNCALLED_B\nCALL NOEXIST_FUNC_B\nCALL NOEXIST_FUNC_B2\nBREAK\nRETURN\n");
-	}
-
 	/// <summary>
 	/// 08 等价性（else 分支）：ParallelParseScript 并行（默认）与串行 fallback 输出逐字一致。
 	/// 覆盖 D5 处置：#1 警告 per-label 缓冲回放、#2 FNF 事件缓冲 + 回放段 ONCE 决策重走
@@ -519,7 +509,7 @@ public class ErbLoaderTests
 	{
 		using var h = new LoaderTestHarness();
 		await h.InitializeAsync();
-		WriteUncalledSweepCorpus(h);
+		ErbLoaderEquivalenceCorpus.WriteFnfWarningCorpus(h);
 		// 未调用函数真解析 + FNC/FNF ONCE
 		ConfigData.Current!.GetConfigItem(ConfigCode.IgnoreUncalledFunction).SetValue(false);
 		ConfigData.Current!.GetConfigItem(ConfigCode.FunctionNotCalledWarning).SetValue(DisplayWarningFlag.ONCE);

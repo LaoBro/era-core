@@ -27,98 +27,8 @@ namespace MinorShift.Emuera.Tests;
 [Collection("LoaderTests")]
 public class UncalledSweepEquivalenceTests
 {
-	// 规模 208：RunUncalledSweepParallel 的 chunk = Max(1, N / (MaxDOP * 16))，MaxDOP = Min(ProcessorCount, 8)。
-	// N > 128 才能让分区粒度真正拉开（N 小时 chunk 恒为 1，分区行为与真实大游戏差异过大）。
-	private const int UncalledCount = 208;
-	private const int FileCount = 16;
-	private const int PerFile = UncalledCount / FileCount; // 13
-
-	// ---------------- 语料 ----------------
-
-	/// <summary>A 组（else 分支）：不得出现 TRYCALLLIST / TRYJUMPLIST / CALLFORM 系指令。</summary>
-	private static void WriteCorpusA(LoaderTestHarness h, bool tamper)
-	{
-		var root = new StringBuilder();
-		root.Append("@EVENTFIRST\n");
-		root.Append("CALL CALLED_ROOT\n");
-		root.Append("PRINTFORML root\n");
-		root.Append("RETURN\n\n");
-		root.Append("@CALLED_ROOT\n");
-		root.Append("#LOCALSIZE 4\n");
-		root.Append("PRINTFORML called\n");
-		root.Append("RETURN\n\n");
-		h.WriteErb("000_ROOT.ERB", root.ToString());
-		WriteUncalledFiles(h, tamper);
-	}
-
-	/// <summary>B 组（callform 分支）：TRYCALLLIST 置 useCallForm=true，未调用清扫改走 callform 分支。</summary>
-	private static void WriteCorpusB(LoaderTestHarness h, bool tamper)
-	{
-		h.WriteErb("000_ROOT.ERB",
-			"@EVENTTRAIN\nTRYCALLLIST\n\tFUNC FOO\nENDFUNC\nRETURN\n");
-		WriteUncalledFiles(h, tamper);
-	}
-
-	private static void WriteUncalledFiles(LoaderTestHarness h, bool tamper)
-	{
-		for (int f = 0; f < FileCount; f++)
-		{
-			var sb = new StringBuilder();
-			for (int k = 0; k < PerFile; k++)
-				sb.Append(MakeUncalled(f * PerFile + k));
-			var text = sb.ToString();
-			// 区分能力自检用：抽掉 UNCALLED_000 的行标签，使 GOTO SKIP_000 失去目标。
-			// 会同时改变指令链、跳转解析结果与后续行号，签名必然不同。
-			if (tamper && f == 0)
-				text = text.Replace("$SKIP_000\n", "", StringComparison.Ordinal);
-			h.WriteErb($"U_{f:D2}.ERB", text);
-		}
-	}
-
-	/// <summary>
-	/// 单个未调用函数：私有变量（#DIM/#DIMS）+ 轮换的控制流结构 + 函数内 GOTO 跳转。
-	/// 控制流轮换覆盖 nestCheck / setJumpTo 的各类跳转写入面；GOTO + $行标签是 JumpTo 的直接靶子。
-	/// </summary>
-	private static string MakeUncalled(int i)
-	{
-		var b = new StringBuilder();
-		b.Append("@UNCALLED_").Append(i.ToString("D3")).Append('\n');
-		b.Append("#LOCALSIZE 12\n");
-		b.Append("#LOCALSSIZE 4\n");
-		b.Append("#DIM LNUM_").Append(i.ToString("D3")).Append('\n');
-		b.Append("#DIMS LSTR_").Append(i.ToString("D3")).Append('\n');
-		string n = "LNUM_" + i.ToString("D3");
-		switch (i % 6)
-		{
-			case 0:
-				b.Append("IF ").Append(n).Append(" == 0\n PRINTFORML zero\nELSEIF ").Append(n)
-				 .Append(" == 1\n PRINTFORML one\nELSE\n PRINTFORML other\nENDIF\n");
-				break;
-			case 1:
-				b.Append("FOR COUNT, 0, 4\n PRINTFORML loop\nNEXT\n");
-				break;
-			case 2:
-				b.Append("REPEAT 3\n PRINTFORML rep\nREND\n");
-				break;
-			case 3:
-				b.Append("WHILE ").Append(n).Append(" < 3\n ").Append(n).Append(" += 1\nWEND\n");
-				break;
-			case 4:
-				b.Append("SELECTCASE ").Append(n)
-				 .Append("\n CASE 0\n  PRINTFORML c0\n CASE 1\n  PRINTFORML c1\n CASEELSE\n  PRINTFORML cx\nENDSELECT\n");
-				break;
-			default:
-				b.Append("IF ").Append(n)
-				 .Append(" >= 0\n FOR COUNT, 0, 2\n  IF COUNT == 1\n   PRINTFORML inner\n  ENDIF\n NEXT\nENDIF\n");
-				break;
-		}
-		b.Append("GOTO SKIP_").Append(i.ToString("D3")).Append('\n');
-		b.Append("PRINTFORML dead\n");
-		b.Append("$SKIP_").Append(i.ToString("D3")).Append('\n');
-		b.Append("PRINTFORML tail\n");
-		b.Append("RETURN\n\n");
-		return b.ToString();
-	}
+	// 语料（A/B 组）已提炼为共享基座 ErbLoaderEquivalenceCorpus——issue 01 的黄金输出快照
+	// 必须以同一份语料为基座（「未新建语料」），复制内联会造出会漂移的第二真相源。
 
 	// ---------------- 加载与签名 ----------------
 
@@ -253,8 +163,8 @@ public class UncalledSweepEquivalenceTests
 	/// </summary>
 	private static void AssertCorpusEffective(List<string> sig, string what)
 	{
-		Assert.True(sig.Count >= UncalledCount,
-			$"{what}: 签名条数 {sig.Count} 少于语料函数数 {UncalledCount}，语料可能未装载");
+		Assert.True(sig.Count >= ErbLoaderEquivalenceCorpus.UncalledCount,
+			$"{what}: 签名条数 {sig.Count} 少于语料函数数 {ErbLoaderEquivalenceCorpus.UncalledCount}，语料可能未装载");
 		Assert.Contains(sig, s => s.Contains("PRINTFORML@", StringComparison.Ordinal)
 			&& !s.Contains("|stub=1", StringComparison.Ordinal));
 		int jumps = CountResolvedJumps(sig);
@@ -271,8 +181,8 @@ public class UncalledSweepEquivalenceTests
 	[Fact]
 	public async Task UncalledSweep_parallel_matches_serial_else_branch()
 	{
-		var serial = await LoadAndSignAsync(WriteCorpusA, parallelParseScript: false);
-		var parallel = await LoadAndSignAsync(WriteCorpusA, parallelParseScript: true);
+		var serial = await LoadAndSignAsync(ErbLoaderEquivalenceCorpus.WriteCorpusA, parallelParseScript: false);
+		var parallel = await LoadAndSignAsync(ErbLoaderEquivalenceCorpus.WriteCorpusA, parallelParseScript: true);
 
 		AssertCorpusEffective(serial, "else 分支");
 		AssertSignaturesEqual(serial, parallel, "else 分支（无 callform 系）");
@@ -285,8 +195,8 @@ public class UncalledSweepEquivalenceTests
 	[Fact]
 	public async Task UncalledSweep_parallel_matches_serial_callform_branch()
 	{
-		var serial = await LoadAndSignAsync(WriteCorpusB, parallelParseScript: false);
-		var parallel = await LoadAndSignAsync(WriteCorpusB, parallelParseScript: true);
+		var serial = await LoadAndSignAsync(ErbLoaderEquivalenceCorpus.WriteCorpusB, parallelParseScript: false);
+		var parallel = await LoadAndSignAsync(ErbLoaderEquivalenceCorpus.WriteCorpusB, parallelParseScript: true);
 
 		AssertCorpusEffective(serial, "callform 分支");
 		AssertSignaturesEqual(serial, parallel, "callform 分支（TRYCALLLIST）");
@@ -301,8 +211,8 @@ public class UncalledSweepEquivalenceTests
 	[Fact]
 	public async Task Serial_load_is_idempotent_across_harnesses()
 	{
-		var first = await LoadAndSignAsync(WriteCorpusA, parallelParseScript: false);
-		var second = await LoadAndSignAsync(WriteCorpusA, parallelParseScript: false);
+		var first = await LoadAndSignAsync(ErbLoaderEquivalenceCorpus.WriteCorpusA, parallelParseScript: false);
+		var second = await LoadAndSignAsync(ErbLoaderEquivalenceCorpus.WriteCorpusA, parallelParseScript: false);
 		AssertSignaturesEqual(first, second, "串行两次加载（对照：排除顺序/静态残留）");
 	}
 
@@ -310,8 +220,8 @@ public class UncalledSweepEquivalenceTests
 	[Fact]
 	public async Task Parallel_load_is_idempotent_across_harnesses()
 	{
-		var first = await LoadAndSignAsync(WriteCorpusA, parallelParseScript: true);
-		var second = await LoadAndSignAsync(WriteCorpusA, parallelParseScript: true);
+		var first = await LoadAndSignAsync(ErbLoaderEquivalenceCorpus.WriteCorpusA, parallelParseScript: true);
+		var second = await LoadAndSignAsync(ErbLoaderEquivalenceCorpus.WriteCorpusA, parallelParseScript: true);
 		AssertSignaturesEqual(first, second, "并行两次加载（对照）");
 	}
 
@@ -322,8 +232,8 @@ public class UncalledSweepEquivalenceTests
 	[Fact]
 	public async Task Strong_signature_detects_tampered_jump_target()
 	{
-		var clean = await LoadAndSignAsync(WriteCorpusA, parallelParseScript: false, tamper: false);
-		var tampered = await LoadAndSignAsync(WriteCorpusA, parallelParseScript: false, tamper: true);
+		var clean = await LoadAndSignAsync(ErbLoaderEquivalenceCorpus.WriteCorpusA, parallelParseScript: false, tamper: false);
+		var tampered = await LoadAndSignAsync(ErbLoaderEquivalenceCorpus.WriteCorpusA, parallelParseScript: false, tamper: true);
 
 		Assert.NotEqual(clean, tampered);
 	}
