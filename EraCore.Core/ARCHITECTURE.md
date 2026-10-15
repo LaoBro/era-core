@@ -177,10 +177,11 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 | `SafGameDirAccessor` | `EraCore.Maui/Services/SafGameDirAccessor.cs:18`（`#if ANDROID`） | Android SAF（`content://`）实现 |
 | `GamePaths` | `GamePaths.cs:6` | 持 `DirAccessor`，解析 / 校验当前游戏根 |
 | `GameScanner` | `GameScanner.cs:11` | 扫描游戏根（**全经 accessor**） |
-| `DirectoryLister` | `DirectoryLister.cs:12` | 逐层列目录，供 Vue `DirectoryBrowser` |
+| `DirectoryLister` | `DirectoryLister.cs:12` | 逐层列目录，供 Vue `DirectoryBrowser`（**全经 accessor**） |
 | `DirectoryChildCache` | `DirectoryChildCache.cs:22` | SAF docId → 子项缓存（**不依赖**接口） |
 | `Wildcard` | `Wildcard.cs:14` | 通配匹配，被两个实现复用（**不依赖**接口） |
-| `AppDataPaths` | `AppDataPaths.cs:8` | 应用私有根（**非游戏树**，**不走** accessor） |
+| `AppDataPaths` | `AppDataPaths.cs:8` | 应用私有根（**非游戏树**，**不走** accessor）；`IsUnder` = F-4 的可机检判定 |
+| `AppDataIo` | `AppDataIo.cs` | **私有域的唯一 IO 窄口子**：方法收「相对私有根的名字」，越域在签名上不可表达 |
 
 ### 4.3 不变量
 
@@ -189,16 +190,36 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 | F-1 | **游戏树**内全部文件 IO 必须经 `IGameDirAccessor`；禁止直接 `File.*` / `Directory.*` | Android SAF 下静默失败、平台差异泄漏进引擎 |
 | F-2 | 两个实现**契约一致**：精确名读取须大小写不敏感解析（对齐 SAF 语义） | 大小写敏感挂载上固定名 CSV 读不出 |
 | F-3 | SAF 写路径须按「父目录 + displayName」查找/创建，**不得**假设理论 URI 已在 provider 注册 | 写回存档丢失 |
-| F-4 | `AppDataPaths`（应用私有目录）是**唯一豁免域**，可不走 accessor | —— |
-| F-5 | 已知**待收敛例外**（见下），新增代码**不得**扩大该清单 | 例外蔓延成事实上的第二套 IO |
+| F-4 | 应用私有域是**唯一豁免域**——domain 由 `AppDataPaths`（+ `AppDataIo` 窄口子）显式界定，经 `AppDataPaths.IsUnder` 机检 | 豁免边界回到「靠开发者记得」的隐式状态 |
+| F-5 | 已知**待收敛例外**（见下）由守卫测试 `GameDirAccessorIoPolicyTests` 逐文件、逐调用数盯着；新增代码**不得**扩大该清单 | 例外蔓延成事实上的第二套 IO |
 
-**待收敛例外清单**（截至 2026-10-15，Core 内裸 `File.*` / `Directory.*`）：
+**待收敛例外清单**（截至 2026-10-16，Core 内裸 `File.*` / `Directory.*`；按归属域分三类）：
 
-- `Shared/Runtime/Utils/SafCompat.cs` —— ADR-0019 的兼容包装（有意保留）
-- `Agent/AgentLog.cs`、`Shared/UI/Game/Image/ImgUtils.cs`、`Shared/UI/Game/Image/AppContents.cs`、`Shared/UI/Game/Image/ConstImage.cs`、`Shared/Runtime/Utils/Sys.cs`、`Compat/LegacyPluginCompat.cs`
-- `GamePaths.cs`（真实路径分支）、`DirectoryLister.cs`（`ComputeParentPath`）
+| 文件 | 域 | 处数 | 理由 |
+|---|---|---|---|
+| `Shared/Runtime/Config/ConfigData.cs` | GameTree | 9 | sav 目录本地分支（强制创建 + 存档挪档）；SAF 分支已走 `SafCompat` |
+| `Shared/Runtime/Script/Data/ConstantData.cs` | GameTree | 2 | accessor 缺失时的 local 回退 |
+| `Shared/Runtime/Utils/EncodingHandler.cs` | GameTree | 2 | 编码探测 `ReadAllBytes`（路径形态混杂） |
+| `Shared/Runtime/Utils/EvilMask/Utils.cs` | GameTree | 1 | 非 HEADLESS 图像加载存在性预检 |
+| `Shared/UI/Game/Image/AppContents.cs` | GameTree | 3 | `resources` 树 CSV 枚举 + 读取 |
+| `Shared/UI/Game/Image/ImgUtils.cs` | GameTree | 1 | 非 HEADLESS 图像加载存在性预检 |
+| `Shared/Runtime/Script/Loader/ErbIrCache.cs` | AppPrivate | 10 | IR 磁盘缓存（appdata `IRCache/` 或桌面 `<游戏目录>/_IRCache/`），非游戏内容 |
+| `Shared/Runtime/Script/Loader/SrcContentCache.cs` | AppPrivate | 8 | 10-B CSV/ERH 源内容缓存，与 `era_ir.dat` 同布局同生命周期 |
+| `GamePaths.cs` | Platform | 2 | 宿主安装目录探测 + 本地路径归一化（`DetectDefault` / `new DirectoryInfo`），发生在 accessor 上任之前 |
+| `Shared/Runtime/Utils/SafCompat.cs` | Platform | 18 | ADR-0019 兼容包装本体（有意保留） |
+| `Shared/Runtime/Utils/Sys.cs` | Platform | 1 | 进程工作目录，不解析游戏文件 |
 
-> `FileSystemGameDirAccessor.cs` 内部的 `File.*` / `Directory.*` 是该接口的实现本体，**属合规调用**。
+> **不计入清单的合规直连调用**（守卫测试显式跳过）：`FileSystemGameDirAccessor.cs`（接口实现本体）、
+> `AppDataIo.cs` 与 `AppDataPaths.cs`（F-4 豁免域自身的 IO 口子）。
+
+**2026-10-16 收敛轮**（候选 6「IGameDirAccessor 接缝泄漏」）已移出清单的站点：
+
+- `DirectoryLister.cs` —— `ComputeParentPath` 改走 `dirAccessor.GetParentPath`（补了 `DirectoryListerTests` 行为锁，因两者对尾部分隔符的语义不同）
+- `GamePaths.cs` —— `Validate()` 的真实路径分支不再裸调 `Directory.Exists`，与 SAF 分支合并为一条经 accessor 的路径
+- `Compat/LegacyPluginCompat.cs` —— 插件兄弟依赖的存在性判定改走注入的 accessor
+- `Shared/Runtime/Utils/PluginSystem/PluginManager.cs` —— `pluginsAware.txt` 存在性改走 accessor
+- `Shared/UI/Game/Image/ConstImage.cs` —— 诊断日志不再写进程 CWD，改落私有域
+- `Agent/AgentLog.cs`、`Shared/Runtime/Config/JSON/JSONConfig.cs` —— 私有域 IO 全部经 `AppDataIo` 窄口子
 
 ### 4.4 ADR 索引
 
@@ -223,7 +244,7 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 |---|---|---|---|
 | 输入 | `IInputHost` | ADR-0031 **proposed**；M1/M2/M4 已落地（接口 + `DefaultInputHost` + 几何/键盘通道） | M5–M8：触屏 E-min、primitive 能力位、`IConsoleUI` 瘦身 Phase 2 |
 | 输出 | `IDisplayState` / `OutputHub` | ADR-0013/0014/0003 **accepted 且已落地** | —— |
-| 文件 | `IGameDirAccessor` | ADR-0019 **accepted 且已落地**（双实现） | 第 4.3 节「待收敛例外」清单清理 |
+| 文件 | `IGameDirAccessor` | ADR-0019 **accepted 且已落地**（双实现）；2026-10-16 收敛一轮 | 第 4.3 节 GameTree 域 6 项待收敛（其余 5 项为豁免/平台域，非欠账） |
 
 > 输入轴仍处推进中：ADR-0031 为 `proposed`，M5–M8 未落地。**本表随里程碑推进而改**，不视为稳定契约。
 

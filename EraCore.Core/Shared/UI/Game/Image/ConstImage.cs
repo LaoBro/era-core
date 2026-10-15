@@ -59,7 +59,10 @@ internal sealed class ConstImage : AbstractImage
 		}
 		catch (Exception e)
 		{
-			File.WriteAllText("img_err.log", e.ToString());
+			// 原先直写相对路径 "img_err.log"——落在进程的当前工作目录（可能只读、跨运行互相覆盖），
+			// 既不属游戏树也不属私有域。F-4：诊断落点统一进 AppDataPaths 豁免域的唯一口子。
+			try { AppDataIo.WriteAllText(AppDataIo.Resolve("img_err.log"), e.ToString()); }
+			catch { /* 日志自身失败不再递归 */ }
 		}
 		return;
 	}

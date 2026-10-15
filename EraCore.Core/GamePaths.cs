@@ -90,28 +90,21 @@ internal sealed class GamePaths
     /// 校验游戏目录结构。失败时抛 <see cref="GamePathValidationException"/>（issue 05）——
     /// 旧实现调 <c>Environment.Exit(1)</c>，会让 /load-game 校验失败时杀死整个 server 进程，
     /// 故改为抛异常：CLI 启动路径在 Program.Main 捕获后退出，server /load-game 路径捕获后返 400。
+    /// <para>
+    /// <b>不变量 F-1</b>：真实路径分支同样经 <see cref="DirAccessor"/>——过去这里裸调
+    /// <c>Directory.Exists</c>（ARCHITECTURE.md 4.3 待收敛例外之一），使「 existence 判定走哪套语义」
+    /// 取决于路径形态而非访问器。本地访问器本来就是 <c>Directory.Exists</c> 的超集
+    /// （多一层大小写容错，归约后与原语义一致）。
+    /// </para>
     /// </summary>
     public void Validate()
     {
-        var isContentUri = ExeDir.StartsWith("content://", StringComparison.Ordinal);
-        if (isContentUri)
-        {
-            if (!DirAccessor.DirectoryExists(ExeDir))
-                throw new GamePathValidationException("DIR_NOT_FOUND", $"目录不存在: {ExeDir}");
-            if (!DirAccessor.DirectoryExists(CsvDir))
-                throw new GamePathValidationException("MISSING_CSV", $"缺少 csv 目录: {CsvDir}");
-            if (!DirAccessor.DirectoryExists(ErbDir))
-                throw new GamePathValidationException("MISSING_ERB", $"缺少 erb 目录: {ErbDir}");
-        }
-        else
-        {
-            if (!Directory.Exists(ExeDir))
-                throw new GamePathValidationException("DIR_NOT_FOUND", $"目录不存在: {ExeDir}");
-            if (!Directory.Exists(CsvDir))
-                throw new GamePathValidationException("MISSING_CSV", $"缺少 csv 目录: {CsvDir}");
-            if (!Directory.Exists(ErbDir))
-                throw new GamePathValidationException("MISSING_ERB", $"缺少 erb 目录: {ErbDir}");
-        }
+        if (!DirAccessor.DirectoryExists(ExeDir))
+            throw new GamePathValidationException("DIR_NOT_FOUND", $"目录不存在: {ExeDir}");
+        if (!DirAccessor.DirectoryExists(CsvDir))
+            throw new GamePathValidationException("MISSING_CSV", $"缺少 csv 目录: {CsvDir}");
+        if (!DirAccessor.DirectoryExists(ErbDir))
+            throw new GamePathValidationException("MISSING_ERB", $"缺少 erb 目录: {ErbDir}");
     }
 }
 

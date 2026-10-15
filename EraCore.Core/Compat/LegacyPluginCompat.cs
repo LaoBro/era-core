@@ -27,18 +27,21 @@ internal static class LegacyPluginCompat
 {
     private static int _resolverInstalled;
     private static string? _pluginsDir;
+    private static IGameDirAccessor? _dirAccessor;
 
     /// <summary>
-    /// 幂等安装 <see cref="AssemblyLoadContext.Default.Resolving"/> 处理器，并记住插件目录。
+    /// 幂等安装 <see cref="AssemblyLoadContext.Default.Resolving"/> 处理器，并记住插件目录与其访问器。
     /// <para>
-    /// 该处理器是**必需**的：.NET Core 的 <c>Assembly.LoadFrom</c> 不会探测被加载文件自身的目录，
-    /// 插件自带的依赖（如 eraTW 的 <c>MathParser.org-mXparser.dll</c>）只躺在 <c>Plugins/</c> 内，
-    /// 只能由此按请求名解析。<c>Emuera</c>（facade）本身走宿主 TPA，处理器保留同名探测作兜底。
+    /// <b>不变量 F-1</b>：依赖探测的存在性判定原为裸 <c>File.Exists</c>；改走
+    /// <paramref name="dirAccessor"/>（ARCHITECTURE.md 4.3 待收敛例外之一）。
+    /// 注意此处<b>不</b>放宽 <see cref="CanLoadPluginsHere"/>：<c>Assembly.LoadFrom</c> 仍需真实路径，
+    /// content URI 下本resolver 只是恒解析不到（既有权衡，未变）。
     /// </para>
     /// </summary>
-    internal static void Prepare(string pluginsDir)
+    internal static void Prepare(string pluginsDir, IGameDirAccessor dirAccessor)
     {
         _pluginsDir = pluginsDir;
+        _dirAccessor = dirAccessor;
         if (Interlocked.Exchange(ref _resolverInstalled, 1) == 0)
             AssemblyLoadContext.Default.Resolving += ResolveFromPluginsDir;
     }
@@ -50,9 +53,13 @@ internal static class LegacyPluginCompat
             return null;
         try
         {
-            var candidate = Path.Combine(dir, name.Name + ".dll");
-            if (File.Exists(candidate))
-                return context.LoadFromAssemblyPath(candidate);
+            var accessor = _dirAccessor;
+            if (accessor == null)
+                return null; // 未 Prepare（尚未加载任何插件）：无目录亦无访问器，无依赖可解析
+            var candidate = accessor.CombinePath(dir, name.Name + ".dll");
+            if (!accessor.FileExists(candidate))
+                return null;
+            return context.LoadFromAssemblyPath(candidate);
         }
         catch (Exception ex)
         {

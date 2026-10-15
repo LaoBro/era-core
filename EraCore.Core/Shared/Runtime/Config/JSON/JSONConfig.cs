@@ -1,5 +1,4 @@
 //新設したコンフィグ設定のロード、セーブ、公開を担当する。
-using System.IO;
 using System.Text.Json;
 using MinorShift.Emuera.GameView;
 
@@ -10,30 +9,31 @@ static class JSONConfig
 	// Some runtime types read this during static initialization before the startup loader runs.
 	public static JSONConfigData Data = new();
 
+	/// <summary>setting.json 在应用私有域内的相对名——唯一 IO 口子是 <see cref="AppDataIo"/>。</summary>
 	const string _configFileName = "setting.json";
-	static string ConfigFilePath => AppDataPaths.CombinePath(_configFileName);
 
+	static AppDataPath ConfigFile => AppDataIo.Resolve(_configFileName);
+
+	/// <summary>
+	/// setting.json 只落在应用私有域（F-4 豁免域），故经 <see cref="AppDataIo"/> 读写而非裸
+	/// <c>File.*</c> / <c>Directory.*</c>——原实现曾列在 ARCHITECTURE.md 4.3 待收敛例外清单里。
+	/// </summary>
 	public static void Load()
 	{
-		var configFilePath = ConfigFilePath;
-		var dir = Path.GetDirectoryName(configFilePath);
-		if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-		{
-			try { Directory.CreateDirectory(dir); }
-			catch { /* ignore directory creation failure in headless mode */ }
-		}
+		try { AppDataPaths.EnsureDirectory(); }
+		catch { /* ignore directory creation failure in headless mode */ }
 
-		if (!File.Exists(configFilePath))
+		if (!AppDataIo.FileExists(ConfigFile))
 		{
 			var defaultData = new JSONConfigData();
 			var defaultJson = JsonSerializer.Serialize(defaultData, EmueraJsonContext.Default.JSONConfigData);
-			try { File.WriteAllText(configFilePath, defaultJson); }
+			try { AppDataIo.WriteAllText(ConfigFile, defaultJson); }
 			catch { /* ignore write failure in headless mode */ }
 		}
 
-		if (File.Exists(configFilePath))
+		if (AppDataIo.FileExists(ConfigFile))
 		{
-			var json = File.ReadAllText(configFilePath);
+			var json = AppDataIo.ReadAllText(ConfigFile);
 			Data = JsonSerializer.Deserialize(json, EmueraJsonContext.Default.JSONConfigData) ?? new JSONConfigData();
 		}
 		else
@@ -45,7 +45,6 @@ static class JSONConfig
 	public static void Save()
 	{
 		var json = JsonSerializer.Serialize(Data, EmueraJsonContext.Default.JSONConfigData);
-		Directory.CreateDirectory(AppDataPaths.Directory);
-		File.WriteAllText(ConfigFilePath, json);
+		AppDataIo.WriteAllText(ConfigFile, json);
 	}
 }

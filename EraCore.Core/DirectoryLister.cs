@@ -28,7 +28,7 @@ internal static class DirectoryLister
             return new DirectoryListResult(dirPath, null, new List<string>());
         }
 
-        var parent = ComputeParentPath(normalized);
+        var parent = ComputeParentPath(normalized, dirAccessor);
 
         if (!dirAccessor.DirectoryExists(normalized))
             return new DirectoryListResult(normalized, parent, new List<string>());
@@ -51,18 +51,38 @@ internal static class DirectoryLister
         return new DirectoryListResult(normalized, parent, names);
     }
 
-    private static string? ComputeParentPath(string normalizedPath)
+    /// <summary>
+    /// 父目录。<b>经 accessor</b>（不变量 F-1）——原实现裸调 <c>Directory.GetParent</c>，
+    /// 是 ARCHITECTURE.md 4.3 待收敛例外之一。
+    /// <para>
+    /// <see cref="IGameDirAccessor.GetParentPath"/> = <c>Path.GetDirectoryName</c> 语义，
+    /// 与 <c>Directory.GetParent</c> 有一处差异：后者对带尾部分隔符的路径（<c>/a/b/</c>）
+    /// 仍返回 <c>/a</c>，前者返回 <c>/a/b</c>（尾部计数为一个空段）。故先去掉非根尾部分隔符，
+    /// 把语义对齐回调用方既有行为。
+    /// </para>
+    /// </summary>
+    private static string? ComputeParentPath(string normalizedPath, IGameDirAccessor dirAccessor)
     {
         try
         {
-            var parentInfo = Directory.GetParent(normalizedPath);
-            if (parentInfo is null) return null;
-            var parentFullName = parentInfo.FullName;
-            if (string.Equals(parentFullName, normalizedPath, StringComparison.Ordinal))
-                return null;
-            return parentFullName;
+            var last = normalizedPath[^1];
+            var probe = normalizedPath.Length > 1
+                && (last == Path.DirectorySeparatorChar || last == Path.AltDirectorySeparatorChar)
+                && !IsRoot(normalizedPath)
+                    ? normalizedPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    : normalizedPath;
+            var parent = dirAccessor.GetParentPath(probe);
+            if (string.IsNullOrEmpty(parent) || string.Equals(parent, probe, StringComparison.Ordinal))
+                return null; // 根：GetParentPath 回落为自身
+            return parent;
         }
         catch { return null; }
+    }
+
+    private static bool IsRoot(string path)
+    {
+        try { return string.Equals(Path.GetPathRoot(path), path, StringComparison.Ordinal); }
+        catch { return false; }
     }
 }
 

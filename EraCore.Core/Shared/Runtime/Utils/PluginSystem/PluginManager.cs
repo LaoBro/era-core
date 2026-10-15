@@ -298,9 +298,11 @@ namespace MinorShift.Emuera.Runtime.Utils.PluginSystem
 			}
 
 			string[] plugins = accessor.GetFiles(pluginDir, "*.dll", SearchOption.TopDirectoryOnly);
-			bool pluginsAware = File.Exists(Program.ExeDir + "pluginsAware.txt");
+			// F-1：原为裸 File.Exists(Program.ExeDir + "pluginsAware.txt")——游戏树内的真实性查询，
+			// SAF 下会对 content:// 路径恒 false（与 ConfigData 的同一条注释同源）。改走 accessor。
+			bool pluginsAware = accessor.FileExists(accessor.CombinePath(Program.ExeDir, "pluginsAware.txt"));
 			// legacy-plugin-compat：解析插件自带的兄弟依赖（.NET Core LoadFrom 不探测自身目录）。
-			LegacyPluginCompat.Prepare(pluginDir);
+			LegacyPluginCompat.Prepare(pluginDir, accessor);
 			ClearMethods();
 			foreach (var pluginPath in plugins)
 			{
