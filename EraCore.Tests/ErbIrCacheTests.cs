@@ -22,7 +22,7 @@ namespace MinorShift.Emuera.Tests;
 /// （并行 degree&gt;1 时逐轮随机），顺序直接进哈希曾使指纹逐轮漂移、IR 永远 miss + 每轮白付
 /// era_ir.dat 整库重建写。</item>
 /// <item>排序只消解顺序维度：文件集合 / Rename 表变化仍必须改变指纹。</item>
-/// <item><see cref="ErbLoader.ShouldUseIrCache"/> 唯一决策点：2026-09-04 方案 B（issues/05）后不含
+/// <item><see cref="ErbIrLoadPipeline.ShouldUseIrCache"/> 唯一决策点：2026-09-04 方案 B（issues/05）后不含
 /// content-URI 维度——SAF 游戏缓存镜像到 app 私有存储（可 seek），读放大止血解除。</item>
 /// <item>方案 B 路径搬迁：content-URI → <c>AppDataPaths/IRCache/&lt;gameKey&gt;/era_ir.dat</c>，本地保持游戏目录；
 /// 多游戏隔离（gameKey = 归一化 ExeDir 的 Fnv1a64）；孤儿清理（宽限期 + 活动会话保护）。</item>
@@ -100,7 +100,7 @@ public class ErbIrCacheTests
 	[InlineData(true, true, false, true)]
 	[InlineData(true, true, true, false)]
 	public void ShouldUseIrCache_truth_table(bool irDiskCacheConfigured, bool lazyFunctionLoad, bool analysisMode, bool expected)
-		=> Assert.Equal(expected, ErbLoader.ShouldUseIrCache(irDiskCacheConfigured, lazyFunctionLoad, analysisMode));
+		=> Assert.Equal(expected, ErbIrLoadPipeline.ShouldUseIrCache(irDiskCacheConfigured, lazyFunctionLoad, analysisMode));
 
 	// ===== 方案 B（issues/05）：content-URI 搬迁到 app 私有存储 =====
 
@@ -270,7 +270,7 @@ public class ErbIrCacheTests
 
 		// 建一个合法（空函数集）IR：指纹来自同一清单构建路径——BuildPendingList 即 IsIrHitRound 内部所用。
 		// issues/12 M4：指纹含 firstDir 清单、IR 写入清单区（IsIrHitRound 读侧与 fp 口径逐位一致）。
-		var pending = ErbLoader.BuildPendingList(env, null, out var firstDirs, out _);
+		var pending = ErbIrLoadPipeline.BuildPendingList(env, null, out var firstDirs, out _);
 		Assert.NotEmpty(pending);
 		long fp = ErbIrCache.ComputeContentFingerprint(pending, null, firstDirs);
 		string irPath = ErbIrCache.GetIrCachePath(tempRoot);
@@ -278,14 +278,14 @@ public class ErbIrCacheTests
 		using (var writer = new ErbIrCache.IrCacheWriter(irPath))
 			Assert.True(writer.Complete(fp, firstDirs));
 
-		Assert.True(ErbLoader.IsIrHitRound(env), "valid IR + 开关齐备 → 命中轮（跳过内容 Preload）");
+		Assert.True(ErbIrLoadPipeline.IsIrHitRound(env), "valid IR + 开关齐备 → 命中轮（跳过内容 Preload）");
 
 		File.Delete(irPath);
-		Assert.False(ErbLoader.IsIrHitRound(env), "IR 缺失 → 走完整 Preload");
+		Assert.False(ErbIrLoadPipeline.IsIrHitRound(env), "IR 缺失 → 走完整 Preload");
 
 		// 建库轮语义：lazy 关闭 → 不判命中，直接走完整 Preload
 		config.GetConfigItem(ConfigCode.LazyFunctionLoad).SetValue(false);
-		Assert.False(ErbLoader.IsIrHitRound(env));
+		Assert.False(ErbIrLoadPipeline.IsIrHitRound(env));
 	}
 
 	[Fact]
@@ -310,7 +310,7 @@ public class ErbIrCacheTests
 			var env = new LoaderEnv(
 				erbDir, erbDir, analysisMode: false, analysisFiles: new List<string>(), debugMode: false)
 			{ DirAccessor = accessor };
-			var pending = ErbLoader.BuildPendingList(env, null, out _, out _);
+			var pending = ErbIrLoadPipeline.BuildPendingList(env, null, out _, out _);
 			Assert.Single(pending);
 			Assert.Equal("MAIN.ERB", pending[0].Filename);
 
@@ -474,11 +474,11 @@ public class ErbIrCacheTests
 		try
 		{
 			// 建库轮：扫描路径取清单
-			var scanned = ErbLoader.BuildPendingList(env, null, out var scanDirs, out _);
+			var scanned = ErbIrLoadPipeline.BuildPendingList(env, null, out var scanDirs, out _);
 			Assert.Equal(3, scanDirs.Count);
 			// 命中轮：同一清单走 override（清 memo 模拟冷缓存）
 			Preload.Clear();
-			var fromIr = ErbLoader.BuildPendingList(env, scanDirs, out var irDirs, out _);
+			var fromIr = ErbIrLoadPipeline.BuildPendingList(env, scanDirs, out var irDirs, out _);
 			// override 与扫描的待载清单逐位一致（含 firstDir 嵌套子目录文件）+ 清单原样透传
 			Assert.Equal(scanned, fromIr);
 			Assert.Equal(scanDirs, irDirs);
@@ -514,7 +514,7 @@ public class ErbIrCacheTests
 			var env = new LoaderEnv(
 				erbDir, erbDir, analysisMode: false, analysisFiles: new List<string>(), debugMode: false)
 			{ DirAccessor = accessor };
-			var pending = ErbLoader.BuildPendingList(env, new List<string> { "1#EV" }, out var firstDirs, out _);
+			var pending = ErbIrLoadPipeline.BuildPendingList(env, new List<string> { "1#EV" }, out var firstDirs, out _);
 			Assert.Equal(2, pending.Count);
 			// Filename 相对 firstDir（既有语义：firstDir 段的枚举源即 <see cref="Preload.EnumerateFilesFromTree"/> 的 per-dir 视角）
 			Assert.Equal("A.ERB", pending[0].Filename); // firstDir 文件在前
@@ -548,7 +548,7 @@ public class ErbIrCacheTests
 		{ DirAccessor = new FileSystemGameDirAccessor() };
 
 		// 建库轮：扫描清单 + fp（含清单）→ 写 IR（含清单区）
-		var pending = ErbLoader.BuildPendingList(env, null, out var firstDirs, out _);
+		var pending = ErbIrLoadPipeline.BuildPendingList(env, null, out var firstDirs, out _);
 		var dir = Assert.Single(firstDirs);
 		Assert.Equal("1#EV", dir);
 		long fp = ErbIrCache.ComputeContentFingerprint(pending, null, firstDirs);
@@ -561,7 +561,7 @@ public class ErbIrCacheTests
 		try
 		{
 			// 命中轮：预判定读 IR 清单（零扫描）→ fp 一致 → hit
-			Assert.True(ErbLoader.IsIrHitRound(env), "IR + 清单一致 → 命中轮（跳过内容 Preload + 免目录扫描）");
+			Assert.True(ErbIrLoadPipeline.IsIrHitRound(env), "IR + 清单一致 → 命中轮（跳过内容 Preload + 免目录扫描）");
 		}
 		finally
 		{
@@ -574,7 +574,7 @@ public class ErbIrCacheTests
 		Preload.Clear();
 		try
 		{
-			Assert.False(ErbLoader.IsIrHitRound(env), "新增 *#* 目录 → fp 失配 → 走完整 Preload（自愈）");
+			Assert.False(ErbIrLoadPipeline.IsIrHitRound(env), "新增 *#* 目录 → fp 失配 → 走完整 Preload（自愈）");
 		}
 		finally
 		{
@@ -704,7 +704,7 @@ public class ErbIrCacheTests
 		{
 			var env = new LoaderEnv(erbDir, erbDir, analysisMode: false, analysisFiles: new List<string>(), debugMode: false)
 			{ DirAccessor = accessor };
-			var scanned = ErbLoader.BuildPendingList(env, null, out var firstDirs, out _);
+			var scanned = ErbIrLoadPipeline.BuildPendingList(env, null, out var firstDirs, out _);
 			Assert.Single(scanned); // stub 平铺：仅 TOP.ERB（.ERB 过滤）
 
 			// 建库轮收尾写 sidecar（与 LoadErbDir Complete 同构：pending rel 对 + 树清单）
@@ -718,7 +718,7 @@ public class ErbIrCacheTests
 
 			Assert.True(ErbIrCache.TryReadFileList(irPath, out var flPending, out var flTree));
 			Assert.Equal(treeRels, flTree);
-			var replayed = ErbLoader.BuildPendingList(env, null, out _, out _, flPending);
+			var replayed = ErbIrLoadPipeline.BuildPendingList(env, null, out _, out _, flPending);
 			Assert.Equal(scanned.Count, replayed.Count);
 			for (int i = 0; i < scanned.Count; i++)
 			{
@@ -755,7 +755,7 @@ public class ErbIrCacheTests
 		Preload.Clear();
 		try
 		{
-			var scanned = ErbLoader.BuildPendingList(env, null, out var firstDirs, out _);
+			var scanned = ErbIrLoadPipeline.BuildPendingList(env, null, out var firstDirs, out _);
 			Assert.Equal(3, scanned.Count);
 
 			var irPath = Path.Combine(Path.GetTempPath(), "emuera-fllocal-" + Guid.NewGuid().ToString("N"), "era_ir.dat");
@@ -768,7 +768,7 @@ public class ErbIrCacheTests
 
 			Assert.True(ErbIrCache.TryReadFileList(irPath, out var flPending, out var flTree));
 			Assert.Equal(treeRels, flTree);
-			var replayed = ErbLoader.BuildPendingList(env, null, out _, out _, flPending);
+			var replayed = ErbIrLoadPipeline.BuildPendingList(env, null, out _, out _, flPending);
 			Assert.Equal(scanned.Count, replayed.Count);
 			for (int i = 0; i < scanned.Count; i++)
 			{

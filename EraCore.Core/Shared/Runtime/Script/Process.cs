@@ -195,7 +195,7 @@ internal sealed partial class Process(EmueraConsole view)
 			//（建库轮 / IR 关闭轮行为不变）。time.log 的 File:Preload 标记随本段移动：
 			// 命中轮 Start→End 间隔即预判定耗时（近 0），非命中轮含完整内容读取。
 			logWriter?.WriteLine("File:Preload:Start");
-			if (ErbLoader.IsIrHitRound(env))
+			if (ErbIrLoadPipeline.IsIrHitRound(env))
 			{
 				// issues/10 10-B：CSV/ERH 内容缓存重水化（era_src.dat 清单校验 → 轮内快照，
 				// EraStreamReader.OpenOnCache 咽喉消费）。必须先于 LoadBaseCsv（GAMEBASE/固定名 CSV）；

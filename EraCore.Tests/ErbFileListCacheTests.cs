@@ -52,7 +52,7 @@ public class ErbFileListCacheTests
 				{ DirAccessor = accessor };
 
 				// 建库轮：扫描 → fp → IR + sidecar（镜像 LoadErbDir Complete 的写侧逻辑）
-				var pending = ErbLoader.BuildPendingList(env, null, out var firstDirs, out _);
+				var pending = ErbIrLoadPipeline.BuildPendingList(env, null, out var firstDirs, out _);
 				Assert.Equal(2, pending.Count);
 				long fp = ErbIrCache.ComputeContentFingerprint(pending.Select(p => (p.Filename, p.File)).ToList(), null, firstDirs);
 				string irPath = ErbIrCache.GetIrCachePath(Root);
@@ -67,7 +67,7 @@ public class ErbFileListCacheTests
 
 				// 命中轮：memo 清空后 IsIrHitRound 回放 sidecar 清单 + fp 一致 + 播种 memo
 				Preload.Clear();
-				Assert.True(ErbLoader.IsIrHitRound(env), "sidecar 回放 → fp 一致 → 命中轮");
+				Assert.True(ErbIrLoadPipeline.IsIrHitRound(env), "sidecar 回放 → fp 一致 → 命中轮");
 				Assert.True(Preload.TryGetTreeFiles(erbDir, out var seeded), "命中轮播种树枚举 memo");
 				Assert.Equal(treeRels.Count, seeded.Count);
 

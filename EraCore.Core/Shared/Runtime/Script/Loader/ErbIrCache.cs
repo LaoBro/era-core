@@ -39,7 +39,7 @@ internal sealed class IrIndexKeyComparer : IEqualityComparer<(string File, strin
 /// 启动只读「文件头 + 索引区」（索引区整体读入驻留，几 MB 量级）；blob 本体（几十 MB）启动完全不读，物化时按需
 /// seek 读单个 blob。详见 design.md §4。
 ///
-/// v2（diagnostic-knobs/issues/12 M4）：新增 firstDir 清单区——建库轮 <see cref="ErbLoader.BuildPendingList"/> 扫描到的
+/// v2（diagnostic-knobs/issues/12 M4）：新增 firstDir 清单区——建库轮 <see cref="ErbIrLoadPipeline.BuildPendingList"/> 扫描到的
 /// <c>*#*</c> 目录相对名有序清单写盘，命中轮读本地替代 SAF 通配扫描（真机冷树 ≈15.9s/进程）。
 /// count=0 是合法状态（无 firstDir 的游戏照常受益——扫描成本恰恰来自「零命中仍付全款」）；
 /// 「有无清单」以 formatVersion==2 为准。清单进内容指纹（集合语义）：任何 <c>*#*</c> 目录增删 → fp 变 →

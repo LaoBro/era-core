@@ -94,7 +94,7 @@ internal static class SrcContentCache
 		try
 		{
 			if (!Config.Config.SrcContentCache
-				|| !ErbLoader.ShouldUseIrCache(Config.Config.IrDiskCacheLoad, Config.Config.LazyFunctionLoad, env.AnalysisMode)
+				|| !ErbIrLoadPipeline.ShouldUseIrCache(Config.Config.IrDiskCacheLoad, Config.Config.LazyFunctionLoad, env.AnalysisMode)
 				|| !SafPath.IsContentUri(env.ErbDir))
 				return;
 			var sw = System.Diagnostics.Stopwatch.StartNew();
