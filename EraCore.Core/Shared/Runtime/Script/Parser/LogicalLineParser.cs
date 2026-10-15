@@ -31,18 +31,15 @@ internal static class LogicalLineParser
 	internal static readonly AsyncLocal<LogicalLine?> ScanLineLocal = new();
 
 	/// <summary>
-	/// erb-loader-parallel 08：加载期当前解析行的统一读点——sweep 期间读 <see cref="Loader.ErbLoader.SweepScanLine"/>
-	///（ThreadLocal）→ null（非 sweep，含生成期与 runtime：回落全局，与 03 现状一致——生成期读者仅
-	/// Creator.Method.String 的 ScanLineLocal 直读，不经此）。双栖读者（load 期解析 + runtime 执行）统一经此读，
-	/// null 时回落 Process.scaningLine / GetScaningLine()（行为不变）——并行 sweep 期间全局 scaningLine 无写，
-	/// 读者必须走这里才能拿到本线程当前行。SweepActive 短路保证非 sweep 常态零开销（runtime 热路径）。
+	/// erb-loader-parallel 08：加载期当前解析行的统一读点。ADR-0027 决策三（第二刀）：原先直读 ErbLoader 的
+	/// 两个静态（<c>SweepActive</c> 短路 + <c>SweepScanLine</c> ThreadLocal）改为转调**单一** internal static
+	/// 解析入口 <see cref="Loader.ErbLoader.TryGetLoadScanLine"/>——槽本体已是 ParseContext 的私有细节。
+	/// 语义不变：sweep 期间返回本线程当前解析行，否则 null（非 sweep，含生成期与 runtime：回落全局，与 03
+	/// 现状一致——生成期读者仅 Creator.Method.String 的 ScanLineLocal 直读，不经此）。双栖读者（load 期解析 +
+	/// runtime 执行）统一经此读，null 时回落 Process.scaningLine / GetScaningLine()（行为不变）——并行 sweep
+	/// 期间全局 scaningLine 无写，读者必须走这里才能拿到本线程当前行；非 sweep 常态由 Active 短路零开销。
 	/// </summary>
-	internal static LogicalLine? GetLoadScaningLine()
-	{
-		if (!Loader.ErbLoader.SweepActive)
-			return null;
-		return Loader.ErbLoader.SweepScanLine.Value;
-	}
+	internal static LogicalLine? GetLoadScaningLine() => Loader.ErbLoader.TryGetLoadScanLine();
 
 	/// <param name="mergedOnlyDeclarations">已合并入共享列表的 #ONLY 宣言（生成期只读，合并序快照）。</param>
 	/// <param name="fileOnlyDeclarations">本文件新宣言的落点（文件产物字段，合并阶段 AddRange 进共享列表）。</param>

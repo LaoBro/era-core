@@ -1450,29 +1450,90 @@ internal sealed class ErbLoader
 	// ===== erb-loader-parallel 08：ParseScript 未调用遍历并行化（spec-phase2 D4/D5，ADR-0024）=====
 
 	/// <summary>
-	/// D5#6：未调用遍并行期间的 per-线程当前解析行（写点见 <see cref="ScanLine"/>）。
-	/// ThreadLocal 而非 AsyncLocal：写点 per-line 高频（eraTW 1.7M 行 × 3 步），AsyncLocal 每次 set 的
-	/// copy-on-write 开销不可接受；sweep body 是纯同步代码（无 await / 上下文流动），ThreadLocal 语义足够。
-	/// 读者经 <see cref="LogicalLineParser.GetLoadScaningLine"/> 统一入口。
+	/// D5#2/#6 的收纳处：未调用遍并行期的**显式解析上下文**（ADR-0027 决策二.2 / 三）。
+	/// <para>
+	/// 它取代原先散落的三个 ambient 槽（<c>SweepScanLine</c> ThreadLocal / <c>SweepArtCurrent</c> ThreadLocal /
+	/// <c>SweepActive</c> static volatile）与实例分流开关 <c>_sweepParallelActive</c>：并行 worker
+	/// <see cref="Enter"/> 后把本对象**显式穿参**给解析链（<see cref="ParseFunctionWithCatch"/> 及其三步与
+	/// 全部写点），写点不再直写任何 ThreadLocal / 实例字段，而是写本对象的 <see cref="Art"/>。
+	/// </para>
+	/// <para>
+	/// 仍有一处 per-线程发布槽 <see cref="LoadScanLine"/>：运行期读者（VariableToken / LexicalAnalyzer /
+	/// ExpressionParser 等）在**同一个 worker 线程**上按线程读"当前解析行"，无法接收参数，故只能按线程发布。
+	/// 它与 <see cref="Active"/> 同为本类型的私有细节——外部仅经
+	/// <see cref="ErbLoader.TryGetLoadScanLine"/> 这一个 internal static 入口读（决策三：静态字段退化为
+	/// ParseContext 管理的实现细节，审计面从全库 grep 收敛到一个类型）。
+	/// </para>
+	/// <para>
+	/// <see cref="CurrentOrSerial"/> 供**运行期接缝可达**的两个方法取用（<see cref="MaterializeFunction"/> /
+	/// <see cref="ComputeSignatureLines"/>——其调用链经 <c>MaterializeOnRuntime</c> /
+	/// <c>EnsureCalleeSignature</c>，按决策一签名冻结，无法穿参）：本线程已发布并行 ctx 时取它，否则取串行 ctx，
+	/// 语义与改动前的 <c>_sweepParallelActive</c> 分流逐位一致。
+	/// </para>
 	/// </summary>
-	internal static readonly ThreadLocal<LogicalLine?> SweepScanLine = new();
+	private sealed class ParseContext
+	{
+		/// <summary>D5#2：本 label 的产物落点（串行 ctx 为 null → 写点落全局 sink / 实例字段，行为逐位不变）。</summary>
+		internal readonly UncalledSweepArt? Art;
+
+		/// <summary>串行与回放 ctx：<see cref="ScanLine"/> 写全局 sink，FNF / useCallForm 落实例字段。</summary>
+		internal static readonly ParseContext Serial = new(null);
+
+		private ParseContext(UncalledSweepArt? art) => Art = art;
+
+		/// <summary>并行 worker 的 per-label 上下文。</summary>
+		internal static ParseContext ForLabel(UncalledSweepArt art) => new(art);
+
+		/// <summary>本 ctx 是否并行——原 <c>_sweepParallelActive</c> 的替代：落点由 ctx 决定，不再是分流开关。</summary>
+		internal bool IsParallel => Art != null;
+
+		/// <summary>D5#6：并行期间的 per-线程当前解析行（运行期读者按线程读，见类文档）。</summary>
+		private static readonly ThreadLocal<LogicalLine?> LoadScanLine = new();
+
+		/// <summary>本线程当前所处 ctx（供 <see cref="CurrentOrSerial"/> 与 <see cref="ExitLabel"/> 用）。</summary>
+		private static readonly ThreadLocal<ParseContext?> CurrentLocal = new();
+
+		/// <summary>
+		/// sweep 期间为 true（volatile）：读者 fast path——<see cref="ErbLoader.TryGetLoadScanLine"/>
+		/// 常态（非 sweep，含 runtime 热路径）直接短路 null 回落全局，免去 ThreadLocal 读
+		///（eraTW 复测实测该读点在变量解析热路径上被调数百万次）。
+		/// </summary>
+		internal static volatile bool Active;
+
+		/// <summary>运行期读者唯一读点（经 <see cref="ErbLoader.TryGetLoadScanLine"/> 暴露）。</summary>
+		internal static LogicalLine? CurrentLoadScanLine => Active ? LoadScanLine.Value : null;
+
+		/// <summary>接缝可达方法的写点取用：本线程的并行 ctx（若有），否则串行 ctx。</summary>
+		internal static ParseContext CurrentOrSerial => CurrentLocal.Value ?? Serial;
+
+		/// <summary>worker 进入 per-label 上下文：发布 per-thread 面（配 <see cref="ExitLabel"/>）。</summary>
+		internal void Enter()
+		{
+			CurrentLocal.Value = this;
+			LoadScanLine.Value = null;
+		}
+
+		/// <summary>label 解析完毕：撤销本线程的 ctx 发布（解析行槽按既有语义留到 sweep 收尾/range 收尾清）。</summary>
+		internal static void ExitLabel() => CurrentLocal.Value = null;
+
+		/// <summary>清本线程两个发布槽（线程池线程复用防残留；原 sweep 收尾的两行）。</summary>
+		internal static void ClearThreadSlots()
+		{
+			LoadScanLine.Value = null;
+			CurrentLocal.Value = null;
+		}
+
+		/// <summary>并行 worker 的解析行写点：写 per-线程发布槽（静态——槽按线程而非按 ctx 实例，见类文档）。</summary>
+		internal static void PublishScanLine(LogicalLine line) => LoadScanLine.Value = line;
+	}
 
 	/// <summary>
-	/// D5#2：未调用遍并行期间的 per-label 产物落点——printFunctionNotFoundWarning 的 FNF 事件拦截用
-	///（ONCE 去重 / 计数必须回放段串行重走）。label 级设置（每 label 2 次写），AsyncLocal 开销可忽略，
-	/// 但与 <see cref="SweepScanLine"/> 同机制更简单。
+	/// 运行期读缝（ADR-0027 决策三）：原先分散的两个静态（<c>SweepActive</c> 短路 + <c>SweepScanLine</c> 读）
+	/// 收敛成的**单一** internal static 解析入口——"运行期读加载期状态"这一事实从此只在本方法可见，
+	/// 槽本体是 <see cref="ParseContext"/> 的私有细节。运行期唯一外部读者
+	/// （<see cref="LogicalLineParser.GetLoadScaningLine"/>）转调本方法。
 	/// </summary>
-	private static readonly ThreadLocal<UncalledSweepArt?> SweepArtCurrent = new();
-
-	/// <summary>sweep 期间为 true（实例字段，主线程在 Parallel.ForEach 前后设置）：<see cref="ScanLine"/> 写点切换与 nestCheck 集合局部化的 fast path。</summary>
-	private bool _sweepParallelActive;
-
-	/// <summary>
-	/// sweep 期间为 true（静态 volatile）：读者 fast path——<see cref="LogicalLineParser.GetLoadScaningLine"/>
-	/// 常态（非 sweep，含 runtime 热路径）直接短路 null 回落全局，免去 AsyncLocal/ThreadLocal 读
-	///（eraTW 复测实测该读点在变量解析热路径上被调数百万次）。
-	/// </summary>
-	internal static volatile bool SweepActive;
+	internal static LogicalLine? TryGetLoadScanLine() => ParseContext.CurrentLoadScanLine;
 
 	/// <summary>D5#2：FNF 事件缓冲（回放段重走 printFunctionNotFoundWarning 的 ONCE 决策）。</summary>
 	private readonly record struct FnfEvent(string Str, LogicalLine Line, int Level, bool IsError);
@@ -1502,15 +1563,16 @@ internal sealed class ErbLoader
 	}
 
 	/// <summary>
-	/// D5#6：解析行写点。串行路径直写全局 sink（行为不变）；未调用遍并行期间写 per-线程
-	/// <see cref="SweepScanLine"/>（全局 sink 无并发写；sweep 收尾 setScanLine(null!) 对齐串行终态——
-	/// 串行下每个 ParseFunctionWithCatch 的 finally 都写 null，中间行值仅解析期读者可见，已由
-	/// GetLoadScaningLine 重定向覆盖）。
+	/// D5#6：解析行写点。落点由**显式传入的 ctx** 决定（ADR-0027 决策二.2：不再直写 ThreadLocal /
+	/// 实例字段）：串行/回放 ctx 直写全局 sink（行为不变）；并行 ctx 写其 per-线程发布槽
+	///（全局 sink 无并发写；sweep 收尾 setScanLine(null!) 对齐串行终态——串行下每个
+	/// ParseFunctionWithCatch 的 finally 都写 null，中间行值仅解析期读者可见，已由
+	/// <see cref="TryGetLoadScanLine"/> 重定向覆盖）。
 	/// </summary>
-	private void ScanLine(LogicalLine line)
+	private void ScanLine(LogicalLine line, ParseContext ctx)
 	{
-		if (_sweepParallelActive)
-			SweepScanLine.Value = line;
+		if (ctx.IsParallel)
+			ParseContext.PublishScanLine(line);
 		else
 			setScanLine(line);
 	}
@@ -1625,7 +1687,7 @@ internal sealed class ErbLoader
 				if (lazyMode && label.IsStub)
 					MaterializeLabel(label);
 				else if (!label.ThreePassed)
-					ParseFunctionWithCatch(label);
+					ParseFunctionWithCatch(label, ParseContext.Serial);
 			}
 			if (countInDepth == 0)
 				break;
@@ -1700,7 +1762,7 @@ internal sealed class ErbLoader
 					{
 						if (label.Depth != labelDepth)
 							continue;
-						ParseFunctionWithCatch(label);
+						ParseFunctionWithCatch(label, ParseContext.Serial);
 					}
 				}
 			}
@@ -1728,7 +1790,7 @@ internal sealed class ErbLoader
 					continue;
 				//解析モード時は呼ばれなかったものをここで解析
 				if (env.AnalysisMode)
-					ParseFunctionWithCatch(label);
+					ParseFunctionWithCatch(label, ParseContext.Serial);
 				bool ignore = false;
 				if (notCalledWarning == DisplayWarningFlag.ONCE)
 				{
@@ -1768,7 +1830,7 @@ internal sealed class ErbLoader
 								artIdx++;
 							}
 							else
-								ParseFunctionWithCatch(label);
+								ParseFunctionWithCatch(label, ParseContext.Serial);
 						}
 					}
 					else
@@ -1906,12 +1968,14 @@ internal sealed class ErbLoader
 
 
 	public Dictionary<string, long> warningDic = [];
-	private void printFunctionNotFoundWarning(string str, LogicalLine line, int level, bool isError)
+	private void printFunctionNotFoundWarning(string str, LogicalLine line, int level, bool isError, ParseContext ctx)
 	{
 		// erb-loader-parallel 08 D5#2：未调用遍并行期间缓冲 FNF 事件（含被忽略的——回放时决策原样重走）。
 		// ONCE 去重（ignoredFNFWarningFiles）与 ignoredFNFWarningCount 必须串行序，故整个决策延后到回放段；
 		// IsError/ErrMes 行内写先行（幂等无害，回放重走时再写一次 no-op）。
-		var sweepArt = SweepArtCurrent.Value;
+		// ADR-0027 决策二.2：落点由显式 ctx 决定（原读 SweepArtCurrent ThreadLocal）——并行 ctx 的
+		// Art 非 null → 拦截入缓冲；串行/回放 ctx 的 Art 为 null → 下方原决策逐位重走。
+		var sweepArt = ctx.Art;
 		if (sweepArt != null)
 		{
 			if (isError)
@@ -1973,9 +2037,11 @@ internal sealed class ErbLoader
 	/// <see cref="Parallel"/>.ForEach(Partitioner 范围分区, Min(ProcessorCount, 8))——Partitioner 均载 +
 	/// 度数封顶（度数硬编码不可配，R3-Q11）；per-label 产物（警告缓冲 / FNF 事件）按 labelList 序
 	/// 存入返回数组，回放段串行重放。共享状态处置对照 D5 清单：#1 警告 per-label 缓冲（Begin/EndWarningBuffer）；
-	/// #2 FNF 事件拦截（printFunctionNotFoundWarning 开头）；#3 useCallForm 改返回值 + per-label
-	/// 产物（原为 ref 直写实例字段，共享写已消除，见 MarkUseCallForm）；
-	/// #5 nestCheck 集合局部化（nestCheck 内部）；#6 scaningLine 写点切换（ScanLine()）；
+	/// #2 FNF 事件拦截 + #3 useCallForm（第二刀后**同经 <see cref="ParseContext"/> 的 per-label 产物落点**，
+	/// 原 ThreadLocal <c>SweepArtCurrent</c> 已删除，见 MarkUseCallForm / printFunctionNotFoundWarning）；
+	/// #5 nestCheck 集合局部化（nestCheck 内部，按 <see cref="ParseContext.IsParallel"/> 判）；
+	/// #6 scaningLine 写点（<see cref="ScanLine"/>：第二刀后写 <see cref="ParseContext"/> 的 per-线程发布槽，
+	/// 原 <c>SweepScanLine</c> 静态已删除）；
 	/// #7 Depth check-then-set 同层同值良性竞争（事实 B）；#8 并行段跳过 per-label 分步计时（_parseDiag 置 null，
 	/// phases 总时长计时在调用方）。异常语义（R3-Q9）：先按序回放已产生的缓冲（已解析 label 的警告不丢）
 	/// 再重抛 InnerExceptions[0]，由外层 LoadErbDir 既有 catch 统一处理。
@@ -1993,8 +2059,7 @@ internal sealed class ErbLoader
 		if (arts.Length == 0)
 			return arts;
 		_parseDiag = null;
-		_sweepParallelActive = true;
-		SweepActive = true;
+		ParseContext.Active = true;
 		// 06-K1 修订 R3-Q11：清扫度不再硬编码——与 LoadPendingParallel 窗口同源同拨（同一旋钮，
 		// 由 ParseScript 算好传入）。auto 时 = min(核数, 8) 与旧硬编码逐位一致；语义仍不同
 		// （此处是并行解析线程上限，窗口是同时在生成/未合并的文件数），共用同一取证旋钮
@@ -2012,14 +2077,17 @@ internal sealed class ErbLoader
 						var art = new UncalledSweepArt { Label = targets[i] };
 						arts[i] = art;
 						ParserMediator.BeginWarningBuffer(art.Warnings);
-						SweepArtCurrent.Value = art;
+						// ADR-0027 决策二.2：per-label 解析上下文**显式建立并穿参**（取代原 SweepArtCurrent
+						// ThreadLocal —— worker 不再直写任何 ambient 槽）。
+						var ctx = ParseContext.ForLabel(art);
+						ctx.Enter();
 						try
 						{
-							ParseFunctionWithCatch(targets[i]);
+							ParseFunctionWithCatch(targets[i], ctx);
 						}
 						finally
 						{
-							SweepArtCurrent.Value = null;
+							ParseContext.ExitLabel();
 							ParserMediator.EndWarningBuffer();
 						}
 					}
@@ -2027,9 +2095,8 @@ internal sealed class ErbLoader
 				finally
 				{
 					// 线程池线程复用防残留：本 range 结束后清 per-线程 slot（否则该线程后续跑 runtime
-					// 代码时 SweepScanLine.Value 非 null，读者会读到 stale 行）
-					SweepScanLine.Value = null;
-					SweepArtCurrent.Value = null;
+					// 代码时发布槽非 null，读者会读到 stale 行）
+					ParseContext.ClearThreadSlots();
 				}
 			});
 		}
@@ -2040,12 +2107,10 @@ internal sealed class ErbLoader
 		}
 		finally
 		{
-			_sweepParallelActive = false;
-			SweepActive = false;
+			ParseContext.Active = false;
 			// Parallel.ForEach 内联执行会污染调用线程的 ThreadLocal slot——显式复位；终态对齐串行
 			//（串行下最后一个 ParseFunctionWithCatch 的 finally 写 null）
-			SweepScanLine.Value = null;
-			SweepArtCurrent.Value = null;
+			ParseContext.ClearThreadSlots();
 			setScanLine(null!);
 		}
 		return arts;
@@ -2082,7 +2147,7 @@ internal sealed class ErbLoader
 			if (w.WarningLevel == UncalledSweepArt.FnfPlaceholderLevel)
 			{
 				var ev = art.FnfEvents[fnfIdx++];
-				printFunctionNotFoundWarning(ev.Str, ev.Line, ev.Level, ev.IsError);
+				printFunctionNotFoundWarning(ev.Str, ev.Line, ev.Level, ev.IsError, ParseContext.Serial);
 			}
 			else
 			{
@@ -2376,11 +2441,15 @@ internal sealed class ErbLoader
 					mdiag.SignatureLabels++;
 				}
 			}
+			// ADR-0027 决策三：本方法经运行期接缝（MaterializeOnRuntime / EnsureCalleeSignature）可达，
+			// 按决策一签名冻结 ⇒ 不穿参，经 ParseContext 的单一访问器取本线程 ctx（在并行 worker 线程上
+			// 取到的即该 worker 的 per-label ctx——语义与原 _sweepParallelActive 分流逐位一致）。
+			ParseContext ctx = ParseContext.CurrentOrSerial;
 			if (mdiag == null)
 			{
-				setArgument(label);
-				nestCheck(label);
-				setJumpTo(label);
+				setArgument(label, ctx);
+				nestCheck(label, ctx);
+				setJumpTo(label, ctx);
 			}
 			else
 			{
@@ -2388,11 +2457,11 @@ internal sealed class ErbLoader
 				long aThree = A();
 				long tSetArg = Stopwatch.GetTimestamp();
 				ParserProbeScope psThree = EnterScope(ParserProbeScope.Three);
-				setArgument(label);
+				setArgument(label, ctx);
 				long tNest = Stopwatch.GetTimestamp();
-				nestCheck(label);
+				nestCheck(label, ctx);
 				long tJump = Stopwatch.GetTimestamp();
-				setJumpTo(label);
+				setJumpTo(label, ctx);
 				long tEnd = Stopwatch.GetTimestamp();
 				ExitScope(psThree);
 				mdiag.SetArgTicks += tNest - tSetArg;
@@ -2404,7 +2473,7 @@ internal sealed class ErbLoader
 		}
 		finally
 		{
-			ScanLine(null!);
+			ScanLine(null!, ParseContext.CurrentOrSerial);
 		}
 		label.ThreePassed = true; // b2-irdiskcache：三遍完成，供主循环跳过重复处理（加载期 CALL arg 转换已提前物化本标签时）
 		return label;
@@ -2520,7 +2589,7 @@ internal sealed class ErbLoader
 			}
 			finally
 			{
-				ScanLine(prevScan!);
+				ScanLine(prevScan!, ParseContext.CurrentOrSerial);
 			}
 			// 注意：不动 IsStub（仍为桩，函数体留待主循环物化）。
 		}
@@ -2729,7 +2798,12 @@ internal sealed class ErbLoader
 	/// <summary>加载期（ParseScript 主循环）arg 解析物化用的当前 loader；运行时恒经 RuntimeLoader，本槽仅加载中回退。</summary>
 	private static ErbLoader? _activeArgLoader;
 
-	private void ParseFunctionWithCatch(FunctionLabelLine label)
+	/// <summary>
+	/// 单标签三遍解析（setArgument / nestCheck / setJumpTo）。<paramref name="ctx"/> 为**显式**解析上下文
+	/// （ADR-0027 决策二.2）：串行主循环与回放传 <see cref="ParseContext.Serial"/>，并行 worker 传其
+	/// per-label ctx——本方法及其三步不再读写任何 ambient 槽。
+	/// </summary>
+	private void ParseFunctionWithCatch(FunctionLabelLine label, ParseContext ctx)
 	{//ここでエラーを捕まえることは本来はないはず。ExeEE相当。
 		try
 		{
@@ -2738,13 +2812,13 @@ internal sealed class ErbLoader
 				// erb-loader-parallel 05：三步分段计时（按 InUncalled 分桶累计）
 				var sw = diag.Sw;
 				sw.Restart();
-				setArgument(label);
+				setArgument(label, ctx);
 				long setArg = sw.ElapsedTicks;
 				sw.Restart();
-				nestCheck(label);
+				nestCheck(label, ctx);
 				long nest = sw.ElapsedTicks;
 				sw.Restart();
-				setJumpTo(label);
+				setJumpTo(label, ctx);
 				long jump = sw.ElapsedTicks;
 				if (diag.InUncalled)
 				{
@@ -2761,9 +2835,9 @@ internal sealed class ErbLoader
 			}
 			else
 			{
-				setArgument(label);
-				nestCheck(label);
-				setJumpTo(label);
+				setArgument(label, ctx);
+				nestCheck(label, ctx);
+				setJumpTo(label, ctx);
 			}
 		}
 		catch (Exception exc)
@@ -2783,13 +2857,13 @@ internal sealed class ErbLoader
 		}
 		finally
 		{
-			ScanLine(null!);
+			ScanLine(null!, ctx);
 		}
 		label.ThreePassed = true; // b2-irdiskcache：三遍跑完（含失败已标错）——主循环按此跳过重复三遍。
 
 	}
 
-	private void setArgument(FunctionLabelLine label)
+	private void setArgument(FunctionLabelLine label, ParseContext ctx)
 	{
 		//1周目/3周
 		//引数の解析とか
@@ -2798,7 +2872,7 @@ internal sealed class ErbLoader
 		while (true)
 		{
 			nextLine = nextLine.NextLine;
-			ScanLine(nextLine);
+			ScanLine(nextLine, ctx);
 			if (nextLine is not InstructionLine func)
 			{
 				if (nextLine is NullLine or FunctionLabelLine)
@@ -2818,7 +2892,7 @@ internal sealed class ErbLoader
 		}
 	}
 
-	private void nestCheck(FunctionLabelLine label)
+	private void nestCheck(FunctionLabelLine label, ParseContext ctx)
 	{
 		//2周目/3周
 		//IF-ELSEIF-ENDIF、REPEAT-RENDの対応チェックなど
@@ -2830,7 +2904,7 @@ internal sealed class ErbLoader
 		List<InstructionLine> tempLineList;
 		Stack<InstructionLine> nestStack;
 		Stack<InstructionLine> SelectcaseStack;
-		if (_sweepParallelActive)
+		if (ctx.IsParallel)
 		{
 			tempLineList = [];
 			nestStack = new();
@@ -2849,7 +2923,7 @@ internal sealed class ErbLoader
 		while (true)
 		{
 			nextLine = nextLine.NextLine;
-			ScanLine(nextLine);
+			ScanLine(nextLine, ctx);
 			if (nextLine is NullLine or FunctionLabelLine)
 				break;
 			if (nextLine is not InstructionLine)
@@ -3387,7 +3461,7 @@ internal sealed class ErbLoader
 		SelectcaseStack.Clear();
 	}
 
-	private void setJumpTo(FunctionLabelLine label)
+	private void setJumpTo(FunctionLabelLine label, ParseContext ctx)
 	{
 		//3周目/3周
 		//フロー制御命令のジャンプ先を設定
@@ -3406,7 +3480,7 @@ internal sealed class ErbLoader
 			}
 			if (func.IsError)
 				continue;
-			ScanLine(func);
+			ScanLine(func, ctx);
 
 			if (func.Function.Instruction != null)
 			{
@@ -3416,7 +3490,7 @@ internal sealed class ErbLoader
 					// D5#3：callform 标记改为返回值，由 MarkUseCallForm 决定落点——
 					// 并行未调用清扫期间写入 per-label 产物，不再直写本实例字段。
 					if (func.Function.Instruction.SetJumpTo(func, depth, ref FunctionNotFoundName))
-						MarkUseCallForm();
+						MarkUseCallForm(ctx);
 				}
 				catch (CodeEE e)
 				{
@@ -3426,27 +3500,28 @@ internal sealed class ErbLoader
 				if (FunctionNotFoundName != null)
 				{
 					if (!env.AnalysisMode)
-						printFunctionNotFoundWarning(string.Format(trerror.NotDefinedFunc.Text, FunctionNotFoundName), func, 2, true);
+						printFunctionNotFoundWarning(string.Format(trerror.NotDefinedFunc.Text, FunctionNotFoundName), func, 2, true, ctx);
 					else
-						printFunctionNotFoundWarning(FunctionNotFoundName, func, 2, true);
+						printFunctionNotFoundWarning(FunctionNotFoundName, func, 2, true, ctx);
 				}
 				continue;
 			}
 			if (func.FunctionCode == FunctionCode.TRYCALLLIST || func.FunctionCode == FunctionCode.TRYJUMPLIST)
-				MarkUseCallForm();
+				MarkUseCallForm(ctx);
 		}
 	}
 
 	/// <summary>
-	/// erb-loader-parallel 08 D5#3：记录「用到 callform 系」，按上下文分流落点而非直写实例字段。
-	/// 主循环（串行）下 <see cref="SweepArtCurrent"/> 为 null → 直写 <see cref="useCallForm"/>，
+	/// erb-loader-parallel 08 D5#3：记录「用到 callform 系」，按显式 ctx 落点而非直写实例字段
+	/// （ADR-0027 第二刀：落点由 <paramref name="ctx"/> 决定，原读 <c>SweepArtCurrent</c> ThreadLocal）。
+	/// 主循环（串行/回放）下 <see cref="ParseContext.Art"/> 为 null → 直写 <see cref="useCallForm"/>，
 	/// 与改动前完全一致；未调用并行清扫期间写入 per-label 产物
 	/// <see cref="UncalledSweepArt.UseCallForm"/>，由回放段在主线程合并。
 	/// 并行区因此不再有对本实例字段的写入（原为 ref 直写，构成共享写）。
 	/// </summary>
-	private void MarkUseCallForm()
+	private void MarkUseCallForm(ParseContext ctx)
 	{
-		UncalledSweepArt? art = SweepArtCurrent.Value;
+		UncalledSweepArt? art = ctx.Art;
 		if (art != null)
 			art.UseCallForm = true;
 		else

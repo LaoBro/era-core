@@ -53,8 +53,9 @@ public class UncalledSweepEquivalenceTests
 		// scan-line sink 必须真实写入 Process.scaningLine（对齐 Process.cs:627 的 `line => process.scaningLine = line`）。
 		// 若沿用其他 loader 单测的 `_ => { }` 空实现，串行路径的 GetLoadScaningLine() 恒为 null、
 		// 回落 Process.GetScaningLine() 仍是 null，私有变量一律被误判「この関数中では定義されていません」
-		//（ErbLoader.cs:2064 已记录该误报）；并行路径走 ThreadLocal SweepScanLine 不受影响——
-		// 于是会造出「串行报错、并行不报」的假差异。语料含 #DIM 私有变量时必现。
+		//（ErbLoader 的 ScanLine 写点注释已记录该误报）；并行路径走 ParseContext 的 per-线程发布槽
+		//（ADR-0027 第二刀前为 ThreadLocal SweepScanLine）不受影响——于是会造出「串行报错、并行不报」
+		// 的假差异。语料含 #DIM 私有变量时必现。
 		// 须载入 h.LabelDic：setJumpTo 的子层 Depth 解析经 GlobalStatic.LabelDictionary。
 		var ok = await new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line)
 			.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
