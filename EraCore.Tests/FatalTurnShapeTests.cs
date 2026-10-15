@@ -23,7 +23,7 @@ public sealed class FatalTurnShapeTests
     [Fact]
     public void Fatal_turn_is_a_wellformed_terminal_frame()
     {
-        var json = AgentJsonlProtocol.BuildFatalTurn("boom");
+        var json = TurnFrames.Fatal("boom");
 
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
@@ -51,7 +51,7 @@ public sealed class FatalTurnShapeTests
         var errorInfo = new ErrorInfo("System.InvalidOperationException", "boom",
             new ErrorInfo("System.IO.IOException", "disk"));
 
-        var json = AgentJsonlProtocol.BuildErrorTurn("boom (full stack)", errorInfo);
+        var json = TurnFrames.Error("boom (full stack)", errorInfo);
 
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;

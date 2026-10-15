@@ -1,6 +1,4 @@
 using System;
-using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera;
@@ -165,7 +163,7 @@ internal sealed class Session : IDisposable
                         // 目标 1：errorInfo 结构化（type/message/inner），agent 一次定位；error 保留完整串兼容既有消费者。
                         // v12：改用共享构造点——终态形状 awaiting.ended{terminal:"Error"}（原先手拼 JsonObject
                         // 带旧顶层 state 且无 awaiting，前端会判为协议解析失败，真实错误反而看不到）。
-                        _io.WriteLine(AgentJsonlProtocol.BuildErrorTurn(ex.ToString(), ErrorInfo.From(ex)));
+                        _io.WriteLine(TurnFrames.Error(ex.ToString(), ErrorInfo.From(ex)));
                     }
                     finally
                     {
@@ -201,7 +199,7 @@ internal sealed class Session : IDisposable
         try
         {
             // v12：与 runLoop 回调内 catch 同一条共享构造点（终态 awaiting.ended{terminal:"Error"}）。
-            _io.WriteLine(AgentJsonlProtocol.BuildErrorTurn(ex.ToString(), ErrorInfo.From(ex)));
+            _io.WriteLine(TurnFrames.Error(ex.ToString(), ErrorInfo.From(ex)));
         }
         catch (Exception wex)
         {

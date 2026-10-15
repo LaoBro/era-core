@@ -547,7 +547,7 @@ internal sealed class DisplayState : IDisplayState
     /// 生成全量快照并序列化为 JSON 字符串（GET /snapshot 端点使用）。
     /// 经 Current → TryUpdate 保证快照随游戏打印实时推进。
     /// JsonTypeInfo 重载消除 IL2026/IL3050（options 重载标 RequiresUnreferencedCode；
-    /// 运行时经 JsonOpts.TypeInfoResolver 走源生成，安全——与 AgentJsonlProtocol.SerializeTurn 同模式）。
+    /// 运行时经 JsonOpts.TypeInfoResolver 走源生成，安全——与 TurnFrames.SerializeTurn 同模式）。
     /// </summary>
     internal string GetSnapshotJson() =>
         JsonSerializer.Serialize(Current, (JsonTypeInfo<DisplaySnapshot>)JsonOpts.GetTypeInfo(typeof(DisplaySnapshot)));

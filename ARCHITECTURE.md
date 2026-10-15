@@ -68,6 +68,8 @@
 - **共享层 `Server/`**（issue 05「抽共享层 + 双宿主」）：回合协议（`GameServerProtocol`）、控制状态机（`Controller`）、会话（`Session` / `SessionRegistry` / `HttpSessionIO` / `OutputHub` / `WsRelay`）与 `HttpListenerHost`（BCL 托管宿主）——不依赖 ASP.NET Core，供 Kestrel 与 MAUI 双宿主复用。
 - 从旧 WinForms 源码迁移而来的共享运行时，位于 `Shared/`。
 
+> Core 内部的三条能力轴（输入 / 输出 / 文件）抽象、实现映射与不变量清单，见 [`EraCore.Core/ARCHITECTURE.md`](EraCore.Core/ARCHITECTURE.md)。
+
 主要区域：
 
 | 路径 | 职责 |
@@ -193,6 +195,7 @@ agent   -> HTTP/WS -> HttpListenerHost (同一共享层会话)
 
 ## 相关文档
 
+- Core 抽象层：[`EraCore.Core/ARCHITECTURE.md`](EraCore.Core/ARCHITECTURE.md)（输入/输出/文件三条能力轴的层图与不变量）
 - 前端导航：[`EraCore.Web/README.md`](EraCore.Web/README.md)
 - 测试说明：[`tests/README.md`](tests/README.md)
 - 文件迁移历史：[`docs/2026.6.30.架构健壮性重构/T-023前置-文件结构整理方案.md`](docs/2026.6.30.架构健壮性重构/T-023前置-文件结构整理方案.md)

@@ -2239,7 +2239,7 @@ internal sealed class BridgeHost : IDisposable
             // 这里原先直接用 EmueraJsonContext.Default.TurnRecord —— 那是**没有 Converters** 的
             // context，历史上只因 fatal turn 的 diff:null 才侥幸不炸；awaiting 一变成内嵌对象，
             // 「改一行注册」已不足以保证正确。故改调 Core 的单一构造点（可被单测闸住）。
-            var errorTurn = AgentJsonlProtocol.BuildFatalTurn(message);
+            var errorTurn = TurnFrames.Fatal(message);
             // _jsBridge.PostTurn 内部 fire-and-forget（async void），异常被自身 catch 不抛——
             // 但 try/catch 兜底防御：PostTurn 之外的序列化失败也走 DisplayAlert fallback。
             _dispatcher.Dispatch(() => _jsBridge.PostTurn(errorTurn));

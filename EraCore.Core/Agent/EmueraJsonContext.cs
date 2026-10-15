@@ -8,7 +8,7 @@ namespace MinorShift.Emuera.GameView;
 /// AOT 下反射序列化被禁用（JsonSerializerIsReflectionDisabled），所有 JSON 路径必须经此上下文。
 /// <para>
 /// wire 契约保持不变的三个机制：
-/// 1. <see cref="TurnJsonOptions"/> / <see cref="DisplayState.JsonOpts"/> 加 <c>TypeInfoResolver = EmueraJsonContext.Default</c>，
+/// 1. <see cref="TurnFrames.TurnJsonOptions"/> / <see cref="DisplayState.JsonOpts"/> 加 <c>TypeInfoResolver = EmueraJsonContext.Default</c>，
 ///    直接序列化 TurnRecord/DisplaySnapshot 走源生成 TypeInfo，输出与反射版逐字节一致（同 WhenWritingNull、无 naming policy）；
 /// 2. <see cref="TurnOpConverter"/>/<see cref="LineOpConverter"/> 的装箱 Write 递归 <c>Serialize((object)value, options)</c>
 ///    经 options.TypeInfoResolver 按运行时具体类型解析——此处显式注册全部多态叶子类型，保证 GetTypeInfo 命中；

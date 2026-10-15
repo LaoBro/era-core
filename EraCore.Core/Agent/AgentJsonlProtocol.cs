@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Primitives;
@@ -15,66 +13,6 @@ namespace MinorShift.Emuera.GameView
 {
     internal class AgentJsonlProtocol : AgentProtocolBase
     {
-        // Issue 08：internal（原 private）—— BridgeHost.ShowFatalError 序列化 error turn 时复用，
-        // 保证与 AgentJsonlProtocol.StepAsync 的 error turn 完全一致（同 converters + ignore condition）。
-        // MAUI 项目经 InternalsVisibleTo("EraCore.Maui") 可访问。
-        // 3.3（NativeAOT）：TypeInfoResolver 指向源生成上下文——AOT 下反射序列化被禁用，
-        // TurnOpConverter/LineOpConverter 的装箱 Write 经此 resolver 按运行时类型解析，wire 不变。
-        internal static readonly JsonSerializerOptions TurnJsonOptions = new()
-        {
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-            Converters = { new TurnOpConverter(), new LineOpConverter() },
-            TypeInfoResolver = EmueraJsonContext.Default,
-        };
-
-        /// <summary>
-        /// TurnRecord 序列化（converter 多态 + 源生成 resolver 的完整形态）。
-        /// 用 JsonTypeInfo 重载而非 options 重载：`Serialize(T, JsonSerializerOptions)` 标了
-        /// RequiresUnreferencedCode/RequiresDynamicCode（IL2026/IL3050），即使运行时经
-        /// TurnJsonOptions.TypeInfoResolver 走源生成也报静态警告；JsonTypeInfo 重载无标注。
-        /// <see cref="JsonSerializerOptions.GetTypeInfo"/> 从 TurnJsonOptions 解析——converter 链
-        /// （TurnOpConverter/LineOpConverter 的多态装箱 Write）完整保留，wire 与 options 重载一致。
-        /// 注意：不可改用 <c>EmueraJsonContext.Default.TurnRecord</c>（context 无 Converters）——
-        /// LineOp/TurnOp 抽象基类直接序列化只输出 type 鉴别符，diff 内容丢失
-        /// （test_snapshot 抓到的 {"lineOps":[{"type":"append"}]} 空壳回归，2026.8.7）。
-        /// </summary>
-        internal static string SerializeTurn(TurnRecord turn)
-            => JsonSerializer.Serialize(turn, (JsonTypeInfo<TurnRecord>)TurnJsonOptions.GetTypeInfo(typeof(TurnRecord)));
-
-        /// <summary>
-        /// 致命错误帧（轴 A 的例外 B5）：<b>不经过脚本</b>、不对应任何停稳点，由第二产出者
-        /// （<c>EraCore.Maui/BridgeHost.ShowError</c>）构造，形态是终态键
-        /// <c>awaiting.ended{terminal:"Error"}</c>（<c>input</c> / <c>wait</c> 不得同时出现）。
-        ///
-        /// <para>🔴 <b>必须与主流帧共用同一条序列化路径</b>（<see cref="SerializeTurn"/>，含多态
-        /// converter + 源生成 resolver）。MAUI 侧原先直接用 <c>EmueraJsonContext.Default.TurnRecord</c>
-        /// ——那是<b>没有 Converters</b> 的上下文，历史上只因 fatal turn 的 <c>diff:null</c> 才侥幸不炸；
-        /// <c>awaiting</c> 一变成内嵌对象，这条路径的风险就不再是「改一行注册」的量级。</para>
-        /// </summary>
-        internal static string BuildFatalTurn(string message) => SerializeTurn(new TurnRecord(
-            diff: null,
-            awaiting: AwaitInfo.Of(null, ConsoleState.Error, timedOut: false),
-            error: message));
-
-        /// <summary>
-        /// 会话级异常帧（初始化阶段失败 / 游戏循环回调异常）——同样<b>不经过脚本</b>、是终态。
-        ///
-        /// <para>与 <see cref="BuildFatalTurn"/> 同属「第二产出者」：必须与主流帧共用同一条
-        /// 序列化路径（<see cref="SerializeTurn"/>），形状是 <c>awaiting.ended{terminal:"Error"}</c>。
-        /// 差别只在这里额外携带结构化诊断 <paramref name="errorInfo"/>，且 <c>error</c> 用完整串
-        /// （含堆栈）以兼容既有消费者。</para>
-        ///
-        /// <para>⚠️ 这两个调用点原先是手拼 <c>JsonObject</c>（含旧的顶层 <c>state</c>、无
-        /// <c>awaiting</c>）——v12 起前端要求 <c>awaiting</c> 必填，手拼帧会被判为协议解析失败、
-        /// 真实错误反而看不到。</para>
-        /// </summary>
-        internal static string BuildErrorTurn(string errorText, ErrorInfo? errorInfo)
-            => SerializeTurn(new TurnRecord(
-                diff: null,
-                awaiting: AwaitInfo.Of(null, ConsoleState.Error, timedOut: false),
-                error: errorText,
-                errorInfo: errorInfo));
-
         private readonly SessionIO _io;
         private readonly DisplayState _displayState;
         private string? _pendingRejectReason;
@@ -141,12 +79,9 @@ namespace MinorShift.Emuera.GameView
                 // QUIT/EXIT：正常退出。
                 // 不能走下方 catch-all——那会构造 state=Running + error 文本的回合，
                 // 前端画面不变、无可见错误，表现为假死。这里构造干净 Quit 回合并结束会话。
-                var quitTurn = SerializeTurn(new TurnRecord(
-                    diff: null,
-                    // 终态：只剩 ended（§0.1 ① 那个「Quit 帧还带 inputType/timeLimit」的残留
-                    // bug 在新形态下结构性不可能构造出来）。
-                    awaiting: AwaitInfo.Of(null, ConsoleState.Quit, timedOut: false)
-                ));
+                // 终态：只剩 ended（§0.1 ① 那个「Quit 帧还带 inputType/timeLimit」的残留
+                // bug 在新形态下结构性不可能构造出来 —— 由 TurnFrames.Quit 的签名保证）。
+                var quitTurn = TurnFrames.Quit();
                 Stop();
                 return quitTurn;
             }
@@ -155,15 +90,10 @@ namespace MinorShift.Emuera.GameView
                 // I-08：脚本运行期异常一律 fatal。
                 var msg = $"StepAsync fatal: {ex}";
                 EmueraLog.Error("jsonl", msg);
-                var errorTurn = SerializeTurn(new TurnRecord(
-                    diff: null,
-                    // 运行期异常一律 fatal（Process 内部状态不可逆）⇒ awaiting 按终态构造。
-                    // 不照抄 console.State：异常可能发生在 Running 态，那时按停稳点判据
-                    // 会得到一个「既无 input 又无 wait」的非法等待（§1.2 规则 1）。
-                    awaiting: AwaitInfo.Of(null, ConsoleState.Error, timedOut: false),
-                    error: ex.Message,
-                    errorInfo: ErrorInfo.From(ex)
-                ));
+                // 运行期异常一律 fatal（Process 内部状态不可逆）⇒ awaiting 按终态构造。
+                // 不照抄 console.State：异常可能发生在 Running 态，那时按停稳点判据
+                // 会得到一个「既无 input 又无 wait」的非法等待（§1.2 规则 1）。
+                var errorTurn = TurnFrames.Error(ex.Message, ErrorInfo.From(ex));
                 Stop();
                 return errorTurn;
             }
@@ -448,9 +378,9 @@ namespace MinorShift.Emuera.GameView
             // 且**更直白**：input 的 type 与 wait 的 durationMs 直接参与比较。
             // 🔒 比较「性质」不得比较「实例」：每次等待都是新实例，比较实例会让抑制形同虚设
             // （直接打破 IdleFrameSuppressionTests）。
-            string shape = DescribeShape(awaiting);
+            string shape = TurnFrames.DescribeShape(awaiting);
             string? inputProps = awaiting.input?.type;
-            string? waitProps = DescribeWaitProps(awaiting.wait);
+            string? waitProps = TurnFrames.DescribeWaitProps(awaiting.wait);
 
             if (allowSuppression && !isInitial && _hasEmittedTurn && IsEmptyDiff(diff)
                 && shape == _emittedShape && inputProps == _emittedInputProps && waitProps == _emittedWaitProps)
@@ -463,39 +393,9 @@ namespace MinorShift.Emuera.GameView
 
             // ADR-0016：TINPUT 计时元数据（timeLimit / displayTime / timeUpMessage）自 v12 起
             // 只挂在 `awaiting.wait` 上（由 AwaitInfo.Of 从同一个 req 填充），顶层不再重复。
-            return SerializeTurn(new TurnRecord(
-                diff: diff,
-                awaiting: awaiting,
-                error: error,
-                protocolVersion: isInitial ? TurnRecord.CurrentProtocolVersion : null,
-                generation: console.LastButtonGeneration
-            ));
+            // 帧形状（含「首帧才盖协议版本」）委托给形状权威 TurnFrames.Ok；本类只管产不产帧与状态。
+            return TurnFrames.Ok(diff, awaiting, error, console.LastButtonGeneration, isInitial);
         }
-
-        /// <summary>
-        /// 抑制指纹的「形状」部分（spec §2.3）：哪个键出现。
-        /// 终态带上 <c>terminal</c>——<c>Quit</c> 与 <c>Error</c> 都是终态但<b>不是</b>同一件事。
-        /// </summary>
-        private static string DescribeShape(AwaitInfo awaiting)
-        {
-            if (awaiting.ended is { } ended)
-                return "ended:" + ended.terminal;
-            return (awaiting.input != null ? "input" : "")
-                   + (awaiting.wait != null ? "+wait" : "");
-        }
-
-        /// <summary>
-        /// 抑制指纹的「wait 的性质」部分（spec §2.3）：durationMs + displayTime + timeUpMessage。
-        /// 刻意<b>不</b>含 <c>timedOut</c>（一次性旗标，不是等待本身的性质；含它会让 B3 永远不可抑制）。
-        /// <c>wait</c> 缺省 = 无限期，返回 null（此时没有任何「wait 的性质」参与比较）。
-        ///
-        /// <para>issue 10 后指纹里不再有 <c>interruptible</c> —— 该键已从契约撤回，
-        /// 「AWAIT 与 TWAIT t,1 同形」也因此反映在抑制判据上（两者不再因它产生假差异）。</para>
-        /// </summary>
-        private static string? DescribeWaitProps(AwaitWait? wait)
-            => wait == null
-                ? null
-                : $"{wait.durationMs}|{wait.displayTime}|{wait.timeUpMessage}";
 
         /// <summary>
         /// issue-004：diff 是否为空 —— 无行级操作、无背景色变更、无背景图变更。
