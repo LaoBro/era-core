@@ -79,8 +79,9 @@ internal sealed class ConfigData
 	/// <summary>
 	/// 诊断旋钮（ADR-0026）：并行未调用遍历平台门策略的内存覆盖——null=不覆盖（默认，
 	/// <see cref="SweepGatePolicy.Auto"/> 跟随平台门）；ForceOn/ForceOff 由 app 壳层经
-	/// Preferences 写入，ErbLoader.ParseScript 读并提供给
-	/// <c>ShouldRunParallelSweep</c>（唯一决策点）。无对应 ConfigCode——游戏随包的
+	/// Preferences 写入，ErbLoadStrategy.FromCurrent 快照并经
+	/// <c>ErbLoadStrategy.ParallelSweep</c> 判定（唯一决策点，ADR-0027 决策二.1 第一刀）。
+	/// 无对应 ConfigCode——游戏随包的
 	/// emuera.config 无法设置（loadConfig 对未知键只登记告警、不改任何项）；仅内存覆盖，不落盘。
 	/// </summary>
 	public SweepGatePolicy? OverrideSweepGatePolicy { get; set; }

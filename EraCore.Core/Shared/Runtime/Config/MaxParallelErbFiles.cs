@@ -3,7 +3,8 @@ namespace MinorShift.Emuera.Runtime.Config;
 /// <summary>
 /// ADR-0026 诊断旋钮三（06-K1）：并行生成度上限（内存覆盖型，不进 emuera.config、不落盘）。
 /// <list type="bullet">
-/// <item><c>null</c>（=auto，默认）：min(核数, 8)——与 <c>ErbLoader.MaxParallelErbFiles</c> 常量现状逐位一致。</item>
+/// <item><c>null</c>（=auto，默认）：min(核数, 8)——与 <c>ErbLoadStrategy.MaxParallelErbFiles</c> 常量逐位一致
+///（第一刀后由 <c>ErbLoadStrategy.FileWindow</c> / <c>SweepDegree</c> 单点解析，见 ADR-0027 决策二.1）。</item>
 /// <item>显式 4/8/16：直接生效（不再与核数取 min）——真机取证档，与核数解耦；16 档的价值正在于
 /// 观察超订阅/更多未合并产物驻留下的表现。ERB 生成窗口（同时在生成/未合并的文件数）与未调用
 /// 遍历清扫度（并行解析线程上限）同源同拨——语义仍不同（文件数 vs 线程数），共用同一取证旋钮

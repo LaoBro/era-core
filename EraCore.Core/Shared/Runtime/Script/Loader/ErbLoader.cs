@@ -138,19 +138,9 @@ internal sealed class ErbLoader
 		_irAllFiles = null; // issues/17 A′：全集只对应当前 _ir，随之一并失效
 	}
 
-	/// <summary>erb-loader-parallel 03：并行生成度上限——窗口内产物同时驻留 = 上限文件数的解析产物，
-	/// 封顶防内存峰值（spec 实测 eraTW 规模 12 核理想并行度 ~8-10x，取 8；默认度 = ProcessorCount）。
-	/// 06-K1：壳层取证旋钮（<see cref="ConfigData.OverrideMaxParallelErbFiles"/>）可覆盖，见下。</summary>
-	internal const int MaxParallelErbFiles = 8;
-
-	/// <summary>
-	/// 06-K1 决策点（真值表穷举于 MaxParallelErbFilesTests）：auto（null）= min(核数, 8) 与现状逐位一致；
-	/// 显式 4/8/16 = 直接生效（与核数解耦的取证档——16 档的价值正在于超订阅/更多未合并产物驻留观测）。
-	/// 两处消费同源同拨：LoadPendingParallel 窗口（文件数语义）+ RunUncalledSweepParallel 清扫度
-	/// （线程数语义）——修订原 R3-Q11「度数硬编码不可配」（diagnostic-knobs/issues/06）。
-	/// </summary>
-	internal static int ResolveMaxParallelErbFiles(int? requested, int processorCount)
-		=> requested ?? Math.Min(processorCount, MaxParallelErbFiles);
+	// erb-loader-parallel 03 / 06-K1：并行度常量上限与其决策点已随第一刀（ADR-0027 决策二.1）迁入
+	// ErbLoadStrategy.MaxParallelErbFiles / FileWindow·SweepDegree（真值表穷举于 ErbLoadStrategyTests）——
+	// 原两处消费点（LoadPendingParallel 窗口 + RunUncalledSweepParallel 清扫度）改由策略快照单点提供。
 
 	/// <summary>
 	/// erb-loader-parallel 06：WP0 局部性实验用 GC 快照（累计分配量 / 各代收集次数）。
@@ -258,14 +248,18 @@ internal sealed class ErbLoader
 			// 机制实验已证并行 ParseScript 回归来自线程池分配上下文交错（GC 增量与串行一致而耗时
 			// 高 25-45%，紧凑化 GC 修复证伪），接受回归；统计留作后续并行化工作的观测基线。
 			//（详见 .scratch/erb-loader-parallel/spec-phase2.md WP0 机制结论节）
+			// ADR-0027 决策二.1（第一刀）：本轮装载的并行性策略——genmerge（文件级）与未调用遍历清扫
+			//（标签级）两处路径选择、两处度数（生成窗口 / 清扫度）与观测词表全部由它单点归属；
+			// ambient（配置 / 平台 / 核数）只在此读一次，此后各处只问对象。
+			var strategy = ErbLoadStrategy.FromCurrent(env);
 			var phaseSw = Stopwatch.StartNew();
 			var gcBeforeGenmerge = GcSnapshot.Take();
-			if (Config.Config.ParallelErbLoad && !env.AnalysisMode)
-				await LoadPendingParallel(pending, isOnlyEvent, displayReport, starttime, externalCt);
+			if (strategy.ParallelGenmerge)
+				await LoadPendingParallel(pending, isOnlyEvent, displayReport, starttime, strategy, externalCt);
 			else
 				await LoadPendingSerial(pending, isOnlyEvent, displayReport, starttime);
 			phaseSw.Stop();
-			EmueraLog.Info("ErbLoader", $"phase=genmerge parallel={Config.Config.ParallelErbLoad && !env.AnalysisMode} files={pending.Count} ms={phaseSw.ElapsedMilliseconds} {GcSnapshot.Diff(gcBeforeGenmerge)}");
+			EmueraLog.Info("ErbLoader", $"phase=genmerge parallel={strategy.ParallelGenmerge} files={pending.Count} ms={phaseSw.ElapsedMilliseconds} {GcSnapshot.Diff(gcBeforeGenmerge)}");
 			ParserMediator.FlushWarningList();
 #if DEBUG
 			output.PrintSystemLine(string.Format(trsl.ElapsedTime.Text, (DateTime.Now - starttime).TotalMilliseconds));
@@ -286,7 +280,7 @@ internal sealed class ErbLoader
 			var parseSw = Stopwatch.StartNew();
 			var gcBeforeParse = GcSnapshot.Take();
 			// CA2016：ParseScript 本轮不做取消感知（erb-bounded-lifecycle 只覆盖生成/合并调度），显式不传播令牌
-			await Task.Run(() => ParseScript(), CancellationToken.None);
+			await Task.Run(() => ParseScript(strategy), CancellationToken.None);
 			parseSw.Stop();
 			EmueraLog.Info("ErbLoader", $"phase=parsescript ms={parseSw.ElapsedMilliseconds} {GcSnapshot.Diff(gcBeforeParse)}" +
 				$" blobReads={_blobReadCount} blobBytes={_blobReadBytes} blobMs={(_blobReadTicks * 1000) / Stopwatch.Frequency}");
@@ -398,7 +392,7 @@ internal sealed class ErbLoader
 
 		// 决策四：ParseScript 阶段计时（AnalysisMode 时可见）
 		var parseSw = Stopwatch.StartNew();
-		await Task.Run(() => ParseScript());
+		await Task.Run(() => ParseScript(ErbLoadStrategy.FromCurrent(env)));
 		parseSw.Stop();
 		if (env.AnalysisMode)
 			output.PrintSystemLine(string.Format(trsl.ElapsedTime.Text, parseSw.ElapsedMilliseconds));
@@ -1107,7 +1101,7 @@ internal sealed class ErbLoader
 	internal Func<string, Exception?>? TestGenerateFaultHook;
 	/// <summary>worker 生命周期 observer：(phase, filename)，phase ∈ start/end/cancel；窗口上界与尾任务收束断言用。</summary>
 	internal Action<string, string>? TestWorkerObserver;
-	/// <summary>窗口宽度覆盖（null = Min(ProcessorCount, MaxParallelErbFiles)）。</summary>
+	/// <summary>窗口宽度覆盖（null = <see cref="ErbLoadStrategy.FileWindow"/>，即 Min(核数, 8) 或旋钮档）。</summary>
 	internal int? TestWindowOverride;
 	#endregion
 
@@ -1118,7 +1112,7 @@ internal sealed class ErbLoader
 	/// <summary>
 	/// 并行调度（erb-bounded-lifecycle，重写自 erb-loader-parallel 03 的全量 Task 数组版）：
 	/// 按索引推进的有界滑动窗口——运行中 worker 数与「已生成未合并产物数」共用同一上限
-	/// <see cref="MaxParallelErbFiles"/>（窗口宽度 = clamp(TestWindowOverride ?? Min(ProcessorCount, MaxParallelErbFiles), 1, pending.Count)），
+	/// <see cref="ErbLoadStrategy.MaxParallelErbFiles"/>（窗口宽度 = clamp(TestWindowOverride ?? Min(ProcessorCount, MaxParallelErbFiles), 1, pending.Count)），
 	/// 不再为全部 pending 创建 Task/结果数组；合并一个文件后才放行下一个，artifact 驻留量有显式上界
 	/// （旧实现首文件慢时未合并产物可驻留接近整个游戏——Android NativeAOT 上表现为 OOM 闪退/长 GC 卡死）。
 	/// <para>
@@ -1143,7 +1137,7 @@ internal sealed class ErbLoader
 	private int _sourceFallbackOnIrHit;
 
 	private async Task LoadPendingParallel(List<(string Filename, string File)> pending, List<string> isOnlyEvent,
-		bool displayReport, DateTime starttime, CancellationToken externalCt)
+		bool displayReport, DateTime starttime, ErbLoadStrategy strategy, CancellationToken externalCt)
 	{
 		_irStubFiles = 0;
 		_irNoFuncFiles = 0;
@@ -1151,9 +1145,9 @@ internal sealed class ErbLoader
 		_sourceFallbackOnIrHit = 0;
 		if (pending.Count == 0)
 			return;
-		int window = Math.Clamp(TestWindowOverride ?? ResolveMaxParallelErbFiles(Config.Config.OverrideMaxParallelErbFiles, Environment.ProcessorCount), 1, pending.Count);
+		int window = Math.Clamp(TestWindowOverride ?? strategy.FileWindow, 1, pending.Count);
 		// 06-K1 自证：knob= 壳层请求词表值，window= 生效值（auto=与无旋钮逐位一致）——取证以此对账
-		EmueraLog.Info("ErbLoader", $"LoadPendingParallel: files={pending.Count}, window={window} knob={MaxParallelErbFilesCodec.ToConfigString(Config.Config.OverrideMaxParallelErbFiles)}");
+		EmueraLog.Info("ErbLoader", $"LoadPendingParallel: files={pending.Count}, window={window} knob={strategy.DegreeKnobString}");
 		// 外部取消（预留 reload/会话退出）+ 内部取消（本轮首错收束）链接；worker 只见合成令牌
 		using var cts = CancellationTokenSource.CreateLinkedTokenSource(externalCt);
 		// 运行表只持有窗口内任务（旧实现：tasks[pending.Count] 全量数组长期持有全部任务引用）
@@ -1528,23 +1522,9 @@ internal sealed class ErbLoader
 	/// </summary>
 	private ParseScriptDiag? _parseDiag;
 
-	/// <summary>
-	/// NativeAOT Android 止血门：并行未调用清扫在 Android 上暂时统一回退串行。
-	/// 该策略只改变平台安全门，不改变桌面配置或 AnalysisMode 的既有语义。
-	/// <para>
-	/// ADR-0026 诊断旋钮扩维：<paramref name="policy"/> 为壳层内存覆盖（默认 Auto 与无旋钮逐位等价）。
-	/// ForceOn 只越过 Android 平台门（AnalysisMode 门与 <paramref name="configured"/> 主开关不越——
-	/// 一个旋钮一个维度）；ForceOff 恒 false，压过一切组合。本函数保持唯一决策点，语义真值表
-	/// 由 ErbLoaderTests 穷举（configured × analysisMode × isAndroid × policy 全组合）。
-	/// </para>
-	/// </summary>
-	internal static bool ShouldRunParallelSweep(bool configured, bool analysisMode, bool isAndroid, SweepGatePolicy policy)
-		=> policy switch
-		{
-			SweepGatePolicy.ForceOn => configured && !analysisMode,
-			SweepGatePolicy.ForceOff => false,
-			_ => configured && !analysisMode && !isAndroid,
-		};
+	// NativeAOT Android 止血门 + ADR-0026 平台门策略（Auto/ForceOn/ForceOff）的判定已随第一刀
+	// （ADR-0027 决策二.1）迁入 ErbLoadStrategy.ParallelSweep（私有实现 + 24 组合真值表穷举于
+	// ErbLoadStrategyTests）——原先由本类静态谓词承担，第二处选择点（genmerge）自有判据，现已归一。
 
 	private sealed class ParseScriptDiag
 	{
@@ -1598,9 +1578,11 @@ internal sealed class ErbLoader
 	private MaterializeDiag? _materializeDiag;
 
 	/// <summary>
-	/// 事前処理したファイルをさらに解析し実行可能な状態にする
+	/// 事前処理したファイルをさらに解析し実行可能な状態にする。
+	/// <paramref name="strategy"/> 由装载入口（LoadErbDir / LoadErbList）构造下传——
+	/// ADR-0027 决策二.1：并行性判定不在本方法体内装配（第一刀），也不经实例字段读取（显式依赖）。
 	/// </summary>
-	private void ParseScript()
+	private void ParseScript(ErbLoadStrategy strategy)
 	{
 		// b2-irdiskcache：主循环期间挂载本 loader 为 arg 解析物化源（CalledFunction 的 stub 被调就地物化，
 		// 供 ConvertArg 读 callee.Arg）。Eager 无桩恒 no-op；lazy 主循环单线程，本槽仅加载中有效。
@@ -1684,18 +1666,16 @@ internal sealed class ErbLoader
 		// NativeAOT Android SIGSEGV 止血：Android 暂不运行并行清扫，设置值仍保留供桌面/后续 A-B。
 		// ADR-0026：policy 为壳层诊断旋钮内存覆盖（null=Auto），parsescript_policy 行尾 policy= 字段
 		// 自证当时策略与生效值（追加式字段，对既有解析兼容）——取证对「哪条路径确实执行了」以此为准。
-		bool parallelSweepConfigured = Config.Config.ParallelParseScript;
-		bool isAndroid = OperatingSystem.IsAndroid();
-		SweepGatePolicy sweepPolicy = Config.Config.OverrideSweepGatePolicy ?? SweepGatePolicy.Auto;
-		bool parallelSweep = ShouldRunParallelSweep(parallelSweepConfigured, env.AnalysisMode, isAndroid, sweepPolicy);
-		// 06-K1/K2 自证：sweep_deg= 未调用遍历清扫度上限（与本轮 RunUncalledSweepParallel 同值），
-		// dimlock= privateDimList 锁策略。时序前提：dimlock= 在 ParseScript 时读 Config，而实际锁行为是
+		// ADR-0027 决策二.1（第一刀）：门的输入装配与判定已归 ErbLoadStrategy——本方法体内不再有
+		// 路径选择的散落状态，只问对象。字段名与顺序逐字不变（parsescript_policy 是取证接口）。
+		// 06-K1/K2 自证：sweep_deg= 未调用遍历清扫度上限（与本轮 RunUncalledSweepParallel 同值，
+		// 由策略的 FileWindow/SweepDegree 同源提供），dimlock= privateDimList 锁策略（非路径选择，
+		// 故不归策略对象）。时序前提：dimlock= 在 ParseScript 时读 Config，而实际锁行为是
 		// IdentifierDictionary 构造时快照——壳层 OnReloadGame 先 Apply 旋钮再建会话，两者恒一致；
 		// 若未来出现先于 Apply 的 idDic 构造路径，此字段会失真，需改为由 idDic 直接上报
-		int sweepDegree = ResolveMaxParallelErbFiles(Config.Config.OverrideMaxParallelErbFiles, Environment.ProcessorCount);
 		DimLockPolicy dimLockPolicy = Config.Config.OverrideDimLockPolicy ?? DimLockPolicy.Auto;
 		EmueraLog.Info("ErbLoader",
-			$"parsescript_policy configured={parallelSweepConfigured} effective={parallelSweep} android={isAndroid} analysis={env.AnalysisMode} policy={SweepGatePolicyCodec.ToConfigString(sweepPolicy)} sweep_deg={sweepDegree} dimlock={DimLockPolicyCodec.ToConfigString(dimLockPolicy)}");
+			$"parsescript_policy configured={strategy.SweepConfigured} effective={strategy.ParallelSweep} android={strategy.IsAndroid} analysis={strategy.AnalysisMode} policy={strategy.SweepPolicyString} sweep_deg={strategy.SweepDegree} dimlock={DimLockPolicyCodec.ToConfigString(dimLockPolicy)}");
 		bool sweepParallelRan = false;
 		if (useCallForm)
 		{//callform系が使われたら全ての関数が呼び出されたとみなす。
@@ -1708,10 +1688,10 @@ internal sealed class ErbLoader
 			// 被调用主循环已按其 Depth 物化过；callform 分支本就无 FNC 导出，故跳过零损失。
 			if (!lazyMode)
 			{
-				if (parallelSweep)
+				if (strategy.ParallelSweep)
 				{
 					// 并行段：解析体全部入 per-label 缓冲（警告 / FNF 事件），回放段按 labelList 序重放
-					ReplayUncalledSweep(RunUncalledSweepParallel(labelList, labelDepth, sweepDegree));
+					ReplayUncalledSweep(RunUncalledSweepParallel(labelList, labelDepth, strategy.SweepDegree));
 					sweepParallelRan = true;
 				}
 				else
@@ -1738,8 +1718,8 @@ internal sealed class ErbLoader
 			// 串行重走（回放体 = 原串行循环体的重放，解析位置替换为 ReplaySweepArt 按序回放缓冲）。
 			// lazy-function-load（B 线 B1）：惰性下不跑未调用解析体（sweepArts 恒 null），
 			// 只保留下方 FNC 免解析导出（Depth==-1 深差集，零解析）；IgnoreUncalledFunction 的 IsError 被 supersede。
-			UncalledSweepArt[]? sweepArts = !lazyMode && parallelSweep && !ignoreUncalledFunction
-				? RunUncalledSweepParallel(labelList, labelDepth, sweepDegree)
+			UncalledSweepArt[]? sweepArts = !lazyMode && strategy.ParallelSweep && !ignoreUncalledFunction
+				? RunUncalledSweepParallel(labelList, labelDepth, strategy.SweepDegree)
 				: null;
 			int artIdx = 0;
 			foreach (FunctionLabelLine label in labelList)

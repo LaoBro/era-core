@@ -3,7 +3,6 @@ using System.IO;
 using System.Linq;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Script;
-using MinorShift.Emuera.Runtime.Script.Loader;
 using MinorShift.Emuera.Runtime.Utils;
 using Xunit;
 
@@ -15,8 +14,8 @@ namespace MinorShift.Emuera.Tests;
 /// <list type="bullet">
 /// <item>Parse/ToConfigString 是 Preferences 值与 LoadPendingParallel/parsescript_policy 日志
 /// knob= 字段的唯一映射点——"auto"/非法/词表外回退 null(auto)；闭集精确匹配（"08" 不算 8）。</item>
-/// <item>ResolveMaxParallelErbFiles 是唯一决策点：auto = min(核数, 8) 与现状逐位一致；
-/// 显式档直接生效（与核数解耦的取证档，16 在 8 核真机上=超订阅观测点）。</item>
+/// <item>度数决策点已随第一刀（ADR-0027 决策二.1）迁入 <c>ErbLoadStrategy</c>（FileWindow / SweepDegree
+/// 同源同值，真值表穷举于 <c>ErbLoadStrategyTests</c>）——本类只保留壳层词表契约与内存覆盖钉子。</item>
 /// <item>旋钮无 ConfigCode 条目：游戏随包 emuera.config 写入条目无效、SaveConfig 不落盘——
 /// 只有 app 壳层（MAUI 设置页诊断分组）能拨动。</item>
 /// </list>
@@ -63,21 +62,6 @@ public class MaxParallelErbFilesTests
 		foreach (var n in new[] { 4, 8, 16 })
 			Assert.Equal(n, MaxParallelErbFilesCodec.Parse(MaxParallelErbFilesCodec.ToConfigString(n)));
 		Assert.Null(MaxParallelErbFilesCodec.Parse(MaxParallelErbFilesCodec.ToConfigString(null)));
-	}
-
-	/// <summary>决策点真值表：auto = min(核数, 8) 与现状逐位一致；显式档直接生效不与核数取 min。</summary>
-	[Theory]
-	[InlineData(null, 4, 4)] // auto：核数先触顶
-	[InlineData(null, 8, 8)]
-	[InlineData(null, 12, 8)] // auto：8 封顶触顶
-	[InlineData(null, 16, 8)]
-	[InlineData(4, 12, 4)]
-	[InlineData(8, 4, 8)] // 显式档高于核数也原样生效（取证档与核数解耦）
-	[InlineData(16, 8, 16)] // 8 核真机上的超订阅观测点
-	[InlineData(16, 12, 16)]
-	public void ResolveMaxParallelErbFiles_truth_table(int? requested, int processorCount, int expected)
-	{
-		Assert.Equal(expected, ErbLoader.ResolveMaxParallelErbFiles(requested, processorCount));
 	}
 
 	[Fact]
