@@ -66,6 +66,12 @@ def build_fixture():
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        # 子进程是 dotnet/MSBuild：输出为 UTF-8，而 Windows 管道模式默认按 locale
+        # （GBK）解码 → UnicodeDecodeError（中文「正在确定要还原的项目…」）。与
+        # run_all.py / emuera_server.py 等处同一处理。build 输出内容未被使用，
+        # 只需保证不炸。
+        encoding="utf-8",
+        errors="replace",
     )
     out = PLUGIN_PROJ.parent / "bin" / "Debug" / "net10.0"
     plugin_dll = out / "RefLegacyPlugin.dll"
