@@ -369,9 +369,10 @@ internal sealed class ErbLoader
 				_filePathByLogical[fname] = fpath;
 				// erb-loader-parallel 01/03：与 LoadErbDir 串行调度同款“生成 → 按序合并”两步
 				//（部分重载文件数少，不参与并行化；跨文件检查保持串行即时）
-				var art = GenerateErbFile(fpath, fname, isOnlyEvent, deferCrossFileChecks: false);
-				MergeErbFile(art, isOnlyEvent);
-			};
+				var art = ErbFileAssembler.Generate(fpath, fname, isOnlyEvent, deferCrossFileChecks: false,
+					replayOnFailure: true, AssembleContext(), _genStats);
+				ApplyMergeOutcome(ErbFileAssembler.Merge(art, isOnlyEvent, AssembleContext()));
+				};
 		});
 		if (env.AnalysisMode)
 			output.NewLine();
@@ -397,664 +398,6 @@ internal sealed class ErbLoader
 		return noError;
 	}
 
-	private sealed class PPState
-	{
-		// ADR-0012：原走 Program.DebugMode / GlobalStatic.IdentifierDictionary（static），
-		// 现经构造注入从外层 ErbLoader 传入。
-		readonly LoaderEnv env;
-		readonly IdentifierDictionary idDic;
-		internal PPState(LoaderEnv env, IdentifierDictionary idDic) { this.env = env; this.idDic = idDic; }
-
-		bool skip;
-		bool done;
-		public bool Disabled;
-		readonly Stack<bool> disabledStack = new();
-		readonly Stack<bool> doneStack = new();
-		readonly Stack<string> ppMatch = new();
-
-		internal void AddKeyWord(string token, string token2, ScriptPosition? position)
-		{
-			//bool token2enabled = string.IsNullOrEmpty(token2);
-			switch (token)
-			{
-				case "SKIPSTART":
-					if (!string.IsNullOrEmpty(token2))
-					{
-						ParserMediator.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
-						break;
-					}
-					if (skip)
-					{
-						ParserMediator.Warn(trerror.DuplicateSkipstart.Text, position, 1);
-						break;
-					}
-					ppMatch.Push("SKIPEND");
-					disabledStack.Push(Disabled);
-					doneStack.Push(done);
-					skip = true;
-					Disabled = true;
-					done = false;
-					break;
-				case "IF_DEBUG":
-					if (!string.IsNullOrEmpty(token2))
-					{
-						ParserMediator.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
-						break;
-					}
-					ppMatch.Push("ELSEIF");
-					disabledStack.Push(Disabled);
-					doneStack.Push(done);
-					Disabled = !env.DebugMode;
-					done = !Disabled;
-					break;
-				case "IF_NDEBUG":
-					if (!string.IsNullOrEmpty(token2))
-					{
-						ParserMediator.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
-						break;
-					}
-					ppMatch.Push("ELSEIF");
-					disabledStack.Push(Disabled);
-					doneStack.Push(done);
-					Disabled = env.DebugMode;
-					done = !Disabled;
-					break;
-				case "IF":
-					if (string.IsNullOrEmpty(token2))
-					{
-						ParserMediator.Warn(string.Format(trerror.MissingArguments.Text, token), position, 1);
-						break;
-					}
-					ppMatch.Push("ELSEIF");
-					disabledStack.Push(Disabled);
-					doneStack.Push(done);
-					Disabled = idDic.GetMacro(token2) == null;
-					done = !Disabled;
-					break;
-				case "ELSEIF":
-					if (string.IsNullOrEmpty(token2))
-					{
-						ParserMediator.Warn(string.Format(trerror.MissingArguments.Text, token), position, 1);
-						break;
-					}
-					if (ppMatch.Count == 0 || ppMatch.Pop() != "ELSEIF")
-					{
-						ParserMediator.Warn(string.Format(trerror.IsInvalid.Text, "[ELSEIF]"), position, 1);
-						break;
-					}
-					ppMatch.Push("ELSEIF");
-					Disabled = done || idDic.GetMacro(token2) == null;
-					done |= !Disabled;
-					break;
-				case "ELSE":
-					if (!string.IsNullOrEmpty(token2))
-					{
-						ParserMediator.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
-						break;
-					}
-					if (ppMatch.Count == 0 || ppMatch.Pop() != "ELSEIF")
-					{
-						ParserMediator.Warn(string.Format(trerror.IsInvalid.Text, "[ELSE]"), position, 1);
-						break;
-					}
-					ppMatch.Push("ENDIF");
-					Disabled = done;
-					done = true;
-					break;
-
-				case "SKIPEND":
-					{
-						if (!string.IsNullOrEmpty(token2))
-						{
-							ParserMediator.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
-							break;
-						}
-						string match = ppMatch.Count == 0 ? "" : ppMatch.Pop();
-						if (match != "SKIPEND")
-						{
-							ParserMediator.Warn(trerror.UnexpectedSkipend.Text, position, 1);
-							break;
-						}
-						skip = false;
-						Disabled = disabledStack.Pop();
-						done = doneStack.Pop();
-					}
-					break;
-				case "ENDIF":
-					{
-						if (!string.IsNullOrEmpty(token2))
-						{
-							ParserMediator.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
-							break;
-						}
-						string match = ppMatch.Count == 0 ? "" : ppMatch.Pop();
-						if (match != "ENDIF" && match != "ELSEIF")
-						{
-							ParserMediator.Warn(trerror.UnexpectedMacroEndif.Text, position, 1);
-							break;
-						}
-						Disabled = disabledStack.Pop();
-						done = doneStack.Pop();
-					}
-					break;
-				default:
-					ParserMediator.Warn(trerror.UnrecognizedPreprosessor.Text, position, 1);
-					break;
-			}
-			if (skip)
-				Disabled = true;
-		}
-
-		internal void FileEnd(ScriptPosition? position)
-		{
-			if (ppMatch.Count != 0)
-			{
-				string match = ppMatch.Pop();
-				if (match == "ELSEIF")
-					match = "ENDIF";
-				ParserMediator.Warn(string.Format(trerror.TheresNo.Text, match), position, 1);
-			}
-		}
-	}
-
-	/// <summary>
-	/// 并行生成期的跨文件重名检查待办（erb-loader-parallel 03）。并行阶段 labelDic 不接受并发读，
-	/// 该检查延后到合并期（<see cref="ErbLoader.MergeErbFile"/>）执行；为保证警告仍出现在
-	/// 原 @ 行的行序位置，生成期先在 <see cref="ErbFileArtifact.Warnings"/> 放占位槽，
-	/// 合并期替换为真实警告或删除。
-	/// </summary>
-	internal readonly record struct PendingOverloadCheck(int Slot, FunctionLabelLine Label, FunctionLabelLine? InFileSenior);
-
-	/// <summary>并行生成期的跨文件 #ONLY 重複宣言检查待办（同上，占位槽机制）。</summary>
-	internal readonly record struct PendingOnlyCheck(int Slot, string LabelName, ScriptPosition Position);
-
-	/// <summary>
-	/// 单文件解析产物（erb-loader-parallel Issue 01）。
-	/// 生成阶段（<see cref="GenerateErbFile"/>）只写本对象：行链挂在各标签线上、警告经
-	/// ParserMediator 重定向进 <see cref="Warnings"/>、控制台输出（AnalysisMode PrintC/间隔行、
-	/// 开文件失败 PrintError）缓冲为 <see cref="ConsoleOps"/>——生成期间无任何 LabelDictionary
-	/// 写入 / 控制台直写 / 共享计数写。合并阶段（<see cref="MergeErbFile"/>）按原文件顺序执行
-	/// 全部共享状态写入与警告发射，03 并行化以本对象为执行单元。
-	/// </summary>
-	private sealed class ErbFileArtifact
-	{
-		public string Filename = null!;
-		/// <summary>@ 标签（含 InvalidLabelLine），按出现序；合并阶段逐个 AddLabel / AddInvalidLabel。</summary>
-		public readonly List<FunctionLabelLine> FunctionLabels = [];
-		/// <summary>$ 标签（ParentLabelLine 生成期已设），按出现序；仅收录 parent 非空者。</summary>
-		public readonly List<GotoLabelLine> GotoLabels = [];
-		/// <summary>#ONLY 宣言名，按出现序；合并阶段 AddRange 进共享 isOnlyEvent 列表。</summary>
-		public readonly List<string> OnlyDeclarations = [];
-		/// <summary>逐文件缓冲的 ParserMediator 警告，合并阶段按序发射。</summary>
-		public readonly List<ParserMediator.ParserWarning> Warnings = [];
-		/// <summary>控制台输出回放（AnalysisMode PrintC/间隔行、开文件失败 PrintError）。</summary>
-		public readonly List<Action<EmueraConsole>> ConsoleOps = [];
-		/// <summary>本文件最后一次 scaningLine 写（VARI 初期值解析镜像）；null = 本文件未写。</summary>
-		public LogicalLine? ScaningLine;
-		/// <summary>并行生成期的跨文件重名检查待办（占位槽）；串行路径恒空。</summary>
-		public readonly List<PendingOverloadCheck> PendingOverloads = [];
-		/// <summary>并行生成期的跨文件 #ONLY 重複宣言检查待办（占位槽）；串行路径恒空。</summary>
-		public readonly List<PendingOnlyCheck> PendingOnlys = [];
-		public int EnabledLineCount;
-		public bool HasError;
-		/// <summary>b2-irdiskcache：本文件的函数 IR blob（按 @ 出现序），仅 IR 生成期（_irBuildEnabled）非空。</summary>
-		public readonly List<IrBlob> IrBlobs = [];
-	}
-
-	/// <summary>
-	/// ファイル一つを読む（生成阶段）：产出全部收进文件产物，不触碰 LabelDictionary / 控制台 / 共享计数。
-	/// 串行路径下紧随 <see cref="MergeErbFile"/>；生成期对共享状态只读（labelDic 重载检查的合并序
-	/// 快照、isOnlyEvent 已合并宣言、IdentifierDictionary 宏表）。
-	/// </summary>
-	/// <param name="deferCrossFileChecks">erb-loader-parallel 03：并行调度下为 true——跨文件重名与
-	/// #ONLY 重複检查延后到合并期（占位槽保行序），生成期不读 labelDic / isOnlyEvent 共享快照。</param>
-	/// <param name="replayOnFailure">串行调度为 true（异常时本方法内回放控制台输出与警告再抛，与旧路径
-	/// 一致）；并行调度为 false（缓冲清理照常，回放由主线程按窗口序统一执行，避免并发控制台写）。</param>
-	private ErbFileArtifact GenerateErbFile(string filepath, string filename, List<string> isOnlyEvent,
-		bool deferCrossFileChecks, bool replayOnFailure = true)
-	{
-		var art = new ErbFileArtifact { Filename = filename };
-		ParserMediator.BeginWarningBuffer(art.Warnings);
-		LogicalLineParser.ScanLineMirror.Value = line => art.ScaningLine = line;
-		try
-		{
-			GenerateErbFileCore(filepath, filename, isOnlyEvent, art, deferCrossFileChecks);
-		}
-		catch
-		{
-			// 异常路径输出与旧路径一致：已产生的控制台输出与警告照常发射（旧路径为直写/直入全局列表）
-			if (replayOnFailure)
-			{
-				ReplayConsoleOps(art);
-				ParserMediator.EmitWarningBuffer(art.Warnings);
-			}
-			throw;
-		}
-		finally
-		{
-			LogicalLineParser.ScanLineMirror.Value = null;
-			ParserMediator.EndWarningBuffer();
-		}
-		return art;
-	}
-
-	private void GenerateErbFileCore(string filepath, string filename, List<string> isOnlyEvent, ErbFileArtifact art,
-		bool deferCrossFileChecks)
-	{
-		// b2-irdiskcache：IR 命中 → 本文件由索引直建桩，免读源文件（design §5.2）——第二次启动的大头收益所在。
-		// issues/17 A′：命中判定分三段（旧实现只有 (1)(3)，把 (2) 误并进 (3)）——
-		//   (1) ByFile 命中且有条目 → IR 桩。真机 2363/2388 走此路，SAF 下总耗仅 38ms，本就无问题；
-		//   (2) ByFile 未命中、但文件在命中轮全集内 → **该文件确实没有函数**（IR 索引只记有函数的文件），
-		//       直接建空产物 return。旧实现落到 (3)：SAF 下每个白付 ~25ms 读源解析（25 个文件 ≈ 620ms），
-		//       且主循环按序 await 使这 25 次阻塞串行放大到整轮 genmerge 的 100%；
-		//   (3) 不在全集内（异常/陈旧路径）→ 回落源路径，保持既有安全语义。
-		if (_ir is { Available: true } irHit)
-		{
-			if (irHit.ByFile.TryGetValue(filename, out var irEntries) && irEntries.Count > 0)
-			{
-				Interlocked.Increment(ref _irStubFiles); // issues/17 观测
-				TryGenerateFromIr(filename, irEntries, art);
-				return;
-			}
-			if (irHit.AllFiles?.Contains(filename) == true)
-			{
-				Interlocked.Increment(ref _irNoFuncFiles); // issues/17 取证：A′ 新省下的文件数
-				return; // 空产物——IR 已证明此文件无函数，无需读源
-			}
-		}
-
-		// issues/17：走到此处即回落读源。IR 可用时本不该到达（判据漏了 → fallbackOnIrHit 非 0 可即时
-		// 发现）；IR 不可用（冷枚举轮）则是常态——SAF 下逐文件走跨进程读，正是修复前 620ms 的来源。
-		Interlocked.Increment(ref _sourceFallbackFiles);
-		if (_ir is { Available: true })
-			Interlocked.Increment(ref _sourceFallbackOnIrHit);
-
-		using var eReader = new EraStreamReader(Config.Config.UseRenameFile && ParserMediator.RenameDic != null);
-
-		if (!eReader.OpenOnCache(filepath, filename))
-		{
-			art.ConsoleOps.Add(c => c.PrintError(string.Format(trerror.FailedOpenFile.Text, eReader.Filename)));
-			return; // ADR-0019：文件打不开直接跳过，避免空 eReader 进入解析循环
-		}
-		var ppstate = new PPState(env, idDic);
-		// 并行调度：跨文件 #ONLY 重複检查延后（共享 isOnlyEvent 是同窗口其他文件未合并的不完整快照），
-		// 传独立空视图禁用即时检查；串行调度传共享快照即时检查（01 行为）。
-		List<string> mergedOnlyView = deferCrossFileChecks ? [] : isOnlyEvent;
-		LogicalLine nextLine = new NullLine();
-		LogicalLine lastLine = new NullLine();
-		FunctionLabelLine lastLabelLine = null!;
-		CharStream st = null!;
-		ScriptPosition? position = null;
-		int funcCount = 0;
-		// 生成期重名判定的文件内视图：跨文件同名经 labelDic.GetEarliestLabelWithName 按合并序读
-		var firstValidLabelByName = new Dictionary<string, FunctionLabelLine>(Config.Config.StrComper);
-		var firstGotoByParent = new Dictionary<FunctionLabelLine, Dictionary<string, GotoLabelLine>>();
-		// lazy-function-load（B 线 B1）：惰性模式 = 开 LazyFunctionLoad 且非 AnalysisMode（AnalysisMode 强制 eager）。
-		// 惰性下函数体行链不解析——labelDic 只注册全量标签桩（IsStub），仅 # 签名行处理（保 Argument/Def/IsMethod）。
-		bool lazy = Config.Config.LazyFunctionLoad && !env.AnalysisMode;
-		// b2-irdiskcache：收集本文件函数 IR blob（仅 IR 生成期，即增量写器非空）。
-		bool collectIr = _irPipeline is { CollectIr: true };
-		FunctionLabelLine? irCurLabel = null;
-		List<IrLine>? irCurLines = null;
-		// 结束当前函数的 blob（@ 边界 / EOF 时调用）。
-		void FinishIrBlob()
-		{
-			if (!collectIr || irCurLabel == null)
-			{
-				irCurLabel = null;
-				irCurLines = null;
-				return;
-			}
-			if (irCurLabel is InvalidLabelLine bad)
-				art.IrBlobs.Add(IrBlob.InvalidFunc(bad.LabelName, bad.Position!.Value.LineNo, bad.ErrMes));
-			else
-				art.IrBlobs.Add(IrBlob.Valid(irCurLabel.LabelName, irCurLabel.Position!.Value.LineNo, irCurLines!));
-			irCurLabel = null;
-			irCurLines = null;
-		}
-		if (env.AnalysisMode)
-			art.ConsoleOps.Add(c => c.PrintSystemLine(" "));
-		while ((st = eReader.ReadEnabledLine(ppstate.Disabled)) != null)
-		{
-			position = new ScriptPosition(eReader.Filename, eReader.LineNo);
-			//rename処理をEraStreamReaderに移管
-			//変換できなかった[[～～]]についてはLexAnalyzerがエラーを投げる
-			if (st.Current == '[' && st.Next != '[')
-			{
-				st.ShiftNext();
-				string token = LexicalAnalyzer.ReadSingleIdentifier(st);
-				LexicalAnalyzer.SkipWhiteSpace(st);
-				string token2 = LexicalAnalyzer.ReadSingleIdentifier(st);
-				if (string.IsNullOrEmpty(token) || st.Current != ']')
-					ParserMediator.Warn(trerror.InvalidSBrackets.Text, position, 1);
-				ppstate.AddKeyWord(token, token2, position);
-				st.ShiftNext();
-				if (!st.EOS)
-					ParserMediator.Warn(string.Format(trerror.IgnoreAfterPreprosessor.Text, token), position, 1);
-				continue;
-			}
-			//if ((skip) || (env.DebugMode && ifndebug) || (!env.DebugMode && ifdebug))
-			//	continue;
-			if (ppstate.Disabled)
-				continue;
-			//ここまでプリプロセッサ
-
-			if (st.Current == '#')
-			{
-				if (lastLine == null || lastLine is not FunctionLabelLine funcLine)
-				{
-					ParserMediator.Warn(trerror.InvalidSharp.Text, position, 1);
-					continue;
-				}
-				// 占位锚：本 # 行首个警告的槽位（跨文件 ONLY 检查占位须插到这里——
-				// 串行路径该警告在 ParseSharpLine 的 Contains 检查点发射，先于同行的 BeIgnore* 警告）
-				int lineWarnStart = art.Warnings.Count;
-				int onlyCountBefore = art.OnlyDeclarations.Count;
-				// b2-irdiskcache：收集 # 签名行文本（物化时重跑 ParseSharpLine 重建签名）。
-				if (collectIr && irCurLabel != null)
-					irCurLines?.Add(new IrLine(position!.Value.LineNo, st.RowString));
-				if (!LogicalLineParser.ParseSharpLine(funcLine, st, position, mergedOnlyView, art.OnlyDeclarations))
-					art.HasError = true;
-				if (deferCrossFileChecks && art.OnlyDeclarations.Count > onlyCountBefore)
-				{
-					int insertAt = lineWarnStart;
-					for (int j = onlyCountBefore; j < art.OnlyDeclarations.Count; j++)
-					{
-						art.Warnings.Insert(insertAt, PlaceholderWarning());
-						art.PendingOnlys.Add(new PendingOnlyCheck(insertAt, art.OnlyDeclarations[j], position!.Value));
-						insertAt++;
-					}
-				}
-				continue;
-			}
-			if (st.Current == '$' || st.Current == '@')
-			{
-				bool isFunction = st.Current == '@';
-				if (!isFunction && lazy)
-				{
-					// b2-irdiskcache：$ goto 属函数体，物化时随 ReparseFunction 重建——blob 收集进本函数行集。
-					if (collectIr && irCurLabel != null)
-						irCurLines?.Add(new IrLine(eReader.LineNo, st.RowString));
-					continue; // 惰性：$ goto 属函数体，物化时随 ReparseFunction 重建，此处跳过
-				}
-				nextLine = LogicalLineParser.ParseLabelLine(st, position, output, art.ConsoleOps);
-				if (isFunction)
-				{
-					var label = nextLine as FunctionLabelLine;
-					lastLabelLine = label!;
-					// b2-irdiskcache：@ 边界——结束上一函数 blob、开启本函数 blob（@ 行文本作首行，物化重建 wc）。
-					FinishIrBlob();
-					if (collectIr)
-					{
-						irCurLabel = label;
-						irCurLines = new() { new IrLine(eReader.LineNo, st.RowString) };
-					}
-					// 惰性：注册标签桩——保签名头、函数体行链留空；函数体在首调用/主循环时物化。
-					if (lazy)
-						label!.IsStub = true;
-					art.FunctionLabels.Add(label!);
-					if (label is InvalidLabelLine)
-					{
-						art.HasError = true;
-
-						ParserMediator.Warn(nextLine.ErrMes, position, 2);
-					}
-					else// if (label is FunctionLabelLine)
-					{
-						var inFileSenior = firstValidLabelByName.GetValueOrDefault(label!.LabelName);
-						if (!label!.IsEvent && (Config.Config.WarnNormalFunctionOverloading || env.AnalysisMode))
-						{
-							if (deferCrossFileChecks)
-							{
-								// 并行调度：跨文件 senior 合并期查 labelDic（此处不可并发读）；
-								// 文件内首现表作 InFileSenior 一并延后——合并期 senior 判定序
-								// （跨文件最早 ?? 文件内首现）与串行即时检查一致，警告仍在 @ 行行序位置
-								art.PendingOverloads.Add(new PendingOverloadCheck(art.Warnings.Count, label, inFileSenior));
-								art.Warnings.Add(PlaceholderWarning());
-							}
-							else
-							{
-								// 重载检查（生成期合并序只读视图 + 文件内首现表，与旧“先清同文件旧标签、
-								// AddLabel 后 GetSameNameLabel 取最早同名”语义一致：
-								// excludingFilename = 本文件——重载场景旧标签要到合并阶段才被清掉，须排除）
-								FunctionLabelLine? seniorLabel = labelDic.GetEarliestLabelWithName(label.LabelName, filename);
-								seniorLabel ??= inFileSenior;
-								if (seniorLabel != null)
-								{
-									//output.NewLine();
-									ParserMediator.Warn(string.Format(trerror.FuncIsAlreadyDefined.Text, label.LabelName, seniorLabel.Position!.Value.Filename, seniorLabel.Position!.Value.LineNo.ToString()), position, 1);
-									funcCount = -1;
-								}
-							}
-						}
-						funcCount++;
-						firstValidLabelByName.TryAdd(label.LabelName, label);
-						if (env.AnalysisMode && Config.Config.PrintCPerLine > 0 && funcCount % Config.Config.PrintCPerLine == 0)
-						{
-							art.ConsoleOps.Add(c => c.NewLine());
-							art.ConsoleOps.Add(c => c.PrintSystemLine(" "));
-						}
-					}
-				}
-				else
-				{
-					if (nextLine is GotoLabelLine gotoLabel)
-					{
-						gotoLabel.ParentLabelLine = lastLabelLine!;
-						if (lastLabelLine != null)
-						{
-							art.GotoLabels.Add(gotoLabel);
-							// 同関数内 $ 重複判定（AddLabelDollar 的 TryAdd 语义：同 parent+名保留首个）
-							if (!firstGotoByParent.TryGetValue(lastLabelLine, out var byName))
-							{
-								byName = new Dictionary<string, GotoLabelLine>(Config.Config.StrComper);
-								firstGotoByParent.Add(lastLabelLine, byName);
-							}
-							if (byName.TryGetValue(gotoLabel.LabelName, out GotoLabelLine? firstGoto))
-							{
-								ScriptPosition pos = firstGoto.Position!.Value;
-								ParserMediator.Warn(string.Format(trerror.LabelIsAlreadyDefined.Text, gotoLabel.LabelName, pos.Filename, pos.LineNo.ToString()), position, 2);
-							}
-							else
-								byName.Add(gotoLabel.LabelName, gotoLabel);
-						}
-					}
-				}
-				if (nextLine is InvalidLine)
-				{
-					art.HasError = true;
-					ParserMediator.Warn(nextLine.ErrMes, position, 2);
-				}
-			}
-			else
-			{
-				// b2-irdiskcache：函数体指令行文本收集（blob 物化输入）。
-				if (collectIr && irCurLabel != null)
-					irCurLines?.Add(new IrLine(eReader.LineNo, st.RowString));
-				// 惰性：函数体指令行不解析（物化时随 ReparseFunction 重建），直接跳过
-				if (lazy)
-					continue;
-				//1808alpha006 処理位置変更
-				////全置換はここで対応
-				////1756beta1+++ 最初に全置換してしまうと関数定義を_Renameでとか論外なことができてしまうので永久封印した
-				//if (ParserMediator.RenameDic != null && st.CurrentEqualTo("[[") && (rowLine.TrimEnd().IndexOf("]]") == rowLine.TrimEnd().Length - 2))
-				//{
-				//    string replacedLine = st.Substring();
-				//    foreach (KeyValuePair<string, string> pair in ParserMediator.RenameDic)
-				//        replacedLine = replacedLine.Replace(pair.Key, pair.Value);
-				//    st = new StringStream(replacedLine);
-				//}
-				if (lastLabelLine == null)
-					ParserMediator.Warn(trerror.LineBeforeFunc.Text, position, 1);
-				nextLine = LogicalLineParser.ParseLine(st, position, output, lastLabelLine!);
-
-
-				if (nextLine == null)
-					continue;
-				if (nextLine is InvalidLine)
-				{
-					art.HasError = true;
-					ParserMediator.Warn(nextLine.ErrMes, position, 2);
-				}
-				else if (JSONConfig.Data.UseNewRandom &&
-										nextLine is InstructionLine instruction)
-				{
-					switch (instruction.FunctionCode)
-					{
-						case FunctionCode.RANDOMIZE:
-							ParserMediator.Warn(trerror.IgnoreRandomize.Text, position, 0);
-							break;
-						case FunctionCode.DUMPRAND:
-							ParserMediator.Warn(trerror.CanNotUseDumprand.Text, position, 0);
-							break;
-						case FunctionCode.INITRAND:
-							ParserMediator.Warn(trerror.CanNotUseInitrand.Text, position, 0);
-							break;
-						default:
-							break;
-					}
-				}
-			}
-			nextLine.ParentLabelLine = lastLabelLine!;
-
-			lastLine = addLine(art, nextLine, lastLine!);
-		}
-		addLine(art, new NullLine(), lastLine!);
-		FinishIrBlob(); // b2-irdiskcache：EOF 收尾最后函数 blob
-		position = new ScriptPosition(eReader.Filename, -1);
-		ppstate.FileEnd(position);
-		return;
-	}
-
-	/// <summary>
-	/// b2-irdiskcache：IR 命中路径的最小桩直建（design §5.2，实现时对账项 B）。免读源文件、免全文件词法扫描。
-	/// 桩只带 LabelName + Position + 最小签名（IsEvent/IsSystem/Depth 由标签名经 IdentifierDictionary 判同节点，
-	/// 与 ParseLabelLine 一致）；Arg/Def/私有变量/IsMethod/LocalLength 留空 → setLabelsArg 跳过、物化时从 blob
-	/// 重建（@ 行重建 wc → # 行重跑 ParseSharpLine → parseLabel → resizeLocalVars）。警告由物化期补发，生成期跳过
-	/// 源 ParsSharpLine/重载检查（指纹保证 IR 与源的等价性不变，改动源 → 指纹变 → 全量重建 → 警告照常）。
-	/// </summary>
-	private static void TryGenerateFromIr(string filename, List<IrIndexEntry> entries, ErbFileArtifact art)
-	{
-		foreach (var e in entries)
-		{
-			var pos = new ScriptPosition(e.File, e.LineNo - 1);
-			if (e.Invalid)
-			{
-				art.FunctionLabels.Add(new InvalidLabelLine(pos, e.Label, e.ErrMes ?? ""));
-				art.HasError = true;
-				continue;
-			}
-			var label = new FunctionLabelLine(pos, e.Label, null!);
-			label.IsStub = true;
-			label.IrBacked = true;
-			if (IdentifierDictionary.IsEventLabelName(e.Label))
-			{
-				label.IsEvent = true;
-				label.IsSystem = true;
-				label.Depth = 0;
-			}
-			else if (IdentifierDictionary.IsSystemLabelName(e.Label))
-			{
-				label.IsSystem = true;
-				label.Depth = 0;
-			}
-			art.FunctionLabels.Add(label);
-		}
-	}
-
-	/// <summary>
-	/// 合并阶段（erb-loader-parallel Issue 01）：按原文件顺序把文件产物并入共享状态——
-	/// 缓冲警告按序发射、全部 LabelDictionary 写入（IfFileLoadClearLabelWithPath / AddLabel /
-	/// AddInvalidLabel / AddLabelDollar）、#ONLY 宣言入共享列表、控制台输出回放、计数聚合。
-	/// Index / FileIndex 分配序与警告顺序由“逐文件生成后立即按序合并”保证与旧串行路径一致。
-	/// 03：并行产物先经 <see cref="ResolvePendingCrossFileChecks"/> 补齐跨文件检查（占位槽替换）。
-	/// </summary>
-	private void MergeErbFile(ErbFileArtifact art, List<string> isOnlyEvent)
-	{
-		ResolvePendingCrossFileChecks(art, isOnlyEvent);
-		// 警告最先入列：等价于旧路径“解析期即入全局列表”（共享写入若异常也不丢已产出警告）
-		ParserMediator.EmitWarningBuffer(art.Warnings);
-		labelDic.IfFileLoadClearLabelWithPath(art.Filename);
-		ReplayConsoleOps(art);
-		var labels = art.FunctionLabels;
-		for (int i = 0; i < labels.Count; i++)
-		{
-			if (labels[i] is InvalidLabelLine)
-				labelDic.AddInvalidLabel(labels[i]);
-			else
-				labelDic.AddLabel(labels[i]);
-		}
-		var gotoLabels = art.GotoLabels;
-		for (int i = 0; i < gotoLabels.Count; i++)
-			labelDic.AddLabelDollar(gotoLabels[i]);
-		if (art.OnlyDeclarations.Count > 0)
-			isOnlyEvent.AddRange(art.OnlyDeclarations);
-		if (art.ScaningLine != null)
-			setScanLine(art.ScaningLine);
-		enabledLineCount += art.EnabledLineCount;
-		if (art.HasError)
-			noError = false;
-		// b2-irdiskcache：逐文件批量落盘到 IR（本文件 image 已并入共享状态，blob 写完即清空释放——内存 O(单文件)）。
-		if (_irPipeline is { CollectIr: true } irPipeline && art.IrBlobs.Count > 0)
-		{
-			irPipeline.AppendFile(art.Filename, art.IrBlobs);
-			art.IrBlobs.Clear();
-		}
-	}
-
-	/// <summary>并行产物的跨文件检查占位（合并期由 <see cref="ResolvePendingCrossFileChecks"/> 替换或删除）。</summary>
-	private static ParserMediator.ParserWarning PlaceholderWarning() => new("", null, 1, null!);
-
-	/// <summary>
-	/// erb-loader-parallel 03：合并期补检——并行生成期延后的跨文件重名（FuncIsAlreadyDefined）与
-	/// #ONLY 重複宣言（AlreadyDeclaredOnly）检查。此时 labelDic / isOnlyEvent 恰含“更早合并文件”
-	/// 的全部内容（本文件的 IfFileLoadClearLabelWithPath 尚未执行、宣言尚未 AddRange），与串行路径
-	/// 生成期快照的可见性一致，判定结果与警告序（占位槽位置）均与串行一致。串行产物无待办，no-op。
-	/// </summary>
-	private void ResolvePendingCrossFileChecks(ErbFileArtifact art, List<string> isOnlyEvent)
-	{
-		if (art.PendingOverloads.Count == 0 && art.PendingOnlys.Count == 0)
-			return;
-		List<int> deadSlots = [];
-		foreach (var check in art.PendingOverloads)
-		{
-			// senior 判定序与串行即时检查一致：跨文件最早（排除本文件名，重载场景旧标签
-			// 由本文件稍后的 IfFileLoadClearLabelWithPath 清理）?? 文件内首现
-			FunctionLabelLine? seniorLabel = labelDic.GetEarliestLabelWithName(check.Label.LabelName, art.Filename);
-			seniorLabel ??= check.InFileSenior;
-			if (seniorLabel != null)
-			{
-				art.Warnings[check.Slot] = new ParserMediator.ParserWarning(
-					string.Format(trerror.FuncIsAlreadyDefined.Text, check.Label.LabelName,
-						seniorLabel.Position!.Value.Filename, seniorLabel.Position!.Value.LineNo.ToString()),
-					check.Label.Position, 1, null!);
-			}
-			else
-				deadSlots.Add(check.Slot);
-		}
-		foreach (var check in art.PendingOnlys)
-		{
-			if (isOnlyEvent.Contains(check.LabelName))
-			{
-				art.Warnings[check.Slot] = new ParserMediator.ParserWarning(
-					string.Format(trerror.AlreadyDeclaredOnly.Text, check.LabelName), check.Position, 1, null!);
-			}
-			else
-				deadSlots.Add(check.Slot);
-		}
-		deadSlots.Sort();
-		for (int i = deadSlots.Count - 1; i >= 0; i--)
-			art.Warnings.RemoveAt(deadSlots[i]);
-	}
-
-	private void ReplayConsoleOps(ErbFileArtifact art)
-	{
-		var ops = art.ConsoleOps;
-		for (int i = 0; i < ops.Count; i++)
-			ops[i](output);
-		ops.Clear();
-	}
-
 	/// <summary>displayReport 逐文件进度行（原两处内联打印收敛；DEBUG 构建带累计耗时）。</summary>
 	private void PrintLoadingProgress(bool displayReport, DateTime starttime, string filename)
 	{
@@ -1077,8 +420,9 @@ internal sealed class ErbLoader
 		foreach (var (filename, file) in pending)
 		{
 			PrintLoadingProgress(displayReport, starttime, filename);
-			var art = await Task.Run(() => GenerateErbFile(file, filename, isOnlyEvent, deferCrossFileChecks: false));
-			MergeErbFile(art, isOnlyEvent);
+			var art = await Task.Run(() => ErbFileAssembler.Generate(file, filename, isOnlyEvent,
+				deferCrossFileChecks: false, replayOnFailure: true, AssembleContext(), _genStats));
+			ApplyMergeOutcome(ErbFileAssembler.Merge(art, isOnlyEvent, AssembleContext()));
 		}
 	}
 
@@ -1112,27 +456,37 @@ internal sealed class ErbLoader
 	/// 尾任务在已释放 gate 上 Release/WaitAsync 抛出无人观察的异常。取消产生的次生
 	/// OperationCanceledException 只记录，不覆盖原始加载异常。
 	/// </para>
-	/// 生成期共享写仍集中在 <see cref="MergeErbFile"/>（主 async 流按序执行）；worker 经 per-task
+	/// 生成期共享写仍集中在 <see cref="ErbFileAssembler.Merge"/>（主 async 流按序执行）；worker 经 per-task
 	/// AsyncLocal（警告缓冲/ScanLineMirror）与 deferCrossFileChecks 空视图做到无共享写。进度行随合并按序补发。
 	/// </summary>
 	// issues/17 genmerge 逐文件分账（「IR 桩 / 无函数 / 回落读源」）。并行 worker 写入，故用 Interlocked。
 	// 保留为常驻观测而非一次性探针：它是 A′ 的体检指标——fallbackSrc 若回升到与文件数同量级，
 	// 说明"在全集内却无 IR 条目"的判据失效（如全集构建异常），无需重跑取证即可发现。
 	// 取证期的临时探针（三段 Stopwatch 计时 + 落源文件名样本）已随 issue 17 结论落定拆除。
-	private int _irStubFiles;
-	/// <summary>判为"在命中轮全集内、但无 IR 条目"（= 确认该文件无函数）而免读源的文件数（issues/17 A′ 的收益口径）。</summary>
-	private int _irNoFuncFiles;
-	private int _sourceFallbackFiles;
-	/// <summary>其中"IR 已 Available 却仍回落"的条数——应恒为 0。</summary>
-	private int _sourceFallbackOnIrHit;
+	// ADR-0034：四个计数随「生成」一并外置为 <see cref="ErbFileAssembler.Stats"/>——worker 线程
+	// 自增它、宿主持有并读取（传引用而非回传，避免改动"并发自增"这一语义）。
+	private readonly ErbFileAssembler.Stats _genStats = new();
+
+	/// <summary>
+	/// ADR-0034：<see cref="ErbFileAssembler"/> 的依赖快照。<b>每次调用前现算</b>——
+	/// <c>labelDic</c> / <c>_ir</c> / <c>_irPipeline</c> 在一次装载内会被重赋值，
+	/// 缓存成字段会引入"快照陈旧"这类新的失效模式。
+	/// </summary>
+	private ErbFileAssembler.Context AssembleContext()
+		=> new(env, idDic, output, setScanLine, labelDic, _ir, _irPipeline);
+
+	/// <summary>应用 <see cref="ErbFileAssembler.MergeOutcome"/>——档 3 的宿主侧残留义务（每处 3 行）。</summary>
+	private void ApplyMergeOutcome(ErbFileAssembler.MergeOutcome outcome)
+	{
+		enabledLineCount += outcome.EnabledLines;
+		if (outcome.HasError)
+			noError = false;
+	}
 
 	private async Task LoadPendingParallel(List<(string Filename, string File)> pending, List<string> isOnlyEvent,
 		bool displayReport, DateTime starttime, ErbLoadStrategy strategy, CancellationToken externalCt)
 	{
-		_irStubFiles = 0;
-		_irNoFuncFiles = 0;
-		_sourceFallbackFiles = 0;
-		_sourceFallbackOnIrHit = 0;
+		_genStats.Reset();
 		if (pending.Count == 0)
 			return;
 		int window = Math.Clamp(TestWindowOverride ?? strategy.FileWindow, 1, pending.Count);
@@ -1148,6 +502,9 @@ internal sealed class ErbLoader
 		int canceledCount = 0;
 		var phaseSw = Stopwatch.StartNew();
 		var gcLast = GcSnapshot.Take();
+		// ADR-0034：worker 的依赖快照在开worker前一次性取好——worker 线程不回读宿主字段
+		//（生成期 deferCrossFileChecks=true 本就不碰 labelDic，此处连字段读也一并免掉）。
+		var ctx = AssembleContext();
 
 		try
 		{
@@ -1157,7 +514,7 @@ internal sealed class ErbLoader
 				while (nextToStart < pending.Count && running.Count < window)
 				{
 					int idx = nextToStart++; // 闭包陷阱：捕获本迭代独立副本
-					running[idx] = Task.Run(() => RunGenerateWorkerAsync(idx, pending[idx].Filename, pending[idx].File, cts.Token));
+					running[idx] = Task.Run(() => RunGenerateWorkerAsync(idx, pending[idx].Filename, pending[idx].File, ctx, cts.Token));
 				}
 				peakActive = Math.Max(peakActive, running.Count);
 
@@ -1171,13 +528,13 @@ internal sealed class ErbLoader
 						$"LoadPendingParallel: fail idx={result.Index} file={result.Filename} stage={(result.Canceled ? "cancel" : "generate")} ex={result.Exception.GetType().Name}");
 					if (result.Artifact != null)
 					{
-						ReplayConsoleOps(result.Artifact);
+						ErbFileAssembler.ReplayConsoleOps(result.Artifact, ctx);
 						ParserMediator.EmitWarningBuffer(result.Artifact.Warnings);
 					}
 					throw result.Exception;
 				}
 				PrintLoadingProgress(displayReport, starttime, result.Filename);
-				MergeErbFile(result.Artifact!, isOnlyEvent);
+				ApplyMergeOutcome(ErbFileAssembler.Merge(result.Artifact!, isOnlyEvent, ctx));
 				// 判别日志（handoff §6.3）：每 32 文件输出窗口占用 + GC 增量，卡住阶段可由 logcat 直接判别
 				if ((merged & 0x1F) == 0)
 				{
@@ -1212,13 +569,16 @@ internal sealed class ErbLoader
 			// issues/17 观测行（A′ 体检）：命中轮 fallbackSrc 应为 0、irNoFunc 应为"0 函数文件数"；
 			// fallbackOnIrHit 恒 0 否则判据有漏。冷枚举轮（IR 不可用）fallbackSrc=n、irStub=0 属常态。
 			EmueraLog.Info("ErbLoader",
-				$"LoadPendingParallel(issues/17): irStub={Volatile.Read(ref _irStubFiles)} irNoFunc={Volatile.Read(ref _irNoFuncFiles)} fallbackSrc={Volatile.Read(ref _sourceFallbackFiles)} fallbackOnIrHit={Volatile.Read(ref _sourceFallbackOnIrHit)}");
+				$"LoadPendingParallel(issues/17): irStub={Volatile.Read(ref _genStats.IrStubFiles)} irNoFunc={Volatile.Read(ref _genStats.IrNoFuncFiles)} fallbackSrc={Volatile.Read(ref _genStats.SourceFallbackFiles)} fallbackOnIrHit={Volatile.Read(ref _genStats.SourceFallbackOnIrHit)}");
 		}
 	}
 
 	/// <summary>worker 主体：gate hook → 取消检查 → 生成 → fault 注入点。永不抛出——一切结果进 <see cref="GenerationResult"/>；
 	/// 测试观察点 start/end/cancel 经 <see cref="TestWorkerObserver"/> 上报（含失败与取消路径，收束断言依据）。</summary>
-	private async Task<GenerationResult> RunGenerateWorkerAsync(int idx, string filename, string filepath, CancellationToken ct)
+	// 注：本方法是 async，故 <see cref="ErbFileAssembler.Context"/> 走按值传参（CS1988 禁止
+	// 异步方法带 in/ref/out 参数）。Context 是 7 个引用的 readonly struct，拷贝成本可忽略。
+	private async Task<GenerationResult> RunGenerateWorkerAsync(int idx, string filename, string filepath,
+		ErbFileAssembler.Context ctx, CancellationToken ct)
 	{
 		TestWorkerObserver?.Invoke("start", filename);
 		try
@@ -1226,7 +586,8 @@ internal sealed class ErbLoader
 			if (TestGenerateGateHook != null)
 				await TestGenerateGateHook(filename, ct).ConfigureAwait(false);
 			ct.ThrowIfCancellationRequested();
-			var art = GenerateErbFile(filepath, filename, [], deferCrossFileChecks: true, replayOnFailure: false);
+			var art = ErbFileAssembler.Generate(filepath, filename, [], deferCrossFileChecks: true,
+				replayOnFailure: false, ctx, _genStats);
 			// fault 注入点在生成完成后：artifact 保留 + 异常显式承载，复现「部分产物 + 异常」的按序回放路径
 			var fault = TestGenerateFaultHook?.Invoke(filename);
 			return fault != null
@@ -1250,15 +611,6 @@ internal sealed class ErbLoader
 	}
 
 	#endregion
-
-	private static LogicalLine addLine(ErbFileArtifact art, LogicalLine nextLine, LogicalLine lastLine)
-	{
-		if (nextLine == null)
-			return null!;
-		art.EnabledLineCount++;
-		lastLine.NextLine = nextLine;
-		return nextLine;
-	}
 
 	private void setLabelsArg()
 	{
