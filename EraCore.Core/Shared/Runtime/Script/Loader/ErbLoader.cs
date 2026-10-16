@@ -242,12 +242,15 @@ internal sealed class ErbLoader
 			//（标签级）两处路径选择、两处度数（生成窗口 / 清扫度）与观测词表全部由它单点归属；
 			// ambient（配置 / 平台 / 核数）只在此读一次，此后各处只问对象。
 			var strategy = ErbLoadStrategy.FromCurrent(env);
+			// ADR-0035：生成期的全部 ambient（依赖 + 配置）在此一次快照，位置须在 _ir/_irPipeline
+			// 赋值（215/220）之后、genmerge 之前——与紧邻的 IrLoadContext.FromCurrent(env) 同一节拍。
+			var ctx = AssembleContext();
 			var phaseSw = Stopwatch.StartNew();
 			var gcBeforeGenmerge = GcSnapshot.Take();
 			if (strategy.ParallelGenmerge)
-				await LoadPendingParallel(pending, isOnlyEvent, displayReport, starttime, strategy, externalCt);
+				await LoadPendingParallel(pending, isOnlyEvent, displayReport, starttime, strategy, ctx, externalCt);
 			else
-				await LoadPendingSerial(pending, isOnlyEvent, displayReport, starttime);
+				await LoadPendingSerial(pending, isOnlyEvent, displayReport, starttime, ctx);
 			phaseSw.Stop();
 			EmueraLog.Info("ErbLoader", $"phase=genmerge parallel={strategy.ParallelGenmerge} files={pending.Count} ms={phaseSw.ElapsedMilliseconds} {GcSnapshot.Diff(gcBeforeGenmerge)}");
 			ParserMediator.FlushWarningList();
@@ -352,6 +355,8 @@ internal sealed class ErbLoader
 		// TryGenerateFromIr 直建桩（须重读源反映新内容），同时关闭上一轮常驻读句柄（issues/05 关闭点）；
 		// 单文件增量失效不在 v1 范围（design §6「不做」），本路不生成 IR 写器。
 		ResetIrState();
+		// ADR-0035：装载入口一次快照（须在 ResetIrState 之后——部分重载不走 IR，_ir 恒 null）。
+		var ctx = AssembleContext();
 
 		await Task.Run(() =>
 		{
@@ -370,8 +375,8 @@ internal sealed class ErbLoader
 				// erb-loader-parallel 01/03：与 LoadErbDir 串行调度同款“生成 → 按序合并”两步
 				//（部分重载文件数少，不参与并行化；跨文件检查保持串行即时）
 				var art = ErbFileAssembler.Generate(fpath, fname, isOnlyEvent, deferCrossFileChecks: false,
-					replayOnFailure: true, AssembleContext(), _genStats);
-				ApplyMergeOutcome(ErbFileAssembler.Merge(art, isOnlyEvent, AssembleContext()));
+					replayOnFailure: true, ctx, _genStats);
+				ApplyMergeOutcome(ErbFileAssembler.Merge(art, isOnlyEvent, ctx));
 				};
 		});
 		if (env.AnalysisMode)
@@ -415,14 +420,14 @@ internal sealed class ErbLoader
 	/// 完全一致——进度行在生成前打印、跨文件检查生成期即时、异常即回放再抛。
 	/// </summary>
 	private async Task LoadPendingSerial(List<(string Filename, string File)> pending, List<string> isOnlyEvent,
-		bool displayReport, DateTime starttime)
+		bool displayReport, DateTime starttime, ErbFileAssembler.Context ctx)
 	{
 		foreach (var (filename, file) in pending)
 		{
 			PrintLoadingProgress(displayReport, starttime, filename);
 			var art = await Task.Run(() => ErbFileAssembler.Generate(file, filename, isOnlyEvent,
-				deferCrossFileChecks: false, replayOnFailure: true, AssembleContext(), _genStats));
-			ApplyMergeOutcome(ErbFileAssembler.Merge(art, isOnlyEvent, AssembleContext()));
+				deferCrossFileChecks: false, replayOnFailure: true, ctx, _genStats));
+			ApplyMergeOutcome(ErbFileAssembler.Merge(art, isOnlyEvent, ctx));
 		}
 	}
 
@@ -468,12 +473,20 @@ internal sealed class ErbLoader
 	private readonly ErbFileAssembler.Stats _genStats = new();
 
 	/// <summary>
-	/// ADR-0034：<see cref="ErbFileAssembler"/> 的依赖快照。<b>每次调用前现算</b>——
-	/// <c>labelDic</c> / <c>_ir</c> / <c>_irPipeline</c> 在一次装载内会被重赋值，
-	/// 缓存成字段会引入"快照陈旧"这类新的失效模式。
+	/// ADR-0034：<see cref="ErbFileAssembler"/> 的依赖快照。
+	/// <para>
+	/// <b>ADR-0035 决策一/四：改为在装载入口调用一次</b>（<see cref="LoadErbDir"/> /
+	/// <see cref="LoadErbList"/>），此后整轮装载共用同一份——包含配置在内全部冻结
+	/// （与 <see cref="IrLoadContext.FromCurrent"/> 同款"装载入口一次快照"）。
+	/// </para>
+	/// <b>调用时机有约束</b>：必须在 <c>_ir</c> / <c>_irPipeline</c> 赋值之后
+	/// （<see cref="LoadErbDir"/> 内为 215/220 行之后），否则快照里的 IR 会是上一轮的残留。
 	/// </summary>
 	private ErbFileAssembler.Context AssembleContext()
-		=> new(env, idDic, output, setScanLine, labelDic, _ir, _irPipeline);
+		=> new(env, idDic, output, setScanLine, labelDic, _ir, _irPipeline,
+			Config.Config.UseRenameFile, ParserMediator.RenameDic != null, Config.Config.StrComper,
+			Config.Config.LazyFunctionLoad, Config.Config.WarnNormalFunctionOverloading,
+			Config.Config.PrintCPerLine, JSONConfig.Data.UseNewRandom);
 
 	/// <summary>应用 <see cref="ErbFileAssembler.MergeOutcome"/>——档 3 的宿主侧残留义务（每处 3 行）。</summary>
 	private void ApplyMergeOutcome(ErbFileAssembler.MergeOutcome outcome)
@@ -484,7 +497,8 @@ internal sealed class ErbLoader
 	}
 
 	private async Task LoadPendingParallel(List<(string Filename, string File)> pending, List<string> isOnlyEvent,
-		bool displayReport, DateTime starttime, ErbLoadStrategy strategy, CancellationToken externalCt)
+		bool displayReport, DateTime starttime, ErbLoadStrategy strategy,
+		ErbFileAssembler.Context ctx, CancellationToken externalCt)
 	{
 		_genStats.Reset();
 		if (pending.Count == 0)
@@ -502,9 +516,8 @@ internal sealed class ErbLoader
 		int canceledCount = 0;
 		var phaseSw = Stopwatch.StartNew();
 		var gcLast = GcSnapshot.Take();
-		// ADR-0034：worker 的依赖快照在开worker前一次性取好——worker 线程不回读宿主字段
+		// ADR-0035：ctx 由装载入口（LoadErbDir/LoadErbList）传入——worker 线程不回读宿主字段
 		//（生成期 deferCrossFileChecks=true 本就不碰 labelDic，此处连字段读也一并免掉）。
-		var ctx = AssembleContext();
 
 		try
 		{

@@ -86,7 +86,9 @@ internal static class ErbFileAssembler
 	internal readonly struct Context
 	{
 		internal Context(LoaderEnv env, IdentifierDictionary idDic, EmueraConsole output,
-			Action<LogicalLine> setScanLine, LabelDictionary labelDic, IrState? ir, ErbIrLoadPipeline? irPipeline)
+			Action<LogicalLine> setScanLine, LabelDictionary labelDic, IrState? ir, ErbIrLoadPipeline? irPipeline,
+			bool useRenameFile, bool hasRenameDic, StringComparer strComper, bool lazyFunctionLoad,
+			bool warnNormalFunctionOverloading, int printCPerLine, bool useNewRandom)
 		{
 			Env = env;
 			IdDic = idDic;
@@ -95,6 +97,13 @@ internal static class ErbFileAssembler
 			LabelDic = labelDic;
 			Ir = ir;
 			IrPipeline = irPipeline;
+			UseRenameFile = useRenameFile;
+			HasRenameDic = hasRenameDic;
+			StrComper = strComper;
+			LazyFunctionLoad = lazyFunctionLoad;
+			WarnNormalFunctionOverloading = warnNormalFunctionOverloading;
+			PrintCPerLine = printCPerLine;
+			UseNewRandom = useNewRandom;
 		}
 
 		public readonly LoaderEnv Env;
@@ -105,6 +114,24 @@ internal static class ErbFileAssembler
 		public readonly LabelDictionary LabelDic;
 		public readonly IrState? Ir;
 		public readonly ErbIrLoadPipeline? IrPipeline;
+
+		// ── ADR-0035：原生的 ambient 配置读，全部在<b>装载入口一次快照</b>（决策一）─────────────
+		// 逐字段对应原来的 Config.Config.* / ParserMediator.RenameDic / JSONConfig.Data.* 直读，
+		// 不做折叠（决策二）：保留"这个决定由哪个 ambient 得出"的可追溯性。
+		/// <summary>原 <c>Config.Config.UseRenameFile</c>。</summary>
+		public readonly bool UseRenameFile;
+		/// <summary>原 <c>ParserMediator.RenameDic != null</c>。</summary>
+		public readonly bool HasRenameDic;
+		/// <summary>原 <c>Config.Config.StrComper</c>。</summary>
+		public readonly StringComparer StrComper;
+		/// <summary>原 <c>Config.Config.LazyFunctionLoad</c>。</summary>
+		public readonly bool LazyFunctionLoad;
+		/// <summary>原 <c>Config.Config.WarnNormalFunctionOverloading</c>。</summary>
+		public readonly bool WarnNormalFunctionOverloading;
+		/// <summary>原 <c>Config.Config.PrintCPerLine</c>。</summary>
+		public readonly int PrintCPerLine;
+		/// <summary>原 <c>JSONConfig.Data.UseNewRandom</c>。</summary>
+		public readonly bool UseNewRandom;
 	}
 
 	/// <summary>
@@ -203,7 +230,7 @@ internal static class ErbFileAssembler
 		if (ctx.Ir is { Available: true })
 			Interlocked.Increment(ref stats.SourceFallbackOnIrHit);
 
-		using var eReader = new EraStreamReader(Config.Config.UseRenameFile && ParserMediator.RenameDic != null);
+		using var eReader = new EraStreamReader(ctx.UseRenameFile && ctx.HasRenameDic);
 
 		if (!eReader.OpenOnCache(filepath, filename))
 		{
@@ -221,11 +248,11 @@ internal static class ErbFileAssembler
 		ScriptPosition? position = null;
 		int funcCount = 0;
 		// 生成期重名判定的文件内视图：跨文件同名经 labelDic.GetEarliestLabelWithName 按合并序读
-		var firstValidLabelByName = new Dictionary<string, FunctionLabelLine>(Config.Config.StrComper);
+		var firstValidLabelByName = new Dictionary<string, FunctionLabelLine>(ctx.StrComper);
 		var firstGotoByParent = new Dictionary<FunctionLabelLine, Dictionary<string, GotoLabelLine>>();
 		// lazy-function-load（B 线 B1）：惰性模式 = 开 LazyFunctionLoad 且非 AnalysisMode（AnalysisMode 强制 eager）。
 		// 惰性下函数体行链不解析——labelDic 只注册全量标签桩（IsStub），仅 # 签名行处理（保 Argument/Def/IsMethod）。
-		bool lazy = Config.Config.LazyFunctionLoad && !ctx.Env.AnalysisMode;
+		bool lazy = ctx.LazyFunctionLoad && !ctx.Env.AnalysisMode;
 		// b2-irdiskcache：收集本文件函数 IR blob（仅 IR 生成期，即增量写器非空）。
 		bool collectIr = ctx.IrPipeline is { CollectIr: true };
 		FunctionLabelLine? irCurLabel = null;
@@ -336,7 +363,7 @@ internal static class ErbFileAssembler
 					else// if (label is FunctionLabelLine)
 					{
 						var inFileSenior = firstValidLabelByName.GetValueOrDefault(label!.LabelName);
-						if (!label!.IsEvent && (Config.Config.WarnNormalFunctionOverloading || ctx.Env.AnalysisMode))
+						if (!label!.IsEvent && (ctx.WarnNormalFunctionOverloading || ctx.Env.AnalysisMode))
 						{
 							if (deferCrossFileChecks)
 							{
@@ -363,7 +390,7 @@ internal static class ErbFileAssembler
 						}
 						funcCount++;
 						firstValidLabelByName.TryAdd(label.LabelName, label);
-						if (ctx.Env.AnalysisMode && Config.Config.PrintCPerLine > 0 && funcCount % Config.Config.PrintCPerLine == 0)
+						if (ctx.Env.AnalysisMode && ctx.PrintCPerLine > 0 && funcCount % ctx.PrintCPerLine == 0)
 						{
 							art.ConsoleOps.Add(c => c.NewLine());
 							art.ConsoleOps.Add(c => c.PrintSystemLine(" "));
@@ -381,7 +408,7 @@ internal static class ErbFileAssembler
 							// 同関数内 $ 重複判定（AddLabelDollar 的 TryAdd 语义：同 parent+名保留首个）
 							if (!firstGotoByParent.TryGetValue(lastLabelLine, out var byName))
 							{
-								byName = new Dictionary<string, GotoLabelLine>(Config.Config.StrComper);
+								byName = new Dictionary<string, GotoLabelLine>(ctx.StrComper);
 								firstGotoByParent.Add(lastLabelLine, byName);
 							}
 							if (byName.TryGetValue(gotoLabel.LabelName, out GotoLabelLine? firstGoto))
@@ -430,7 +457,7 @@ internal static class ErbFileAssembler
 					art.HasError = true;
 					ParserMediator.Warn(nextLine.ErrMes, position, 2);
 				}
-				else if (JSONConfig.Data.UseNewRandom &&
+				else if (ctx.UseNewRandom &&
 										nextLine is InstructionLine instruction)
 				{
 					switch (instruction.FunctionCode)
