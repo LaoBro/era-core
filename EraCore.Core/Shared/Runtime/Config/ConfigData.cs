@@ -830,7 +830,8 @@ internal sealed class ConfigData
 
 	public bool LoadConfig()
 	{
-		return LoadConfigCore(configPath, Program.CsvDir);
+		// ADR-0038 决策三：accessor 在入口取一次，显式穿参到真正做 IO 的那一段。
+		return LoadConfigCore(configPath, Program.CsvDir, GamePaths.Current?.DirAccessor);
 	}
 
 	/// <summary>
@@ -840,10 +841,11 @@ internal sealed class ConfigData
 	/// </summary>
 	public bool LoadConfig(string exeDir)
 	{
+		// ADR-0038 决策三：同上，accessor 在入口取一次后显式下传。
+		var accessor = GamePaths.Current?.DirAccessor;
 		string csvDir;
 		if (SafPath.IsContentUri(exeDir))
 		{
-			var accessor = GamePaths.Current?.DirAccessor;
 			csvDir = accessor != null
 				? accessor.ResolveSubPath(exeDir, "csv")
 				: CombineConfigPath(exeDir, "csv");
@@ -851,10 +853,10 @@ internal sealed class ConfigData
 		else
 			csvDir = Path.Combine(exeDir, "csv") + Path.DirectorySeparatorChar;
 		string configPathLocal = CombineConfigPath(exeDir, "emuera.config");
-		return LoadConfigCore(configPathLocal, csvDir);
+		return LoadConfigCore(configPathLocal, csvDir, accessor);
 	}
 
-	private bool LoadConfigCore(string configPathLocal, string csvDir)
+	private bool LoadConfigCore(string configPathLocal, string csvDir, IGameDirAccessor? dirAccessor)
 	{
 		string defaultConfigPath = CombineConfigPath(csvDir, "_default.config");
 		string fixedConfigPath = CombineConfigPath(csvDir, "_fixed.config");
@@ -871,7 +873,7 @@ internal sealed class ConfigData
 
 		// 候选 2 / ADR-0009：原 Config.SetConfig(this) 已坍缩——视图（Config）是薄转发层，
 		// 无副本可刷新；clamp/语言/存档目录逻辑下沉为实例方法 ApplyPostLoadEffects。
-		ApplyPostLoadEffects();
+		ApplyPostLoadEffects(dirAccessor);
 
 		// DisplayReport 覆盖：三源（default/emuera/fixed.config）已合并且 post-load 已应用，
 		// 此时压 DisplayReport 能盖过一切来源（含 fixed.config 的强制值）。
@@ -925,7 +927,11 @@ internal sealed class ConfigData
 	/// 加载后置处理：clamp 非法范围、按 useLanguage 计算语言 LCID 与编码、必要时创建/迁移存档目录。
 	/// 原 Config.SetConfig 的等价逻辑（视图无副本后，直接写回 _data 的 item）。
 	/// </summary>
-	public void ApplyPostLoadEffects()
+	/// <summary>
+	/// ADR-0038 决策三：<paramref name="dirAccessor"/> 为 null 时跳过 sav 目录逻辑——
+	/// 宁可不做，也不回落到本地 IO（F-1）。
+	/// </summary>
+	public void ApplyPostLoadEffects(IGameDirAccessor? dirAccessor)
 	{
 		UseLanguage lang = GetConfigValue<UseLanguage>(ConfigCode.useLanguage);
 		switch (lang)
@@ -995,9 +1001,9 @@ internal sealed class ConfigData
 #endif
 				}
 			}
-			else if (!Directory.Exists(SavDir))
+			else if (dirAccessor != null && !dirAccessor.DirectoryExists(SavDir))
 			{
-				createSavDirAndMoveFiles();
+				ensureSavDir(dirAccessor);
 			}
 		}
 	}
@@ -1038,41 +1044,26 @@ internal sealed class ConfigData
 		};
 	}
 
-	private void createSavDirAndMoveFiles()
+	/// <summary>
+	/// ADR-0038：确保 sav 目录可建——<b>只建目录，不搬存档</b>。
+	/// <para>
+	/// 原名 <c>createSavDirAndMoveFiles</c> 里的"搬移"段已删除：它前面有一道
+	/// <c>Dialog.ShowPrompt</c> 同意提示，而无头实现恒返回 No（HeadlessDialog，日志
+	/// "auto-select: No"），故旧存档搬移在<b>任何当前构建里都不会发生</b>；依赖它的两处存在性
+	/// 探测（<c>global.sav</c> 存在性 + <c>save*.sav</c> 枚举）也随之删除——它们只服务于
+	/// "有没有东西可搬"这一问，无副作用、无日志，删掉还省掉每次启动的 3 趟 IO。
+	/// </para>
+	/// <para><b>本方法刻意保持"不搬移"这一既有行为</b>（先钉测试 <c>SaveFolderCreationTests</c>）。</para>
+	/// </summary>
+	private void ensureSavDir(IGameDirAccessor dirAccessor)
 	{
-		string savDir = SavDir;
 		try
 		{
-			Directory.CreateDirectory(savDir);
+			dirAccessor.CreateDirectory(SavDir);
 		}
 		catch
 		{
 			Dialog.Show(trmb.FolderCreationFailure.Text, trmb.FailedCreateSavFolder.Text);
-			return;
-		}
-		bool existGlobal = File.Exists(Program.ExeDir + "global.sav");
-		string[] savFiles = Directory.GetFiles(Program.ExeDir, "save*.sav", SearchOption.TopDirectoryOnly);
-		if (!existGlobal && savFiles.Length == 0)
-			return;
-		var result = Dialog.ShowPrompt(trmb.SavFolderCreated.Text, trmb.DataTransfer.Text);
-		if (result == false)
-			return;
-		if (!Directory.Exists(savDir))
-		{
-			Dialog.Show(trmb.DataTransferFailure.Text, trmb.MissingSavFolder.Text);
-			return;
-		}
-		try
-		{
-			if (File.Exists(Program.ExeDir + "global.sav"))
-				File.Move(Program.ExeDir + "global.sav", savDir + "global.sav");
-			savFiles = Directory.GetFiles(Program.ExeDir, "save*.sav", SearchOption.TopDirectoryOnly);
-			foreach (string oldpath in savFiles)
-				File.Move(oldpath, savDir + Path.GetFileName(oldpath));
-		}
-		catch
-		{
-			Dialog.Show(trmb.DataTransferFailure.Text, trmb.FailedMoveSavFiles.Text);
 		}
 	}
 	#endregion

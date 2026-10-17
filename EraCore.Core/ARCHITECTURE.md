@@ -193,7 +193,7 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 | F-4 | 应用私有域是**唯一豁免域**——domain 由 `AppDataPaths`（+ `AppDataIo` 窄口子）显式界定，经 `AppDataPaths.IsUnder` 机检 | 豁免边界回到「靠开发者记得」的隐式状态 |
 | F-5 | 已知**待收敛例外**（见下）由守卫测试 `GameDirAccessorIoPolicyTests` 逐文件、逐调用数盯着；新增代码**不得**扩大该清单 | 例外蔓延成事实上的第二套 IO |
 
-**待收敛例外清单**（截至 2026-10-18，Core 内裸 `File.*` / `Directory.*`；按归属域分三类）：
+**待收敛例外清单**（截至 2026-10-18，Core 内裸 `File.*` / `Directory.*`；按归属域分三类）——**GameTree 域已归零**：
 
 > **2026-10-18（ADR-0036，两片）**：GameTree 域里两组**不可编译**站点已随其源码一并删除，非"收敛"——
 > ① `AppContents.cs`（3 处，随 `#else` 半支删除）；② `ImgUtils.cs`（整文件，`#if !HEADLESS`）
@@ -208,10 +208,13 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 > `EncodingHandler` 的两个 path 重载、`EraStreamReader` 的「accessor 读空后直连磁盘」最后兜底
 > （末项是**刻意的行为变化**：失败显性化；行为锁 = `EraStreamReaderAccessorTests`，其中
 > `Open_does_not_fall_back_to_the_local_file_system` 在兜底被加回时立即转红）。
+> 同日（ADR-0038）收尾 `ConfigData` 的 sav 挪档：搬移段前有一道 `Dialog.ShowPrompt`，无头实现恒返回 No
+> ⇒ 两处 `File.Move` 与依赖它们的三处探测**在任何当前构建里不可达**，随段删除；其余两处改用 accessor。
+> **关键结论：原本为它们准备的 `MoveFile` 接口成员已撤销**——不需要了，接口一个符号都没动。
+> 行为锁 = `SaveFolderCreationTests`，钉住「建 sav 目录 + 旧存档不搬移」这一刻意保持的行为。
 
 | 文件 | 域 | 处数 | 理由 |
 |---|---|---|---|
-| `Shared/Runtime/Config/ConfigData.cs` | GameTree | 9 | sav 目录本地分支（强制创建 + 存档挪档）；SAF 分支已走 `SafCompat` |
 | `Shared/Runtime/Script/Loader/ErbIrCache.cs` | AppPrivate | 10 | IR 磁盘缓存（appdata `IRCache/` 或桌面 `<游戏目录>/_IRCache/`），非游戏内容 |
 | `Shared/Runtime/Script/Loader/SrcContentCache.cs` | AppPrivate | 8 | 10-B CSV/ERH 源内容缓存，与 `era_ir.dat` 同布局同生命周期 |
 | `GamePaths.cs` | Platform | 2 | 宿主安装目录探测 + 本地路径归一化（`DetectDefault` / `new DirectoryInfo`），发生在 accessor 上任之前 |
@@ -253,7 +256,7 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 |---|---|---|---|
 | 输入 | `IInputHost` | ADR-0031 **proposed**；M1/M2/M4 已落地（接口 + `DefaultInputHost` + 几何/键盘通道） | M5–M8：触屏 E-min、primitive 能力位、`IConsoleUI` 瘦身 Phase 2 |
 | 输出 | `IDisplayState` / `OutputHub` | ADR-0013/0014/0003 **accepted 且已落地** | —— |
-| 文件 | `IGameDirAccessor` | ADR-0019 **accepted 且已落地**（双实现）；2026-10-16 收敛一轮；**2026-10-18 ADR-0036 删除全部不可编译分支**（`AppContents` / `ImgUtils` / `EvilMask.Utils`）+ **ADR-0037 收最后一条可编译读缝**（`ConstantData` / `EncodingHandler` / `EraStreamReader`） | 第 4.3 节 GameTree 域仅剩 **1 项**（Cap **9**：见 [09](../.scratch/erb-pipeline-deep-module/issues/09-gametree-remaining-io.md) 批次 A = `ConfigData` 的 sav 挪档，待决是否给接口加 `Move`；其余 5 项为豁免/平台域，非欠账） |
+| 文件 | `IGameDirAccessor` | ADR-0019 **accepted 且已落地**（双实现）；2026-10-16 收敛一轮；**2026-10-18 三轮清完**：ADR-0036 删全部不可编译分支（`AppContents` / `ImgUtils` / `EvilMask.Utils`）→ ADR-0037 收最后一条可编译读缝（`ConstantData` / `EncodingHandler` / `EraStreamReader`）→ ADR-0038 收 sav 挪档（`ConfigData`） | **GameTree 域已归零**（Cap 0）；剩余 5 项全为豁免/平台域（`ErbIrCache` / `SrcContentCache` / `GamePaths` / `SafCompat` / `Sys`），非欠账。新增游戏树直连 IO 会立即被守卫测试判为「未登记」转红 |
 
 > 输入轴仍处推进中：ADR-0031 为 `proposed`，M5–M8 未落地。**本表随里程碑推进而改**，不视为稳定契约。
 

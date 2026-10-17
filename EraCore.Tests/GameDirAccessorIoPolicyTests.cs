@@ -69,8 +69,8 @@ public class GameDirAccessorIoPolicyTests
     private static readonly IReadOnlyDictionary<string, Exemption> KnownDirectIo = new Dictionary<string, Exemption>(StringComparer.Ordinal)
     {
         // ── GameTree：游戏树 IO，仍绕过 accessor —— 真正的待收敛欠账 ────────────────
-        ["Shared/Runtime/Config/ConfigData.cs"] = new(
-            "sav 目录本地分支：强制创建 + global.sav / save*.sav 挪档（SAF 分支已走 SafCompat）", Domain.GameTree, 9),
+        // ADR-0036（不可编译分支）+ ADR-0037（可编译读缝）+ ADR-0038（sav 挪档）后**已归零**：
+        // 新增游戏树直连 IO 会落进下面的「无登记 ⇒ 违规」分支，立即转红。
 
         // ── AppPrivate：应用私有域 / 引擎自有派生数据（F-4 豁免）────────────────────
         ["Shared/Runtime/Script/Loader/ErbIrCache.cs"] = new(

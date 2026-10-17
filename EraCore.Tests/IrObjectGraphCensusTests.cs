@@ -147,7 +147,7 @@ $CENSUS_DOLLAR
 		// 正路：LoadConfig(exeDir)（ConfigData.cs:785，读 <exeDir>/emuera.config + csv 下 default/fixed），
 		// 再补跑 ApplyPostLoadEffects()（LangManager.setEncode 的唯一入口，:874-887；幂等）。
 		ConfigData.Current!.LoadConfig(gameDir);
-		ConfigData.Current!.ApplyPostLoadEffects();
+		ConfigData.Current!.ApplyPostLoadEffects(GamePaths.Current?.DirAccessor);
 		await h.InitializeAsync(); // 用游戏自带配置加载（生产形态；真机 fp 实测 NR=true）
 
 		var all = h.LabelDic.GetAllLabels(true);
@@ -184,7 +184,7 @@ $CENSUS_DOLLAR
 
 		using var h = new LoaderTestHarness(gameDir);
 		ConfigData.Current!.LoadConfig(gameDir);
-		ConfigData.Current!.ApplyPostLoadEffects();
+		ConfigData.Current!.ApplyPostLoadEffects(GamePaths.Current?.DirAccessor);
 		await h.InitializeAsync();
 
 		ForceReduceArgumentOnLoad();
