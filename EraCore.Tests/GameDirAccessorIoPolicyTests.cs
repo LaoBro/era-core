@@ -12,7 +12,7 @@ namespace MinorShift.Emuera.Tests;
 /// 不变量 F-1 的清单守卫：<see cref="IGameDirAccessor"/> 是游戏树 IO 的唯一接缝，
 /// Core 内任何直连 <c>File.*</c> / <c>Directory.*</c> / <c>new FileStream/FileInfo/DirectoryInfo</c>
 /// 都必须<b>显式登记并说明理由</b>。登记项带调用数上限＝快照，
-/// <b>删除无需改清单，新增或换(new)文件必转红</b>——让「例外蔓延」在 CI 上被拦下。
+/// <b>减少调用无需改清单（Cap 是上限），但计数归零必须删行</b>；<b>新增或换(new)文件必转红</b>——让「例外蔓延」在 CI 上被拦下。
 /// <para>
 /// 与 <see cref="SafIoPolicyTests"/> 的分工：本类守「全 Core 例外清单」（ARCHITECTURE.md 4.3）；
 /// 后者守 SAF content URI 的路径语义（特定的非法 <c>Path.*</c> 用法），二者不重叠。
@@ -125,11 +125,21 @@ public class GameDirAccessorIoPolicyTests
             }
         }
 
-        // 陈旧登记：清单里的文件已消失（被删/被改名）→ 清掉该行，保持清单是「现役欠账」而非历史博物馆。
+        // 陈旧登记：清单必须是「现役欠账」而非历史名单——两种情形都必须删行：
+        // (a) 文件已消失（被删/被改名）；
+        // (b) 文件还在，但直连 IO 已**清零**（被收敛干净，或随不可编译分支一并删除——ADR-0036）。
+        // (b) 曾经是漏洞：AppContents.cs 的 3 处 IO 连同其 #else 半支被删后，行仍躺在清单里，
+        //     直到人工勘察才发现「有一条欠账其实已经不在构建里」。
         foreach (var relativePath in KnownDirectIo.Keys.OrderBy(k => k, StringComparer.Ordinal))
         {
-            if (!counts.ContainsKey(relativePath))
+            if (!counts.TryGetValue(relativePath, out var listed))
+            {
                 violations.Add($"{relativePath}: exemption row is stale (file no longer exists) — remove it.");
+                continue;
+            }
+            if (listed == 0)
+                violations.Add($"{relativePath}: exemption row is stale (no direct I/O left — converged, or removed " +
+                               "with a dead compile branch; see ARCHITECTURE.md 4.3) — remove the row.");
         }
 
         Assert.True(violations.Count == 0,
