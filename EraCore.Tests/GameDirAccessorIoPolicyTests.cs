@@ -75,10 +75,6 @@ public class GameDirAccessorIoPolicyTests
             "accessor 缺失时的 local 回退（dirAccessor?.FileExists(...) ?? File.Exists(...)）", Domain.GameTree, 2),
         ["Shared/Runtime/Utils/EncodingHandler.cs"] = new(
             "编码探测 ReadAllBytes（path 形态混杂；应随 CSV/ERB 读取一并 accessor 化）", Domain.GameTree, 2),
-        ["Shared/Runtime/Utils/EvilMask/Utils.cs"] = new(
-            "非 HEADLESS 图像 LoadImage 的存在性预检", Domain.GameTree, 1),
-        ["Shared/UI/Game/Image/ImgUtils.cs"] = new(
-            "非 HEADLESS 图像 LoadImage 的存在性预检", Domain.GameTree, 1),
 
         // ── AppPrivate：应用私有域 / 引擎自有派生数据（F-4 豁免）────────────────────
         ["Shared/Runtime/Script/Loader/ErbIrCache.cs"] = new(

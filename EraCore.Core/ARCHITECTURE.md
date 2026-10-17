@@ -195,9 +195,14 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 
 **待收敛例外清单**（截至 2026-10-18，Core 内裸 `File.*` / `Directory.*`；按归属域分三类）：
 
-> **2026-10-18（ADR-0036）**：`Shared/UI/Game/Image/AppContents.cs`（GameTree，3 处）已随其**不可编译的 `#else` 半支**一并删除移出清单
-> ——Core 恒以 `HEADLESS` 编译（`EraCore.Core.csproj:8`），这 3 处从不参与任何构建。resources 树的工作由
-> `ImageNameTable`（经 accessor）承接。**清点清单前应先确认目标是否在 `#else` 内**——清单条目数是源码文本计数，不等于真实 IO 面。
+> **2026-10-18（ADR-0036，两片）**：GameTree 域里两组**不可编译**站点已随其源码一并删除，非"收敛"——
+> ① `AppContents.cs`（3 处，随 `#else` 半支删除）；② `ImgUtils.cs`（整文件，`#if !HEADLESS`）
+> 与 `EvilMask/Utils.cs`（1 处，随 `#if !HEADLESS` 区域删除）。
+> 依据：Core 恒以 `HEADLESS` 编译（`EraCore.Core.csproj:8`），这些站点从不参与任何构建；其调用方
+> （`Process.cs:118` 命中 headless stub、`ConstImage.cs:76`、`Creator.Method.Io.cs:82/290`）亦在各自 `#else` 内。
+> 注：`Emuera/Program.cs:183/186` 也引用了被删的 `Utils.LoadImage` / `MakeIconFromBmpFile`，但该目录**无 csproj、
+> 不在 `EraCore.sln` 内**，属遗留参考源码，不参与构建。
+> **清点清单前应先确认目标是否在 `#else` 内**——清单条目数是源码文本计数，不等于真实 IO 面。
 > 守卫测试自此也堵住了同一漏洞：清单行的实际计数若已归零（文件还在、但已无直连 IO），该行会被判为陈旧而必须删除——清单始终保持为「现役欠账」。
 
 | 文件 | 域 | 处数 | 理由 |
@@ -205,8 +210,6 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 | `Shared/Runtime/Config/ConfigData.cs` | GameTree | 9 | sav 目录本地分支（强制创建 + 存档挪档）；SAF 分支已走 `SafCompat` |
 | `Shared/Runtime/Script/Data/ConstantData.cs` | GameTree | 2 | accessor 缺失时的 local 回退 |
 | `Shared/Runtime/Utils/EncodingHandler.cs` | GameTree | 2 | 编码探测 `ReadAllBytes`（路径形态混杂） |
-| `Shared/Runtime/Utils/EvilMask/Utils.cs` | GameTree | 1 | 非 HEADLESS 图像加载存在性预检 |
-| `Shared/UI/Game/Image/ImgUtils.cs` | GameTree | 1 | 非 HEADLESS 图像加载存在性预检 |
 | `Shared/Runtime/Script/Loader/ErbIrCache.cs` | AppPrivate | 10 | IR 磁盘缓存（appdata `IRCache/` 或桌面 `<游戏目录>/_IRCache/`），非游戏内容 |
 | `Shared/Runtime/Script/Loader/SrcContentCache.cs` | AppPrivate | 8 | 10-B CSV/ERH 源内容缓存，与 `era_ir.dat` 同布局同生命周期 |
 | `GamePaths.cs` | Platform | 2 | 宿主安装目录探测 + 本地路径归一化（`DetectDefault` / `new DirectoryInfo`），发生在 accessor 上任之前 |
@@ -248,7 +251,7 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 |---|---|---|---|
 | 输入 | `IInputHost` | ADR-0031 **proposed**；M1/M2/M4 已落地（接口 + `DefaultInputHost` + 几何/键盘通道） | M5–M8：触屏 E-min、primitive 能力位、`IConsoleUI` 瘦身 Phase 2 |
 | 输出 | `IDisplayState` / `OutputHub` | ADR-0013/0014/0003 **accepted 且已落地** | —— |
-| 文件 | `IGameDirAccessor` | ADR-0019 **accepted 且已落地**（双实现）；2026-10-16 收敛一轮；**2026-10-18 ADR-0036 删除首片不可编译 `#else` 分支（`AppContents`）** | 第 4.3 节 GameTree 域 **5** 项待收敛（其中 2 项同属不可编译分支，见 [09](../.scratch/erb-pipeline-deep-module/issues/09-gametree-remaining-io.md)；其余 5 项为豁免/平台域，非欠账） |
+| 文件 | `IGameDirAccessor` | ADR-0019 **accepted 且已落地**（双实现）；2026-10-16 收敛一轮；**2026-10-18 ADR-0036 删除全部不可编译分支（两片：`AppContents` / `ImgUtils`+`EvilMask.Utils`）** | 第 4.3 节 GameTree 域 **3 项**待收敛（Cap 15 → **13**，全部可达：见 [09](../.scratch/erb-pipeline-deep-module/issues/09-gametree-remaining-io.md) 批次 A/B/C；其余 5 项为豁免/平台域，非欠账） |
 
 > 输入轴仍处推进中：ADR-0031 为 `proposed`，M5–M8 未落地。**本表随里程碑推进而改**，不视为稳定契约。
 
