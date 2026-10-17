@@ -13,17 +13,13 @@ public static class EncodingHandler
 
 
 	/// <summary>
-	/// 单次 I/O 读取文件全部字节并完成 BOM 检测 + UTF-8/SHIFT-JIS 解码尝试。
-	/// 替代原先 DetectEncoding + File.ReadAllLines 的多次 I/O 路径（决策零）。
-	/// 行分割语义与 <see cref="File.ReadAllLines(string, Encoding)"/> 一致（StringReader.ReadLine 处理 \r\n / \r / \n）。
+	/// ADR-0019：从字节数组检测编码并分行。
+	/// <para>
+	/// ADR-0037：原先还有按 <c>path</c> 直读的 <c>ReadAllLinesWithDetection(string)</c> 重载——
+	/// 它是 <see cref="EraStreamReader"/> 兜底才存在的最后一条直连读缝，随兜底一并删除；
+	/// 调用方一律先经 <see cref="IGameDirAccessor"/> 取字节再进本方法。
+	/// </para>
 	/// </summary>
-	public static string[] ReadAllLinesWithDetection(string path)
-	{
-		byte[] bytes = File.ReadAllBytes(path);
-		return ReadAllLinesFromBytes(bytes);
-	}
-
-	/// <summary>ADR-0019：从字节数组检测编码并分行。</summary>
 	public static string[] ReadAllLinesFromBytes(byte[] bytes)
 	{
 		var bomEnc = DetectBomEncoding(bytes);
@@ -73,20 +69,6 @@ public static class EncodingHandler
 		while ((line = sr.ReadLine()) != null)
 			lines.Add(line);
 		return lines.ToArray();
-	}
-
-	public static Encoding DetectEncoding(string filePath)
-	{
-		try
-		{
-			// 决策零：合并 I/O — 一次 ReadAllBytes 同时完成 BOM 检查 + UTF-8 验证，
-			// 不再经 StreamReader.ReadToEnd() 浪费一次完整扫描。
-			return DetectEncoding(File.ReadAllBytes(filePath));
-		}
-		catch
-		{
-			return shiftjisEncoding;
-		}
 	}
 
 	/// <summary>从已读取的字节判断 BOM、UTF-8 或 Shift-JIS，供 SAF 调用方避免回退到本地 File API。</summary>

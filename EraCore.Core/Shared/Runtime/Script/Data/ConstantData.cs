@@ -221,7 +221,9 @@ internal sealed class ConstantData
 
 	private void loadVariableSizeData(string csvPath, bool disp, IGameDirAccessor dirAccessor)
 	{
-		if (!(dirAccessor?.FileExists(csvPath) ?? File.Exists(csvPath)))
+		// ADR-0037：dirAccessor 由 LoaderEnv 的 required 成员传入（NRT），恒非 null —— 原
+		// `dirAccessor?.FileExists(...) ?? File.Exists(...)` 的回退支在类型层面不可达，已删除。
+		if (!dirAccessor.FileExists(csvPath))
 			return;
 		using var eReader = new EraStreamReader(false);
 		if (!eReader.Open(csvPath))
@@ -1718,8 +1720,8 @@ internal sealed class ConstantData
 
 	private void loadDataTo(string csvPath, int targetIndex, long[] targetI, bool disp, IGameDirAccessor dirAccessor)
 	{
-
-		if (!(dirAccessor?.FileExists(csvPath) ?? File.Exists(csvPath)))
+		// ADR-0037：同上，回退支不可达已删除。
+		if (!dirAccessor.FileExists(csvPath))
 			return;
 		string[] target = names[targetIndex];
 		HashSet<int> defined = [];

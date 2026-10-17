@@ -71,10 +71,6 @@ public class GameDirAccessorIoPolicyTests
         // ── GameTree：游戏树 IO，仍绕过 accessor —— 真正的待收敛欠账 ────────────────
         ["Shared/Runtime/Config/ConfigData.cs"] = new(
             "sav 目录本地分支：强制创建 + global.sav / save*.sav 挪档（SAF 分支已走 SafCompat）", Domain.GameTree, 9),
-        ["Shared/Runtime/Script/Data/ConstantData.cs"] = new(
-            "accessor 缺失时的 local 回退（dirAccessor?.FileExists(...) ?? File.Exists(...)）", Domain.GameTree, 2),
-        ["Shared/Runtime/Utils/EncodingHandler.cs"] = new(
-            "编码探测 ReadAllBytes（path 形态混杂；应随 CSV/ERB 读取一并 accessor 化）", Domain.GameTree, 2),
 
         // ── AppPrivate：应用私有域 / 引擎自有派生数据（F-4 豁免）────────────────────
         ["Shared/Runtime/Script/Loader/ErbIrCache.cs"] = new(

@@ -29,7 +29,7 @@ public class EncodingHandlerReadAllLinesTests
 		try
 		{
 			var expected = File.ReadAllLines(path, EncodingHandler.UTF8Encoding);
-			var actual = EncodingHandler.ReadAllLinesWithDetection(path);
+			var actual = EncodingHandler.ReadAllLinesFromBytes(bytes);
 			Assert.Equal(expected, actual);
 			Assert.Equal(new[] { "line1", "line2", "line3" }, actual);
 		}
@@ -44,7 +44,7 @@ public class EncodingHandlerReadAllLinesTests
 		var path = WriteTempFile(bytes);
 		try
 		{
-			var actual = EncodingHandler.ReadAllLinesWithDetection(path);
+			var actual = EncodingHandler.ReadAllLinesFromBytes(bytes);
 			Assert.Equal(new[] { "あいう", "line2" }, actual);
 		}
 		finally { File.Delete(path); }
@@ -60,7 +60,7 @@ public class EncodingHandlerReadAllLinesTests
 		var path = WriteTempFile(bytes);
 		try
 		{
-			var actual = EncodingHandler.ReadAllLinesWithDetection(path);
+			var actual = EncodingHandler.ReadAllLinesFromBytes(bytes);
 			Assert.Equal(new[] { "日本語テスト", "line2" }, actual);
 		}
 		finally { File.Delete(path); }
@@ -76,7 +76,7 @@ public class EncodingHandlerReadAllLinesTests
 		try
 		{
 			var expected = File.ReadAllLines(path, Encoding.UTF8);
-			var actual = EncodingHandler.ReadAllLinesWithDetection(path);
+			var actual = EncodingHandler.ReadAllLinesFromBytes(bytes);
 			Assert.Equal(expected, actual);
 			Assert.Equal(2, actual.Length);
 		}
@@ -93,7 +93,7 @@ public class EncodingHandlerReadAllLinesTests
 		try
 		{
 			var expected = File.ReadAllLines(path, Encoding.UTF8);
-			var actual = EncodingHandler.ReadAllLinesWithDetection(path);
+			var actual = EncodingHandler.ReadAllLinesFromBytes(bytes);
 			Assert.Equal(expected, actual);
 			Assert.Equal(2, actual.Length);
 			Assert.Equal("line2", actual[1]);
@@ -111,7 +111,7 @@ public class EncodingHandlerReadAllLinesTests
 		try
 		{
 			var expected = File.ReadAllLines(path, Encoding.UTF8);
-			var actual = EncodingHandler.ReadAllLinesWithDetection(path);
+			var actual = EncodingHandler.ReadAllLinesFromBytes(bytes);
 			Assert.Equal(expected, actual);
 			Assert.Equal(4, actual.Length);
 		}
@@ -121,10 +121,11 @@ public class EncodingHandlerReadAllLinesTests
 	[Fact]
 	public void EmptyFile_returns_empty_array()
 	{
+		// ADR-0037：被测入口改为字节版；临时文件与 File.ReadAllLines 仅作 oracle 保留。
 		var path = WriteTempFile([]);
 		try
 		{
-			var actual = EncodingHandler.ReadAllLinesWithDetection(path);
+			var actual = EncodingHandler.ReadAllLinesFromBytes(File.ReadAllBytes(path));
 			Assert.Empty(actual);
 		}
 		finally { File.Delete(path); }

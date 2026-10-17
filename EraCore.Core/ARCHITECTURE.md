@@ -203,13 +203,15 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 > 注：`Emuera/Program.cs:183/186` 也引用了被删的 `Utils.LoadImage` / `MakeIconFromBmpFile`，但该目录**无 csproj、
 > 不在 `EraCore.sln` 内**，属遗留参考源码，不参与构建。
 > **清点清单前应先确认目标是否在 `#else` 内**——清单条目数是源码文本计数，不等于真实 IO 面。
-> 守卫测试自此也堵住了同一漏洞：清单行的实际计数若已归零（文件还在、但已无直连 IO），该行会被判为陈旧而必须删除——清单始终保持为「现役欠账」。
+> **守卫测试自此也堵住了同一漏洞**：清单行的实际计数若已归零（文件还在、但已无直连 IO），该行会被判为陈旧而必须删除——清单始终保持为「现役欠账」。
+> 2026-10-18 下午（ADR-0037）又收掉三处**可编译**站点：`ConstantData` 的不可达 `File.Exists` 回退、
+> `EncodingHandler` 的两个 path 重载、`EraStreamReader` 的「accessor 读空后直连磁盘」最后兜底
+> （末项是**刻意的行为变化**：失败显性化；行为锁 = `EraStreamReaderAccessorTests`，其中
+> `Open_does_not_fall_back_to_the_local_file_system` 在兜底被加回时立即转红）。
 
 | 文件 | 域 | 处数 | 理由 |
 |---|---|---|---|
 | `Shared/Runtime/Config/ConfigData.cs` | GameTree | 9 | sav 目录本地分支（强制创建 + 存档挪档）；SAF 分支已走 `SafCompat` |
-| `Shared/Runtime/Script/Data/ConstantData.cs` | GameTree | 2 | accessor 缺失时的 local 回退 |
-| `Shared/Runtime/Utils/EncodingHandler.cs` | GameTree | 2 | 编码探测 `ReadAllBytes`（路径形态混杂） |
 | `Shared/Runtime/Script/Loader/ErbIrCache.cs` | AppPrivate | 10 | IR 磁盘缓存（appdata `IRCache/` 或桌面 `<游戏目录>/_IRCache/`），非游戏内容 |
 | `Shared/Runtime/Script/Loader/SrcContentCache.cs` | AppPrivate | 8 | 10-B CSV/ERH 源内容缓存，与 `era_ir.dat` 同布局同生命周期 |
 | `GamePaths.cs` | Platform | 2 | 宿主安装目录探测 + 本地路径归一化（`DetectDefault` / `new DirectoryInfo`），发生在 accessor 上任之前 |
@@ -251,7 +253,7 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 |---|---|---|---|
 | 输入 | `IInputHost` | ADR-0031 **proposed**；M1/M2/M4 已落地（接口 + `DefaultInputHost` + 几何/键盘通道） | M5–M8：触屏 E-min、primitive 能力位、`IConsoleUI` 瘦身 Phase 2 |
 | 输出 | `IDisplayState` / `OutputHub` | ADR-0013/0014/0003 **accepted 且已落地** | —— |
-| 文件 | `IGameDirAccessor` | ADR-0019 **accepted 且已落地**（双实现）；2026-10-16 收敛一轮；**2026-10-18 ADR-0036 删除全部不可编译分支（两片：`AppContents` / `ImgUtils`+`EvilMask.Utils`）** | 第 4.3 节 GameTree 域 **3 项**待收敛（Cap 15 → **13**，全部可达：见 [09](../.scratch/erb-pipeline-deep-module/issues/09-gametree-remaining-io.md) 批次 A/B/C；其余 5 项为豁免/平台域，非欠账） |
+| 文件 | `IGameDirAccessor` | ADR-0019 **accepted 且已落地**（双实现）；2026-10-16 收敛一轮；**2026-10-18 ADR-0036 删除全部不可编译分支**（`AppContents` / `ImgUtils` / `EvilMask.Utils`）+ **ADR-0037 收最后一条可编译读缝**（`ConstantData` / `EncodingHandler` / `EraStreamReader`） | 第 4.3 节 GameTree 域仅剩 **1 项**（Cap **9**：见 [09](../.scratch/erb-pipeline-deep-module/issues/09-gametree-remaining-io.md) 批次 A = `ConfigData` 的 sav 挪档，待决是否给接口加 `Move`；其余 5 项为豁免/平台域，非欠账） |
 
 > 输入轴仍处推进中：ADR-0031 为 `proposed`，M5–M8 未落地。**本表随里程碑推进而改**，不视为稳定契约。
 
