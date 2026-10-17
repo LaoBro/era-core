@@ -77,8 +77,6 @@ public class GameDirAccessorIoPolicyTests
             "编码探测 ReadAllBytes（path 形态混杂；应随 CSV/ERB 读取一并 accessor 化）", Domain.GameTree, 2),
         ["Shared/Runtime/Utils/EvilMask/Utils.cs"] = new(
             "非 HEADLESS 图像 LoadImage 的存在性预检", Domain.GameTree, 1),
-        ["Shared/UI/Game/Image/AppContents.cs"] = new(
-            "resources 树 CSV 枚举 + ReadAllLines（ContentDir 需 accessor 化）", Domain.GameTree, 3),
         ["Shared/UI/Game/Image/ImgUtils.cs"] = new(
             "非 HEADLESS 图像 LoadImage 的存在性预检", Domain.GameTree, 1),
 

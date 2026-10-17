@@ -193,7 +193,11 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 | F-4 | 应用私有域是**唯一豁免域**——domain 由 `AppDataPaths`（+ `AppDataIo` 窄口子）显式界定，经 `AppDataPaths.IsUnder` 机检 | 豁免边界回到「靠开发者记得」的隐式状态 |
 | F-5 | 已知**待收敛例外**（见下）由守卫测试 `GameDirAccessorIoPolicyTests` 逐文件、逐调用数盯着；新增代码**不得**扩大该清单 | 例外蔓延成事实上的第二套 IO |
 
-**待收敛例外清单**（截至 2026-10-16，Core 内裸 `File.*` / `Directory.*`；按归属域分三类）：
+**待收敛例外清单**（截至 2026-10-18，Core 内裸 `File.*` / `Directory.*`；按归属域分三类）：
+
+> **2026-10-18（ADR-0036）**：`Shared/UI/Game/Image/AppContents.cs`（GameTree，3 处）已随其**不可编译的 `#else` 半支**一并删除移出清单
+> ——Core 恒以 `HEADLESS` 编译（`EraCore.Core.csproj:8`），这 3 处从不参与任何构建。resources 树的工作由
+> `ImageNameTable`（经 accessor）承接。**清点清单前应先确认目标是否在 `#else` 内**——清单条目数是源码文本计数，不等于真实 IO 面。
 
 | 文件 | 域 | 处数 | 理由 |
 |---|---|---|---|
@@ -201,7 +205,6 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 | `Shared/Runtime/Script/Data/ConstantData.cs` | GameTree | 2 | accessor 缺失时的 local 回退 |
 | `Shared/Runtime/Utils/EncodingHandler.cs` | GameTree | 2 | 编码探测 `ReadAllBytes`（路径形态混杂） |
 | `Shared/Runtime/Utils/EvilMask/Utils.cs` | GameTree | 1 | 非 HEADLESS 图像加载存在性预检 |
-| `Shared/UI/Game/Image/AppContents.cs` | GameTree | 3 | `resources` 树 CSV 枚举 + 读取 |
 | `Shared/UI/Game/Image/ImgUtils.cs` | GameTree | 1 | 非 HEADLESS 图像加载存在性预检 |
 | `Shared/Runtime/Script/Loader/ErbIrCache.cs` | AppPrivate | 10 | IR 磁盘缓存（appdata `IRCache/` 或桌面 `<游戏目录>/_IRCache/`），非游戏内容 |
 | `Shared/Runtime/Script/Loader/SrcContentCache.cs` | AppPrivate | 8 | 10-B CSV/ERH 源内容缓存，与 `era_ir.dat` 同布局同生命周期 |
@@ -244,7 +247,7 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 |---|---|---|---|
 | 输入 | `IInputHost` | ADR-0031 **proposed**；M1/M2/M4 已落地（接口 + `DefaultInputHost` + 几何/键盘通道） | M5–M8：触屏 E-min、primitive 能力位、`IConsoleUI` 瘦身 Phase 2 |
 | 输出 | `IDisplayState` / `OutputHub` | ADR-0013/0014/0003 **accepted 且已落地** | —— |
-| 文件 | `IGameDirAccessor` | ADR-0019 **accepted 且已落地**（双实现）；2026-10-16 收敛一轮 | 第 4.3 节 GameTree 域 6 项待收敛（其余 5 项为豁免/平台域，非欠账） |
+| 文件 | `IGameDirAccessor` | ADR-0019 **accepted 且已落地**（双实现）；2026-10-16 收敛一轮；**2026-10-18 ADR-0036 删除首片不可编译 `#else` 分支（`AppContents`）** | 第 4.3 节 GameTree 域 **5** 项待收敛（其中 2 项同属不可编译分支，见 [09](../.scratch/erb-pipeline-deep-module/issues/09-gametree-remaining-io.md)；其余 5 项为豁免/平台域，非欠账） |
 
 > 输入轴仍处推进中：ADR-0031 为 `proposed`，M5–M8 未落地。**本表随里程碑推进而改**，不视为稳定契约。
 
