@@ -754,32 +754,6 @@ internal sealed class ErbLoader
 	/// </summary>
 	internal static LogicalLine? TryGetLoadScanLine() => ParseContext.CurrentLoadScanLine;
 
-	/// <summary>D5#2：FNF 事件缓冲（回放段重走 printFunctionNotFoundWarning 的 ONCE 决策）。</summary>
-	private readonly record struct FnfEvent(string Str, LogicalLine Line, int Level, bool IsError);
-
-	/// <summary>
-	/// 未调用遍 per-label 产物。警告（含 FNF 占位）按原串行发射序进 <see cref="Warnings"/>，
-	/// 回放段按序消费（<see cref="ReplaySweepArt"/>）——普通警告直发、FNF 占位重走原决策，
-	/// 交错序与串行一致（FNF 与普通警告在 setJumpTo 行序上天然交错）。
-	/// </summary>
-	private sealed class UncalledSweepArt
-	{
-		public FunctionLabelLine Label = null!;
-		public readonly List<ParserMediator.ParserWarning> Warnings = [];
-		public readonly List<FnfEvent> FnfEvents = [];
-		/// <summary>FNF 占位标记 level（普通警告 level 0-3，-1 安全保留）。</summary>
-		public const int FnfPlaceholderLevel = -1;
-		/// <summary>
-		/// D5#3：本 label 解析过程中是否用到 callform 系。并行段由 <c>MarkUseCallForm</c> 写入本字段，
-		/// 回放段 <c>ReplaySweepArt</c> 在主线程合并回 <c>useCallForm</c>——并行期间不碰实例字段。
-		/// </summary>
-		public bool UseCallForm;
-		public void AddFnfEvent(string str, LogicalLine line, int level, bool isError)
-		{
-			Warnings.Add(new ParserMediator.ParserWarning("", null!, FnfPlaceholderLevel, null!));
-			FnfEvents.Add(new FnfEvent(str, line, level, isError));
-		}
-	}
 
 	/// <summary>
 	/// D5#6：解析行写点。落点由**显式传入的 ctx** 决定（ADR-0027 决策二.2：不再直写 ThreadLocal /
@@ -935,7 +909,10 @@ internal sealed class ErbLoader
 				if (strategy.ParallelSweep)
 				{
 					// 并行段：解析体全部入 per-label 缓冲（警告 / FNF 事件），回放段按 labelList 序重放
-					ReplayUncalledSweep(RunUncalledSweepParallel(labelList, labelDepth, strategy.SweepDegree));
+					// ADR-0042：回放外移；FNF 重走经回调（它绑着 ParseContext，仍在宿主），callform 标记由返回值交回
+					if (ErbUncalledSweepReplay.ReplayAll(
+						RunUncalledSweepParallel(labelList, labelDepth, strategy.SweepDegree), ReplayFnf))
+						useCallForm = true;
 					sweepParallelRan = true;
 				}
 				else
@@ -1007,8 +984,9 @@ internal sealed class ErbLoader
 						{
 							if (sweepArts != null)
 							{
-								// 原 ParseFunctionWithCatch(label) 的位置：按序回放该 label 的缓冲
-								ReplaySweepArt(sweepArts[artIdx]);
+								// 原 ParseFunctionWithCatch(label) 的位置：按序回放该 label 的缓冲（ADR-0042）
+								if (ErbUncalledSweepReplay.Replay(sweepArts[artIdx], ReplayFnf))
+									useCallForm = true;
 								artIdx++;
 							}
 							else
@@ -1102,6 +1080,13 @@ internal sealed class ErbLoader
 
 	/// <summary>AnalysisMode 下的解析告警计数（宿主持有：主循环结束时由 ParseScript 读它出报告）。</summary>
 	public Dictionary<string, long> warningDic = [];
+
+	/// <summary>
+	/// ADR-0042：回放段的 FNF 重走入口。FNF 决策（ONCE 去重 / count / Warn）仍是宿主的私有逻辑，
+	/// 因为它绑着 <see cref="ParseContext"/>（宿主私有嵌套类型）——C3 搬 ParseContext 时一并处理。
+	/// </summary>
+	private void ReplayFnf(string str, LogicalLine line, int level, bool isError)
+		=> printFunctionNotFoundWarning(str, line, level, isError, ParseContext.Serial);
 
 	private void printFunctionNotFoundWarning(string str, LogicalLine line, int level, bool isError, ParseContext ctx)
 	{
@@ -1239,7 +1224,8 @@ internal sealed class ErbLoader
 		}
 		catch (AggregateException agg)
 		{
-			ReplayUncalledSweep(arts);
+			if (ErbUncalledSweepReplay.ReplayAll(arts, ReplayFnf))
+				useCallForm = true;
 			throw agg.InnerExceptions[0];
 		}
 		finally
@@ -1253,47 +1239,6 @@ internal sealed class ErbLoader
 		return arts;
 	}
 
-	/// <summary>按 labelList 序回放 per-label 产物（null 元素跳过——并行段异常时部分 label 未调度）。</summary>
-	private void ReplayUncalledSweep(UncalledSweepArt[] arts)
-	{
-		for (int i = 0; i < arts.Length; i++)
-		{
-			if (arts[i] != null)
-				ReplaySweepArt(arts[i]);
-		}
-	}
-
-	/// <summary>
-	/// 回放单个 label 的缓冲（回放协议：回放体 = 原串行循环体的重放，不写镜像逻辑）：
-	/// 普通警告按序直发全局列表；FNF 占位按序重走 printFunctionNotFoundWarning 原决策
-	///（ONCE 去重 / ignoredFNFWarningCount / Warn 发射，警告/事件从缓冲读，决策逻辑原样重走）。
-	/// </summary>
-	private void ReplaySweepArt(UncalledSweepArt art)
-	{
-		// D5#3：并行段采集的 callform 标记在此由主线程合并（单向置位，等价于串行的 OR 语义）。
-		// 必须早于下方 warnings.Count == 0 的提前返回，否则无警告的 label 会丢失该标记。
-		if (art.UseCallForm)
-			useCallForm = true;
-		var warnings = art.Warnings;
-		if (warnings.Count == 0)
-			return;
-		int fnfIdx = 0;
-		for (int i = 0; i < warnings.Count; i++)
-		{
-			var w = warnings[i];
-			if (w.WarningLevel == UncalledSweepArt.FnfPlaceholderLevel)
-			{
-				var ev = art.FnfEvents[fnfIdx++];
-				printFunctionNotFoundWarning(ev.Str, ev.Line, ev.Level, ev.IsError, ParseContext.Serial);
-			}
-			else
-			{
-				ParserMediator.EmitWarning(w);
-			}
-		}
-		warnings.Clear();
-		art.FnfEvents.Clear();
-	}
 
 	/// <summary>b2-irdiskcache：「行文本流」抽象（design §5.3）——源回读与 blob 文本两条实现共用同一物化循环，物化产物等价性收敛为「输入流 == 源文件启用行」一件事。</summary>
 	private interface IFunctionLineSource
