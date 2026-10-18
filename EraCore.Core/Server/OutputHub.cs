@@ -19,7 +19,21 @@ namespace MinorShift.Emuera.Server;
 /// - <see cref="Complete"/> 在 session 结束时调用，完成所有订阅者 Channel，使 WS 发送循环
 ///   自然结束并下发关闭帧。
 /// </summary>
-internal sealed class OutputHub : IOutputBroadcaster
+/// <remarks>
+/// <b>为什么没有 <c>IOutputBroadcaster</c> 抽象</b>（2026-10-19 收）：本类原先实现
+/// <c>IOutputBroadcaster</c>，动机是让 <c>HttpSessionIO</c> 能注入假实现——随之而来的第二条论据是
+/// "<c>OutputHub</c> 是 <c>internal sealed</c>，无法继承做 mock"。
+/// 两点都不成立：①「不能继承」不等于「不能用于测试」——本类按 O-1 零外部依赖，可直接 <c>new</c>，
+/// 生产类本身就是最好的替身；②该接口自创立起<b>从未被任何替身实现过</b>，而唯一装配点
+/// <c>SessionRegistry.CreateSessionCore</c> 与 <c>WsSubscription</c> 全都直指具体类型——
+/// 抽象面 1 处 vs 具体面 4 处，耦合没消除，只是挪到了 registry。
+/// <para>
+/// 历史沿革（保留以备将来判断"会不会再有第二个实现"）：HTTP 与 MAUI 托管共用同一份中枢；
+/// 原 <c>MauiBridgeIO</c>（曾经的第二个适配方向）已随 issue 05 托管架构删除。
+/// 若将来真的出现第二个投递目标，按 O-3' 重新引入接口即可，成本与本次删除对称。
+/// </para>
+/// </remarks>
+internal sealed class OutputHub
 {
     private readonly object _subscribersLock = new();
     private readonly List<(ChannelReader<string> Reader, ChannelWriter<string> Writer)> _subscribers = new();

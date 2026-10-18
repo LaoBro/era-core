@@ -13,7 +13,7 @@ namespace MinorShift.Emuera.Server;
 /// </summary>
 internal sealed class HttpSessionIO : SessionIO, ITurnSink
 {
-    private readonly IOutputBroadcaster _broadcaster;
+    private readonly OutputHub _broadcaster;
     private readonly Channel<string> _input = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
     {
         SingleReader = true,
@@ -28,12 +28,16 @@ internal sealed class HttpSessionIO : SessionIO, ITurnSink
     private readonly ConcurrentQueue<string> _unread = new();
 
     /// <summary>
-    /// 注入 <see cref="IOutputBroadcaster"/> 旁路广播：所有 <see cref="WriteLine"/> 的 turn
-    /// 既写入 HTTP 长轮询消费的 <c>_output</c> Channel，也经 broadcaster 广播给 WS 等观察者。
-    /// 接抽象而非 <see cref="OutputHub"/> 具体类型，使本类可在单测中注入 mock broadcaster
-    /// （<see cref="OutputHub"/> 是 <c>internal sealed</c> 无法继承做 mock）。
+    /// 注入旁路广播中枢：所有 <see cref="WriteLine"/> 的 turn <b>既</b>写入 HTTP 长轮询消费的
+    /// <c>_output</c> Channel，<b>也</b>经 hub 广播给 WS 等观察者——必须同源、同序、同一份实例（不变量 O-4，
+    /// 行为锁见 <c>HttpSessionIoDualWriteTests</c>）。二者不可只做其一，否则 HTTP 与 WS 输出分叉。
+    /// <para>
+    /// 直持 <see cref="OutputHub"/> 具体类型：本类原先经 <c>IOutputBroadcaster</c> 抽象注入，理由
+    /// （"<c>OutputHub</c> 是 <c>internal sealed</c>，无法继承做 mock"）不成立——理由与历史沿革见
+    /// <see cref="OutputHub"/> 的 remarks。
+    /// </para>
     /// </summary>
-    public HttpSessionIO(IOutputBroadcaster broadcaster)
+    public HttpSessionIO(OutputHub broadcaster)
     {
         _broadcaster = broadcaster ?? throw new ArgumentNullException(nameof(broadcaster));
     }
@@ -68,7 +72,7 @@ internal sealed class HttpSessionIO : SessionIO, ITurnSink
     /// <summary>
     /// 关闭 IO。幂等：多次调用安全。
     /// 调用后 ReadLineAsync 返回 null，WriteLine 丢弃数据。
-    /// 同时通知 <see cref="IOutputBroadcaster"/> 完成所有观察者 Channel，使 WS 连接收到关闭帧。
+    /// 同时通知 <see cref="OutputHub"/> 完成所有观察者 Channel，使 WS 连接收到关闭帧。
     /// </summary>
     public override void Close()
     {

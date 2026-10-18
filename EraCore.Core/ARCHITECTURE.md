@@ -108,7 +108,7 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 输出有两条**结构不同**的通道，共用同一 turn 串：
 
 - **拉取式快照**（`IDisplayState`）：引擎持有显示状态，宿主按需 `TryUpdate()` / `Current`。
-- **推送式广播**（`OutputHub` / `IOutputBroadcaster`）：turn 写出即广播给所有旁路订阅者（WS）。
+- **推送式广播**（`OutputHub`）：turn 写出即广播给所有旁路订阅者（WS）。
 
 | 类型 | 语义 | 定义 |
 |---|---|---|
@@ -117,7 +117,7 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 | `DisplaySnapshot` / `DisplayLine` / `DisplayEntry` | 全量快照与行/条目 | `Agent/DisplayState.cs:22,46,81` |
 | `TurnRecord` | 增量帧 wire 契约（`diff` / `awaiting` / `error` / `protocolVersion` / `generation`） | `Agent/TurnRecord.cs:9`（版本常量 `:47`） |
 | `DisplayDiff` / `LineOp` / `TurnOp` | 帧内操作序列 | `Agent/TurnRecord.cs:93,113,134` |
-| `IOutputBroadcaster` | 输出广播窄接口（仅 `Publish` / `Complete`） | `Server/IOutputBroadcaster.cs:14` |
+| `OutputHub` | 旁路广播中枢：每观察者一个独占 reader（`Publish` / `Subscribe` / `Complete`）；**无接口层** | `Server/OutputHub.cs:22` |
 | `ITurnSink` / `IControlSignal` | `TurnDelivery` 消费的窄接缝（读/回滚/排水/写/关闭；控制权快照） | `Server/TurnDelivery.cs:23,12` |
 
 ### 3.2 生产实现与消费链
@@ -126,7 +126,7 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 |---|---|---|
 | 快照产出 | `AgentJsonlProtocol`（持 `DisplayState`，经 `_io.WriteLine` 产帧） | `Agent/AgentJsonlProtocol.cs:14` |
 | **帧形状权威** | `TurnFrames`（合法帧形状 + 序列化 + 终态工厂；纯静态、不持运行期状态） | `Agent/TurnFrames.cs:26` |
-| 推送中枢 | `OutputHub`（`: IOutputBroadcaster`，唯一生产实现） | `Server/OutputHub.cs:22` |
+| 推送中枢 | `OutputHub`（唯一旁路广播出口；**不设接口层**，理由见该类型 remarks） | `Server/OutputHub.cs:22` |
 | 会话 IO | `HttpSessionIO`（`: SessionIO, ITurnSink`；`WriteLine` 同时入队 + 广播） | `Server/HttpSessionIO.cs:14` |
 | 长轮询编排 | `TurnDelivery`（长轮询 + 控制权抢占 + final-turn-once + 超时不变式） | `Server/TurnDelivery.cs:38` |
 | 控制信号 | `Controller`（`: IControlSignal`） | `Server/Controller.cs:86` |
@@ -141,8 +141,8 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 |---|---|---|
 | O-1 | `OutputHub` **纯转发**：不解析 turn、不持业务状态、不依赖 `Session` / 协议层 / 引擎层 | 旁路耦合进业务 |
 | O-2 | 订阅者为**独占** `ChannelReader`，**晚加入者只收后续 turn**（不回放历史） | 订阅语义歧义 |
-| O-3 | `IOutputBroadcaster` **仅为 `HttpSessionIO` 可测性服务**，生产实现只允许 `OutputHub` | 出现第二个生产实现即破坏「唯一广播中枢」 |
-| O-4 | `WriteLine` 必须**同时**入 `_output` Channel（HTTP 长轮询）与广播（旁路），二者不可只做其一 | HTTP 与 WS 输出分叉 |
+| O-3 | `OutputHub` 是**唯一**旁路广播出口且**不设接口层**（2026-10-19 收，理由见该类型 remarks）。将来若真出现第二个投递目标，须在此重开讨论后再引入抽象 | 抽象面 1 处 vs 具体面 4 处，「已解耦」的假象复活却换不来任何测试能力 |
+| O-4 | `WriteLine` 必须**同时**入 `_output` Channel（HTTP 长轮询）与广播（旁路），二者不可只做其一；且两侧须**同序、同一份字符串实例**，不得在任一侧再加工 —— 行为锁 `HttpSessionIoDualWriteTests` | HTTP 与 WS 输出分叉（症状：WS 模式下按钮不刷新而 HTTP 模式下正常，最难归因） |
 | O-5 | `TurnDelivery` 独占「长轮询 + 控制权抢占 + final-turn-once + 超时」四条不变式，`Session` 只做组装 | 取水路径出现第二读者 / final turn 重复或丢失 |
 | O-6 | 协议版本变更须**同步**更新 `TurnRecord.CurrentProtocolVersion` 与 Python 侧 `tests/emuera_server.py:PROTOCOL_VERSION` | 前后端版本错配 |
 | O-7 | 生产代码**只能**经 `TurnFrames`（`Ok` / `Quit` / `Fatal` / `Error`）构造帧；终态帧只能经 `Quit` / `Fatal` / `Error` 三个语义入口 | 「Quit 帧带 diff」「错误帧照抄 `console.State`」等非法形态复活 |

@@ -146,7 +146,7 @@ internal sealed class SessionRegistry
             if (!await AwaitTeardownAsync(detached))
                 return new SessionCreateResult(SessionCreateStatus.PreviousSessionStillRunning, null, default, null);
 
-            // issue 03：SessionRegistry 自持 OutputHub 引用，HttpSessionIO 只接 IOutputBroadcaster 抽象。
+            // issue 03：SessionRegistry 自持 OutputHub 引用，HttpSessionIO 直持同一实例（2026-10-19 起不再经 IOutputBroadcaster 抽象）。
             await _sessionLock.WaitAsync();
             try
             {
@@ -545,7 +545,7 @@ internal sealed class SessionRegistry
     /// <param name="dialectProfileId">本会话的方言 profile 覆盖；<c>null</c> = 用注册表构造时的 <c>_dialectProfileId</c>。</param>
     private Session CreateSessionCore(ConfigData configData, bool fullDiffOnFirstTurn = false, string? dialectProfileId = null)
     {
-        // issue 03：SessionRegistry 自持 OutputHub 引用，HttpSessionIO 只接 IOutputBroadcaster 抽象。
+        // issue 03：SessionRegistry 自持 OutputHub 引用，HttpSessionIO 直持同一实例（2026-10-19 起不再经 IOutputBroadcaster 抽象）。
         // 接缝（ADR-0049 D4）：hub/io 始终由本方法建（WS 订阅路径与生产一致），工厂只替换 Session 本体。
         var hub = new OutputHub();
         var io = new HttpSessionIO(hub);
