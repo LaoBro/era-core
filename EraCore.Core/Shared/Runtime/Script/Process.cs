@@ -89,7 +89,7 @@ internal sealed partial class Process(EmueraConsole view)
 		var stopWatch = new Stopwatch();
 		stopWatch.Start();
 		LexicalAnalyzer.UseMacro = false;
-		originalState = new ProcessState(console);
+		originalState = new ProcessState(ProcessTrace.For(console), () => MethodStack() == 0);
 		executionState = new ExecutionState();
 		executionState.CurrentState = originalState;
 		initialiing = true;

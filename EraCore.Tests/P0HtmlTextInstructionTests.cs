@@ -84,7 +84,7 @@ RETURN
 	{
 		// 非 FORCE_SETARG 指令的实参在加载期不解析，运行期才由 ArgumentParser 补齐（复刻 ScriptProc 路径）。
 		Assert.True(ArgumentParser.SetArgumentTo(line));
-		var state = new ProcessState(h.Console);
+		var state = new ProcessState(ProcessTrace.For(h.Console));
 		line.Function.Instruction.DoInstruction(h.Exm, line, state);
 		return line;
 	}

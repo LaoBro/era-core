@@ -114,7 +114,7 @@ RETURN
 		=> WithEntryAsync((harness, lines) =>
 		{
 			InstructionLine call = Line(lines, "CALLSTR");
-			var state = new ProcessState(harness.Console);
+			var state = new ProcessState(ProcessTrace.For(harness.Console));
 			call.Function.Instruction.DoInstruction(harness.Exm, call, state);
 
 			Assert.Equal(1, state.functionCount);
@@ -128,7 +128,7 @@ RETURN
 		=> WithEntryAsync((harness, lines) =>
 		{
 			InstructionLine jump = Line(lines, "JUMPSTR");
-			var state = new ProcessState(harness.Console);
+			var state = new ProcessState(ProcessTrace.For(harness.Console));
 			jump.Function.Instruction.DoInstruction(harness.Exm, jump, state);
 
 			Assert.Equal(1, state.functionCount);
@@ -143,7 +143,7 @@ RETURN
 			foreach (string name in new[] { "TRYCALLSTR", "TRYCCALLSTR" })
 			{
 				InstructionLine line = Line(lines, name);
-				var state = new ProcessState(harness.Console);
+				var state = new ProcessState(ProcessTrace.For(harness.Console));
 
 				// 目标函数不存在：TRY* 不抛错，走容错（有配对则跳到 CATCH）。
 				Exception? ex = null;

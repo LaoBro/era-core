@@ -1,24 +1,26 @@
+using System.Collections.Generic;
 using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Script;
 using MinorShift.Emuera.Runtime.Script.Parser;
 using MinorShift.Emuera.Runtime.Script.Statements;
+using MinorShift.Emuera.Runtime.Utils;
 using Xunit;
 
 namespace MinorShift.Emuera.Tests;
 
 /// <summary>
 /// ADR-0011 / Issue 03：ProcessState 隔离单测。
-/// 直接以 fake EmueraConsole（DebugMode 下才使用，测试默认 false 故传 null）构造，
-/// 不开启 GlobalStatic scope、不碰 AsyncLocal ambient，只验证可观察状态。
+/// 候选 4 · 第 1 刀后：调试 trace 经 <see cref="ProcessTrace"/> 注入，默认走
+/// <see cref="ProcessTrace.Disabled"/>，不开启 GlobalStatic scope、不碰 AsyncLocal ambient。
 /// </summary>
 public class ProcessStateTests
 {
     // LogicalLine 为抽象类且无抽象成员，测试内造一个最小具体行。
     private sealed class FakeLine : LogicalLine { }
 
-    private static ProcessState NewState() => new(null!);
+    private static ProcessState NewState() => new(ProcessTrace.Disabled);
 
     [Fact]
     public void ShiftNextLine_advances_to_NextLine_and_increments_lineCount()
@@ -101,5 +103,46 @@ public class ProcessStateTests
         state.Return(0);
         Assert.True(state.ScriptEnd); // 帧已弹出
         Assert.Null(state.CurrentLine);
+    }
+
+    // 候选 4 · 第 1 刀：trace 改经 ProcessTrace 注入后，原先只在 Program.DebugMode=true 下
+    // 可观察的 Add/Remove 配对，现在可在默认（DebugMode=false）测试环境直接断言。
+    [Fact]
+    public void IntoFunction_and_Return_emit_balanced_trace_through_injected_sink()
+    {
+        using var scope = GlobalStatic.OpenScope(new ConfigData());
+        var ops = new List<string>();
+        var trace = ProcessTrace.FromDelegates(
+            s => ops.Add("add:" + s),
+            () => ops.Add("remove"),
+            () => ops.Add("clear"));
+        var state = new ProcessState(trace);
+        var label = new FunctionLabelLine(new ScriptPosition("TEST.ERB", 1), "TESTFUNC", new WordCollection());
+        var called = CalledFunction.CreateCalledFunctionMethod(label, "TESTFUNC");
+
+        state.IntoFunction(called, null!, null!);
+        state.Return(0);
+
+        Assert.Equal(2, ops.Count);
+        Assert.StartsWith("add:CALL @TESTFUNC", ops[0]);
+        Assert.Equal("remove", ops[1]); // 出栈必须消耗掉入栈时压入的 trace 行
+    }
+
+    [Fact]
+    public void ClearFunctionList_respects_injected_clear_gate()
+    {
+        // gate 替代原先内联的 GlobalStatic.Process.MethodStack() == 0 判定
+        //（ADR-0011 决策三：子模块不持 Process 反向引用）。
+        var ops = new List<string>();
+        var trace = ProcessTrace.FromDelegates(ops.Add, clear: () => ops.Add("clear"));
+
+        var blocked = new ProcessState(trace, () => false);
+        blocked.ClearFunctionList();
+        Assert.DoesNotContain("clear", ops);
+
+        var allowed = new ProcessState(trace, () => true);
+        allowed.ClearFunctionList();
+        Assert.Single(ops);
+        Assert.Equal("clear", ops[0]);
     }
 }
