@@ -302,9 +302,12 @@ internal static class ErbIrCache
 		try
 		{
 			var path = GetFileListPath(irCachePath);
-			if (!File.Exists(path))
+			if (!SafCompat.FileExists(path))
 				return false;
-			using var r = new BinaryReader(File.OpenRead(path));
+			// ADR-0048：文件级 IO 经 SafCompat（本地 / content URI 双形态的单点）；读空 = 视为损坏。
+			if (SafCompat.OpenRead(path) is not { } stream)
+				return false;
+			using var r = new BinaryReader(stream);
 			int pendingCount = r.ReadInt32();
 			if (pendingCount is < 0 or > FileListMaxEntries)
 				return false;
@@ -372,7 +375,7 @@ internal static class ErbIrCache
 		{
 			var path = GetFileListPath(irCachePath);
 			var tmp = path + ".tmp";
-			using (var w = new BinaryWriter(File.Create(tmp)))
+			using (var w = new BinaryWriter(SafCompat.OpenWrite(tmp)))
 			{
 				w.Write(pendingRels.Count);
 				foreach (var (logical, rel) in pendingRels)
@@ -392,7 +395,7 @@ internal static class ErbIrCache
 			}
 			if (!SafCompat.TryAtomicReplaceLocal(tmp, path))
 			{
-				try { File.Delete(tmp); } catch { /* 残留 tmp 无害（下次写覆盖） */ }
+				try { SafCompat.Delete(tmp); } catch { /* 残留 tmp 无害（下次写覆盖） */ }
 				return false;
 			}
 			return true;
@@ -425,7 +428,7 @@ internal static class ErbIrCache
 			// issues/10 10-B：era_src.dat（CSV/ERH 内容缓存）随重扫同清——三件套一起失效
 			foreach (var name in new[] { Path.GetFileName(irPath), Path.GetFileName(GetFileListPath(irPath)), Path.GetFileName(GetSrcCachePath(exeDir)) })
 			{
-				try { var p = Path.Combine(dir, name); if (File.Exists(p)) File.Delete(p); }
+				try { var p = Path.Combine(dir, name); if (SafCompat.FileExists(p)) SafCompat.Delete(p); }
 				catch { ok = false; }
 			}
 			return ok;
@@ -457,23 +460,26 @@ internal static class ErbIrCache
 			if (!string.IsNullOrEmpty(activeExeDir))
 				keepKeys.Add(ComputeGameKey(activeExeDir));
 
-			if (!Directory.Exists(IrCacheRoot))
+			// ADR-0048：孤儿治理恒落在 appdata（IrCacheRoot），故走 F-4 的 AppDataIo；
+			// 目录级三个原语（枚举 / mtime / 递归删）正是为此补齐，语义均为幂等。
+			var root = AppDataIo.Resolve("IRCache");
+			if (!AppDataIo.DirectoryExists(root))
 				return;
 			var removed = new List<string>();
-			foreach (var dir in Directory.EnumerateDirectories(IrCacheRoot))
+			foreach (var dir in AppDataIo.EnumerateDirectories(root))
 			{
 				string key = Path.GetFileName(dir);
 				if (key.Length == 0 || keepKeys.Contains(key))
 					continue;
+				var cred = AppDataIo.Resolve("IRCache/" + key);
+				var stamp = AppDataIo.GetDirectoryLastWriteUtc(cred);
+				if (stamp == DateTime.MinValue)
+					continue; // 枚举后消失（竞态），对齐原 catch → continue
+				if (DateTime.UtcNow - stamp < OrphanGracePeriod)
+					continue; // 宽限期内不删
 				try
 				{
-					if (DateTime.UtcNow - Directory.GetLastWriteTimeUtc(dir) < OrphanGracePeriod)
-						continue; // 宽限期内不删
-				}
-				catch { continue; }
-				try
-				{
-					Directory.Delete(dir, recursive: true);
+					AppDataIo.DeleteDirectoryTree(cred);
 					removed.Add(key);
 				}
 				catch (Exception ex)

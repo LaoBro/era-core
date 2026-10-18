@@ -78,8 +78,8 @@ public class GameDirAccessorIoPolicyTests
         // 新增游戏树直连 IO 会落进下面的「无登记 ⇒ 违规」分支，立即转红。
 
         // ── 待收敛（AppPrivate）：应用私有域 / 引擎自有派生数据（F-4 豁免）──────────────
-        ["Shared/Runtime/Script/Loader/ErbIrCache.cs"] = new(
-            "IR 磁盘缓存：content-URI 游戏落 AppDataPaths/IRCache/<gameKey>/，桌面本地布局落 <游戏目录>/_IRCache/——均非游戏内容", Domain.AppPrivate, 10),
+        // ADR-0048（2026-10-18）：ErbIrCache 的 10 处已归零——文件级走 SafCompat、目录级走 AppDataIo，
+        // 行已删除（守卫要求：计数归零必须删行，清单只保留「现役欠账」）。
         ["Shared/Runtime/Script/Loader/SrcContentCache.cs"] = new(
             "issues/10 10-B CSV/ERH 源内容缓存：与 era_ir.dat 同布局、同生命周期", Domain.AppPrivate, 8),
 

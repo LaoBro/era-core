@@ -218,12 +218,16 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 > **关键结论：原本为它们准备的 `MoveFile` 接口成员已撤销**——不需要了，接口一个符号都没动。
 > 行为锁 = `SaveFolderCreationTests`，钉住「建 sav 目录 + 旧存档不搬移」这一刻意保持的行为。
 
-### 待收敛（真欠账，18 处）
+### 待收敛（真欠账，8 处）
 
 | 文件 | 域 | 处数 | 理由 | 收敛方向 |
 |---|---|---|---|---|
-| `Shared/Runtime/Script/Loader/ErbIrCache.cs` | AppPrivate | 10 | IR 磁盘缓存（appdata `IRCache/` 或桌面 `<游戏目录>/_IRCache/`），非游戏内容 | 缓存域自有接缝 |
 | `Shared/Runtime/Script/Loader/SrcContentCache.cs` | AppPrivate | 8 | 10-B CSV/ERH 源内容缓存，与 `era_ir.dat` 同布局同生命周期 | 同上 |
+
+> **2026-10-18（ADR-0048，14 票批 B）**：`ErbIrCache` 的 10 处已**归零**——文件级 IO 改走
+> `SafCompat`（本地 / content URI 双形态的单点），目录级孤儿治理改走 `AppDataIo`
+> （本票批 A 补的枚举 / 目录 mtime / 递归删三个幂等原语）。行已从清单删除。
+> 残留的 `SrcContentCache`（8 处）走同一手法，见 14 票批 C。
 
 > **收敛方向不是塞进 `IGameDirAccessor`**：该接口的语义是「游戏内容目录」，把缓存 IO 挂进去会污染 F-1。
 > 若要收，正确形态是给缓存域一个独立窄接口（形如 `IAppDataAccessor`），与 F-4 的 `AppDataPaths` / `AppDataIo` 同族。
@@ -272,7 +276,7 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 |---|---|---|---|
 | 输入 | `IInputHost` | ADR-0031 **proposed**；M1/M2/M4 已落地（接口 + `DefaultInputHost` + 几何/键盘通道） | M5–M8：触屏 E-min、primitive 能力位、`IConsoleUI` 瘦身 Phase 2 |
 | 输出 | `IDisplayState` / `OutputHub` | ADR-0013/0014/0003 **accepted 且已落地** | —— |
-| 文件 | `IGameDirAccessor` | ADR-0019 **accepted 且已落地**（双实现）；2026-10-16 收敛一轮；**2026-10-18 三轮清完**：ADR-0036 删全部不可编译分支（`AppContents` / `ImgUtils` / `EvilMask.Utils`）→ ADR-0037 收最后一条可编译读缝（`ConstantData` / `EncodingHandler` / `EraStreamReader`）→ ADR-0038 收 sav 挪档（`ConfigData`） | **GameTree 域已归零**（Cap 0）；剩余 5 项已按 §4.3 拆为**待收敛 2 项 / 18 处**（`ErbIrCache` / `SrcContentCache`，缓存域，收敛方向是独立窄接口而非 `IGameDirAccessor`）与**永久豁免 3 项 / 21 处**（`GamePaths` / `SafCompat` / `Sys`）。新增游戏树直连 IO 会立即被守卫测试判为「未登记」转红 |
+| 文件 | `IGameDirAccessor` | ADR-0019 **accepted 且已落地**（双实现）；2026-10-16 收敛一轮；**2026-10-18 三轮清完**：ADR-0036 删全部不可编译分支（`AppContents` / `ImgUtils` / `EvilMask.Utils`）→ ADR-0037 收最后一条可编译读缝（`ConstantData` / `EncodingHandler` / `EraStreamReader`）→ ADR-0038 收 sav 挪档（`ConfigData`） | **GameTree 域已归零**（Cap 0）；剩余 5 项已按 §4.3 拆分：**待收敛 1 项 / 8 处**（`SrcContentCache`；`ErbIrCache` 的 10 处已由 ADR-0048 归零）与**永久豁免 3 项 / 21 处**（`GamePaths` / `SafCompat` / `Sys`）。新增游戏树直连 IO 会立即被守卫测试判为「未登记」转红 |
 
 > 输入轴仍处推进中：ADR-0031 为 `proposed`，M5–M8 未落地。**本表随里程碑推进而改**，不视为稳定契约。
 
