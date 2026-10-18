@@ -91,6 +91,8 @@ internal sealed class Session : IDisposable
     /// volatile：HTTP 线程（/load-game / GET /state / GET /snapshot）读、游戏循环 Task 线程写。
     /// </summary>
     private volatile bool _loading;
+    /// <summary>测试接缝：替代真实游戏循环的任务（null = 生产路径）。见 internal 构造。</summary>
+    private readonly Task? _loopOverride;
 
     public Session(HttpSessionIO io, ITerminalSetup terminalSetup, ConfigData configData, TimeSpan? agentLease = null, bool fullDiffOnFirstTurn = false, string? dialectProfileId = null)
     {
@@ -107,13 +109,29 @@ internal sealed class Session : IDisposable
         // 此处的 Start() 仅把游戏循环排到独立 Task，构造留待 scope 内。
     }
 
+    /// <summary>
+    /// 测试接缝（ADR-0049 D4）：用给定任务替代真实游戏循环，供 registry 的相位迁移
+    /// （timeout → Retiring → 拒绝建会话）确定性复现。
+    /// <para>
+    /// 接缝刻意只有<b>一个 <see cref="Task"/> 引用</b>——与 <see cref="BoundedLoopWait"/> 同一手法；
+    /// 不引入 <c>ISession</c> 接口（成员数会逼近实现，属浅模块）。生产路径不得使用本构造。
+    /// </para>
+    /// <para>
+    /// 注意：注入的循环不会走 <c>FinalizeEndedLoop</c>，故 <see cref="HasEnded"/> 恒为 false、
+    /// <see cref="StateString"/> 恒为 <c>Loading</c>。用例据此只断言「循环是否退出」相关语义。
+    /// </para>
+    /// </summary>
+    internal Session(HttpSessionIO io, ITerminalSetup terminalSetup, ConfigData configData, TimeSpan? agentLease, bool fullDiffOnFirstTurn, string? dialectProfileId, Task loop)
+        : this(io, terminalSetup, configData, agentLease, fullDiffOnFirstTurn, dialectProfileId)
+        => _loopOverride = loop ?? throw new ArgumentNullException(nameof(loop));
+
     public void Start()
     {
         // Issue 11 D1：进入 Task.Run 前置 _loading=true——/load-game 同步返回时
         // GameLoopAsync 可能尚未跑到 console.Initialize()，但 _loading 已可见（volatile）。
         // runLoop 回调首行（console.Initialize 完成后）置 false。
         _loading = true;
-        _gameTask = Task.Run(GameLoopAsync);
+        _gameTask = _loopOverride ?? Task.Run(GameLoopAsync);
     }
 
     private async Task GameLoopAsync()
@@ -274,15 +292,21 @@ internal sealed class Session : IDisposable
     /// 再在锁外做有界等待（<see cref="WaitForLoopExitAsync"/>），从而让其他端点恢复可响应。
     ///
     /// 幂等：重复调用只生效一次。
+    ///
+    /// <para><b>拆除顺序的唯一编排点</b>（ADR-0049 D1）：控制权终止（<c>Controller.End</c>）由
+    /// <see cref="TurnDelivery.Dispose"/> 在置拆除旗标<b>之后</b>发出。调用方不得自行先调
+    /// <c>Controller.End</c>——那会在「End 已发布、旗标未置」的窗口里让在途 GET /turn
+    /// 把 404 误报成 409。</para>
     /// </summary>
-    public void RequestTeardown()
+    /// <param name="reason">控制权终止原因：<c>session_ended</c>（删除/关停）或 <c>session_replaced</c>（换游戏/重开）。</param>
+    public void RequestTeardown(string reason = "session_ended")
     {
         if (_disposed)
             return;
 
         _disposed = true;
-        // 会话拆除交 TurnDelivery（内部 End(session_ended) + Close[即 _io.Close]，保留 Controller 归属权）
-        _delivery.Dispose();
+        // 会话拆除交 TurnDelivery（置旗标 → End(reason) → Close[即 _io.Close]，保留 Controller 归属权）
+        _delivery.Dispose(reason);
         // issue-002：把停止信号送达脚本层 —— 此前没有任何一步触及脚本的运行判据，
         // 脚本唯一的出口是它自己跑到 QUIT/ERROR，拆除只能干等。
         // 发出后 IsRunning 恒假，脚本在下一个指令边界停下（ScriptProc.Run 的循环体首部）。

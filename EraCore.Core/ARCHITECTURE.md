@@ -128,7 +128,8 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 | 长轮询编排 | `TurnDelivery`（长轮询 + 控制权抢占 + final-turn-once + 超时不变式） | `Server/TurnDelivery.cs:38` |
 | 控制信号 | `Controller`（`: IControlSignal`） | `Server/Controller.cs:86` |
 | WS 传输 | `WsRelay`（Core 共享，BCL only） | `Server/WsRelay.cs:27` |
-| 会话装配 | `SessionRegistry.CreateSessionCore`（建 `OutputHub` → `HttpSessionIO` → `Session`） | `Server/SessionRegistry.cs:463` |
+| 会话装配 | `SessionRegistry.CreateSessionCore`（建 `OutputHub` → `HttpSessionIO` → `Session`；测试可注入会话工厂，接缝是一个 loop `Task`） | `Server/SessionRegistry.cs:546` |
+| 会话相位与拆除顺序 | `SessionRegistry` 的 `Live` / `Retiring` 相位（ADR-0049 S-1~S-3）；拆除顺序固定在 `TurnDelivery.Dispose(reason)` 内（置旗标 → `End` → `Close`），registry 不得自行 `Controller.End` | `Server/SessionRegistry.cs`、`Server/TurnDelivery.cs:133` |
 | 宿主持有 | Kestrel `WsConnectionHandler` / MAUI `BridgeHost.TurnPumpAsync` / CLI `TerminalRenderer` | 见第 5 节宿主表 |
 
 ### 3.3 不变量

@@ -43,14 +43,18 @@ internal sealed class SessionRegistry
     private volatile Session? _session;
     private OutputHub? _sessionHub;
     /// <summary>
-    /// 已摘除但游戏循环尚未退出会话（issue-001）。
+    /// <b>Retiring 相位</b>（ADR-0049 D2）：<c>_session == null</c> 且上一轮拆除的旧循环仍在跑。
     ///
     /// 拆除超时后 <c>_session</c> 已是 null，但旧循环仍在运行且仍读 <see cref="GamePaths.Current"/>、
     /// 仍持有 scope 静态。此字段让<b>后续</b>变更操作知道"还有个循环活着"——
     /// 否则它们会看到 <c>_session == null</c> 以为无旧循环，直接建新会话，
     /// 造成 spec 决策四禁止的静态竞争（新循环初始化清掉旧循环正在用的缓存）。
+    ///
+    /// <para>它不再是「残留引用」而是相位载体：create 拒绝、DELETE 幂等等待、<c>/state</c> 的
+    /// <c>retiring</c> 字段都读它。清除只发生在 <see cref="AwaitTeardownAsync"/> 的成功返回处
+    /// （S-2：不由时间清、不由新建会话清）。volatile：变更操作在锁内写、只读端点无锁读。</para>
     /// </summary>
-    private Session? _retiring;
+    private volatile Session? _retiring;
     private readonly ITerminalSetup _terminalSetup;
     private readonly GameConfigService _configService;
     private readonly TimeSpan? _agentLease;
@@ -87,6 +91,21 @@ internal sealed class SessionRegistry
 
     /// <summary>当前 session 引用（volatile 读）——仅供只读端点（/turn /input /snapshot）使用。</summary>
     public Session? CurrentSession => _session;
+
+    /// <summary>
+    /// 是否处于 Retiring 相位（无 Live 会话，但上一轮拆除的旧循环尚未退出，ADR-0049 D2）。
+    /// 只读端点（<c>GET /state</c>）据此透出 <c>retiring</c> 字段；无锁读，仅作诊断与客户端提示。
+    /// </summary>
+    public bool IsRetiring => _retiring != null;
+
+    /// <summary>
+    /// 测试接缝（ADR-0049 D4）：替代 <c>new Session(...)</c> 的会话工厂。
+    /// <para>
+    /// registry 仍自持 <see cref="OutputHub"/> 与 <see cref="HttpSessionIO"/>，故 WS 订阅路径与生产
+    /// 完全一致；注入方只决定「会话怎么建」与「它的游戏循环任务是谁」。生产路径为 null。
+    /// </para>
+    /// </summary>
+    internal Func<HttpSessionIO, ConfigData, Session>? SessionFactory { get; init; }
 
     /// <summary>
     /// POST /session（迁移自原 HandleCreateSessionAsync）。
@@ -219,6 +238,59 @@ internal sealed class SessionRegistry
     }
 
     /// <summary>
+    /// MAUI 托管模式的<b>原子重开</b>（ADR-0049 D5）：一次 gate、一次有界等待、一次建会话。
+    ///
+    /// <para><b>为什么需要</b>：宿主此前是「<c>DeleteSessionAsync</c>（忽略结果）→ <c>CreateMauiSessionAsync</c>」
+    /// 两次调用。旧循环若在上界内没退出，第一次吞掉 <c>TeardownTimeout</c>，第二次再等一遍上界
+    /// 才返回 <see cref="SessionCreateStatus.PreviousSessionStillRunning"/> —— 用户侧表现是切换游戏
+    /// 卡住 10 秒后弹出一个枚举名。把两步合成一次调用后，最坏等待回到一个上界，且失败原因单一。</para>
+    ///
+    /// <para><b>与 <see cref="CreateMauiSessionAsync"/> 的区别</b>：不返回 <c>Conflict</c>——重开的语义
+    /// 就是「替换当前会话」，宿主已持有唯一会话的归属权。与 <see cref="ReplaceForLoadGameAsync(string)"/>
+    /// 的区别：<b>不碰</b> <see cref="GamePaths"/>（MAUI 的路径由 <c>OnReloadGame</c> 提前 Resolve，
+    /// 由此处改写会让旧循环读到新路径——issue-001 严防的形态）。</para>
+    /// </summary>
+    public async Task<SessionCreateResult> ReplaceMauiSessionAsync(ConfigData configData, bool fullDiffOnFirstTurn = true, string? dialectProfileId = null)
+    {
+        await _mutationGate.WaitAsync();
+        try
+        {
+            // 上一轮拆除遗留的旧循环同样要先退出（S-1：Retiring 必须先清）。
+            if (_retiring != null && !await AwaitTeardownAsync(null))
+                return new SessionCreateResult(SessionCreateStatus.PreviousSessionStillRunning, null, default, null);
+
+            Session? detached;
+            await _sessionLock.WaitAsync();
+            try
+            {
+                detached = DetachSessionLocked("session_replaced");
+            }
+            finally
+            {
+                _sessionLock.Release();
+            }
+
+            if (!await AwaitTeardownAsync(detached))
+                return new SessionCreateResult(SessionCreateStatus.PreviousSessionStillRunning, null, default, null);
+
+            await _sessionLock.WaitAsync();
+            try
+            {
+                var session = CreateSessionCore(configData, fullDiffOnFirstTurn, dialectProfileId);
+                return new SessionCreateResult(SessionCreateStatus.Created, session.Id, session.CreatedAt, session.StateString);
+            }
+            finally
+            {
+                _sessionLock.Release();
+            }
+        }
+        finally
+        {
+            _mutationGate.Release();
+        }
+    }
+
+    /// <summary>
     /// DELETE /session（迁移自原 HandleDeleteSessionAsync）。
     /// 存在 session → dispose 并置空 → <see cref="SessionDeleteStatus.Removed"/>；否则 NotFound。
     /// </summary>
@@ -237,14 +309,24 @@ internal sealed class SessionRegistry
             try
             {
                 if (_session == null)
-                    return new SessionDeleteResult(SessionDeleteStatus.NotFound);
-                if (identity.HasValue && !_session.HasEnded)
                 {
-                    var gate = _session.Controller.CheckLifecycle(identity.Value, sessionEnded: false);
-                    if (gate.Status != ControlGateStatus.Allowed)
-                        return new SessionDeleteResult(SessionDeleteStatus.ControlDenied, gate.Reason);
+                    // ADR-0049 D3（幂等 DELETE）：没有 Live 会话时仍要区分
+                    // 「真没了」(→ 404) 与「上一轮拆除超时、旧循环还在跑」(→ 有界等待后 Removed)。
+                    // 否则调用方拿着 503 的重试指引再调一次，反而拿到 404 —— 同一事实两种答案。
+                    if (_retiring == null)
+                        return new SessionDeleteResult(SessionDeleteStatus.NotFound);
+                    detached = null;
                 }
-                detached = DetachSessionLocked("session_ended");
+                else
+                {
+                    if (identity.HasValue && !_session.HasEnded)
+                    {
+                        var gate = _session.Controller.CheckLifecycle(identity.Value, sessionEnded: false);
+                        if (gate.Status != ControlGateStatus.Allowed)
+                            return new SessionDeleteResult(SessionDeleteStatus.ControlDenied, gate.Reason);
+                    }
+                    detached = DetachSessionLocked("session_ended");
+                }
             }
             finally
             {
@@ -253,6 +335,7 @@ internal sealed class SessionRegistry
 
             // 锁外有界等待——issue-001 的核心：等待期间 server 仍可响应，
             // 超时则回明确失败而非让调用方无限期等一个永不返回的 join。
+            // detached 为 null 时等的是 _retiring（上次拆除遗留的循环）。
             if (!await AwaitTeardownAsync(detached))
                 return new SessionDeleteResult(SessionDeleteStatus.TeardownTimeout, "teardown_timeout");
 
@@ -463,10 +546,13 @@ internal sealed class SessionRegistry
     private Session CreateSessionCore(ConfigData configData, bool fullDiffOnFirstTurn = false, string? dialectProfileId = null)
     {
         // issue 03：SessionRegistry 自持 OutputHub 引用，HttpSessionIO 只接 IOutputBroadcaster 抽象。
+        // 接缝（ADR-0049 D4）：hub/io 始终由本方法建（WS 订阅路径与生产一致），工厂只替换 Session 本体。
         var hub = new OutputHub();
         var io = new HttpSessionIO(hub);
         _sessionHub = hub;
-        var session = new Session(io, _terminalSetup, configData, _agentLease, fullDiffOnFirstTurn, dialectProfileId ?? _dialectProfileId);
+        var session = SessionFactory is { } factory
+            ? factory(io, configData)
+            : new Session(io, _terminalSetup, configData, _agentLease, fullDiffOnFirstTurn, dialectProfileId ?? _dialectProfileId);
         session.Start();
         _session = session;
         return session;
@@ -479,14 +565,15 @@ internal sealed class SessionRegistry
     /// </summary>
     private Session? DetachSessionLocked(string reason = "session_ended")
     {
-        if (_session is { HasEnded: false } session)
-            session.Controller.End(reason);
         var detached = _session;
         // 顺序要点：先摘引用，后发拆除请求。反过来的话，摘引用与请求之间若有读端点
         // 拿到 null，会漏掉"会话正在拆除"这一事实并误判为"未加载游戏"。
         _session = null;
         _sessionHub = null;
-        detached?.RequestTeardown();
+        // 控制权终止（Controller.End）由 RequestTeardown 内部发出，且必须晚于
+        // TurnDelivery 的拆除旗标（ADR-0049 D1）。此处<b>不得</b>自行再调 Controller.End：
+        // 那会把「End 已发布、旗标未置」的窗口重新打开，使在途 GET /turn 误报 409。
+        detached?.RequestTeardown(reason);
         // 循环仍活着才登记为 _retiring：已结束的会话（如刚 QUIT）不影响后续建会话。
         if (detached is { HasEnded: false })
             _retiring = detached;

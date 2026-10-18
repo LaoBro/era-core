@@ -211,6 +211,10 @@ internal sealed class GameServerProtocol
             payload["isRunning"] = false;
             payload["threadAlive"] = false;
             payload["gameDir"] = null;
+            // ADR-0049 D6：Retiring 相位（无 Live 会话，但上一轮拆除的旧循环尚未退出）。
+            // 纯增量字段——不新增 Ending 状态值，老客户端忽略即可。
+            if (_sessions.IsRetiring)
+                payload["retiring"] = true;
         }
         else
         {

@@ -111,18 +111,30 @@ internal sealed class TurnDelivery : IDisposable
     }
 
     /// <summary>
-    /// 会话拆除：End(session_ended) + Close。不 Dispose 共享的 signal/sink（归属 Session）。
+    /// 会话拆除：置拆除旗标 → End(reason) → Close。不 Dispose 共享的 signal/sink（归属 Session）。
+    /// <para>
+    /// <b>这三步的顺序是本类型对外契约的一部分</b>（ADR-0049 D1）：等待者由 End 发布的任务完成唤醒，
+    /// 其后必然能看到旗标（任务完成自带 acquire/release 语义），因此拆除期的在途 GET /turn
+    /// 稳定归一为 Closed(404)，不会与 ownerChanged 分支竞争出 409/404 不确定返回。
+    /// <b>调用方不得先自行 End</b>——那会在「End 已发布、旗标未置」的窗口里把 404 变成 409。
+    /// </para>
+    /// <para>
     /// 注意：不置 <see cref="_sessionEnded"/>（该旗标只在 EndOfGame/game-ended 置位），以保持
     /// 与原 Session.HasEnded「仅游戏结束后」的快失败判定语义（DELETE-mid-game 仍走 not_controller 409）。
-    /// 拆除期在途 GET /turn 经 <see cref="_sessionTeardown"/> 稳定归一为 Closed(404)，
-    /// 不再与 ownerChanged 分支竞争产生 409/404 不确定返回。
+    /// </para>
     /// </summary>
-    public void Dispose()
+    /// <param name="reason">
+    /// 控制权终止原因（<c>session_ended</c> / <c>session_replaced</c>）。由 <see cref="Session.RequestTeardown"/>
+    /// 透传，取代原先 registry 在拆除前自行调用 <c>Controller.End</c> 的旁路。
+    /// </param>
+    /// <summary>IDisposable 契约入口：等价于 <see cref="Dispose(string)"/> 的 <c>session_ended</c>。</summary>
+    public void Dispose() => Dispose("session_ended");
+
+    public void Dispose(string reason)
     {
-        // 先置拆除旗标（volatile 写）再 End + Close：等待者观察到 ownerChanged 完成时
-        // 必然已见该旗标（任务完成自带 acquire/release 语义），从而稳定走 Closed(404) 分支。
+        // 顺序不可换：先置旗标（volatile 写），再 End，再 Close。
         _sessionTeardown = true;
-        _signal.End("session_ended");
+        _signal.End(reason);
         _sink.Close();
     }
 
