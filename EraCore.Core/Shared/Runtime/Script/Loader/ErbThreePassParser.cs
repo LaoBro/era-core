@@ -146,7 +146,7 @@ internal sealed class ErbThreePassParser
 			ignoredFNFWarningCount++;
 			return;
 		}
-		ParserMediator.Warn(str, line, level, isError, false);
+		ctx.Warn(str, line, level, isError, false);
 	}
 
 	/// <summary>
@@ -198,7 +198,7 @@ internal sealed class ErbThreePassParser
 #endif
 			//1756beta2+v6.1 修正の効率化のために何かパース関係でハンドリングできてないエラーが出た場合はスタックトレースを投げるようにした
 			string errmes = exc is EmueraException ? exc.Message : exc.GetType().ToString() + ":" + exc.Message;
-			ParserMediator.Warn(string.Format(trerror.FuncAnalysisError.Text, label.LabelName, errmes), label, 2, true, false, (exc is not EmueraException ? exc.StackTrace : null)!);
+			ctx.Warn(string.Format(trerror.FuncAnalysisError.Text, label.LabelName, errmes), label, 2, true, false, (exc is not EmueraException ? exc.StackTrace : null)!);
 			label.ErrMes = trerror.CalledFailedFunc.Text;
 #if HEADLESS
 			// 无头模式下无需处理 UI 消息队列
@@ -234,7 +234,7 @@ internal sealed class ErbThreePassParser
 			{
 				if (!func.Function.IsMethodSafe())
 				{
-					ParserMediator.Warn(string.Format(trerror.CanNotUseInUserFunc.Text, func.Function.Name), nextLine, 2, true, false);
+					ctx.Warn(string.Format(trerror.CanNotUseInUserFunc.Text, func.Function.Name), nextLine, 2, true, false);
 					continue;
 				}
 			}
@@ -300,7 +300,7 @@ internal sealed class ErbThreePassParser
 							|| currentBaseFunc.FunctionCode == FunctionCode.TRYGOTOLIST)
 						//|| (currentBaseFunc.FunctionCode == FunctionCode.SELECTCASE))
 						{
-							ParserMediator.Warn(string.Format(trerror.CanNotLabelDefineInSyntax.Text, currentBaseFunc.Function.Name), nextLine, 2, true, false);
+							ctx.Warn(string.Format(trerror.CanNotLabelDefineInSyntax.Text, currentBaseFunc.Function.Name), nextLine, 2, true, false);
 						}
 					}
 				}
@@ -315,7 +315,7 @@ internal sealed class ErbThreePassParser
 					if (func!.FunctionCode != FunctionCode.DATA && func.FunctionCode != FunctionCode.DATAFORM && func.FunctionCode != FunctionCode.DATALIST
 						&& func.FunctionCode != FunctionCode.ENDLIST && func.FunctionCode != FunctionCode.ENDDATA)
 					{
-						ParserMediator.Warn(string.Format(trerror.InvalidInstructionInSyntax.Text, baseFunc.Function.Name, func.Function.Name), func, 2, true, false);
+						ctx.Warn(string.Format(trerror.InvalidInstructionInSyntax.Text, baseFunc.Function.Name, func.Function.Name), func, 2, true, false);
 						continue;
 					}
 				}
@@ -323,7 +323,7 @@ internal sealed class ErbThreePassParser
 				{
 					if (func!.FunctionCode != FunctionCode.DATA && func.FunctionCode != FunctionCode.DATAFORM && func.FunctionCode != FunctionCode.ENDLIST)
 					{
-						ParserMediator.Warn(string.Format(trerror.InvalidInstructionInSyntax.Text, "DATALIST", func.Function.Name), func, 2, true, false);
+						ctx.Warn(string.Format(trerror.InvalidInstructionInSyntax.Text, "DATALIST", func.Function.Name), func, 2, true, false);
 						continue;
 					}
 				}
@@ -331,7 +331,7 @@ internal sealed class ErbThreePassParser
 				{
 					if (func!.FunctionCode != FunctionCode.FUNC && func.FunctionCode != FunctionCode.ENDFUNC)
 					{
-						ParserMediator.Warn(string.Format(trerror.InvalidInstructionInSyntax.Text, baseFunc.Function.Name, func.Function.Name), func, 2, true, false);
+						ctx.Warn(string.Format(trerror.InvalidInstructionInSyntax.Text, baseFunc.Function.Name, func.Function.Name), func, 2, true, false);
 						continue;
 					}
 				}
@@ -339,7 +339,7 @@ internal sealed class ErbThreePassParser
 				{
 					if (baseFunc.IfCaseList!.Count == 0 && func!.FunctionCode != FunctionCode.CASE && func!.FunctionCode != FunctionCode.CASEELSE && func!.FunctionCode != FunctionCode.ENDSELECT)
 					{
-						ParserMediator.Warn(string.Format(trerror.OutsideSelectcase.Text, func.Function.Name), func, 2, true, false);
+						ctx.Warn(string.Format(trerror.OutsideSelectcase.Text, func.Function.Name), func, 2, true, false);
 						continue;
 					}
 				}
@@ -358,14 +358,14 @@ internal sealed class ErbThreePassParser
 					{
 						if (iLine.FunctionCode == FunctionCode.REPEAT)
 						{
-							ParserMediator.Warn(trerror.NestedRepeat.Text, func, 1, false, false);
+							ctx.Warn(trerror.NestedRepeat.Text, func, 1, false, false);
 						}
 						else if (iLine.FunctionCode == FunctionCode.FOR)
 						{
 							VariableTerm cnt = (iLine.Argument as SpForNextArgment)!.Cnt;
 							if (cnt.Identifier.Name == "COUNT" && cnt.isAllConst && cnt.getEl1forArg == 0)
 							{
-								ParserMediator.Warn(string.Format(trerror.RepeatInsideFor.Text, "0"), func, 1, false, false);
+								ctx.Warn(string.Format(trerror.RepeatInsideFor.Text, "0"), func, 1, false, false);
 							}
 						}
 					}
@@ -398,14 +398,14 @@ internal sealed class ErbThreePassParser
 							{
 								if (iLine.FunctionCode == FunctionCode.REPEAT && Cnt.isAllConst && Cnt.getEl1forArg == 0)
 								{
-									ParserMediator.Warn(string.Format(trerror.RepeatInsideFor.Text, "0"), func, 1, false, false);
+									ctx.Warn(string.Format(trerror.RepeatInsideFor.Text, "0"), func, 1, false, false);
 								}
 								else if (iLine.FunctionCode == FunctionCode.FOR)
 								{
 									VariableTerm destCnt = (iLine.Argument as SpForNextArgment)!.Cnt;
 									if (destCnt.Identifier.Name == "COUNT" && Cnt.isAllConst && destCnt.isAllConst && destCnt.getEl1forArg == Cnt.getEl1forArg)
 									{
-										ParserMediator.Warn(string.Format(trerror.RepeatInsideFor.Text, Cnt.getEl1forArg.ToString()), func, 1, false, false);
+										ctx.Warn(string.Format(trerror.RepeatInsideFor.Text, Cnt.getEl1forArg.ToString()), func, 1, false, false);
 									}
 								}
 							}
@@ -439,7 +439,7 @@ internal sealed class ErbThreePassParser
 					}
 					if (pairLine == null)
 					{
-						ParserMediator.Warn(string.Format(trerror.InvalidLoopInstruction.Text, func.Function.Name), func, 2, true, false);
+						ctx.Warn(string.Format(trerror.InvalidLoopInstruction.Text, func.Function.Name), func, 2, true, false);
 						break;
 					}
 					func.JumpTo = pairLine;
@@ -452,11 +452,11 @@ internal sealed class ErbThreePassParser
 						InstructionLine? ifLine = nestStack.Count == 0 ? null : nestStack.Peek()!;
 						if (ifLine == null || ifLine.FunctionCode != FunctionCode.IF)
 						{
-							ParserMediator.Warn(string.Format(trerror.InvalidElse.Text, func.Function.Name), func, 2, true, false);
+							ctx.Warn(string.Format(trerror.InvalidElse.Text, func.Function.Name), func, 2, true, false);
 							break;
 						}
 						if (ifLine!.IfCaseList!.Last!.Value!.FunctionCode == FunctionCode.ELSE)
-							ParserMediator.Warn(string.Format(trerror.InvalidElseAfterElse.Text, func!.Function.Name), func, 1, false, false);
+							ctx.Warn(string.Format(trerror.InvalidElseAfterElse.Text, func!.Function.Name), func, 1, false, false);
 						ifLine.IfCaseList.AddLast(func);
 					}
 					break;
@@ -465,7 +465,7 @@ internal sealed class ErbThreePassParser
 						InstructionLine? ifLine = nestStack.Count == 0 ? null : nestStack.Peek()!;
 						if (ifLine == null || ifLine.FunctionCode != FunctionCode.IF)
 						{
-							ParserMediator.Warn(trerror.UnexpectedEndif.Text, func, 2, true, false);
+							ctx.Warn(trerror.UnexpectedEndif.Text, func, 2, true, false);
 							break;
 						}
 						foreach (var ifelseifLine in ifLine.IfCaseList!)
@@ -481,14 +481,14 @@ internal sealed class ErbThreePassParser
 						InstructionLine? selectLine = nestStack.Count == 0 ? null : nestStack.Peek()!;
 						if (selectLine == null || selectLine.FunctionCode != FunctionCode.SELECTCASE && SelectcaseStack.Count == 0)
 						{
-							ParserMediator.Warn(string.Format(trerror.OutsideSelectcase.Text, func.Function.Name), func, 2, true, false);
+							ctx.Warn(string.Format(trerror.OutsideSelectcase.Text, func.Function.Name), func, 2, true, false);
 							break;
 						}
 						else if (selectLine.FunctionCode != FunctionCode.SELECTCASE && SelectcaseStack.Count > 0)
 						{
 							do
 							{
-								ParserMediator.Warn(string.Format(trerror.InstructionNotClosed.Text, selectLine.Function.Name, FunctionIdentifier.getMatchFunction(selectLine.FunctionCode), func.Function.Name), func, 2, true, false);
+								ctx.Warn(string.Format(trerror.InstructionNotClosed.Text, selectLine.Function.Name, FunctionIdentifier.getMatchFunction(selectLine.FunctionCode), func.Function.Name), func, 2, true, false);
 								//これを跨いでIF等が閉じられることがないようにする。
 								nestStack.Pop();
 								//if (nestStack.Count > 0)　//空になってるかは下で判定できるので、これを見る必要がない
@@ -497,7 +497,7 @@ internal sealed class ErbThreePassParser
 							break;
 						}
 						if (selectLine.IfCaseList.Count > 0 && selectLine.IfCaseList.Last!.Value.FunctionCode == FunctionCode.CASEELSE)
-							ParserMediator.Warn(string.Format(trerror.InvalidCaseAfterCaseelse.Text, func.Function.Name), func, 1, false, false);
+							ctx.Warn(string.Format(trerror.InvalidCaseAfterCaseelse.Text, func.Function.Name), func, 1, false, false);
 						selectLine.IfCaseList.AddLast(func);
 					}
 					break;
@@ -506,14 +506,14 @@ internal sealed class ErbThreePassParser
 						InstructionLine? selectLine = nestStack.Count == 0 ? null : nestStack.Peek()!;
 						if (selectLine == null || selectLine.FunctionCode != FunctionCode.SELECTCASE && SelectcaseStack.Count == 0)
 						{
-							ParserMediator.Warn(trerror.UnexpectedEndselect.Text, func, 2, true, false);
+							ctx.Warn(trerror.UnexpectedEndselect.Text, func, 2, true, false);
 							break;
 						}
 						else if (selectLine.FunctionCode != FunctionCode.SELECTCASE && SelectcaseStack.Count > 0)
 						{
 							do
 							{
-								ParserMediator.Warn(string.Format(trerror.InstructionNotClosed.Text, selectLine.Function.Name, FunctionIdentifier.getMatchFunction(selectLine.FunctionCode), func.Function.Name), func, 2, true, false);
+								ctx.Warn(string.Format(trerror.InstructionNotClosed.Text, selectLine.Function.Name, FunctionIdentifier.getMatchFunction(selectLine.FunctionCode), func.Function.Name), func, 2, true, false);
 								//これを跨いでIF等が閉じられることがないようにする。
 								nestStack.Pop();
 								//if (nestStack.Count > 0)　//空になってるかは下で判定できるので、これを見る必要がない
@@ -533,7 +533,7 @@ internal sealed class ErbThreePassParser
 						var term = (selectLine.Argument as ExpressionArgument)!.Term;
 						if (term == null)
 						{
-							ParserMediator.Warn(trerror.MissingArg.Text, selectLine, 2, true, false);
+							ctx.Warn(trerror.MissingArg.Text, selectLine, 2, true, false);
 							break;
 						}
 						foreach (var caseLine in selectLine.IfCaseList)
@@ -545,12 +545,12 @@ internal sealed class ErbThreePassParser
 								continue;
 							var caseExps = (caseLine.Argument as CaseArgument)!.CaseExps;
 							if (caseExps.Length == 0)
-								ParserMediator.Warn(trerror.MissingArg.Text, caseLine, 2, true, false);
+								ctx.Warn(trerror.MissingArg.Text, caseLine, 2, true, false);
 
 							foreach (var exp in caseExps)
 							{
 								if (exp.GetOperandType() != term.GetOperandType())
-									ParserMediator.Warn(trerror.NotMatchCaseTypeAndSelectcaseType.Text, caseLine, 2, true, false);
+									ctx.Warn(trerror.NotMatchCaseTypeAndSelectcaseType.Text, caseLine, 2, true, false);
 							}
 
 						}
@@ -569,7 +569,7 @@ internal sealed class ErbThreePassParser
 					if (nestStack.Count == 0
 						|| nestStack.Peek().FunctionCode != parentFunc)
 					{
-						ParserMediator.Warn(string.Format(trerror.MissingCorresponding.Text, parentFunc.ToString(), func.Function.Name), func, 2, true, false);
+						ctx.Warn(string.Format(trerror.MissingCorresponding.Text, parentFunc.ToString(), func.Function.Name), func, 2, true, false);
 						break;
 					}
 					pairLine = nestStack.Pop();//REPEAT
@@ -582,7 +582,7 @@ internal sealed class ErbThreePassParser
 					if (pairLine == null
 						|| !pairLine.Function.IsTryC())
 					{
-						ParserMediator.Warn(trerror.MissingTryc.Text, func, 2, true, false);
+						ctx.Warn(trerror.MissingTryc.Text, func, 2, true, false);
 						break;
 					}
 					pairLine = nestStack.Pop();//TRYC
@@ -593,7 +593,7 @@ internal sealed class ErbThreePassParser
 					if (nestStack.Count == 0
 						|| nestStack.Peek().FunctionCode != FunctionCode.CATCH)
 					{
-						ParserMediator.Warn(trerror.UnexpectedEndcatch.Text, func, 2, true, false);
+						ctx.Warn(trerror.UnexpectedEndcatch.Text, func, 2, true, false);
 						break;
 					}
 					pairLine = nestStack.Pop();//CATCH
@@ -613,12 +613,12 @@ internal sealed class ErbThreePassParser
 						{
 							if (iLine.Function.IsPrintData())
 							{
-								ParserMediator.Warn(trerror.NestedPrintdata.Text, func, 2, true, false);
+								ctx.Warn(trerror.NestedPrintdata.Text, func, 2, true, false);
 								break;
 							}
 							if (iLine.FunctionCode == FunctionCode.STRDATA)
 							{
-								ParserMediator.Warn(trerror.StrdataInsidePrintdata.Text, func, 2, true, false);
+								ctx.Warn(trerror.StrdataInsidePrintdata.Text, func, 2, true, false);
 								break;
 							}
 						}
@@ -634,12 +634,12 @@ internal sealed class ErbThreePassParser
 						{
 							if (iLine.FunctionCode == FunctionCode.STRDATA)
 							{
-								ParserMediator.Warn(trerror.NestedStrdata.Text, func, 2, true, false);
+								ctx.Warn(trerror.NestedStrdata.Text, func, 2, true, false);
 								break;
 							}
 							if (iLine.Function.IsPrintData())
 							{
-								ParserMediator.Warn(trerror.PrintdataInsideStrdata.Text, func, 2, true, false);
+								ctx.Warn(trerror.PrintdataInsideStrdata.Text, func, 2, true, false);
 								break;
 							}
 						}
@@ -654,7 +654,7 @@ internal sealed class ErbThreePassParser
 						var pline = nestStack.Count == 0 ? null : nestStack.Peek();
 						if (pline == null || !pline.Function.IsPrintData() && pline.FunctionCode != FunctionCode.STRDATA)
 						{
-							ParserMediator.Warn(trerror.UnexpectedDatalist.Text, func, 2, true, false);
+							ctx.Warn(trerror.UnexpectedDatalist.Text, func, 2, true, false);
 							break;
 						}
 						tempLineList = [];
@@ -666,11 +666,11 @@ internal sealed class ErbThreePassParser
 					{
 						if (nestStack.Count == 0 || nestStack.Peek().FunctionCode != FunctionCode.DATALIST)
 						{
-							ParserMediator.Warn(trerror.UnexpectedEndlist.Text, func, 2, true, false);
+							ctx.Warn(trerror.UnexpectedEndlist.Text, func, 2, true, false);
 							break;
 						}
 						if (tempLineList.Count == 0)
-							ParserMediator.Warn(trerror.DatalistDataIsMissing.Text, func, 1, false, false);
+							ctx.Warn(trerror.DatalistDataIsMissing.Text, func, 1, false, false);
 						nestStack.Pop();
 						nestStack.Peek().dataList.Add(tempLineList);
 						break;
@@ -681,7 +681,7 @@ internal sealed class ErbThreePassParser
 						InstructionLine pdata = (nestStack.Count == 0 ? null : nestStack.Peek())!;
 						if (pdata == null || !pdata.Function.IsPrintData() && pdata.FunctionCode != FunctionCode.DATALIST && pdata.FunctionCode != FunctionCode.STRDATA)
 						{
-							ParserMediator.Warn(string.Format(trerror.MissingPrintdata.Text, func.Function.Name), func, 2, true, false);
+							ctx.Warn(string.Format(trerror.MissingPrintdata.Text, func.Function.Name), func, 2, true, false);
 							break;
 						}
 						List<InstructionLine> iList = [];
@@ -699,13 +699,13 @@ internal sealed class ErbThreePassParser
 						InstructionLine pline = (nestStack.Count == 0 ? null : nestStack.Peek())!;
 						if (pline == null || !pline.Function.IsPrintData() && pline.FunctionCode != FunctionCode.STRDATA)
 						{
-							ParserMediator.Warn(string.Format(trerror.MissingPrintdataStrdata.Text, func.Function.Name), func, 2, true, false);
+							ctx.Warn(string.Format(trerror.MissingPrintdataStrdata.Text, func.Function.Name), func, 2, true, false);
 							break;
 						}
 						if (pline.FunctionCode == FunctionCode.DATALIST)
-							ParserMediator.Warn(trerror.DatalistNotClosed.Text, func, 2, true, false);
+							ctx.Warn(trerror.DatalistNotClosed.Text, func, 2, true, false);
 						if (pline.dataList.Count == 0)
-							ParserMediator.Warn(string.Format(trerror.InstructionDataIsMissing.Text, pline.Function.Name), func, 1, false, false);
+							ctx.Warn(string.Format(trerror.InstructionDataIsMissing.Text, pline.Function.Name), func, 1, false, false);
 						pline.JumpTo = func;
 						nestStack.Pop();
 						break;
@@ -717,7 +717,7 @@ internal sealed class ErbThreePassParser
 					{
 						if (iLine.FunctionCode == FunctionCode.TRYCALLLIST || iLine.FunctionCode == FunctionCode.TRYJUMPLIST || iLine.FunctionCode == FunctionCode.TRYGOTOLIST)
 						{
-							ParserMediator.Warn(trerror.NestedTrycalllist.Text, func, 2, true, false);
+							ctx.Warn(trerror.NestedTrycalllist.Text, func, 2, true, false);
 							break;
 						}
 					}
@@ -732,12 +732,12 @@ internal sealed class ErbThreePassParser
 						if (pFunc == null ||
 							pFunc.FunctionCode != FunctionCode.TRYCALLLIST && pFunc.FunctionCode != FunctionCode.TRYJUMPLIST && pFunc.FunctionCode != FunctionCode.TRYGOTOLIST)
 						{
-							ParserMediator.Warn(string.Format(trerror.MissingTrycalllist.Text, func.Function.Name), func, 2, true, false);
+							ctx.Warn(string.Format(trerror.MissingTrycalllist.Text, func.Function.Name), func, 2, true, false);
 							break;
 						}
 						if (func.Argument == null)
 						{
-							ParserMediator.Warn(string.Format(trerror.InvalidInstructionInTrycalllist.Text, func.Function.Name), pFunc, 2, true, false);
+							ctx.Warn(string.Format(trerror.InvalidInstructionInTrycalllist.Text, func.Function.Name), pFunc, 2, true, false);
 							break;
 						}
 						if (pFunc.FunctionCode == FunctionCode.TRYGOTOLIST)
@@ -745,12 +745,12 @@ internal sealed class ErbThreePassParser
 							var spCallArg = func.Argument as SpCallArgment;
 							if (spCallArg!.SubNames.Count != 0)
 							{
-								ParserMediator.Warn(trerror.TrygotolistToSBrackets.Text, func, 2, true, false);
+								ctx.Warn(trerror.TrygotolistToSBrackets.Text, func, 2, true, false);
 								break;
 							}
 							if (spCallArg.RowArgs.Count != 0)
 							{
-								ParserMediator.Warn(trerror.TrygotolistTargetHasArg.Text, func, 2, true, false);
+								ctx.Warn(trerror.TrygotolistTargetHasArg.Text, func, 2, true, false);
 								break;
 							}
 						}
@@ -762,7 +762,7 @@ internal sealed class ErbThreePassParser
 					if (pf == null ||
 						pf.FunctionCode != FunctionCode.TRYCALLLIST && pf.FunctionCode != FunctionCode.TRYJUMPLIST && pf.FunctionCode != FunctionCode.TRYGOTOLIST)
 					{
-						ParserMediator.Warn(string.Format(trerror.MissingTrycalllist.Text, func.Function.Name), func, 2, true, false);
+						ctx.Warn(string.Format(trerror.MissingTrycalllist.Text, func.Function.Name), func, 2, true, false);
 						break;
 					}
 					pf.JumpTo = func;
@@ -773,7 +773,7 @@ internal sealed class ErbThreePassParser
 					{
 						if (iLine.FunctionCode == FunctionCode.NOSKIP)
 						{
-							ParserMediator.Warn(trerror.NestedNoskip.Text, func, 2, true, false);
+							ctx.Warn(trerror.NestedNoskip.Text, func, 2, true, false);
 							break;
 						}
 					}
@@ -786,7 +786,7 @@ internal sealed class ErbThreePassParser
 					if (pfunc == null ||
 						pfunc.FunctionCode != FunctionCode.NOSKIP)
 					{
-						ParserMediator.Warn(string.Format(trerror.MissingNoskip.Text, func.Function.Name), func, 2, true, false);
+						ctx.Warn(string.Format(trerror.MissingNoskip.Text, func.Function.Name), func, 2, true, false);
 						break;
 					}
 					//エラーハンドリング用
@@ -804,9 +804,9 @@ internal sealed class ErbThreePassParser
 			string funcName = func.Function.Name;
 			string funcMatch = FunctionIdentifier.getMatchFunction(func.FunctionCode);
 			if (func != null)
-				ParserMediator.Warn(string.Format(trerror.MissingCorresponding.Text, funcMatch, funcName), func, 2, true, false);
+				ctx.Warn(string.Format(trerror.MissingCorresponding.Text, funcMatch, funcName), func, 2, true, false);
 			else
-				ParserMediator.Warn(trerror.DefaultError.Text, func!, 2, true, false);
+				ctx.Warn(trerror.DefaultError.Text, func!, 2, true, false);
 		}
 		//使ったスタックをクリア
 		SelectcaseStack.Clear();
@@ -845,7 +845,7 @@ internal sealed class ErbThreePassParser
 				}
 				catch (CodeEE e)
 				{
-					ParserMediator.Warn(e.Message, func, 2, true, false);
+					ctx.Warn(e.Message, func, 2, true, false);
 					continue;
 				}
 				if (FunctionNotFoundName != null)

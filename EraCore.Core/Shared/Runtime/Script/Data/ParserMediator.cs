@@ -193,6 +193,44 @@ internal partial class ParserMediator
 		Warn(str, line, level, isError, isBackComp, null!);
 	}
 
+	/// <summary>
+	/// ADR-0046：把"带行对象"的警告写入<b>指定目的地</b>（<c>null</c> = 沿用 ambient：缓冲激活进缓冲，否则进全局）。
+	/// <para>
+	/// 与 <see cref="WarnTo(List{ParserWarning}, string, ScriptPosition?, int)"/> 成对：那个管 3 参（位置）形态，
+	/// 这个管 5/6 参（行对象）形态——两者的过滤、<c>IsError</c> 标记与加锁语义逐字一致，只是落点可指定。
+	/// </para>
+	/// </summary>
+	internal static void WarnTo(List<ParserWarning>? destination, string str, LogicalLine line, int level,
+		bool isError, bool isBackComp, string stack)
+	{
+		if (isError)
+		{
+			line.IsError = true;
+			line.ErrMes = str;
+		}
+		if (level < Config.DisplayWarningLevel && !Program.AnalysisMode)
+			return;
+		if (isBackComp && !Config.WarnBackCompatibility)
+			return;
+		if (console == null || console.RunERBFromMemory)
+			return;
+		var warning = new ParserWarning(str, line.Position, level, stack);
+		if (destination == null)
+		{
+			AddWarning(warning);
+			return;
+		}
+		if (ReferenceEquals(destination, warningList))
+		{
+			lock (warningListLock)
+			{
+				warningList.Add(warning);
+			}
+			return;
+		}
+		destination.Add(warning);
+	}
+
 	public static void Warn(string str, LogicalLine line, int level, bool isError, bool isBackComp, string stack)
 	{
 		if (isError)

@@ -81,4 +81,12 @@ internal sealed class ParseContext
 
 	/// <summary>并行 worker 的解析行写点：写 per-线程发布槽（静态——槽按线程而非按 ctx 实例，见类文档）。</summary>
 	internal static void PublishScanLine(LogicalLine line) => LoadScanLine.Value = line;
+
+	/// <summary>
+	/// ADR-0046：警告的<b>落点</b>由 ctx 决定——并行 ctx 写它自己的 per-label 产物，串行/回放 ctx 走 ambient
+	///（缓冲或全局）。这正是本类型原本的立意（"写点不再直写任何 ambient 槽，而是写本对象的 <see cref="Art"/>"），
+	/// 至此把警告也纳入同一规则。
+	/// </summary>
+	internal void Warn(string str, LogicalLine line, int level, bool isError, bool isBackComp, string? stack = null)
+		=> ParserMediator.WarnTo(Art?.Warnings, str, line, level, isError, isBackComp, stack!);
 }
