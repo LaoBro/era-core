@@ -43,14 +43,9 @@ internal sealed class ErbLoader
 	readonly LoaderEnv env;
 	readonly Action<LogicalLine> setScanLine;
 	readonly EmueraConsole output;
-	readonly HashSet<string> ignoredFNFWarningFiles = new(StringComparer.OrdinalIgnoreCase);
-	int ignoredFNFWarningCount;
 
 	// 决策三-a：nestCheck 栈/列表复用 — 1000 函数避免 3000+ 次堆分配。
 	// loadErb/ParseScript 为单线程调用，字段在 nestCheck 入口 Clear() 即可安全复用。
-	private readonly Stack<InstructionLine> _nestStackReuse = new();
-	private readonly Stack<InstructionLine> _selectcaseStackReuse = new();
-	private readonly List<InstructionLine> _tempLineListReuse = new();
 
 	int enabledLineCount;
 	LabelDictionary labelDic = null!;
@@ -698,20 +693,11 @@ internal sealed class ErbLoader
 	/// 三步分段（setArgument/nestCheck/setJumpTo）按"主循环 / 未调用遍历"两桶累计 Tick，
 	/// 供 D4 策略预注册判据（spec-phase2 R2-Q2）取数。
 	/// </summary>
-	private ParseScriptDiag? _parseDiag;
 
 	// NativeAOT Android 止血门 + ADR-0026 平台门策略（Auto/ForceOn/ForceOff）的判定已随第一刀
 	// （ADR-0027 决策二.1）迁入 ErbLoadStrategy.ParallelSweep（私有实现 + 24 组合真值表穷举于
 	// ErbLoadStrategyTests）——原先由本类静态谓词承担，第二处选择点（genmerge）自有判据，现已归一。
 
-	private sealed class ParseScriptDiag
-	{
-		internal readonly Stopwatch Sw = new();
-		/// <summary>当前 ParseFunctionWithCatch 的三步耗时计入哪一桶（主循环=false / 未调用遍历=true）。</summary>
-		internal bool InUncalled;
-		internal long MainSetArgTicks, MainNestTicks, MainJumpTicks;
-		internal long UncalledSetArgTicks, UncalledNestTicks, UncalledJumpTicks;
-	}
 
 
 	/// <summary>当前物化分账桶（仅 ParseScript 主循环期间非 null；运行期物化不采集）。</summary>
@@ -735,7 +721,7 @@ internal sealed class ErbLoader
 		List<FunctionLabelLine> labelList = labelDic.GetAllLabels(true);
 		// erb-loader-parallel 05：DisplayReport 开启时采集三组诊断（层宽直方图 / 三步分段 / 主循环 vs 未调用遍切分）
 		ParseScriptDiag? diag = Config.Config.DisplayReport ? new ParseScriptDiag() : null;
-		_parseDiag = diag;
+		ThreePass.ParseDiag = diag;
 		// issue 07 P1a/P1b：物化分账（无条件采集与发射——lazy 命中轮不走 ParseFunctionWithCatch，
 		// 现有 parsescript_diag 的 steps 桶恒空，故这条线独立于 DisplayReport）。
 		MaterializeDiag matDiag = new();
@@ -765,7 +751,7 @@ internal sealed class ErbLoader
 				if (lazyMode && label.IsStub)
 					MaterializeLabel(label);
 				else if (!label.ThreePassed)
-					ParseFunctionWithCatch(label, ParseContext.Serial);
+					ThreePass.ParseFunctionWithCatch(label, ParseContext.Serial);
 			}
 			if (countInDepth == 0)
 				break;
@@ -834,7 +820,7 @@ internal sealed class ErbLoader
 					// 并行段：解析体全部入 per-label 缓冲（警告 / FNF 事件），回放段按 labelList 序重放
 					// ADR-0042：回放外移；FNF 重走经回调（它绑着 ParseContext，仍在宿主），callform 标记由返回值交回
 					if (ErbUncalledSweepReplay.ReplayAll(
-						RunUncalledSweepParallel(labelList, labelDepth, strategy.SweepDegree), ReplayFnf))
+						RunUncalledSweepParallel(labelList, labelDepth, strategy.SweepDegree), ThreePass.ReplayFnf))
 						useCallForm = true;
 					sweepParallelRan = true;
 				}
@@ -844,7 +830,7 @@ internal sealed class ErbLoader
 					{
 						if (label.Depth != labelDepth)
 							continue;
-						ParseFunctionWithCatch(label, ParseContext.Serial);
+						ThreePass.ParseFunctionWithCatch(label, ParseContext.Serial);
 					}
 				}
 			}
@@ -872,7 +858,7 @@ internal sealed class ErbLoader
 					continue;
 				//解析モード時は呼ばれなかったものをここで解析
 				if (env.AnalysisMode)
-					ParseFunctionWithCatch(label, ParseContext.Serial);
+					ThreePass.ParseFunctionWithCatch(label, ParseContext.Serial);
 				bool ignore = false;
 				if (notCalledWarning == DisplayWarningFlag.ONCE)
 				{
@@ -908,12 +894,12 @@ internal sealed class ErbLoader
 							if (sweepArts != null)
 							{
 								// 原 ParseFunctionWithCatch(label) 的位置：按序回放该 label 的缓冲（ADR-0042）
-								if (ErbUncalledSweepReplay.Replay(sweepArts[artIdx], ReplayFnf))
+								if (ErbUncalledSweepReplay.Replay(sweepArts[artIdx], ThreePass.ReplayFnf))
 									useCallForm = true;
 								artIdx++;
 							}
 							else
-								ParseFunctionWithCatch(label, ParseContext.Serial);
+								ThreePass.ParseFunctionWithCatch(label, ParseContext.Serial);
 						}
 					}
 					else
@@ -957,8 +943,8 @@ internal sealed class ErbLoader
 		{
 			if (ignoredFNCWarningCount > 0 && Config.Config.DisplayWarningLevel <= 1 && notCalledWarning != DisplayWarningFlag.IGNORE)
 				output.PrintError(string.Format(trerror.IgnoredFuncNeverCalled.Text, ignoredFNCWarningCount));
-			if (ignoredFNFWarningCount > 0 && Config.Config.DisplayWarningLevel <= 2 && notCalledWarning != DisplayWarningFlag.IGNORE)
-				output.PrintError(string.Format(trerror.IgnoredUndefinedFuncCall.Text, ignoredFNFWarningCount));
+			if (ThreePass.IgnoredFnfCount > 0 && Config.Config.DisplayWarningLevel <= 2 && notCalledWarning != DisplayWarningFlag.IGNORE)
+				output.PrintError(string.Format(trerror.IgnoredUndefinedFuncCall.Text, ThreePass.IgnoredFnfCount));
 		}
 		ParserMediator.FlushWarningList();
 		if (Config.Config.DisplayReport)
@@ -975,7 +961,7 @@ internal sealed class ErbLoader
 			EmueraLog.Info("ErbLoader",
 				$"parsescript_diag depth_hist {string.Join(' ', depthHist.Select(static kv => $"d{kv.Key}={kv.Value}"))}");
 		}
-		_parseDiag = null;
+		ThreePass.ParseDiag = null;
 		if (Config.Config.AllowFunctionOverloading && Config.Config.WarnFunctionOverloading)
 		{
 			List<string> overloadedList = idDic.GetOverloadedList(labelDic);
@@ -1005,75 +991,13 @@ internal sealed class ErbLoader
 	public Dictionary<string, long> warningDic = [];
 
 	/// <summary>
-	/// ADR-0042：回放段的 FNF 重走入口。FNF 决策（ONCE 去重 / count / Warn）仍是宿主的私有逻辑，
-	/// 因为它绑着 <see cref="ParseContext"/>（宿主私有嵌套类型）——C3 搬 ParseContext 时一并处理。
+	/// ADR-0044（D 组第三刀 · C3b）：单标签三遍解析 + FNF 决策。延迟创建——Context 里两个引用
+	/// （<c>warningDic</c> 公开字段、<c>setScanLine</c> 委托）都是本类的实例成员。
 	/// </summary>
-	private void ReplayFnf(string str, LogicalLine line, int level, bool isError)
-		=> printFunctionNotFoundWarning(str, line, level, isError, ParseContext.Serial);
+	private ErbThreePassParser? _threePass;
+	private ErbThreePassParser ThreePass => _threePass ??= new ErbThreePassParser(new ErbThreePassParser.Context(
+		env.AnalysisMode, exm, ScanLine, warningDic, () => useCallForm = true));
 
-	private void printFunctionNotFoundWarning(string str, LogicalLine line, int level, bool isError, ParseContext ctx)
-	{
-		// erb-loader-parallel 08 D5#2：未调用遍并行期间缓冲 FNF 事件（含被忽略的——回放时决策原样重走）。
-		// ONCE 去重（ignoredFNFWarningFiles）与 ignoredFNFWarningCount 必须串行序，故整个决策延后到回放段；
-		// IsError/ErrMes 行内写先行（幂等无害，回放重走时再写一次 no-op）。
-		// ADR-0027 决策二.2：落点由显式 ctx 决定（原读 SweepArtCurrent ThreadLocal）——并行 ctx 的
-		// Art 非 null → 拦截入缓冲；串行/回放 ctx 的 Art 为 null → 下方原决策逐位重走。
-		var sweepArt = ctx.Art;
-		if (sweepArt != null)
-		{
-			if (isError)
-			{
-				line.IsError = true;
-				line.ErrMes = str;
-			}
-			sweepArt.AddFnfEvent(str, line, level, isError);
-			return;
-		}
-		if (env.AnalysisMode)
-		{
-			if (warningDic.TryGetValue(str, out long value))
-				warningDic[str] = ++value;
-			else
-				warningDic.Add(str, 1);
-			return;
-		}
-		if (isError)
-		{
-			line.IsError = true;
-			line.ErrMes = str;
-		}
-		if (level < Config.Config.DisplayWarningLevel)
-			return;
-		bool ignore = false;
-		DisplayWarningFlag warnFlag = Config.Config.FunctionNotFoundWarning;
-		if (warnFlag == DisplayWarningFlag.IGNORE)
-			ignore = true;
-		else if (warnFlag == DisplayWarningFlag.DISPLAY)
-			ignore = false;
-		else if (warnFlag == DisplayWarningFlag.ONCE)
-		{
-
-			string filename = line.Position!.Value.Filename;
-			if (!string.IsNullOrEmpty(filename))
-			{
-				if (ignoredFNFWarningFiles.Contains(filename))
-				{
-					ignore = true;
-				}
-				else
-				{
-					ignore = false;
-					ignoredFNFWarningFiles.Add(filename);
-				}
-			}
-		}
-		if (ignore && !env.AnalysisMode)
-		{
-			ignoredFNFWarningCount++;
-			return;
-		}
-		ParserMediator.Warn(str, line, level, isError, false);
-	}
 
 
 
@@ -1103,7 +1027,7 @@ internal sealed class ErbLoader
 		var arts = new UncalledSweepArt[targets.Count];
 		if (arts.Length == 0)
 			return arts;
-		_parseDiag = null;
+		ThreePass.ParseDiag = null;
 		ParseContext.Active = true;
 		// 06-K1 修订 R3-Q11：清扫度不再硬编码——与 LoadPendingParallel 窗口同源同拨（同一旋钮，
 		// 由 ParseScript 算好传入）。auto 时 = min(核数, 8) 与旧硬编码逐位一致；语义仍不同
@@ -1128,7 +1052,7 @@ internal sealed class ErbLoader
 						ctx.Enter();
 						try
 						{
-							ParseFunctionWithCatch(targets[i], ctx);
+							ThreePass.ParseFunctionWithCatch(targets[i], ctx);
 						}
 						finally
 						{
@@ -1147,7 +1071,7 @@ internal sealed class ErbLoader
 		}
 		catch (AggregateException agg)
 		{
-			if (ErbUncalledSweepReplay.ReplayAll(arts, ReplayFnf))
+			if (ErbUncalledSweepReplay.ReplayAll(arts, ThreePass.ReplayFnf))
 				useCallForm = true;
 			throw agg.InnerExceptions[0];
 		}
@@ -1453,9 +1377,9 @@ internal sealed class ErbLoader
 			ParseContext ctx = ParseContext.CurrentOrSerial;
 			if (mdiag == null)
 			{
-				setArgument(label, ctx);
-				nestCheck(label, ctx);
-				setJumpTo(label, ctx);
+				ThreePass.SetArgument(label, ctx);
+				ThreePass.NestCheck(label, ctx);
+				ThreePass.SetJumpTo(label, ctx);
 			}
 			else
 			{
@@ -1463,11 +1387,11 @@ internal sealed class ErbLoader
 				long aThree = A();
 				long tSetArg = Stopwatch.GetTimestamp();
 				ParserProbeScope psThree = EnterScope(ParserProbeScope.Three);
-				setArgument(label, ctx);
+				ThreePass.SetArgument(label, ctx);
 				long tNest = Stopwatch.GetTimestamp();
-				nestCheck(label, ctx);
+				ThreePass.NestCheck(label, ctx);
 				long tJump = Stopwatch.GetTimestamp();
-				setJumpTo(label, ctx);
+				ThreePass.SetJumpTo(label, ctx);
 				long tEnd = Stopwatch.GetTimestamp();
 				ExitScope(psThree);
 				mdiag.SetArgTicks += tNest - tSetArg;
@@ -1804,735 +1728,6 @@ internal sealed class ErbLoader
 	/// <summary>加载期（ParseScript 主循环）arg 解析物化用的当前 loader；运行时恒经 RuntimeLoader，本槽仅加载中回退。</summary>
 	private static ErbLoader? _activeArgLoader;
 
-	/// <summary>
-	/// 单标签三遍解析（setArgument / nestCheck / setJumpTo）。<paramref name="ctx"/> 为**显式**解析上下文
-	/// （ADR-0027 决策二.2）：串行主循环与回放传 <see cref="ParseContext.Serial"/>，并行 worker 传其
-	/// per-label ctx——本方法及其三步不再读写任何 ambient 槽。
-	/// </summary>
-	private void ParseFunctionWithCatch(FunctionLabelLine label, ParseContext ctx)
-	{//ここでエラーを捕まえることは本来はないはず。ExeEE相当。
-		try
-		{
-			if (_parseDiag is { } diag)
-			{
-				// erb-loader-parallel 05：三步分段计时（按 InUncalled 分桶累计）
-				var sw = diag.Sw;
-				sw.Restart();
-				setArgument(label, ctx);
-				long setArg = sw.ElapsedTicks;
-				sw.Restart();
-				nestCheck(label, ctx);
-				long nest = sw.ElapsedTicks;
-				sw.Restart();
-				setJumpTo(label, ctx);
-				long jump = sw.ElapsedTicks;
-				if (diag.InUncalled)
-				{
-					diag.UncalledSetArgTicks += setArg;
-					diag.UncalledNestTicks += nest;
-					diag.UncalledJumpTicks += jump;
-				}
-				else
-				{
-					diag.MainSetArgTicks += setArg;
-					diag.MainNestTicks += nest;
-					diag.MainJumpTicks += jump;
-				}
-			}
-			else
-			{
-				setArgument(label, ctx);
-				nestCheck(label, ctx);
-				setJumpTo(label, ctx);
-			}
-		}
-		catch (Exception exc)
-		{
-#if !HEADLESS
-			System.Media.SystemSounds.Hand.Play();
-#endif
-			//1756beta2+v6.1 修正の効率化のために何かパース関係でハンドリングできてないエラーが出た場合はスタックトレースを投げるようにした
-			string errmes = exc is EmueraException ? exc.Message : exc.GetType().ToString() + ":" + exc.Message;
-			ParserMediator.Warn(string.Format(trerror.FuncAnalysisError.Text, label.LabelName, errmes), label, 2, true, false, (exc is not EmueraException ? exc.StackTrace : null)!);
-			label.ErrMes = trerror.CalledFailedFunc.Text;
-#if HEADLESS
-			// 无头模式下无需处理 UI 消息队列
-#else
-			System.Windows.Forms.Application.DoEvents();
-#endif
-		}
-		finally
-		{
-			ScanLine(null!, ctx);
-		}
-		label.ThreePassed = true; // b2-irdiskcache：三遍跑完（含失败已标错）——主循环按此跳过重复三遍。
-
-	}
-
-	private void setArgument(FunctionLabelLine label, ParseContext ctx)
-	{
-		//1周目/3周
-		//引数の解析とか
-		LogicalLine nextLine = label;
-		bool inMethod = label.IsMethod;
-		while (true)
-		{
-			nextLine = nextLine.NextLine;
-			ScanLine(nextLine, ctx);
-			if (nextLine is not InstructionLine func)
-			{
-				if (nextLine is NullLine or FunctionLabelLine)
-					break;
-				continue;
-			}
-			if (inMethod)
-			{
-				if (!func.Function.IsMethodSafe())
-				{
-					ParserMediator.Warn(string.Format(trerror.CanNotUseInUserFunc.Text, func.Function.Name), nextLine, 2, true, false);
-					continue;
-				}
-			}
-			if (Config.Config.NeedReduceArgumentOnLoad || env.AnalysisMode || func.Function.IsForceSetArg())
-				ArgumentParser.SetArgumentTo(func);
-		}
-	}
-
-	private void nestCheck(FunctionLabelLine label, ParseContext ctx)
-	{
-		//2周目/3周
-		//IF-ELSEIF-ENDIF、REPEAT-RENDの対応チェックなど
-		//PRINTDATA系もここでチェック
-		// 决策三-a：复用 ErbLoader 实例字段，避免每函数分配 3 个容器（1000 函数 = 3000+ 次分配）
-		// erb-loader-parallel 08 D5#5：未调用遍并行期间实例字段复用会互踩——改局部实例
-		//（eraTW 63k label × 小集合，分配成本可忽略）；串行路径保持字段复用。
-		LogicalLine nextLine = label;
-		List<InstructionLine> tempLineList;
-		Stack<InstructionLine> nestStack;
-		Stack<InstructionLine> SelectcaseStack;
-		if (ctx.IsParallel)
-		{
-			tempLineList = [];
-			nestStack = new();
-			SelectcaseStack = new();
-		}
-		else
-		{
-			tempLineList = _tempLineListReuse;
-			nestStack = _nestStackReuse;
-			SelectcaseStack = _selectcaseStackReuse;
-			tempLineList.Clear();
-			nestStack.Clear();
-			SelectcaseStack.Clear();
-		}
-		InstructionLine pairLine = null!;
-		while (true)
-		{
-			nextLine = nextLine.NextLine;
-			ScanLine(nextLine, ctx);
-			if (nextLine is NullLine or FunctionLabelLine)
-				break;
-			if (nextLine is not InstructionLine)
-			{
-				if (nextLine is GotoLabelLine)
-				{
-					InstructionLine currentBaseFunc = (nestStack.Count == 0 ? null : nestStack.Peek())!;
-					if (currentBaseFunc != null)
-					{
-						if (currentBaseFunc.FunctionCode == FunctionCode.PRINTDATA
-							|| currentBaseFunc.FunctionCode == FunctionCode.PRINTDATAL
-							|| currentBaseFunc.FunctionCode == FunctionCode.PRINTDATAW
-							|| currentBaseFunc.FunctionCode == FunctionCode.PRINTDATAD
-							|| currentBaseFunc.FunctionCode == FunctionCode.PRINTDATADL
-							|| currentBaseFunc.FunctionCode == FunctionCode.PRINTDATADW
-							|| currentBaseFunc.FunctionCode == FunctionCode.PRINTDATAK
-							|| currentBaseFunc.FunctionCode == FunctionCode.PRINTDATAKL
-							|| currentBaseFunc.FunctionCode == FunctionCode.PRINTDATAKW
-							|| currentBaseFunc.FunctionCode == FunctionCode.STRDATA
-							|| currentBaseFunc.FunctionCode == FunctionCode.DATALIST
-							|| currentBaseFunc.FunctionCode == FunctionCode.TRYCALLLIST
-							|| currentBaseFunc.FunctionCode == FunctionCode.TRYJUMPLIST
-							|| currentBaseFunc.FunctionCode == FunctionCode.TRYGOTOLIST)
-						//|| (currentBaseFunc.FunctionCode == FunctionCode.SELECTCASE))
-						{
-							ParserMediator.Warn(string.Format(trerror.CanNotLabelDefineInSyntax.Text, currentBaseFunc.Function.Name), nextLine, 2, true, false);
-						}
-					}
-				}
-				continue;
-			}
-			var func = nextLine as InstructionLine;
-			var baseFunc = nestStack.Count == 0 ? null : nestStack.Peek();
-			if (baseFunc != null)
-			{
-				if (baseFunc!.Function!.IsPrintData() || baseFunc.FunctionCode == FunctionCode.STRDATA)
-				{
-					if (func!.FunctionCode != FunctionCode.DATA && func.FunctionCode != FunctionCode.DATAFORM && func.FunctionCode != FunctionCode.DATALIST
-						&& func.FunctionCode != FunctionCode.ENDLIST && func.FunctionCode != FunctionCode.ENDDATA)
-					{
-						ParserMediator.Warn(string.Format(trerror.InvalidInstructionInSyntax.Text, baseFunc.Function.Name, func.Function.Name), func, 2, true, false);
-						continue;
-					}
-				}
-				else if (baseFunc.FunctionCode == FunctionCode.DATALIST)
-				{
-					if (func!.FunctionCode != FunctionCode.DATA && func.FunctionCode != FunctionCode.DATAFORM && func.FunctionCode != FunctionCode.ENDLIST)
-					{
-						ParserMediator.Warn(string.Format(trerror.InvalidInstructionInSyntax.Text, "DATALIST", func.Function.Name), func, 2, true, false);
-						continue;
-					}
-				}
-				else if (baseFunc.FunctionCode == FunctionCode.TRYCALLLIST || baseFunc.FunctionCode == FunctionCode.TRYJUMPLIST || baseFunc.FunctionCode == FunctionCode.TRYGOTOLIST)
-				{
-					if (func!.FunctionCode != FunctionCode.FUNC && func.FunctionCode != FunctionCode.ENDFUNC)
-					{
-						ParserMediator.Warn(string.Format(trerror.InvalidInstructionInSyntax.Text, baseFunc.Function.Name, func.Function.Name), func, 2, true, false);
-						continue;
-					}
-				}
-				else if (baseFunc.FunctionCode == FunctionCode.SELECTCASE)
-				{
-					if (baseFunc.IfCaseList!.Count == 0 && func!.FunctionCode != FunctionCode.CASE && func!.FunctionCode != FunctionCode.CASEELSE && func!.FunctionCode != FunctionCode.ENDSELECT)
-					{
-						ParserMediator.Warn(string.Format(trerror.OutsideSelectcase.Text, func.Function.Name), func, 2, true, false);
-						continue;
-					}
-				}
-			}
-			// 方言结构化 TRYC 指令（FunctionCode.__NULL__，如 TRYCJUMPSTR/TRYCCALLSTR）按 flag 参与
-			// CATCH 嵌套配对（实现票 20）。原生 TRYC* 有真实 FunctionCode，仍由下面的 switch 处理。
-			if (func!.FunctionCode == FunctionCode.__NULL__ && func.Function.IsTryC())
-			{
-				nestStack.Push(func);
-				continue;
-			}
-			switch (func!.FunctionCode)
-			{
-				case FunctionCode.REPEAT:
-					foreach (InstructionLine iLine in nestStack)
-					{
-						if (iLine.FunctionCode == FunctionCode.REPEAT)
-						{
-							ParserMediator.Warn(trerror.NestedRepeat.Text, func, 1, false, false);
-						}
-						else if (iLine.FunctionCode == FunctionCode.FOR)
-						{
-							VariableTerm cnt = (iLine.Argument as SpForNextArgment)!.Cnt;
-							if (cnt.Identifier.Name == "COUNT" && cnt.isAllConst && cnt.getEl1forArg == 0)
-							{
-								ParserMediator.Warn(string.Format(trerror.RepeatInsideFor.Text, "0"), func, 1, false, false);
-							}
-						}
-					}
-					if (func.IsError)
-						break;
-					nestStack.Push(func);
-					break;
-				case FunctionCode.IF:
-					nestStack.Push(func);
-					func.IfCaseList = [];
-					func.IfCaseList.AddFirst(func);
-					break;
-				case FunctionCode.SELECTCASE:
-					nestStack.Push(func);
-					func.IfCaseList = [];
-					SelectcaseStack.Push(func);
-					break;
-				case FunctionCode.FOR:
-					//ネストエラーチェックのためにコストはかかるが、ここでチェックする
-					if (func.Argument == null)
-						ArgumentParser.SetArgumentTo(func);
-					//上で引数解析がなされていることは保証されているので、
-					//それでこれがfalseになるのは、引数解析でエラーが起きた場合のみ
-					if (func.Argument != null)
-					{
-						VariableTerm Cnt = (func.Argument as SpForNextArgment)!.Cnt;
-						if (Cnt.Identifier.Name == "COUNT")
-						{
-							foreach (InstructionLine iLine in nestStack)
-							{
-								if (iLine.FunctionCode == FunctionCode.REPEAT && Cnt.isAllConst && Cnt.getEl1forArg == 0)
-								{
-									ParserMediator.Warn(string.Format(trerror.RepeatInsideFor.Text, "0"), func, 1, false, false);
-								}
-								else if (iLine.FunctionCode == FunctionCode.FOR)
-								{
-									VariableTerm destCnt = (iLine.Argument as SpForNextArgment)!.Cnt;
-									if (destCnt.Identifier.Name == "COUNT" && Cnt.isAllConst && destCnt.isAllConst && destCnt.getEl1forArg == Cnt.getEl1forArg)
-									{
-										ParserMediator.Warn(string.Format(trerror.RepeatInsideFor.Text, Cnt.getEl1forArg.ToString()), func, 1, false, false);
-									}
-								}
-							}
-						}
-					}
-					if (func.IsError)
-						break;
-					nestStack.Push(func);
-					break;
-				case FunctionCode.WHILE:
-				case FunctionCode.TRYCGOTO:
-				case FunctionCode.TRYCJUMP:
-				case FunctionCode.TRYCCALL:
-				case FunctionCode.TRYCGOTOFORM:
-				case FunctionCode.TRYCJUMPFORM:
-				case FunctionCode.TRYCCALLFORM:
-				case FunctionCode.DO:
-					nestStack.Push(func);
-					break;
-				case FunctionCode.BREAK:
-				case FunctionCode.CONTINUE:
-					// 决策三-b：直接遍历 Stack（LIFO，从栈顶到栈底，与 [.. nestStack] 顺序一致），消除 InstructionLine[] 分配
-					pairLine = null!;
-					foreach (var iLine in nestStack)
-					{
-						if (iLine.FunctionCode == FunctionCode.REPEAT
-							|| iLine.FunctionCode == FunctionCode.FOR
-							|| iLine.FunctionCode == FunctionCode.WHILE
-							|| iLine.FunctionCode == FunctionCode.DO)
-						{ pairLine = iLine; break; }
-					}
-					if (pairLine == null)
-					{
-						ParserMediator.Warn(string.Format(trerror.InvalidLoopInstruction.Text, func.Function.Name), func, 2, true, false);
-						break;
-					}
-					func.JumpTo = pairLine;
-					break;
-
-				case FunctionCode.ELSEIF:
-				case FunctionCode.ELSE:
-					{
-						//1.725 Stack<T>.Last.Value()はStackが空の時はnullを返す仕様だと思いこんでおりました。
-						InstructionLine? ifLine = nestStack.Count == 0 ? null : nestStack.Peek()!;
-						if (ifLine == null || ifLine.FunctionCode != FunctionCode.IF)
-						{
-							ParserMediator.Warn(string.Format(trerror.InvalidElse.Text, func.Function.Name), func, 2, true, false);
-							break;
-						}
-						if (ifLine!.IfCaseList!.Last!.Value!.FunctionCode == FunctionCode.ELSE)
-							ParserMediator.Warn(string.Format(trerror.InvalidElseAfterElse.Text, func!.Function.Name), func, 1, false, false);
-						ifLine.IfCaseList.AddLast(func);
-					}
-					break;
-				case FunctionCode.ENDIF:
-					{
-						InstructionLine? ifLine = nestStack.Count == 0 ? null : nestStack.Peek()!;
-						if (ifLine == null || ifLine.FunctionCode != FunctionCode.IF)
-						{
-							ParserMediator.Warn(trerror.UnexpectedEndif.Text, func, 2, true, false);
-							break;
-						}
-						foreach (var ifelseifLine in ifLine.IfCaseList!)
-						{
-							ifelseifLine.JumpTo = func;
-						}
-						nestStack.Pop();
-					}
-					break;
-				case FunctionCode.CASE:
-				case FunctionCode.CASEELSE:
-					{
-						InstructionLine? selectLine = nestStack.Count == 0 ? null : nestStack.Peek()!;
-						if (selectLine == null || selectLine.FunctionCode != FunctionCode.SELECTCASE && SelectcaseStack.Count == 0)
-						{
-							ParserMediator.Warn(string.Format(trerror.OutsideSelectcase.Text, func.Function.Name), func, 2, true, false);
-							break;
-						}
-						else if (selectLine.FunctionCode != FunctionCode.SELECTCASE && SelectcaseStack.Count > 0)
-						{
-							do
-							{
-								ParserMediator.Warn(string.Format(trerror.InstructionNotClosed.Text, selectLine.Function.Name, FunctionIdentifier.getMatchFunction(selectLine.FunctionCode), func.Function.Name), func, 2, true, false);
-								//これを跨いでIF等が閉じられることがないようにする。
-								nestStack.Pop();
-								//if (nestStack.Count > 0)　//空になってるかは下で判定できるので、これを見る必要がない
-								selectLine = nestStack.Count == 0 ? null : nestStack.Peek(); //ちなみにnullになることはない（SELECTCASEがない場合は上で弾けるから）
-							} while (selectLine != null && selectLine.FunctionCode != FunctionCode.SELECTCASE);
-							break;
-						}
-						if (selectLine.IfCaseList.Count > 0 && selectLine.IfCaseList.Last!.Value.FunctionCode == FunctionCode.CASEELSE)
-							ParserMediator.Warn(string.Format(trerror.InvalidCaseAfterCaseelse.Text, func.Function.Name), func, 1, false, false);
-						selectLine.IfCaseList.AddLast(func);
-					}
-					break;
-				case FunctionCode.ENDSELECT:
-					{
-						InstructionLine? selectLine = nestStack.Count == 0 ? null : nestStack.Peek()!;
-						if (selectLine == null || selectLine.FunctionCode != FunctionCode.SELECTCASE && SelectcaseStack.Count == 0)
-						{
-							ParserMediator.Warn(trerror.UnexpectedEndselect.Text, func, 2, true, false);
-							break;
-						}
-						else if (selectLine.FunctionCode != FunctionCode.SELECTCASE && SelectcaseStack.Count > 0)
-						{
-							do
-							{
-								ParserMediator.Warn(string.Format(trerror.InstructionNotClosed.Text, selectLine.Function.Name, FunctionIdentifier.getMatchFunction(selectLine.FunctionCode), func.Function.Name), func, 2, true, false);
-								//これを跨いでIF等が閉じられることがないようにする。
-								nestStack.Pop();
-								//if (nestStack.Count > 0)　//空になってるかは下で判定できるので、これを見る必要がない
-								selectLine = nestStack.Count == 0 ? null : nestStack.Peek(); //ちなみにnullになることはない（SELECTCASEがない場合は上で弾けるから）
-							} while (selectLine != null && selectLine.FunctionCode != FunctionCode.SELECTCASE);
-							//とりあえず、対応するSELECTCASE跨ぎは閉じる
-							SelectcaseStack.Pop();
-							//こっちでも抜かないとSELECTCASEが2つのENDSELECTに対応してしまう
-							nestStack.Pop();
-							break;
-						}
-						nestStack.Pop();
-						SelectcaseStack.Pop();
-						selectLine.JumpTo = func;
-						if (selectLine.IsError)
-							break;
-						var term = (selectLine.Argument as ExpressionArgument)!.Term;
-						if (term == null)
-						{
-							ParserMediator.Warn(trerror.MissingArg.Text, selectLine, 2, true, false);
-							break;
-						}
-						foreach (var caseLine in selectLine.IfCaseList)
-						{
-							caseLine.JumpTo = func;
-							if (caseLine.IsError)
-								continue;
-							if (caseLine.FunctionCode == FunctionCode.CASEELSE)
-								continue;
-							var caseExps = (caseLine.Argument as CaseArgument)!.CaseExps;
-							if (caseExps.Length == 0)
-								ParserMediator.Warn(trerror.MissingArg.Text, caseLine, 2, true, false);
-
-							foreach (var exp in caseExps)
-							{
-								if (exp.GetOperandType() != term.GetOperandType())
-									ParserMediator.Warn(trerror.NotMatchCaseTypeAndSelectcaseType.Text, caseLine, 2, true, false);
-							}
-
-						}
-						//コンパイル時ジャンプテーブル構築（条件を満たさない場合は null → 実行時に線形スキャンへフォールバック）。
-						//eager と lazy 物化（ReparseFunction）は同一の nestCheck 経路を共有するため、物化関数は自動で建表される。
-						selectLine.SelectCaseJumpTable = SelectCaseJumpTable.TryBuild(selectLine, exm);
-					}
-					break;
-				case FunctionCode.REND:
-				case FunctionCode.NEXT:
-				case FunctionCode.WEND:
-				case FunctionCode.LOOP:
-					FunctionCode parentFunc = FunctionIdentifier.getParentFunc(func.FunctionCode);
-					//if (parentFunc == FunctionCode.__NULL__)
-					//    throw new ExeEE("何か変？");
-					if (nestStack.Count == 0
-						|| nestStack.Peek().FunctionCode != parentFunc)
-					{
-						ParserMediator.Warn(string.Format(trerror.MissingCorresponding.Text, parentFunc.ToString(), func.Function.Name), func, 2, true, false);
-						break;
-					}
-					pairLine = nestStack.Pop();//REPEAT
-					func.JumpTo = pairLine;
-					pairLine.JumpTo = func;
-					break;
-				case FunctionCode.CATCH:
-					pairLine = (nestStack.Count == 0 ? null : nestStack.Peek())!;
-					// 按 flag 判定（实现票 20）：同时覆盖原生 TRYC* 与方言 __NULL__ TRYC 指令（TRYCJUMPSTR/TRYCCALLSTR）。
-					if (pairLine == null
-						|| !pairLine.Function.IsTryC())
-					{
-						ParserMediator.Warn(trerror.MissingTryc.Text, func, 2, true, false);
-						break;
-					}
-					pairLine = nestStack.Pop();//TRYC
-					pairLine.JumpToEndCatch = func;//TRYCにCATCHの位置を教える
-					nestStack.Push(func);
-					break;
-				case FunctionCode.ENDCATCH:
-					if (nestStack.Count == 0
-						|| nestStack.Peek().FunctionCode != FunctionCode.CATCH)
-					{
-						ParserMediator.Warn(trerror.UnexpectedEndcatch.Text, func, 2, true, false);
-						break;
-					}
-					pairLine = nestStack.Pop();//CATCH
-					pairLine.JumpToEndCatch = func;//CATCHにENDCATCHの位置を教える
-					break;
-				case FunctionCode.PRINTDATA:
-				case FunctionCode.PRINTDATAL:
-				case FunctionCode.PRINTDATAW:
-				case FunctionCode.PRINTDATAD:
-				case FunctionCode.PRINTDATADL:
-				case FunctionCode.PRINTDATADW:
-				case FunctionCode.PRINTDATAK:
-				case FunctionCode.PRINTDATAKL:
-				case FunctionCode.PRINTDATAKW:
-					{
-						foreach (var iLine in nestStack)
-						{
-							if (iLine.Function.IsPrintData())
-							{
-								ParserMediator.Warn(trerror.NestedPrintdata.Text, func, 2, true, false);
-								break;
-							}
-							if (iLine.FunctionCode == FunctionCode.STRDATA)
-							{
-								ParserMediator.Warn(trerror.StrdataInsidePrintdata.Text, func, 2, true, false);
-								break;
-							}
-						}
-						if (func.IsError)
-							break;
-						func.dataList = [];
-						nestStack.Push(func);
-						break;
-					}
-				case FunctionCode.STRDATA:
-					{
-						foreach (var iLine in nestStack)
-						{
-							if (iLine.FunctionCode == FunctionCode.STRDATA)
-							{
-								ParserMediator.Warn(trerror.NestedStrdata.Text, func, 2, true, false);
-								break;
-							}
-							if (iLine.Function.IsPrintData())
-							{
-								ParserMediator.Warn(trerror.PrintdataInsideStrdata.Text, func, 2, true, false);
-								break;
-							}
-						}
-						if (func.IsError)
-							break;
-						func.dataList = [];
-						nestStack.Push(func);
-						break;
-					}
-				case FunctionCode.DATALIST:
-					{
-						var pline = nestStack.Count == 0 ? null : nestStack.Peek();
-						if (pline == null || !pline.Function.IsPrintData() && pline.FunctionCode != FunctionCode.STRDATA)
-						{
-							ParserMediator.Warn(trerror.UnexpectedDatalist.Text, func, 2, true, false);
-							break;
-						}
-						tempLineList = [];
-						nestStack.Push(func);
-
-						break;
-					}
-				case FunctionCode.ENDLIST:
-					{
-						if (nestStack.Count == 0 || nestStack.Peek().FunctionCode != FunctionCode.DATALIST)
-						{
-							ParserMediator.Warn(trerror.UnexpectedEndlist.Text, func, 2, true, false);
-							break;
-						}
-						if (tempLineList.Count == 0)
-							ParserMediator.Warn(trerror.DatalistDataIsMissing.Text, func, 1, false, false);
-						nestStack.Pop();
-						nestStack.Peek().dataList.Add(tempLineList);
-						break;
-					}
-				case FunctionCode.DATA:
-				case FunctionCode.DATAFORM:
-					{
-						InstructionLine pdata = (nestStack.Count == 0 ? null : nestStack.Peek())!;
-						if (pdata == null || !pdata.Function.IsPrintData() && pdata.FunctionCode != FunctionCode.DATALIST && pdata.FunctionCode != FunctionCode.STRDATA)
-						{
-							ParserMediator.Warn(string.Format(trerror.MissingPrintdata.Text, func.Function.Name), func, 2, true, false);
-							break;
-						}
-						List<InstructionLine> iList = [];
-						if (pdata.FunctionCode != FunctionCode.DATALIST)
-						{
-							iList.Add(func);
-							pdata.dataList.Add(iList);
-						}
-						else
-							tempLineList.Add(func);
-						break;
-					}
-				case FunctionCode.ENDDATA:
-					{
-						InstructionLine pline = (nestStack.Count == 0 ? null : nestStack.Peek())!;
-						if (pline == null || !pline.Function.IsPrintData() && pline.FunctionCode != FunctionCode.STRDATA)
-						{
-							ParserMediator.Warn(string.Format(trerror.MissingPrintdataStrdata.Text, func.Function.Name), func, 2, true, false);
-							break;
-						}
-						if (pline.FunctionCode == FunctionCode.DATALIST)
-							ParserMediator.Warn(trerror.DatalistNotClosed.Text, func, 2, true, false);
-						if (pline.dataList.Count == 0)
-							ParserMediator.Warn(string.Format(trerror.InstructionDataIsMissing.Text, pline.Function.Name), func, 1, false, false);
-						pline.JumpTo = func;
-						nestStack.Pop();
-						break;
-					}
-				case FunctionCode.TRYCALLLIST:
-				case FunctionCode.TRYJUMPLIST:
-				case FunctionCode.TRYGOTOLIST:
-					foreach (InstructionLine iLine in nestStack)
-					{
-						if (iLine.FunctionCode == FunctionCode.TRYCALLLIST || iLine.FunctionCode == FunctionCode.TRYJUMPLIST || iLine.FunctionCode == FunctionCode.TRYGOTOLIST)
-						{
-							ParserMediator.Warn(trerror.NestedTrycalllist.Text, func, 2, true, false);
-							break;
-						}
-					}
-					if (func.IsError)
-						break;
-					func.callList = [];
-					nestStack.Push(func);
-					break;
-				case FunctionCode.FUNC:
-					{
-						InstructionLine pFunc = (nestStack.Count == 0 ? null : nestStack.Peek())!;
-						if (pFunc == null ||
-							pFunc.FunctionCode != FunctionCode.TRYCALLLIST && pFunc.FunctionCode != FunctionCode.TRYJUMPLIST && pFunc.FunctionCode != FunctionCode.TRYGOTOLIST)
-						{
-							ParserMediator.Warn(string.Format(trerror.MissingTrycalllist.Text, func.Function.Name), func, 2, true, false);
-							break;
-						}
-						if (func.Argument == null)
-						{
-							ParserMediator.Warn(string.Format(trerror.InvalidInstructionInTrycalllist.Text, func.Function.Name), pFunc, 2, true, false);
-							break;
-						}
-						if (pFunc.FunctionCode == FunctionCode.TRYGOTOLIST)
-						{
-							var spCallArg = func.Argument as SpCallArgment;
-							if (spCallArg!.SubNames.Count != 0)
-							{
-								ParserMediator.Warn(trerror.TrygotolistToSBrackets.Text, func, 2, true, false);
-								break;
-							}
-							if (spCallArg.RowArgs.Count != 0)
-							{
-								ParserMediator.Warn(trerror.TrygotolistTargetHasArg.Text, func, 2, true, false);
-								break;
-							}
-						}
-						pFunc.callList.Add(func);
-						break;
-					}
-				case FunctionCode.ENDFUNC:
-					var pf = nestStack.Count == 0 ? null : nestStack.Peek();
-					if (pf == null ||
-						pf.FunctionCode != FunctionCode.TRYCALLLIST && pf.FunctionCode != FunctionCode.TRYJUMPLIST && pf.FunctionCode != FunctionCode.TRYGOTOLIST)
-					{
-						ParserMediator.Warn(string.Format(trerror.MissingTrycalllist.Text, func.Function.Name), func, 2, true, false);
-						break;
-					}
-					pf.JumpTo = func;
-					nestStack.Pop();
-					break;
-				case FunctionCode.NOSKIP:
-					foreach (var iLine in nestStack)
-					{
-						if (iLine.FunctionCode == FunctionCode.NOSKIP)
-						{
-							ParserMediator.Warn(trerror.NestedNoskip.Text, func, 2, true, false);
-							break;
-						}
-					}
-					if (func.IsError)
-						break;
-					nestStack.Push(func);
-					break;
-				case FunctionCode.ENDNOSKIP:
-					var pfunc = nestStack.Count == 0 ? null : nestStack.Peek();
-					if (pfunc == null ||
-						pfunc.FunctionCode != FunctionCode.NOSKIP)
-					{
-						ParserMediator.Warn(string.Format(trerror.MissingNoskip.Text, func.Function.Name), func, 2, true, false);
-						break;
-					}
-					//エラーハンドリング用
-					pfunc.JumpTo = func;
-					func.JumpTo = pfunc;
-					nestStack.Pop();
-					break;
-			}
-
-		}
-
-		while (nestStack.Count != 0)
-		{
-			var func = nestStack.Pop();
-			string funcName = func.Function.Name;
-			string funcMatch = FunctionIdentifier.getMatchFunction(func.FunctionCode);
-			if (func != null)
-				ParserMediator.Warn(string.Format(trerror.MissingCorresponding.Text, funcMatch, funcName), func, 2, true, false);
-			else
-				ParserMediator.Warn(trerror.DefaultError.Text, func!, 2, true, false);
-		}
-		//使ったスタックをクリア
-		SelectcaseStack.Clear();
-	}
-
-	private void setJumpTo(FunctionLabelLine label, ParseContext ctx)
-	{
-		//3周目/3周
-		//フロー制御命令のジャンプ先を設定
-		LogicalLine nextLine = label;
-		int depth = label.Depth;
-		if (depth < 0)
-			depth = -2;
-		while (true)
-		{
-			nextLine = nextLine.NextLine;
-			if (!(nextLine is InstructionLine func))
-			{
-				if (nextLine is NullLine || nextLine is FunctionLabelLine)
-					break;
-				continue;
-			}
-			if (func.IsError)
-				continue;
-			ScanLine(func, ctx);
-
-			if (func.Function.Instruction != null)
-			{
-				string FunctionNotFoundName = null!;
-				try
-				{
-					// D5#3：callform 标记改为返回值，由 MarkUseCallForm 决定落点——
-					// 并行未调用清扫期间写入 per-label 产物，不再直写本实例字段。
-					if (func.Function.Instruction.SetJumpTo(func, depth, ref FunctionNotFoundName))
-						MarkUseCallForm(ctx);
-				}
-				catch (CodeEE e)
-				{
-					ParserMediator.Warn(e.Message, func, 2, true, false);
-					continue;
-				}
-				if (FunctionNotFoundName != null)
-				{
-					if (!env.AnalysisMode)
-						printFunctionNotFoundWarning(string.Format(trerror.NotDefinedFunc.Text, FunctionNotFoundName), func, 2, true, ctx);
-					else
-						printFunctionNotFoundWarning(FunctionNotFoundName, func, 2, true, ctx);
-				}
-				continue;
-			}
-			if (func.FunctionCode == FunctionCode.TRYCALLLIST || func.FunctionCode == FunctionCode.TRYJUMPLIST)
-				MarkUseCallForm(ctx);
-		}
-	}
-
-	/// <summary>
-	/// erb-loader-parallel 08 D5#3：记录「用到 callform 系」，按显式 ctx 落点而非直写实例字段
-	/// （ADR-0027 第二刀：落点由 <paramref name="ctx"/> 决定，原读 <c>SweepArtCurrent</c> ThreadLocal）。
-	/// 主循环（串行/回放）下 <see cref="ParseContext.Art"/> 为 null → 直写 <see cref="useCallForm"/>，
-	/// 与改动前完全一致；未调用并行清扫期间写入 per-label 产物
-	/// <see cref="UncalledSweepArt.UseCallForm"/>，由回放段在主线程合并。
-	/// 并行区因此不再有对本实例字段的写入（原为 ref 直写，构成共享写）。
-	/// </summary>
-	private void MarkUseCallForm(ParseContext ctx)
-	{
-		UncalledSweepArt? art = ctx.Art;
-		if (art != null)
-			art.UseCallForm = true;
-		else
-			useCallForm = true;
-	}
 
 	// erb-loader-parallel 03：原 GetErbFilesFromCache 孪生实现收敛至 Preload.GetFilesFromCache（扩展名 + 日志标签参数化）。
 }
