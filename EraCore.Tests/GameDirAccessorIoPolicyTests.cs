@@ -62,6 +62,11 @@ public class GameDirAccessorIoPolicyTests
     /// <summary>
     /// 例外清单（ARCHITECTURE.md 4.3 的机读形态）。键 = 相对 <c>EraCore.Core</c> 的路径。
     /// <para>
+    /// <b>与 4.3 的两段一一对应：</b><see cref="Domain.AppPrivate"/> = 「待收敛（真欠账）」，
+    /// <see cref="Domain.Platform"/> = 「永久豁免（不打算收敛）」。文档分段与这里的 <c>Domain</c> 字段
+    /// 是同一事实的两种写法——改一边必须改另一边。
+    /// </para>
+    /// <para>
     /// <b>Cap 是当前实测调用数：</b>删掉若干处调用使实际数下降时无需改本表；新增一处即超出 → 转红。
     /// 故本表只减不增（ARCHITECTURE.md 4.3 不变量 F-5 的同义表述）。
     /// </para>
@@ -72,13 +77,13 @@ public class GameDirAccessorIoPolicyTests
         // ADR-0036（不可编译分支）+ ADR-0037（可编译读缝）+ ADR-0038（sav 挪档）后**已归零**：
         // 新增游戏树直连 IO 会落进下面的「无登记 ⇒ 违规」分支，立即转红。
 
-        // ── AppPrivate：应用私有域 / 引擎自有派生数据（F-4 豁免）────────────────────
+        // ── 待收敛（AppPrivate）：应用私有域 / 引擎自有派生数据（F-4 豁免）──────────────
         ["Shared/Runtime/Script/Loader/ErbIrCache.cs"] = new(
             "IR 磁盘缓存：content-URI 游戏落 AppDataPaths/IRCache/<gameKey>/，桌面本地布局落 <游戏目录>/_IRCache/——均非游戏内容", Domain.AppPrivate, 10),
         ["Shared/Runtime/Script/Loader/SrcContentCache.cs"] = new(
             "issues/10 10-B CSV/ERH 源内容缓存：与 era_ir.dat 同布局、同生命周期", Domain.AppPrivate, 8),
 
-        // ── Platform：依附于具体运行形态，与游戏树无关 ──────────────────────────────
+        // ── 永久豁免（Platform）：依附于具体运行形态，与游戏树无关 —— 不打算收敛 ────────
         ["GamePaths.cs"] = new(
             "宿主安装目录探测（AppContext.BaseDirectory 下的 Data/erb）+ 本地路径归一化 new DirectoryInfo——发生在 accessor 上任之前；游戏树判定已在 Validate 收敛", Domain.Platform, 2),
         ["Shared/Runtime/Utils/SafCompat.cs"] = new(

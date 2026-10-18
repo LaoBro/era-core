@@ -191,9 +191,14 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 | F-2 | 两个实现**契约一致**：精确名读取须大小写不敏感解析（对齐 SAF 语义） | 大小写敏感挂载上固定名 CSV 读不出 |
 | F-3 | SAF 写路径须按「父目录 + displayName」查找/创建，**不得**假设理论 URI 已在 provider 注册 | 写回存档丢失 |
 | F-4 | 应用私有域是**唯一豁免域**——domain 由 `AppDataPaths`（+ `AppDataIo` 窄口子）显式界定，经 `AppDataPaths.IsUnder` 机检 | 豁免边界回到「靠开发者记得」的隐式状态 |
-| F-5 | 已知**待收敛例外**（见下）由守卫测试 `GameDirAccessorIoPolicyTests` 逐文件、逐调用数盯着；新增代码**不得**扩大该清单 | 例外蔓延成事实上的第二套 IO |
+| F-5 | 已知**例外清单**（见下，分「待收敛」与「永久豁免」两段）由守卫测试 `GameDirAccessorIoPolicyTests` 逐文件、逐调用数盯着；新增代码**不得**扩大该清单 | 例外蔓延成事实上的第二套 IO |
 
-**待收敛例外清单**（截至 2026-10-18，Core 内裸 `File.*` / `Directory.*`；按归属域分三类）——**GameTree 域已归零**：
+**例外清单**（截至 2026-10-18，Core 内裸 `File.*` / `Directory.*`）——**GameTree 域已归零**。
+
+> **两段的区分口径**（2026-10-18 拆分，由守卫测试的 `Domain` 字段机读）：
+> **待收敛** = `Domain.AppPrivate`，理论上可收敛，只差一个合适的接缝；
+> **永久豁免** = `Domain.Platform`，是访问器的底层实现或发生在 accessor 上任之前，**不打算收敛**。
+> 此前两者混装在一张表里，每次盘点都要重新解释"为什么这几行不动"。
 
 > **2026-10-18（ADR-0036，两片）**：GameTree 域里两组**不可编译**站点已随其源码一并删除，非"收敛"——
 > ① `AppContents.cs`（3 处，随 `#else` 半支删除）；② `ImgUtils.cs`（整文件，`#if !HEADLESS`）
@@ -213,12 +218,23 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 > **关键结论：原本为它们准备的 `MoveFile` 接口成员已撤销**——不需要了，接口一个符号都没动。
 > 行为锁 = `SaveFolderCreationTests`，钉住「建 sav 目录 + 旧存档不搬移」这一刻意保持的行为。
 
-| 文件 | 域 | 处数 | 理由 |
+### 待收敛（真欠账，18 处）
+
+| 文件 | 域 | 处数 | 理由 | 收敛方向 |
+|---|---|---|---|---|
+| `Shared/Runtime/Script/Loader/ErbIrCache.cs` | AppPrivate | 10 | IR 磁盘缓存（appdata `IRCache/` 或桌面 `<游戏目录>/_IRCache/`），非游戏内容 | 缓存域自有接缝 |
+| `Shared/Runtime/Script/Loader/SrcContentCache.cs` | AppPrivate | 8 | 10-B CSV/ERH 源内容缓存，与 `era_ir.dat` 同布局同生命周期 | 同上 |
+
+> **收敛方向不是塞进 `IGameDirAccessor`**：该接口的语义是「游戏内容目录」，把缓存 IO 挂进去会污染 F-1。
+> 若要收，正确形态是给缓存域一个独立窄接口（形如 `IAppDataAccessor`），与 F-4 的 `AppDataPaths` / `AppDataIo` 同族。
+> 在此之前，这 18 处保持登记——它们是**唯一**还需要解释的欠账。
+
+### 永久豁免（21 处，不打算收敛）
+
+| 文件 | 域 | 处数 | 为什么不收敛 |
 |---|---|---|---|
-| `Shared/Runtime/Script/Loader/ErbIrCache.cs` | AppPrivate | 10 | IR 磁盘缓存（appdata `IRCache/` 或桌面 `<游戏目录>/_IRCache/`），非游戏内容 |
-| `Shared/Runtime/Script/Loader/SrcContentCache.cs` | AppPrivate | 8 | 10-B CSV/ERH 源内容缓存，与 `era_ir.dat` 同布局同生命周期 |
-| `GamePaths.cs` | Platform | 2 | 宿主安装目录探测 + 本地路径归一化（`DetectDefault` / `new DirectoryInfo`），发生在 accessor 上任之前 |
-| `Shared/Runtime/Utils/SafCompat.cs` | Platform | 18 | ADR-0019 兼容包装本体（有意保留） |
+| `GamePaths.cs` | Platform | 2 | 宿主安装目录探测 + 本地路径归一化（`DetectDefault` / `new DirectoryInfo`），**发生在 accessor 上任之前**——此时还没有访问器可用 |
+| `Shared/Runtime/Utils/SafCompat.cs` | Platform | 18 | ADR-0019 兼容包装**本体**：它就是访问器在 SAF 下的实现底座，收敛等于让实现调用自己 |
 | `Shared/Runtime/Utils/Sys.cs` | Platform | 1 | 进程工作目录，不解析游戏文件 |
 
 > **不计入清单的合规直连调用**（守卫测试显式跳过）：`FileSystemGameDirAccessor.cs`（接口实现本体）、
@@ -256,7 +272,7 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 |---|---|---|---|
 | 输入 | `IInputHost` | ADR-0031 **proposed**；M1/M2/M4 已落地（接口 + `DefaultInputHost` + 几何/键盘通道） | M5–M8：触屏 E-min、primitive 能力位、`IConsoleUI` 瘦身 Phase 2 |
 | 输出 | `IDisplayState` / `OutputHub` | ADR-0013/0014/0003 **accepted 且已落地** | —— |
-| 文件 | `IGameDirAccessor` | ADR-0019 **accepted 且已落地**（双实现）；2026-10-16 收敛一轮；**2026-10-18 三轮清完**：ADR-0036 删全部不可编译分支（`AppContents` / `ImgUtils` / `EvilMask.Utils`）→ ADR-0037 收最后一条可编译读缝（`ConstantData` / `EncodingHandler` / `EraStreamReader`）→ ADR-0038 收 sav 挪档（`ConfigData`） | **GameTree 域已归零**（Cap 0）；剩余 5 项全为豁免/平台域（`ErbIrCache` / `SrcContentCache` / `GamePaths` / `SafCompat` / `Sys`），非欠账。新增游戏树直连 IO 会立即被守卫测试判为「未登记」转红 |
+| 文件 | `IGameDirAccessor` | ADR-0019 **accepted 且已落地**（双实现）；2026-10-16 收敛一轮；**2026-10-18 三轮清完**：ADR-0036 删全部不可编译分支（`AppContents` / `ImgUtils` / `EvilMask.Utils`）→ ADR-0037 收最后一条可编译读缝（`ConstantData` / `EncodingHandler` / `EraStreamReader`）→ ADR-0038 收 sav 挪档（`ConfigData`） | **GameTree 域已归零**（Cap 0）；剩余 5 项已按 §4.3 拆为**待收敛 2 项 / 18 处**（`ErbIrCache` / `SrcContentCache`，缓存域，收敛方向是独立窄接口而非 `IGameDirAccessor`）与**永久豁免 3 项 / 21 处**（`GamePaths` / `SafCompat` / `Sys`）。新增游戏树直连 IO 会立即被守卫测试判为「未登记」转红 |
 
 > 输入轴仍处推进中：ADR-0031 为 `proposed`，M5–M8 未落地。**本表随里程碑推进而改**，不视为稳定契约。
 
