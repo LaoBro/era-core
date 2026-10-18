@@ -53,7 +53,7 @@ internal static class DirectoryLister
 
     /// <summary>
     /// 父目录。<b>经 accessor</b>（不变量 F-1）——原实现裸调 <c>Directory.GetParent</c>，
-    /// 是 ARCHITECTURE.md 4.3 待收敛例外之一。
+    /// 该项已收敛，<b>不再</b>计入 ARCHITECTURE.md §4.3 例外清单。
     /// <para>
     /// <see cref="IGameDirAccessor.GetParentPath"/> = <c>Path.GetDirectoryName</c> 语义，
     /// 与 <c>Directory.GetParent</c> 有一处差异：后者对带尾部分隔符的路径（<c>/a/b/</c>）

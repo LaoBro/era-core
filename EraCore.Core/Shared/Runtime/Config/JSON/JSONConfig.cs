@@ -16,7 +16,7 @@ static class JSONConfig
 
 	/// <summary>
 	/// setting.json 只落在应用私有域（F-4 豁免域），故经 <see cref="AppDataIo"/> 读写而非裸
-	/// <c>File.*</c> / <c>Directory.*</c>——原实现曾列在 ARCHITECTURE.md 4.3 待收敛例外清单里。
+	/// <c>File.*</c> / <c>Directory.*</c>——原实现曾列在 ARCHITECTURE.md §4.3 例外清单里，现已收敛。
 	/// </summary>
 	public static void Load()
 	{
