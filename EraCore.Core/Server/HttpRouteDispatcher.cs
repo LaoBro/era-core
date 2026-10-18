@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.UI.Game;
 
 namespace MinorShift.Emuera.Server;
 
@@ -160,34 +161,22 @@ internal sealed class HttpRouteDispatcher
     }
 
     /// <summary>
-    /// HTTP body → 协议循环消费的 input jsonl（与 WS 上行帧同源）。
-    /// 手工构造 <c>JsonObject</c> 而非 POCO 序列化：键名与 <c>JsonlCommand</c> 逐一对应，
-    /// 且 <c>token</c> 属于 HTTP 传输层、不进协议帧。
+    /// HTTP body → 协议循环消费的 input jsonl。
+    /// <para>
+    /// 2026-10-19：由<b>手工拼 <c>JsonObject</c></b> 改为序列化 <see cref="JsonlCommand"/> ——
+    /// 手拼版本把 wire 键名抄了第二份（原注释自陈「键名与 JsonlCommand 逐一对应」），
+    /// 任一处改字段名都会静默漂移。现在上行 input 帧的键名<b>只有 JsonlCommand 一处真相</b>。
+    /// </para>
+    /// <para>
+    /// 序列化走 <c>EmueraJsonContext.Default.JsonlCommand</c>（源生成，NativeAOT 安全）；
+    /// 该上下文 <c>DefaultIgnoreCondition = WhenWritingNull</c> ⇒ 未携带的可选字段不落 wire，
+    /// 输出与旧手拼版语义等价（<c>token</c> 属于 HTTP 传输层，仍不进协议帧）。
+    /// </para>
     /// </summary>
     private static string BuildInputJsonl(HttpInput i)
-    {
-        var obj = new JsonObject { ["type"] = "input" };
-        if (i.value != null)
-            obj["value"] = i.value;
-        if (i.hoverValue is { } h)
-            obj["hoverValue"] = h;
-        if (i.focus is { } f)
-            obj["focus"] = f;
-        if (i.geometry is { } g)
-            obj["geometry"] = new JsonObject { ["x"] = g.x, ["y"] = g.y };
-        if (i.keys != null)
-        {
-            var arr = new JsonArray();
-            foreach (var k in i.keys)
-            {
-                if (k == null)
-                    continue;
-                arr.Add(new JsonObject { ["code"] = k.code, ["down"] = k.down });
-            }
-            obj["keys"] = arr;
-        }
-        return obj.ToJsonString();
-    }
+        => JsonSerializer.Serialize(
+            new JsonlCommand("input", i.value, i.hoverValue, i.keys, i.geometry, i.focus),
+            EmueraJsonContext.Default.JsonlCommand);
 
     private HttpResult HandleLoadGame(HttpRequestData request)
     {
@@ -321,9 +310,15 @@ internal sealed class HttpRouteDispatcher
         public InputGeometry? geometry { get; set; }
         public bool? focus { get; set; }
 
+        /// <summary>
+        /// wire → 输入侧：把捎带的状态字段转成 <see cref="InputStateEvent"/>。
+        /// 与 <see cref="JsonlCommand.ToInputState"/> 同构 —— 上行状态的两个 wire 入口
+        /// （HTTP body / 协议帧）在此收敛到同一个类型。
+        /// </summary>
+        public InputStateEvent ToInputState() => new(hoverValue, keys, geometry, focus);
+
         /// <summary>是否携带状态字段（不含 value）。为 true 时即使 value 缺省也是合法输入（状态类）。</summary>
-        public bool HasInputState =>
-            hoverValue != null || keys != null || geometry != null || focus.HasValue;
+        public bool HasInputState => ToInputState().HasAny;
     }
 
     /// <summary>POST /control/acquire|release body（token 可选）。</summary>

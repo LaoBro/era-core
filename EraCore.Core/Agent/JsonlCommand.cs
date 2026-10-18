@@ -1,3 +1,5 @@
+using MinorShift.Emuera.UI.Game;
+
 namespace MinorShift.Emuera.GameView;
 
 /// <summary>
@@ -10,6 +12,12 @@ namespace MinorShift.Emuera.GameView;
 /// <item><b>状态类</b>：<c>value</c> 缺省 ⇒ <b>只写 <see cref="MinorShift.Emuera.UI.Game.IInputHost"/></b>，
 /// 不派发、不产帧（值等待下带空 <c>value</c> 会触发 <c>OnInputRejected</c>，故必须跳过）。</item>
 /// </list>
+/// </para>
+/// <para>
+/// 🔴 <b>状态字段的键名必须扁平</b>：本 record 是 wire 契约本身（前端 <c>InputExtra</c>
+/// 与 HTTP body 都按这套扁平键名发送），不得把四个字段收进嵌套对象 —— 那会改 wire。
+/// 形状收口改在 Core 侧做：进 Core 第一步就 <see cref="ToInputState"/> 成
+/// <see cref="InputStateEvent"/>，其后的翻译链路只有那一个类型。
 /// </para>
 /// </summary>
 /// <remarks>
@@ -24,17 +32,11 @@ internal record JsonlCommand(
     string? hoverValue = null,
     InputKeyEvent[]? keys = null,
     InputGeometry? geometry = null,
-    bool? focus = null);
-
-/// <summary>
-/// 键鼠事件（Win32 VK 键码 + 按下/松开）。鼠标键用 1/2/4（= <c>VK_LBUTTON/RBUTTON/MBUTTON</c>）。
-/// <para>
-/// ⚠️ <b>逐条立即上报，不做时间合并</b>（spec-v3 §3.6）：down+up 若被合并进同一帧，
-/// 宿主按序处理后电平已归零 ⇒ 按键被压成零宽度脉冲 ⇒ 快速按键的触发整条丢失。
-/// 一帧含多条 <c>keys</c> 只用于「同时按下」的组合键，不是跨时间合并。
-/// </para>
-/// </summary>
-internal sealed record InputKeyEvent(int code, bool down);
-
-/// <summary>console 局部坐标（<b>左上基准</b>，ADR-0031 §8）。仅 <c>Geometry</c> 宿主发送；M5 前不启用。</summary>
-internal sealed record InputGeometry(int x, int y);
+    bool? focus = null)
+{
+    /// <summary>
+    /// wire → 输入侧：把捎带的状态字段转成 <see cref="InputStateEvent"/>。
+    /// 这是上行状态进入 Core 的<b>唯一</b>形状转换点（<c>HttpInput</c> 也有同构的一个）。
+    /// </summary>
+    public InputStateEvent ToInputState() => new(hoverValue, keys, geometry, focus);
+}

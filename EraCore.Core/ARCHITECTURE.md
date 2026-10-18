@@ -52,6 +52,9 @@ Core 把「引擎与世界的全部接触面」收敛为三条能力轴。它们
 | `InputSnapshot` | **不可变**输入快照（pull 面），宿主以 `Volatile` 整体换引用 | `Shared/UI/Game/IInputHost.cs:109` |
 | `KeyStateSet` | 键盘电平 + 版本号（`GETKEY` / `GETKEYTRIGGERED` 的操作数） | `Shared/UI/Game/IInputHost.cs:61` |
 | `IViewportProvider` | 视口状态（**渲染侧概念，与输入分离**） | `Shared/UI/Game/IInputHost.cs:181` |
+| `InputStateEvent` | **上行**输入事件（push 面）：两个 wire 入口（`JsonlCommand` 协议帧 / `HttpInput` HTTP body）的共同终点。与 pull 面的 `InputSnapshot` 分居两侧 | `Shared/UI/Game/InputStateEvent.cs` |
+| `InputKeyEvent` / `InputGeometry` | 上行状态的 wire 载荷（VK 键码 + down / console 局部坐标），两个 wire 入口共用 | `Shared/UI/Game/InputStateEvent.cs` |
+| `InputStateApplier` | 上行输入翻译**深模块**（与下行 `TurnFrames` 对称）。两个适配器 = 真接缝：wire 入口 `Apply` + CLI 指针入口 `ApplyPointerGeometry/ApplyPointerKey`；**能力位门卫在此统一** | `Shared/UI/Game/InputStateApplier.cs` |
 | `IVtHost` | VT 输入宿主窄接口（CLI 侧原语分发） | `Terminal/IVtHost.cs:11` |
 | `ITerminalInput` / `ITerminalSetup` / `IWindowSize` | 平台裸终端能力（读字节 / ANSI / 尺寸） | `Terminal/Platform/ITerminalInput.cs`、`ITerminalSetup.cs`、`Terminal/IWindowSize.cs` |
 

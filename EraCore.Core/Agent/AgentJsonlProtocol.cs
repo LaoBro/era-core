@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Server;
 using MinorShift.Emuera.UI.Game;
@@ -223,7 +222,8 @@ namespace MinorShift.Emuera.GameView
 
                 // spec-v3 §5.1/§5.3：先把捎带的状态字段写进 IInputHost，再决定派发与否。
                 // 顺序要紧 —— 写状态必须**先于** DispatchInput，否则脚本本轮读到的仍是旧值。
-                ApplyInputState(cmd);
+                // 翻译本体见 InputStateApplier（wire → 输入宿主），本类只保留这段编排顺序。
+                InputStateApplier.Apply(cmd.ToInputState(), ui.Input);
 
                 // 状态类（value 缺省）：只更新状态，不派发、不产帧。
                 if (cmd.value == null)
@@ -234,42 +234,6 @@ namespace MinorShift.Emuera.GameView
                     _io.WriteLine(stepTurn);
                 else
                     break;
-            }
-        }
-
-        /// <summary>
-        /// spec-v3 §5.1：把 <c>input</c> 帧的可选状态字段写进统一输入宿主（<see cref="IInputHost"/>）。
-        /// <para>
-        /// 全部字段都是<b>可选</b>的：一个都不带时本方法是空操作（旧客户端行为不变）。
-        /// 宿主为 <see cref="NullInputHost"/> 时写入被丢弃 —— 骨架阶段无能力即无效果。
-        /// </para>
-        /// <para>
-        /// 🔴 <b>不做任何合并、不补对称的 up</b>：<c>down</c> 与 <c>up</c> 由宿主（前端）
-        /// 分两条独立帧上报，本方法只做「把这一帧的内容写进宿主」一件事。
-        /// 曾在此把一次点击合成 down+up 一对 —— 那会让 <c>GETKEYTRIGGERED</c> 永远不成立
-        /// （它的原版语义要求「此刻按着」，见 <see cref="KeyStateSet"/> 注释）。
-        /// </para>
-        /// </summary>
-        private void ApplyInputState(JsonlCommand cmd)
-        {
-            IInputHost host = ui.Input;
-
-            if (cmd.focus is { } focused)
-                host.NotifyFocusChanged(focused);
-
-            if (cmd.geometry is { } g)
-                host.SubmitGeometry(new EmuPoint(g.x, g.y));
-
-            if (cmd.hoverValue != null)
-                host.SubmitHover(cmd.hoverValue);
-
-            if (cmd.keys == null)
-                return;
-            foreach (var k in cmd.keys)
-            {
-                if (k == null || k.code < 0 || k.code >= 256)
-                    continue;
-                host.SubmitKey(k.code, k.down);
             }
         }
 

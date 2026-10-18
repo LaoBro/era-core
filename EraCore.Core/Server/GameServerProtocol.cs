@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Config;
 
 namespace MinorShift.Emuera.Server;
@@ -448,11 +449,17 @@ internal sealed class GameServerProtocol
         });
     }
 
-    /// <summary>把输入值构造成协议循环消费的 input jsonl（与 WS 输入帧同源，保证 HTTP/WS 输入格式对称）。</summary>
+    /// <summary>
+    /// 把输入值构造成协议循环消费的 input jsonl（与 WS 输入帧同源，保证 HTTP/WS 输入格式对称）。
+    /// <para>
+    /// 2026-10-19：与 <c>HttpRouteDispatcher</c> 那处一同改为序列化 <see cref="JsonlCommand"/> ——
+    /// 上行 input 帧的键名不再有手抄的第二份。
+    /// </para>
+    /// </summary>
     public static string BuildInputJsonl(string value)
-    {
-        return new JsonObject { ["type"] = "input", ["value"] = value }.ToJsonString();
-    }
+        => JsonSerializer.Serialize(
+            new JsonlCommand("input", value),
+            EmueraJsonContext.Default.JsonlCommand);
 
     /// <summary>token → 身份：空 token 视为用户（无 token 调用方），非空视为 agent（token 即身份）。</summary>
     public static ControlIdentity ToIdentity(string? token)

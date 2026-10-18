@@ -66,18 +66,16 @@ namespace MinorShift.Emuera.GameView
         /// <para>
         /// ⚠️ 只在宿主声明 <see cref="InputCapability.Geometry"/> 时才写 —— 否则
         /// <c>MoveMouse</c> 不会被调用，写了也无消费者（<c>NullInputHost</c> 本身也是空操作）。
+        /// 门卫本体（与 wire 入口共用同一份）已收进 <see cref="InputStateApplier"/>。
         /// </para>
         /// </summary>
         void IVtHost.SubmitPointerGeometry(int row, int col)
         {
-            IInputHost host = ui.Input;
-            if (!host.Capabilities.Has(InputCapability.Geometry))
-                return;
-
             int x = TerminalViewportGeometry.PointXAtViewportCol(col);
             int y = TerminalViewportGeometry.PointYAtViewportRow(row);
 
-            host.SubmitGeometry(new EmuPoint(x, y));
+            // 门卫（能力位判定）已收进 InputStateApplier，与 wire 入口同口径
+            InputStateApplier.ApplyPointerGeometry(ui.Input, new EmuPoint(x, y));
         }
 
         /// <summary>
@@ -85,15 +83,13 @@ namespace MinorShift.Emuera.GameView
         /// <para>
         /// ⚠️ 只在宿主声明 <see cref="InputCapability.KeyboardState"/> 时才写 —— 与
         /// <see cref="IVtHost.SubmitPointerGeometry"/> 同一门卫口径：能力位先声明，通道才通电。
+        /// 门卫本体（与 wire 入口共用同一份）已收进 <see cref="InputStateApplier"/>。
         /// </para>
         /// </summary>
         void IVtHost.SubmitPointerKey(int virtualKey, bool down)
         {
-            IInputHost host = ui.Input;
-            if (!host.Capabilities.Has(InputCapability.KeyboardState))
-                return;
-
-            host.SubmitKey(virtualKey, down);
+            // 门卫（能力位判定）已收进 InputStateApplier，与 wire 入口同口径
+            InputStateApplier.ApplyPointerKey(ui.Input, virtualKey, down);
         }
 
         /// <summary>当前 Scroll Offset（IVtHost 门卫读取）。ADR-0009：从 ScrollController 读。</summary>

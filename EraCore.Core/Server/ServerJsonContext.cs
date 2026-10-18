@@ -28,8 +28,9 @@ namespace MinorShift.Emuera.Server;
 [JsonSerializable(typeof(JsonObject))]
 [JsonSerializable(typeof(HttpRouteDispatcher.HttpInput))]
 // spec-v3 §5.1：input 帧的可选状态字段（HttpInput 的可达类型，源生成须显式注册否则 SYSLIB1030）。
-[JsonSerializable(typeof(MinorShift.Emuera.GameView.InputKeyEvent))]
-[JsonSerializable(typeof(MinorShift.Emuera.GameView.InputGeometry))]
+// 2026-10-19：二者已下移至输入侧 Shared/UI/Game（两个 wire 入口共用，不再属于协议层）。
+[JsonSerializable(typeof(MinorShift.Emuera.UI.Game.InputKeyEvent))]
+[JsonSerializable(typeof(MinorShift.Emuera.UI.Game.InputGeometry))]
 [JsonSerializable(typeof(HttpRouteDispatcher.ControlRequest))]
 [JsonSerializable(typeof(HttpRouteDispatcher.LoadGameRequest))]
 [JsonSerializable(typeof(HttpRouteDispatcher.ScanGameRequest))]
