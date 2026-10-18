@@ -20,7 +20,7 @@ internal abstract class AInstruction
 	/// </para>
 	/// </summary>
 	public virtual bool SetJumpTo(InstructionLine func, int currentDepth, ref string FunctionoNotFoundName) => false;
-	public virtual void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+	public virtual void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 	{ throw new ExeEE("未実装 or 呼び出しミス"); }
 
 	public virtual Argument CreateArgument(InstructionLine line, ExpressionMediator exm)

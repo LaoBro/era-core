@@ -85,6 +85,8 @@ public sealed class ExecutionStateTests
         public bool calledWhenNormal { get; set; }
         public CalledFunction CurrentCalled { get; set; } = null!;
         public int lineCount { get; set; }
+        // 候选 4 · 第 3 刀：接口推广到指令层后补上的 3 个成员
+        public string Scope { get; set; } = null!;
 
         public void ShiftNextLine() { }
         public void JumpTo(LogicalLine line) { }
@@ -92,6 +94,8 @@ public sealed class ExecutionStateTests
         public void IntoFunction(CalledFunction call, UserDefinedFunctionArgument? srcArgs, ExpressionMediator exm) { }
         public void Begin() { }
         public void ClearFunctionList() { }
+        public void SetBegin(string keyword, bool force) { }
+        public void ReturnF(SingleTerm ret) { }
         public IProcessState Clone() => new FakeProcessState
         {
             SystemState = SystemState,
@@ -102,6 +106,7 @@ public sealed class ExecutionStateTests
             isBegun = isBegun,
             CurrentCalled = CurrentCalled,
             CurrentLine = CurrentLine,
+            Scope = Scope,
         };
     }
 }

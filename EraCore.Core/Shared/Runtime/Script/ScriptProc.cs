@@ -111,7 +111,7 @@ internal sealed class ScriptProc
 					continue;
 				}
 				if (func.Function.Instruction != null)
-					func.Function.Instruction.DoInstruction(exm, func, (ProcessState)executionState.CurrentState);
+					func.Function.Instruction.DoInstruction(exm, func, executionState.CurrentState);
 				else if (func.Function.IsFlowContorol())
 					doFlowControlFunction(func);
 				else
@@ -139,7 +139,7 @@ internal sealed class ScriptProc
 	public void DoDebugNormalFunction(InstructionLine func, bool munchkin)
 	{
 		if (func.Function.Instruction != null)
-			func.Function.Instruction.DoInstruction(exm, func, (ProcessState)executionState.CurrentState);
+			func.Function.Instruction.DoInstruction(exm, func, executionState.CurrentState);
 		else
 			doNormalFunction(func);
 		if (munchkin)

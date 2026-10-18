@@ -36,7 +36,7 @@ internal sealed partial class FunctionIdentifier
 	#region Emuera.NET VAR命令
 	private sealed class VARI_Instruction : AInstruction
 	{
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			var arg = (IntAsignArgument)func.Argument;
 			var varName = arg.ConstStr;
@@ -60,7 +60,7 @@ internal sealed partial class FunctionIdentifier
 	}
 	private sealed class VARS_Instruction : AInstruction
 	{
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			var arg = (StrAsignArgument)func.Argument;
 			var varName = arg.ConstStr;
@@ -180,7 +180,7 @@ internal sealed partial class FunctionIdentifier
 		readonly bool isLC;
 		readonly bool isC;
 		readonly bool isForms;
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (GlobalStatic.Process.SkipPrint)
 				return;
@@ -263,7 +263,7 @@ internal sealed partial class FunctionIdentifier
 				throw new ExeEE(trerror.AbnormalPrintdata.Text);
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (GlobalStatic.Process.SkipPrint)
 				return;
@@ -322,7 +322,7 @@ internal sealed partial class FunctionIdentifier
 			#endregion
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (GlobalStatic.Process.SkipPrint)
 				return;
@@ -347,7 +347,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.SP_HTMLSPLIT);
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			SpHtmlSplitArgument spSplitArg = (SpHtmlSplitArgument)func.Argument;
 			string str = spSplitArg.TargetStr.GetStrValue(exm);
@@ -374,7 +374,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.SP_HTML_PRINT);
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (GlobalStatic.Process.SkipPrint)
 				return;
@@ -396,7 +396,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.VOID);
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			exm.Console.ClearHTMLIsland();
 		}
@@ -413,7 +413,7 @@ internal sealed partial class FunctionIdentifier
 			#endregion
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (GlobalStatic.Process.SkipPrint)
 				return;
@@ -452,7 +452,7 @@ internal sealed partial class FunctionIdentifier
 			#endregion
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (GlobalStatic.Process.SkipPrint)
 				return;
@@ -485,7 +485,7 @@ internal sealed partial class FunctionIdentifier
 			#endregion
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (GlobalStatic.Process.SkipPrint)
 				return;
@@ -532,7 +532,7 @@ internal sealed partial class FunctionIdentifier
 			return ret;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (GlobalStatic.Process.SkipPrint)
 				return;
@@ -553,7 +553,7 @@ internal sealed partial class FunctionIdentifier
 			if (newline)
 				flag |= PRINT_NEWLINE;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			string str;
 			if (func.Argument.IsConst)
@@ -573,7 +573,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.VOID);
 			flag = METHOD_SAFE | EXTENDED | DEBUG_FUNC;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			exm.Console.DebugClear();
 		}
@@ -586,7 +586,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.METHOD);
 			flag = METHOD_SAFE | EXTENDED;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			AExpression term = ((MethodArgument)func.Argument).MethodTerm;
 			//Type type = term.GetOperandType();
@@ -610,7 +610,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.SP_SET);
 			flag = METHOD_SAFE;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (func.Argument is SpSetArrayArgument arg)
 			{
@@ -668,7 +668,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.FORM_STR_NULLABLE);
 			flag = METHOD_SAFE | EXTENDED | IS_PRINT;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			AExpression term = ((ExpressionArgument)func.Argument).Term;
 			string str = term.GetStrValue(exm);
@@ -683,7 +683,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.INT_EXPRESSION);
 			flag = METHOD_SAFE | EXTENDED | IS_PRINT;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArgument intExpArg = (ExpressionArgument)func.Argument;
 			int delNum = (int)intExpArg.Term.GetIntValue(exm);
@@ -704,7 +704,7 @@ internal sealed partial class FunctionIdentifier
 			this.unicode = unicode;
 		}
 		bool unicode;
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			string str;
 			if (func.Argument.IsConst)
@@ -727,7 +727,7 @@ internal sealed partial class FunctionIdentifier
 			this.op = op;
 		}
 		int op;
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			BitArgument spsetarg = (BitArgument)func.Argument;
 			VariableTerm varTerm = spsetarg.VariableDest;
@@ -759,7 +759,7 @@ internal sealed partial class FunctionIdentifier
 			isForce = force;
 		}
 		bool isForce;
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (isForce)
 				exm.Console.ReadAnyKey(false, true);
@@ -775,7 +775,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.VOID);
 			flag = IS_PRINT;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			exm.Console.ReadAnyKey(true, false);
 		}
@@ -789,7 +789,7 @@ internal sealed partial class FunctionIdentifier
 			flag = IS_PRINT | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			exm.Console.ReadAnyKey();
 			SpSwapCharaArgument arg = (SpSwapCharaArgument)func.Argument;
@@ -814,7 +814,7 @@ internal sealed partial class FunctionIdentifier
 			flag = IS_PRINT | IS_INPUT;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			#region EM_私家版_INPUT系機能拡張
 			//ExpressionArgument arg = (ExpressionArgument)func.Argument;
@@ -870,7 +870,7 @@ internal sealed partial class FunctionIdentifier
 			flag = IS_PRINT | IS_INPUT;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			#region EM_私家版_INPUT系機能拡張
 			//ExpressionArgument arg = (ExpressionArgument)func.Argument;
@@ -926,7 +926,7 @@ internal sealed partial class FunctionIdentifier
 			flag = IS_PRINT | IS_INPUT | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			#region EM_私家版_INPUT系機能拡張＆ONEINPUT系制限解除
 			//ExpressionArgument arg = (ExpressionArgument)func.Argument;
@@ -991,7 +991,7 @@ internal sealed partial class FunctionIdentifier
 			flag = IS_PRINT | IS_INPUT | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			#region EM_私家版_INPUT系機能拡張＆ONEINPUT系制限解除
 			//ExpressionArgument arg = (ExpressionArgument)func.Argument;
@@ -1059,7 +1059,7 @@ internal sealed partial class FunctionIdentifier
 		}
 		readonly bool isOne;
 		readonly bool _noFocus;
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			SpTInputsArgument tinputarg = (SpTInputsArgument)func.Argument;
 
@@ -1121,7 +1121,7 @@ internal sealed partial class FunctionIdentifier
 		}
 		readonly bool isOne;
 		readonly bool _noFocus;
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			SpTInputsArgument tinputarg = (SpTInputsArgument)func.Argument;
 			InputRequest req = new()
@@ -1177,7 +1177,7 @@ internal sealed partial class FunctionIdentifier
 
 		// SetJumpTo（加载期跳转解析）已分居 Instraction.Child.JumpResolution.cs（ADR-0027 第三刀）。
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			AExpression mToken;
 			string labelName;
@@ -1249,7 +1249,7 @@ internal sealed partial class FunctionIdentifier
 
 		// SetJumpTo（加载期跳转解析）已分居 Instraction.Child.JumpResolution.cs（ADR-0027 第三刀）。
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 
 			SpCallSharpArgment arg = (SpCallSharpArgment)func.Argument;
@@ -1290,7 +1290,7 @@ internal sealed partial class FunctionIdentifier
 
 		// SetJumpTo（加载期跳转解析）已分居 Instraction.Child.JumpResolution.cs（ADR-0027 第三刀）。
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			AExpression mToken;
 			string labelName;
@@ -1339,7 +1339,7 @@ internal sealed partial class FunctionIdentifier
 		}
 		bool newline;
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			SpBarArgument barArg = (SpBarArgument)func.Argument;
 			long var = barArg.Terms[0].GetIntValue(exm);
@@ -1359,7 +1359,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			SpTimesArgument timesArg = (SpTimesArgument)func.Argument;
 			VariableTerm var = timesArg.VariableDest;
@@ -1400,7 +1400,7 @@ internal sealed partial class FunctionIdentifier
 		bool isDel;
 		bool isSp;
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (!Config.CompatiSPChara && isSp)
 				throw new CodeEE(trerror.SPCharaConfigIsOff.Text);
@@ -1442,7 +1442,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			exm.VEvaluator.AddPseudoCharacter();
 		}
@@ -1456,7 +1456,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			SpSwapCharaArgument arg = (SpSwapCharaArgument)func.Argument;
 			long x = arg.X.GetIntValue(exm);
@@ -1472,7 +1472,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			SpSwapCharaArgument arg = (SpSwapCharaArgument)func.Argument;
 			long x = arg.X.GetIntValue(exm);
@@ -1489,7 +1489,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArrayArgument intExpArg = (ExpressionArrayArgument)func.Argument;
 			foreach (AExpression int64Term in intExpArg.TermList)
@@ -1505,7 +1505,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			SpSortcharaArgument spSortArg = (SpSortcharaArgument)func.Argument;
 			long elem = 0;
@@ -1530,7 +1530,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			exm.Console.SetStringStyle(Config.ForeColor);
 		}
@@ -1544,7 +1544,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			exm.Console.SetBgColor(Config.BackColor);
 		}
@@ -1558,7 +1558,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArrayArgument arg = (ExpressionArrayArgument)func.Argument;
 			string bgName;
@@ -1585,7 +1585,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArrayArgument arg = (ExpressionArrayArgument)func.Argument;
 			string bgName;
@@ -1602,7 +1602,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			// issue 02：无头落地（全清）
 			exm.Console.ClearBgImage();
@@ -1617,7 +1617,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (!OperatingSystem.IsWindows())
 				return;
@@ -1632,7 +1632,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (!OperatingSystem.IsWindows())
 				return;
@@ -1647,7 +1647,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (!OperatingSystem.IsWindows())
 				return;
@@ -1663,7 +1663,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 
 			SpVarSetArgument spvarsetarg = (SpVarSetArgument)func.Argument;
@@ -1705,7 +1705,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			SpCVarSetArgument spvarsetarg = (SpCVarSetArgument)func.Argument;
 			FixedVariableTerm p = spvarsetarg.VariableDest.GetFixedVariableTerm(exm);
@@ -1761,7 +1761,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			long iValue;
 			if (func.Argument.IsConst)
@@ -1787,7 +1787,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (JSONConfig.Data.UseNewRandom)
 			{
@@ -1809,7 +1809,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (JSONConfig.Data.UseNewRandom)
 			{
@@ -1832,7 +1832,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			exm.VEvaluator.SaveGlobal();
 		}
@@ -1846,7 +1846,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (exm.VEvaluator.LoadGlobal())
 				exm.VEvaluator.RESULT = 1;
@@ -1863,7 +1863,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			exm.VEvaluator.ResetData();
 			exm.Console.ResetStyle();
@@ -1878,7 +1878,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			exm.VEvaluator.ResetGlobalData();
 		}
@@ -1902,7 +1902,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArrayArgument arg = (ExpressionArrayArgument)func.Argument;
 			var terms = arg.TermList;
@@ -1934,7 +1934,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArgument arg = (ExpressionArgument)func.Argument;
 			string datFilename;
@@ -1955,7 +1955,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			throw new NotImplCodeEE();
 			//SpSaveVarArgument arg = (SpSaveVarArgument)func.Argument;
@@ -1973,7 +1973,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			throw new NotImplCodeEE();
 			//ExpressionArgument arg = (ExpressionArgument)func.Argument;
@@ -1995,7 +1995,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			long target;
 			if (func.Argument.IsConst)
@@ -2017,7 +2017,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED | PARTIAL;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			//何もしない
 		}
@@ -2037,7 +2037,7 @@ internal sealed partial class FunctionIdentifier
 		}
 		bool byname;
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			throw new NotImplCodeEE();
 
@@ -2111,7 +2111,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.SP_SWAP);
 			flag = METHOD_SAFE | EXTENDED;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			SpSwapCharaArgument arg = (SpSwapCharaArgument)func.Argument;
 			long foreColor = arg.X.GetIntValue(exm);
@@ -2134,7 +2134,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.INT_EXPRESSION);
 			flag = METHOD_SAFE | EXTENDED;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArgument arg = (ExpressionArgument)func.Argument;
 			long delay;
@@ -2156,7 +2156,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.INT_EXPRESSION);
 			flag = METHOD_SAFE | EXTENDED;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArgument arg = (ExpressionArgument)func.Argument;
 			long duration;
@@ -2183,7 +2183,7 @@ internal sealed partial class FunctionIdentifier
 			flag = EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionsArgument arg = (ExpressionsArgument)func.Argument;
 			long time = 0;
@@ -2208,7 +2208,7 @@ internal sealed partial class FunctionIdentifier
 			//flag = IS_PRINT | IS_INPUT | EXTENDED;
 			flag = EXTENDED;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			InputRequest req = new()
 			{
@@ -2227,7 +2227,7 @@ internal sealed partial class FunctionIdentifier
 			flag = IS_PRINT | IS_INPUT;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			//実行時点で描画されてないときがあるのでやっておく
 			if (!exm.Console.PrintBuffer.IsEmpty)
@@ -2317,7 +2317,7 @@ internal sealed partial class FunctionIdentifier
 			flag = IS_PRINT | IS_INPUT;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			//ExpressionArgument arg = (ExpressionArgument)func.Argument;
 			//InputRequest req = new InputRequest();
@@ -2423,7 +2423,7 @@ internal sealed partial class FunctionIdentifier
 			flag = IS_PRINT | IS_INPUT;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			//実行時点で描画されてないときがあるのでやっておく
 			if (!exm.Console.PrintBuffer.IsEmpty)
@@ -2513,7 +2513,7 @@ internal sealed partial class FunctionIdentifier
 			flag = IS_PRINT | IS_INPUT;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			//ExpressionArgument arg = (ExpressionArgument)func.Argument;
 			//InputRequest req = new InputRequest();
@@ -2621,7 +2621,7 @@ internal sealed partial class FunctionIdentifier
 			flag = EXTENDED | METHOD_SAFE;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			var arg = (SpDtColumnOptions)func.Argument;
 			var dict = exm.VEvaluator.VariableData.DataDataTables;
@@ -2663,7 +2663,7 @@ internal sealed partial class FunctionIdentifier
 			flag = EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			long waittime = -1;
 			ExpressionArgument arg = (func.Argument as ExpressionArgument)!;
@@ -2691,7 +2691,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.SP_HTML_PRINT);
 			flag = METHOD_SAFE | EXTENDED;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			var soundArg = (SpHtmlPrint)func.Argument;
 			string datFilename = null!;
@@ -2741,7 +2741,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.VOID);
 			flag = METHOD_SAFE | EXTENDED;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			for (int i = 0; i < sound.Length; i++)
 			{
@@ -2761,7 +2761,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.STR_EXPRESSION);
 			flag = METHOD_SAFE | EXTENDED;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArgument arg = (ExpressionArgument)func.Argument;
 			string datFilename = null!;
@@ -2796,7 +2796,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.VOID);
 			flag = METHOD_SAFE | EXTENDED;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			bgm.stop();
 		}
@@ -2809,7 +2809,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.INT_EXPRESSION);
 			flag = METHOD_SAFE | EXTENDED;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArgument intExpArg = (ExpressionArgument)func.Argument;
 			int vol = (int)intExpArg.Term.GetIntValue(exm);
@@ -2828,7 +2828,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.INT_EXPRESSION);
 			flag = METHOD_SAFE | EXTENDED;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArgument intExpArg = (ExpressionArgument)func.Argument;
 			int vol = (int)intExpArg.Term.GetIntValue(exm);
@@ -2847,7 +2847,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.VOID);
 			flag = METHOD_SAFE | EXTENDED;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (Config.ForbidUpdateCheck == true)
 			{
@@ -2952,7 +2952,7 @@ internal sealed partial class FunctionIdentifier
 			flag = EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArgument fn = (ExpressionArgument)func.Argument;
 			// SetToolTipFontName: WinForms-only stub removed in Headless
@@ -2968,7 +2968,7 @@ internal sealed partial class FunctionIdentifier
 			flag = EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArgument fs = (ExpressionArgument)func.Argument;
 			// SetToolTipFontSize: WinForms-only stub removed in Headless
@@ -2984,7 +2984,7 @@ internal sealed partial class FunctionIdentifier
 			flag = EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			// CustomToolTip: WinForms-only stub removed in Headless
 			_ = (ExpressionArgument)func.Argument;
@@ -3000,7 +3000,7 @@ internal sealed partial class FunctionIdentifier
 			flag = EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArgument i = (ExpressionArgument)func.Argument;
 			// SetToolTipFormat: WinForms-only stub removed in Headless
@@ -3016,7 +3016,7 @@ internal sealed partial class FunctionIdentifier
 			flag = EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArgument i = (ExpressionArgument)func.Argument;
 			// SetToolTipImg: WinForms-only stub removed in Headless
@@ -3032,7 +3032,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			exm.Console.forceUpdateGeneration();
 		}
@@ -3050,7 +3050,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.STR);
 			flag = FLOW_CONTROL;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			string keyword = func.Argument.ConstStr;
 			#region EE
@@ -3069,7 +3069,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.STR);
 			flag = FLOW_CONTROL;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			string keyword = func.Argument.ConstStr;
 			//if (Config.Config.IgnoreCase)//1756 BEGINのキーワードは関数扱いらしい
@@ -3089,7 +3089,7 @@ internal sealed partial class FunctionIdentifier
 			this.isSave = isSave;
 		}
 		readonly bool isSave;
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if ((state.SystemState & SystemStateCode.__CAN_SAVE__) != SystemStateCode.__CAN_SAVE__)
 			{
@@ -3119,7 +3119,7 @@ internal sealed partial class FunctionIdentifier
 				ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.INT_EXPRESSION);
 			}
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			SpForNextArgment forArg = (SpForNextArgment)func.Argument;
 			func.LoopCounter = forArg.Cnt;
@@ -3142,7 +3142,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.INT_EXPRESSION);
 			flag = METHOD_SAFE | EXTENDED | FLOW_CONTROL | PARTIAL;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArgument expArg = (ExpressionArgument)func.Argument;
 			if (expArg.Term.GetIntValue(exm) != 0)//式が真
@@ -3161,7 +3161,7 @@ internal sealed partial class FunctionIdentifier
 
 		// SetJumpTo（加载期跳转解析）已分居 Instraction.Child.JumpResolution.cs（ADR-0027 第三刀）。
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArgument expArg = (ExpressionArgument)func.Argument;
 			if (expArg.Term.GetIntValue(exm) == 0)//評価式が真ならそのまま流れ落ちる
@@ -3176,7 +3176,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(argtype);
 			flag = METHOD_SAFE | FLOW_CONTROL | PARTIAL | FORCE_SETARG;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			//if (iFuncCode == FunctionCode.ELSE || iFuncCode == FunctionCode.ELSEIF
 			//	|| iFuncCode == FunctionCode.CASE || iFuncCode == FunctionCode.CASEELSE)
@@ -3193,7 +3193,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.VOID);
 			flag = FLOW_CONTROL | PARTIAL | FORCE_SETARG;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 		}
 	}
@@ -3205,7 +3205,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.INT_EXPRESSION);
 			flag = METHOD_SAFE | FLOW_CONTROL | PARTIAL | FORCE_SETARG;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			LogicalLine ifJumpto = func.JumpTo;//ENDIF
 											   //チェック済み
@@ -3260,7 +3260,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.EXPRESSION);
 			flag = METHOD_SAFE | EXTENDED | FLOW_CONTROL | PARTIAL | FORCE_SETARG;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			AExpression selectValue = ((ExpressionArgument)func.Argument).Term;
 			//コンパイル時ジャンプテーブル：O(1) ディスパッチ。無い場合は従来の線形スキャン。
@@ -3344,7 +3344,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.FORM_STR);
 			flag = EXTENDED | FLOW_CONTROL;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			//int termnum = 0;
 			//foreach (IOperandTerm term in ((ExpressionArrayArgument)func.Argument).TermList)
@@ -3386,7 +3386,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.INT_ANY);
 			flag = FLOW_CONTROL;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			//int termnum = 0;
 			ExpressionArrayArgument expArrayArg = (ExpressionArrayArgument)func.Argument;
@@ -3416,7 +3416,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.VOID);
 			flag = METHOD_SAFE | EXTENDED | FLOW_CONTROL | PARTIAL;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			//if (sequential)//上から流れてきたなら何もしないでENDCATCHに飛ぶ
 			state.JumpTo(func.JumpToEndCatch);
@@ -3430,7 +3430,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.VOID);
 			flag = METHOD_SAFE | FLOW_CONTROL | EXTENDED;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			state.JumpTo(func.ParentLabelLine);
 		}
@@ -3443,7 +3443,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.VOID);
 			flag = METHOD_SAFE | FLOW_CONTROL;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			////BREAKのJUMP先はRENDまたはNEXT。そのジャンプ先であるREPEATかFORをiLineに代入。
 			//1.723 仕様変更。BREAKのJUMP先にはREPEAT、FOR、WHILEを記憶する。そのJUMP先が本当のJUMP先。
@@ -3468,7 +3468,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.VOID);
 			flag = METHOD_SAFE | FLOW_CONTROL;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			InstructionLine jumpTo = (InstructionLine)func.JumpTo;
 			if ((jumpTo.FunctionCode == FunctionCode.REPEAT) || (jumpTo.FunctionCode == FunctionCode.FOR))
@@ -3524,7 +3524,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.VOID);
 			flag = METHOD_SAFE | FLOW_CONTROL | PARTIAL;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			InstructionLine jumpTo = (InstructionLine)func.JumpTo;
 			//ループ変数が不明(REPEAT、FORを経由せずにループしようとした場合は無視してループを抜ける(eramakerがこういう仕様だったりする))
@@ -3552,7 +3552,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.VOID);
 			flag = METHOD_SAFE | EXTENDED | FLOW_CONTROL | PARTIAL;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			InstructionLine jumpTo = (InstructionLine)func.JumpTo;
 			if (((ExpressionArgument)jumpTo.Argument).Term.GetIntValue(exm) != 0)
@@ -3567,7 +3567,7 @@ internal sealed partial class FunctionIdentifier
 			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.INT_EXPRESSION);
 			flag = METHOD_SAFE | EXTENDED | FLOW_CONTROL | PARTIAL | FORCE_SETARG;
 		}
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			ExpressionArgument expArg = (ExpressionArgument)func.Argument;
 			if (expArg.Term.GetIntValue(exm) != 0)//式が真
@@ -3586,7 +3586,7 @@ internal sealed partial class FunctionIdentifier
 
 		// SetJumpTo（加载期跳转解析）已分居 Instraction.Child.JumpResolution.cs（ADR-0027 第三刀）。
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			AExpression term = ((ExpressionArgument)func.Argument).Term;
 			SingleTerm ret = null!;
@@ -3621,7 +3621,7 @@ internal sealed partial class FunctionIdentifier
 
 		// SetJumpTo（加载期跳转解析）已分居 Instraction.Child.JumpResolution.cs（ADR-0027 第三刀）。
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			SpCallArgment spCallArg = (SpCallArgment)func.Argument;
 			CalledFunction call;
@@ -3685,7 +3685,7 @@ internal sealed partial class FunctionIdentifier
 
 		// SetJumpTo（加载期跳转解析）已分居 Instraction.Child.JumpResolution.cs（ADR-0027 第三刀）。
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			string scriptLine = func.Argument.IsConst
 				? func.Argument.ConstStr
@@ -3758,7 +3758,7 @@ internal sealed partial class FunctionIdentifier
 
 		// SetJumpTo（加载期跳转解析）已分居 Instraction.Child.JumpResolution.cs（ADR-0027 第三刀）。
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			string labelName = func.Argument.ConstStr;
 			CalledFunction call = CalledFunction.CallEventFunction(GlobalStatic.LabelDictionary, labelName, func);
@@ -3787,7 +3787,7 @@ internal sealed partial class FunctionIdentifier
 
 		// SetJumpTo（加载期跳转解析）已分居 Instraction.Child.JumpResolution.cs（ADR-0027 第三刀）。
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			string label;
 			LogicalLine jumpto;
@@ -3835,7 +3835,7 @@ internal sealed partial class FunctionIdentifier
 		}
 		readonly bool lineRelative;
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			var arg = (SpSetImageLayerArgument)func.Argument;
 			string spriteName = arg.SpriteName.GetStrValue(exm);
@@ -3863,7 +3863,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			long depth = ((ExpressionArgument)func.Argument).Term.GetIntValue(exm);
 			exm.Console.ClearImageLayer(depth);
@@ -3878,7 +3878,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			exm.Console.ClearImageLayerAll();
 		}
@@ -3898,7 +3898,7 @@ internal sealed partial class FunctionIdentifier
 		}
 		readonly bool alignRight;
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			if (GlobalStatic.Process.SkipPrint)
 				return;
@@ -3918,7 +3918,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			var arg = (SpColorAlphaArgument)func.Argument;
 			long rgb, alpha;
@@ -3945,7 +3945,7 @@ internal sealed partial class FunctionIdentifier
 			flag = METHOD_SAFE | EXTENDED;
 		}
 
-		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			exm.Console.TextBackgroundColor = null;
 		}
