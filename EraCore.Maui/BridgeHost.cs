@@ -1995,28 +1995,26 @@ internal sealed class BridgeHost : IDisposable
                 return;
             }
 
-            // 3. 先销毁可能残留的旧会话，再建新的——hot-swap 竞态守卫。
-            //    共享 SessionRegistry 后（issues/13 M6），旧 BridgeHost.Dispose 的
-            //    DeleteSessionAsync 跑在后台线程，可能与本次 Create 抢锁：
-            //    CreateMauiSessionAsync 见到「已有未结束会话」会直接返 Conflict 而不重建。
-            //    改造前新旧 host 各有独立 SessionRegistry，天然无此竞态。
-            //    此处已处后台线程（Task.Run），Session.Dispose join 游戏循环不阻塞 UI。
-            //    无会话时 DeleteSessionAsync 返 NotFound，无副作用。
-            await serverHost.Sessions.DeleteSessionAsync();
-            if (_disposed)
-                return;
-
-            // 4. 建共享 session——游戏已由 OnReloadGame 初始化（GamePaths.Current 已 Resolve + ConfigData 已加载），
+            // 3. 替换会话——**单次调用**（ADR-0049 D5）。
+            //    改造前是「DeleteSessionAsync（忽略结果）→ CreateMauiSessionAsync」两次调用：
+            //    旧循环若在上界内没退出，第一次吞掉 TeardownTimeout、第二次再等一遍上界，
+            //    用户侧表现是切换游戏卡住 10 秒后弹出一个枚举名。
+            //    ReplaceMauiSessionAsync 内部完成「拆旧 → 一次有界等待 → 建新」，失败原因单一。
+            //    游戏已由 OnReloadGame 初始化（GamePaths.Current 已 Resolve + ConfigData 已加载），
+            //    故本方法刻意不碰 GamePaths。
             //    fullDiffOnFirstTurn=true：MAUI WebView 桥接无 GET /snapshot 入口，首帧 diff 须全量。
             //    显式传 _configData：共享 server 构造时绑的是启动期占位配置，会话必须用真实配置
             //    （含 OnReloadGame 应用的性能覆盖旋钮），否则 ErbLoader 读到的是占位值。
             //    dialectProfileId：按会话传入方言 profile（null = v24pure）。
-            var createResult = await serverHost.Sessions.CreateMauiSessionAsync(_configData, fullDiffOnFirstTurn: true, dialectProfileId);
+            var createResult = await serverHost.Sessions.ReplaceMauiSessionAsync(_configData, fullDiffOnFirstTurn: true, dialectProfileId);
             if (_disposed)
                 return;
             if (createResult.Status != SessionCreateStatus.Created)
             {
-                ShowError("创建游戏会话失败: " + createResult.Status);
+                // 用户可读结论：拆旧循环没在上界内退出，而不是把枚举名抛给用户（D7 的服务端一半）。
+                ShowError(createResult.Status == SessionCreateStatus.PreviousSessionStillRunning
+                    ? "上一局仍在结束中，请稍候再试。"
+                    : "创建游戏会话失败: " + createResult.Status);
                 return;
             }
 

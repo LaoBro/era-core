@@ -1448,20 +1448,30 @@ export const useGameStore = defineStore('game', () => {
    * 流程：
    * 1. GET /state → 拿当前 gameDir（权威目标，非 localStorage 回退）
    * 2. disconnect 旧 WS + reset 显示状态
-   * 3. DELETE /session → 干净替换旧会话
-   * 4. POST /load-game {当前 gameDir} → 重载同一目录
-   * 5. 成功 → connect WS 入新 session
-   * 6. 失败 → 清空 localStorage 预填 + gameDir，回退到空路径选择器，等待玩家手动输入
+   * 3. POST /load-game {当前 gameDir} → 服务端在同一次请求内原子替换旧会话
+   * 4. 成功 → connect WS 入新 session
+   * 5. 失败 → 清空 localStorage 预填 + gameDir，回退到空路径选择器，等待玩家手动输入
+   *    （例外：SESSION_STILL_RUNNING 重试耗尽时保留目录，见 ADR-0049 D7）
    *
    * 与 loadGame 的区别：
    * - 目标目录来自 GET /state（当前 session 目录），而非参数传入
-   * - 先 DELETE /session 再 /load-game（loadGame 不 DELETE，依赖 /load-game 内部 dispose）
    * - 失败时清空 gameDir（loadGame 失败时保留旧 gameDir）
    *
-   * server 端状态备注：快速重开失败后（DELETE 已执行 + /load-game 校验失败），
-   * server 端 _session==null（已被 DELETE dispose），GET /state 返 {state:"Idle", gameDir:null}——
+   * ADR-0049 D5/D7（2026-10-18）：
+   * - 不再先发 DELETE /session。/load-game 内部已原子完成「拆旧 → 有界等待 → 建新」，
+   *   多一次 DELETE 只是多一次往返 + 多一个等待上界（旧循环卡住时白等 5 秒）。
+   * - SESSION_STILL_RUNNING（上一局仍在结束中）不是终态错误：按 0.5/1/2s 退避重试，
+   *   仍失败才报错，且保留用户所选目录。
+   *
+   * server 端状态备注：快速重开失败后（/load-game 已摘除旧会话），server 端 _session==null，
+   * GET /state 返 {state:"Idle", gameDir:null}；若旧循环仍在跑则额外带 retiring:true——
    * 前端不感知 Current 残留，看到空选择器。
    */
+  /** Promise-based setTimeout——SESSION_STILL_RUNNING 退避重试间隔（ADR-0049 D7）。 */
+  function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   async function quickRestart(): Promise<void> {
     if (reloadStatus.value === 'loading') return;
 
@@ -1495,19 +1505,43 @@ export const useGameStore = defineStore('game', () => {
     reset();
 
     try {
-      // Step 3: DELETE /session（干净替换旧会话）
-      try {
-        await fetch(`${httpBase}/session`, { method: 'DELETE' });
-      } catch {
-        // DELETE 失败不阻断——/load-game 内部会 dispose 旧 session
-      }
+      // Step 3: POST /load-game —— 一次调用即原子替换旧会话（ADR-0049 D5）。
+      // 不再先发 DELETE：那会多一次往返，且旧循环未退出时会白等一个上界、
+      // 再由 /load-game 等第二遍——用户侧就是「切换游戏卡住十秒后报错」。
+      const postLoadGame = (): Promise<Response> =>
+        fetch(`${httpBase}/load-game`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ gameDir: currentGameDir }),
+        });
 
-      // Step 4: POST /load-game {currentGameDir}
-      const resp = await fetch(`${httpBase}/load-game`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gameDir: currentGameDir }),
-      });
+      type ErrorPayload = {
+        error?: { code?: string; message?: string };
+        code?: string;
+        controller?: unknown;
+        state?: string;
+      };
+
+      // ADR-0049 D7：SESSION_STILL_RUNNING = 上一局仍在结束中，退避重试而非直接报错。
+      const retryDelaysMs = [500, 1000, 2000];
+      let resp = await postLoadGame();
+      let lastError: { code: string; message: string; body: ErrorPayload | null } | null = null;
+
+      for (let attempt = 0; resp.status === 503; attempt++) {
+        let body: ErrorPayload | null = null;
+        try {
+          body = (await resp.json()) as ErrorPayload;
+        } catch {
+          // body 非 JSON——code 未知，按不可重试处理
+        }
+        const code = body?.error?.code ?? body?.code ?? 'LOAD_FAILED';
+        const message = body?.error?.message ?? `HTTP ${resp.status}`;
+        lastError = { code, message, body };
+        // 只有「上一局仍在结束中」值得重试；其余 503（如服务器关闭）立即报错。
+        if (code !== 'SESSION_STILL_RUNNING' || attempt >= retryDelaysMs.length) break;
+        await delay(retryDelaysMs[attempt]);
+        resp = await postLoadGame();
+      }
 
       if (resp.status === 200) {
         // 成功——更新 gameDir + 持久化
@@ -1519,17 +1553,23 @@ export const useGameStore = defineStore('game', () => {
         await conn.connect(conn.serverUrl);
       } else {
         // 失败——D14：清空预填，回退到空路径选择器
-        let code: string = 'LOAD_FAILED';
-        let message = `HTTP ${resp.status}`;
-        let body: { error?: { code?: string; message?: string }; code?: string; controller?: unknown; state?: string } | null = null;
-        try {
-          body = await resp.json();
-          if (body?.error?.code) code = body.error.code;
-          if (body?.error?.message) message = body.error.message;
-          else if (typeof body?.code === 'string') code = body.code;
-        } catch {
-          // body 非 JSON——用默认 code/message
+        // 503 的 body 已在重试循环里解析过（响应体不可重读）；其余状态码在此解析。
+        if (lastError === null) {
+          try {
+            const errorBody = (await resp.json()) as ErrorPayload;
+            lastError = {
+              code: errorBody?.error?.code ?? errorBody?.code ?? 'LOAD_FAILED',
+              message: errorBody?.error?.message ?? `HTTP ${resp.status}`,
+              body: errorBody,
+            };
+          } catch {
+            // body 非 JSON——用默认 code/message
+            lastError = { code: 'LOAD_FAILED', message: `HTTP ${resp.status}`, body: null };
+          }
         }
+        const code: string = lastError.code;
+        const message: string = lastError.message;
+        const body = lastError.body;
         if (code.startsWith('CONTROL_')) {
           conn.applyControlDenied({
             controller: body?.controller,
@@ -1539,7 +1579,9 @@ export const useGameStore = defineStore('game', () => {
           });
         } else {
           loadGameError.value = new LoadGameError(code as LoadGameErrorCode, message, resp.status);
-          resetToIdlePicker();
+          // ADR-0049 D7：唯一例外 —— 「上一局仍在结束中」重试耗尽时**不回退选择器**，
+          // 保留 gameDir/localStorage，让用户直接再点一次；其余失败沿用 D14 的回退语义。
+          if (code !== 'SESSION_STILL_RUNNING') resetToIdlePicker();
         }
       }
     } catch (e) {
