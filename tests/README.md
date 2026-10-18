@@ -93,6 +93,34 @@ npm run test:e2e  # Playwright：真实浏览器布局判据（自动起 vite de
 D:/LaoBro/era-core/EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe
 ```
 
+## 方言与面快照测试
+
+方言相关 C# 测试分四层：
+
+| 测试 | 覆盖 |
+|---|---|
+| `DialectProfileTests` | profile 闭包、可见面并集/隐藏、会话隔离、投影端到端 |
+| `DialectSurfaceSnapshotTests` | 三 profile 运行期面与 `tools/dialect-inventory/surface.*.txt` 逐位比对 |
+| `DialectCrossForkConflictTests` | 同键多 owner 的 override/priority 裁决 |
+| `P0*Tests` | 各 P0 家族的解析 fixture、执行 fixture、flag 反射、profile 可见性 |
+
+```bash
+# 全部方言相关
+dotnet test EraCore.Tests/EraCore.Tests.csproj --filter FullyQualifiedName~Dialect
+dotnet test EraCore.Tests/EraCore.Tests.csproj --filter FullyQualifiedName~P0
+```
+
+新增/删除方言键后，先确认 `v24pure` 面未变化，再显式重写快照：
+
+```powershell
+$env:ERACORE_DIALECT_SURFACE_UPDATE=1
+dotnet test EraCore.Tests/EraCore.Tests.csproj --filter FullyQualifiedName~DialectSurfaceSnapshotTests
+Remove-Item Env:ERACORE_DIALECT_SURFACE_UPDATE
+dotnet test EraCore.Tests/EraCore.Tests.csproj --filter FullyQualifiedName~DialectSurfaceSnapshotTests
+```
+
+快照口径与键清单见 [`docs/reference/dialect-surface.md`](../docs/reference/dialect-surface.md)，移植流程见 [`docs/guides/dialect-porting.md`](../docs/guides/dialect-porting.md)。
+
 ## 一致性套件 + DoD 单入口（实现票 25）
 
 参数化 `--game-dir <dir> [--profile <id>]` 的可机械执行验收，含三层：**解析 smoke**（零「无法解析的标识符/行」+

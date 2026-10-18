@@ -20,6 +20,7 @@
 | [web-fonts.md](web-fonts.md) | Web 跨平台字体：MS Gothic 符号区宽度非均匀、回退链缺口、Unifont 按实测宽度选字、CFF→TTF 漏 scale、Vite 内联、dist-maui/SkipVueBuild、WebView 缓存 |
 | [web-css-dom.md](web-css-dom.md) | Web CSS/DOM 行为：overflow hidden 仍可程序滚动、focus() 滚所有可滚祖先、transform 动画溢出撑 scrollHeight、截断用 clip 不用 hidden、fixed 不动=祖先被滚、视图切换（v-if）丢滚动位置须"不卸载 + visibility"保住 |
 | [image-pipeline.md](image-pipeline.md) | 图片/尺寸探针：轻量头探针替代解码会丢格式覆盖（webp→0 宽不可见）；图片"不显示"先查协议几何 |
+| [dialect-and-sqlite.md](dialect-and-sqlite.md) | 方言移植与 SQLite：profile 必须在 scope 内解析、methodList 并入 funcDic 形成命令形、键级 delta 漏签名、`.als` 静默中断、IR 同名覆盖、原生库分发位置 |
 
 ## 约定
 

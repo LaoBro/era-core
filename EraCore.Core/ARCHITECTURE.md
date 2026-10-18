@@ -29,6 +29,10 @@ Core 把「引擎与世界的全部接触面」收敛为三条轴，它们**方�
      └──────────────────────────────────────────────────────────┘
 ```
 
+> **方言层不是第四条能力轴。** 它是 `Shared/Runtime/Script/Statements/` 内注册表的会话级投影
+> （profile → 可见面），不增加输入/输出/文件的新接触面；结构、闭包与不变量见
+> [`../docs/guides/dialect-porting.md`](../docs/guides/dialect-porting.md)。
+
 三轴接口一律 `internal`，宿主经 `EraCore.Core.csproj` 的 `InternalsVisibleTo`
 （`EraCore.Server` / `EraCore.Cli` / `EraCore.Maui` / `EraCore.Tests`）访问；
 唯一例外是文件轴的 `IGameDirAccessor`（`public` —— 宿主实现需跨程序集可见）。
@@ -131,11 +135,11 @@ HTTP body —— 的共同终点），再由 **`InputStateApplier`** 翻译成�
 
 ## 5. 宿主侧接触点
 
-| 宿主 | 声明的输入能力位 | 输入 | 输出 | 文件 |
-|---|---|---|---|---|
-| **Cli** | `Geometry \| KeyboardState` | 造平台 `ITerminalInput`（Windows/Posix）→ VT `AgentCliProtocol` | `AgentCliProtocol` + `TerminalRenderer`；视口 `CliViewport` | `FileSystemGameDirAccessor` + `GamePaths`（`HeadlessEntry`） |
-| **Server / HTTP** | `KeyboardState \| Hover \| Focus` | 经共享层 `Session` 内置的 `DefaultInputHost`（`s.IO.EnqueueInput`） | Kestrel 壳路由 + `WsConnectionHandler` → `WsRelay`；`HttpSessionIO` 双写 | `GamePaths.Current.DirAccessor`（`KestrelGameServer`） |
-| **Maui** | 复用 Server 同一 `DefaultInputHost` | 同 Server | `BridgeHost.TurnPumpAsync` 订阅 `OutputHub` | `BridgeHost.ResolveDirAccessor`：`content://` → `SafGameDirAccessor.Instance`，否则 `FileSystemGameDirAccessor` |
+| 宿主 | 声明的输入能力位 | 输入 | 输出 | 文件 | 方言 profile |
+|---|---|---|---|---|---|
+| **Cli** | `Geometry \| KeyboardState` | 造平台 `ITerminalInput`（Windows/Posix）→ VT `AgentCliProtocol` | `AgentCliProtocol` + `TerminalRenderer`；视口 `CliViewport` | `FileSystemGameDirAccessor` + `GamePaths`（`HeadlessEntry`） | `--profile`（启动期 fail-fast；缺省 `v24pure`） |
+| **Server / HTTP** | `KeyboardState \| Hover \| Focus` | 经共享层 `Session` 内置的 `DefaultInputHost`（`s.IO.EnqueueInput`） | Kestrel 壳路由 + `WsConnectionHandler` → `WsRelay`；`HttpSessionIO` 双写 | `GamePaths.Current.DirAccessor`（`KestrelGameServer`） | 同 Cli（`ServerRunner` 透传） |
+| **Maui** | 复用 Server 同一 `DefaultInputHost` | 同 Server | `BridgeHost.TurnPumpAsync` 订阅 `OutputHub` | `BridgeHost.ResolveDirAccessor`：`content://` → `SafGameDirAccessor.Instance`，否则 `FileSystemGameDirAccessor` | 设置项 `app.dialectProfile`（建会话前读，重载游戏生效） |
 
 ---
 
@@ -154,6 +158,8 @@ HTTP body —— 的共同终点），再由 **`InputStateApplier`** 翻译成�
 ## 7. 相关文档
 
 - 仓库总览：[`../ARCHITECTURE.md`](../ARCHITECTURE.md)
+- 方言移植指南：[`../docs/guides/dialect-porting.md`](../docs/guides/dialect-porting.md)
+- 方言键清单：[`../docs/reference/dialect-surface.md`](../docs/reference/dialect-surface.md)
 - 架构决策记录：[`../docs/adr/`](../docs/adr/)
 - 前端导航：[`../EraCore.Web/README.md`](../EraCore.Web/README.md)
 - 测试说明：[`../tests/README.md`](../tests/README.md)

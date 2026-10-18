@@ -83,6 +83,36 @@
 
 `EmueraConsole` 是核心游戏控制台状态对象，不属于 Server 或 Web 层。Server、MAUI 和 Agent 都通过它或其桥接状态消费游戏输出。
 
+## 方言兼容层
+
+era-core **不 fork 核心**来兼容其他 Emuera 分支。上游 fork 的语义键（如 Skia 的 `TINPUTNF`、`SQL_*`）作为**方言模块**登记在内置注册表中，默认对普通游戏隐藏；会话绑定 profile 后，才在解析期进入可见面。
+
+```text
+descriptor（Dialect = Baseline | Snake | Eratw）
+  -> FunctionIdentifier.funcDic / FunctionMethodCreator.methodList
+  -> DialectRegistry：模块 -> profile 闭包 -> 不可变 surface（按 id 缓存）
+  -> GlobalStatic.OpenScope(configData, profileId)
+  -> IdentifierDictionary 构造期一次性过滤 instructionDic / methodDic -> nameDic
+  -> 解析器 / 执行器只读过滤后的表（零 profile 分支）
+```
+
+| profile | 模块闭包 | 用途 |
+|---|---|---|
+| `v24pure`（默认） | `baseline` | 普通 Emuera 游戏；与移植前行为一致 |
+| `snake` | `baseline + snake` | Skia 语义键（17 指令 + 49 函数） |
+| `eratw` | `baseline + snake + eratw` | eraTW 画蛇添足版；当前 `eratw` 模块为空 |
+
+约定：
+
+- 可见面 = 所选模块声明键的并集；**未声明即隐藏**；显式 Hide 胜出；模块顺序不参与键裁决；
+- 同键多 owner 必须显式 `override`/`priority`，否则构造期报错，禁止静默合并；
+- 新增一条指令/函数只改一个 descriptor 声明点，见 [`EraCore.Core/Shared/Runtime/Script/Statements/FunctionIdentifier.Registry.cs`](EraCore.Core/Shared/Runtime/Script/Statements/FunctionIdentifier.Registry.cs) 与 [`Creator.Registry.cs`](EraCore.Core/Shared/Runtime/Script/Statements/Function/Creator.Registry.cs)；
+- `--profile` 在 CLI 启动期 fail-fast；MAUI 用设置页 `app.dialectProfile`，重载游戏生效；agent 透传 `--profile` 并守卫复用 server 的一致性。
+
+SQL 方言键引入 Core 的**唯一原生依赖**：`Microsoft.Data.Sqlite` → `SQLitePCLRaw.bundle_e_sqlite3` → `e_sqlite3.dll`。所有 SQLite 类型收口在 `SqlManager.cs` 单文件；CLI 分发时需保留 `runtimes/win-x64/native/e_sqlite3.dll`（或平铺到 exe 同目录），MAUI Windows 已内置。
+
+详见 [方言移植指南](docs/guides/dialect-porting.md)、[eraTW 运行手册](docs/guides/running-eratw.md) 与 [66 键清单](docs/reference/dialect-surface.md)。
+
 ## Server
 
 `EraCore.Server/` 提供单进程、单活跃会话的 HTTP 服务（**Kestrel 宿主壳**——路由、静态资源、body/token 解析与 HttpResult→IResult 映射，业务协议委托给 Core 共享层）：
@@ -106,7 +136,7 @@
 - `HeadlessEntry`：解析命令行选项并选择运行模式。
 - `HeadlessRunner`：交互式 CLI 模式。
 - `ServerRunner`：启动 `KestrelGameServer`。
-- `HeadlessOptions`：`--ExeDir`、`--server`、`--port` 和协议选项。
+- `HeadlessOptions`：`--ExeDir`、`--server`、`--port`、`--profile` 和协议选项。
 
 T-024 后已删除 stdin pipe 和 JSONL stdin/stdout 模式。脚本、自动化和 `eracore_agent` CLI 统一使用 Server 模式。
 
@@ -119,6 +149,7 @@ T-024 后已删除 stdin pipe 和 JSONL stdin/stdout 模式。脚本、自动化
 - `HttpListenerHost`（Core 内，BCL `System.Net.HttpListener`）：MAUI 托管 Server，起 HTTP+WS，agent 经 localhost 连接**同一会话**（单实例共享）。
 - `JsBridge/` 提供 Windows/Android 平台桥接实现。
 - `MauiProgram` 负责 MAUI 依赖注入和应用启动。
+- 方言 profile 由设置项 `app.dialectProfile` 决定（`BridgeHost` 在建会话前读取并按会话传入），重载游戏生效。
 
 MAUI 启动和游戏选择流程：
 
@@ -192,6 +223,7 @@ agent   -> HTTP/WS -> HttpListenerHost (同一共享层会话)
 - MAUI 使用独立的 `dist-maui/` 和相对 Vite base，避免与 CLI 构建互相覆盖。
 - CLI 发布时 `wwwroot/` 是随 exe 分发的外部静态文件目录，不嵌入单文件 exe。
 - MAUI 不支持 `PublishSingleFile`；应使用框架依赖或独立发布。
+- CLI 的 SQLite 原生库位于 `runtimes/win-x64/native/e_sqlite3.dll`；拷贝分发时必须带 `runtimes/` 整树或把 dll 平铺到 exe 同目录。MAUI Windows 已由 RID 发布压平。
 
 ## 相关文档
 

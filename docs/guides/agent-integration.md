@@ -30,6 +30,8 @@ agent
 2. **本地记录** `.eracore-server.json` — 上次 `start` 拉起的 standalone server。
 3. **`--host:--port` 上已在跑的 server** — 都没有才用 `--eracore-path` 二进制拉起新 server。
 
+方言 profile：`--profile` 只对本次新拉起的 server 生效；复用已有 server 时以该 server 的启动参数为准，请求与记录不一致会直接报错（不会静默用错误可见面加载游戏）。eraTW 画蛇添足版必须 `--profile eratw`，见 [`running-eratw.md`](running-eratw.md)。
+
 ---
 
 ## 运行期产物（不要提交）

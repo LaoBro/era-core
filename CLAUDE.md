@@ -48,6 +48,21 @@ dotnet exec EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.dll --ExeDir test_game --p
 dotnet exec EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.dll --ExeDir test_game --server --port 8080
 ```
 
+### 运行 eraTW 画蛇添足版（方言 profile）
+
+```bash
+# CLI/Server：必须加 --profile eratw
+dotnet exec EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.dll --ExeDir <eraTW> --server --port 8080 --profile eratw
+
+# Agent
+python -m eracore_agent start --game-dir <eraTW> --profile eratw
+
+# MAUI：设置页选“方言兼容 = eratw”，重载游戏生效
+```
+
+CLI/Server 运行 SQL 脚本时需要 `e_sqlite3.dll`；构建输出在
+`EraCore.Cli/bin/Debug/net10.0/runtimes/win-x64/native/e_sqlite3.dll`，拷贝分发时要带 `runtimes/` 整树或平铺到 exe 同目录。详见 [`docs/guides/running-eratw.md`](docs/guides/running-eratw.md)。
+
 ### 构建/运行 MAUI Windows
 
 ```bash
@@ -106,6 +121,8 @@ python -m eracore_agent stop
 ## 必须遵守的约束
 
 - Core/Server/Cli/Maui 开启 `TreatWarningsAsErrors`；新增 warning 必须修复，不能随意增加 `NoWarn`。
+- 新增内置方言指令/函数只改两个声明点之一：`FunctionIdentifier.Registry.cs`（指令）或 `Creator.Registry.cs`（函数）；不要改 `FunctionCode` 枚举，也不要在其它文件重复登记同名键。
+- 方言键默认进 `snake`/`eratw` 模块，**不得泄漏进 `v24pure`**；面快照变更必须显式评审并用 `ERACORE_DIALECT_SURFACE_UPDATE=1` 重写。
 - T-024 后 stdin pipe 和 JSONL stdin/stdout 模式已删除；自动化统一使用 `--server`。
 - 升级 Agent 协议版本时，必须同步更新 C# `TurnRecord.CurrentProtocolVersion` 和 Python `tests/emuera_server.py:PROTOCOL_VERSION`。
 - MAUI 只依赖 Core，不引入 Server/Cli 的 ASP.NET Core 依赖。
@@ -116,6 +133,7 @@ python -m eracore_agent stop
 ## 环境陷阱
 
 - 在 Windows/TRAE 环境中，不要使用 `Start-Process -RedirectStandardOutput ... -Wait` 捕获全量 `dotnet build` 输出。重定向管道可能因缓冲区填满而死锁。直接运行 `dotnet build`，或使用不会阻塞输出读取的方式。
+- CLI 分发时不要只拷 `EraCore.Cli.exe`：SQLite 原生库在 `runtimes/win-x64/native/e_sqlite3.dll`，漏拷会在 SQL 脚本处报 `DllNotFoundException`。MAUI Windows 已由 RID 发布压平到 `win-x64/`。
 - 当前 Windows 沙箱中直接运行 `dotnet build` / `dotnet test` 可能在并行 MSBuild 项目引用解析阶段以“0 错误”但退出码 1 静默失败。遇到时加 `-m:1` 单节点构建/测试，例如：
   ```bash
   dotnet test EraCore.Tests/EraCore.Tests.csproj --no-restore -m:1
@@ -130,8 +148,10 @@ python -m eracore_agent stop
 
 ## 文档索引
 
-- 架构总览：[`ARCHITECTURE.md`](ARCHITECTURE.md)
-- 使用与运维指南：[`docs/guides/README.md`](docs/guides/README.md)（构建与发布 / 性能与加载开关 / Agent 集成）
+- 架构总览：[`ARCHITECTURE.md`](ARCHITECTURE.md)（含方言兼容层）
+- 使用与运维指南：[`docs/guides/README.md`](docs/guides/README.md)（构建与发布 / 性能与加载开关 / Agent 集成 / 方言移植 / eraTW 运行）
+- 方言移植：[`docs/guides/dialect-porting.md`](docs/guides/dialect-porting.md)
+- 方言键清单：[`docs/reference/dialect-surface.md`](docs/reference/dialect-surface.md)
 - Web 前端：[`EraCore.Web/README.md`](EraCore.Web/README.md)
 - 测试：[`tests/README.md`](tests/README.md)
 - 终端行为教训：[`docs/LESSONS/terminal-windows.md`](docs/LESSONS/terminal-windows.md)

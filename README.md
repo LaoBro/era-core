@@ -34,6 +34,8 @@
 
 - **跨平台一套引擎** — Windows 桌面（原生 MAUI）、Android（APK，可选 NativeAOT 加速）、浏览器（Web SPA）多处体验一致。
 
+- **方言兼容层** — 其他 Emuera 分支新增的指令/函数以会话级 profile 隔离，普通游戏保持 `v24pure` 行为；当前已覆盖 eraTW 画蛇添足版所需的 Skia 语义键。见[方言移植指南](docs/guides/dialect-porting.md)。
+
 - **性能大幅优化** — ERB 并行加载 + 未调用函数延迟解析 + IR 缓存，实测启动快一个数量级、内存降至原版约 1/7（见下方[性能](#性能)）。
 
 ***
@@ -59,6 +61,9 @@ dotnet build EraCore.Cli/EraCore.Cli.csproj -c Debug
 # 启动 HTTP 服务器并自动打开浏览器（未显式 --port 时自动挑空闲端口）
 dotnet exec EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.dll --server --open-browser
 ```
+
+> 运行 **eraTW 画蛇添足版**等依赖方言键的游戏时，必须加 `--profile eratw`；CLI/Server 还需保证
+> `e_sqlite3.dll` 可加载。完整说明见[运行 eraTW 画蛇添足版](docs/guides/running-eratw.md)。
 
 浏览器里先看到游戏选择页（输入/浏览主目录 → 点游戏即进），无需手敲游戏路径。手动指定端口：
 
@@ -162,6 +167,9 @@ python tests/run_all.py --binary EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe -
 | [docs/guides/README.md](docs/guides/README.md)                         | 使用与运维指南索引                                                 |
 | [docs/guides/build-and-publish.md](docs/guides/build-and-publish.md)   | 构建与发布：`publish.ps1` 各目标、原生 dotnet 命令、Android NativeAOT 约束 |
 | [docs/guides/performance-tuning.md](docs/guides/performance-tuning.md) | 性能与加载开关：ERB 并行加载、延迟解析、相关警告开关与实测数据                         |
+| [docs/guides/dialect-porting.md](docs/guides/dialect-porting.md)       | 方言指令移植：descriptor、profile 投影、测试与面快照门禁                          |
+| [docs/guides/running-eratw.md](docs/guides/running-eratw.md)           | 运行 eraTW 画蛇添足版：`--profile eratw`、SQLite 原生库、故障排查                  |
+| [docs/reference/dialect-surface.md](docs/reference/dialect-surface.md) | 方言键权威清单：66 键、实现状态与已知差异                                    |
 | [docs/guides/agent-integration.md](docs/guides/agent-integration.md)   | Agent 集成：JSONL 协议、server 复用优先级、运行期产物                      |
 | [EraCore.Web/README.md](EraCore.Web/README.md)                         | Web 前端开发：文件导航与常见修改入口                                      |
 | [tests/README.md](tests/README.md)                                     | 测试套件：夹具、套件与单项运行方式                                         |

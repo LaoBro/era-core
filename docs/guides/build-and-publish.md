@@ -50,6 +50,26 @@ dotnet build EraCore.Cli/EraCore.Cli.csproj -c Debug
 dotnet publish EraCore.Cli/EraCore.Cli.csproj -c Release --no-self-contained -o publish/cli
 ```
 
+### SQLite 原生库（`e_sqlite3.dll`）
+
+`EraCore.Core` 的 SQL 方言函数经 `Microsoft.Data.Sqlite` → `SQLitePCLRaw.bundle_e_sqlite3` 携带原生库。发布/分发时必须保证它能被加载：
+
+| 形态 | 位置 |
+|---|---|
+| CLI 框架依赖（build/publish） | `runtimes/win-x64/native/e_sqlite3.dll`（相对 CLI 输出根） |
+| CLI 扁平分发 | 把上述 dll 平铺到 `EraCore.Cli.exe` 同目录，或保留 `runtimes/` 整树 |
+| MAUI Windows | `win-x64/e_sqlite3.dll`（RID 发布已压平，随应用内置） |
+| Android | 尚未接入 `SqliteRuntime` 式原生库定位，SQL 暂不可用 |
+
+```powershell
+# 只拷 exe 时的最小补丁
+Copy-Item `
+  EraCore.Cli/bin/Release/net10.0/runtimes/win-x64/native/e_sqlite3.dll `
+  <分发目录>/
+```
+
+`cli-aot` 与 SQLite 的组合尚未单独验证；如启用 NativeAOT，需同时检查 ILC 对 SQLitePCLRaw 的裁剪/反射警告，并在目标机实跑一次 `SQL_CONNECT`。
+
 ### MAUI Windows 桌面应用
 
 ```bash
