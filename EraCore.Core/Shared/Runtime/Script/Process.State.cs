@@ -100,45 +100,39 @@ internal sealed class ProcessState : IProcessState
 	{
 		this.trace = trace;
 		this.traceClearGate = traceClearGate;
+		callStack = new CallStack(trace);
 	}
 	readonly ProcessTrace trace;
 	readonly Func<bool>? traceClearGate;
-	readonly List<CalledFunction> functionList = [];
-	private LogicalLine currentLine = null!;
+	/// <summary>
+	/// 候选 4 · 第 2 刀：执行游标与函数调用栈已劈出为 <see cref="CallStack"/>。
+	/// 本类退为协调者（会话状态 + BEGIN 状态机），下列成员仅作转发 ——
+	/// 以守住 ADR-0011 决策四 G1：指令层与 Process 的调用语法零改动。
+	/// </summary>
+	readonly CallStack callStack;
+
 	//private LogicalLine nextLine;
-	int IProcessState.lineCount { get => lineCount; set => lineCount = value; }
-	public int lineCount;
-	public int currentMin;
-	//private bool sequential;
 
-	public bool ScriptEnd
-	{
-		get
-		{
-			return functionList.Count == currentMin;
-		}
-	}
+	public int lineCount { get => callStack.LineCount; set => callStack.LineCount = value; }
 
-	public int functionCount
-	{
-		get
-		{
-			return functionList.Count;
-		}
-	}
+	public int currentMin { get => callStack.CurrentMin; set => callStack.CurrentMin = value; }
+
+	public bool ScriptEnd => callStack.ScriptEnd;
+
+	public int functionCount => callStack.FunctionCount;
 
 	SystemStateCode sysStateCode = SystemStateCode.Title_Begin;
 	BeginType begintype = BeginType.NULL;
 	public bool isBegun { get { return begintype != BeginType.NULL; } }
 
-	public LogicalLine CurrentLine { get { return currentLine; } set { currentLine = value; } }
+	public LogicalLine CurrentLine { get { return callStack.CurrentLine; } set { callStack.CurrentLine = value; } }
 	public LogicalLine ErrorLine
 	{
 		get
 		{
 			//if (RunningLine != null)
 			//	return RunningLine;
-			return currentLine;
+			return callStack.CurrentLine;
 		}
 	}
 
@@ -146,43 +140,20 @@ internal sealed class ProcessState : IProcessState
 	//public LogicalLine RunningLine { get; set; }
 	//1755a 呼び出し元消滅
 	//public bool Sequential { get { return sequential; } }
-	public CalledFunction CurrentCalled
-	{
-		get
-		{
-			//実行関数なしの状態は一部のシステムINPUT以外では存在しないのでGOTO系の処理でしかここに来ない関係上、前提を満たしようがない
-			//if (functionList.Count == 0)
-			//    throw new ExeEE("実行中関数がない");
-			return functionList[^1];
-		}
-	}
+	public CalledFunction CurrentCalled => callStack.CurrentCalled;
 	public SystemStateCode SystemState
 	{
 		get { return sysStateCode; }
 		set { sysStateCode = value; }
 	}
 
-	public void ShiftNextLine()
-	{
-		currentLine = currentLine.NextLine;
-		//nextLine = nextLine.NextLine;
-		//RunningLine = null;
-		//sequential = true;
-		//GlobalStatic.Process.lineCount++;
-		lineCount++;
-	}
+	public void ShiftNextLine() => callStack.ShiftNextLine();
 
 	/// <summary>
 	/// 関数内の移動。JUMPではなくGOTOやIF文など
 	/// </summary>
 	/// <param name="line"></param>
-	public void JumpTo(LogicalLine line)
-	{
-		currentLine = line;
-		lineCount++;
-		//sequential = false;
-		//ShfitNextLine();
-	}
+	public void JumpTo(LogicalLine line) => callStack.JumpTo(line);
 	#region EE_FORCE_QUIT系
 	// public void SetBegin(string keyword)
 	public void SetBegin(string keyword, bool force)
@@ -240,8 +211,7 @@ internal sealed class ProcessState : IProcessState
 		begintype = type;
 		return;
 	err:
-		CalledFunction func = functionList[0];
-		string funcName = func.FunctionName;
+		string funcName = callStack.BottomFunctionName;
 		throw new CodeEE(string.Format(trerror.CanNotUseInstruction.Text, funcName, errmes));
 	}
 	#endregion
@@ -261,10 +231,7 @@ internal sealed class ProcessState : IProcessState
 	{
 		if (!isClone)
 			trace.Clear(traceClearGate);
-		foreach (CalledFunction called in functionList)
-			if (called.CurrentLabel.hasPrivDynamicVar)
-				called.CurrentLabel.ScopeOut();
-		functionList.Clear();
+		callStack.Clear();
 		begintype = BeginType.NULL;
 	}
 
@@ -316,10 +283,7 @@ internal sealed class ProcessState : IProcessState
 			trace.Clear(null);
 			trace.Add("BEGIN:" + begintype.ToString());
 		}
-		foreach (CalledFunction called in functionList)
-			if (called.CurrentLabel.hasPrivDynamicVar)
-				called.CurrentLabel.ScopeOut();
-		functionList.Clear();
+		callStack.Clear();
 		begintype = BeginType.NULL;
 		return;
 	}
@@ -335,225 +299,32 @@ internal sealed class ProcessState : IProcessState
 		Begin();
 	}
 
-	public LogicalLine GetCurrentReturnAddress
-	{
-		get
-		{
-			if (functionList.Count == currentMin)
-				return null!;
-			return functionList[^1].ReturnAddress;
-		}
-	}
+	public LogicalLine GetCurrentReturnAddress => callStack.GetCurrentReturnAddress;
 
-	public LogicalLine GetReturnAddressSequensial(int curerntDepth)
-	{
-		if (functionList.Count == currentMin)
-			return null!;
-		return functionList[functionList.Count - curerntDepth - 1].ReturnAddress;
-	}
+	public LogicalLine GetReturnAddressSequensial(int curerntDepth) => callStack.GetReturnAddressSequensial(curerntDepth);
 
-	public string Scope
-	{
-		get
-		{
-			//スクリプトの実行中処理からしか呼び出されないので、ここはない…はず
-			//if (functionList.Count == 0)
-			//{
-			//    throw new ExeEE("実行中の関数が存在しません");
-			//}
-			if (functionList.Count == 0)
-				return null!;//1756 デバッグコマンドから呼び出されるようになったので
-			return functionList[^1].FunctionName;
-		}
-	}
+	public string Scope => callStack.Scope;
 
+	/// <summary>
+	/// 通常関数の RETURN。清栈语义见 <see cref="CallStack.Return(long)"/>：栈清空且无处可回时
+	/// 由 CallStack 返回 true，此处据此触发挂起的 BEGIN —— 这是 BEGIN 状态机与调用栈之间
+	/// 唯一的耦合点，劈分后保持单向（调用栈不反向依赖 BEGIN）。
+	/// </summary>
 	public void Return(long ret)
 	{
-		if (IsFunctionMethod)
-		{
-			ReturnF(null!);
-			return;
-		}
-		//sequential = false;//いずれにしろ順列ではない。
-		//呼び出し元は全部スクリプト処理
-		//if (functionList.Count == 0)
-		//{
-		//    throw new ExeEE("実行中の関数が存在しません");
-		//}
-		CalledFunction called = functionList[^1];
-		if (called.IsJump)
-		{//JUMPした場合。即座にRETURN RESULTする。
-			if (called.TopLabel.hasPrivDynamicVar)
-				called.TopLabel.ScopeOut();
-			functionList.Remove(called);
-			if (trace.Enabled)
-				trace.Remove();
-			Return(ret);
-			return;
-		}
-		if (!called.IsEvent)
-		{
-			if (called.TopLabel.hasPrivDynamicVar)
-				called.TopLabel.ScopeOut();
-			currentLine = null!;
-		}
-		else
-		{
-			if (called.CurrentLabel.hasPrivDynamicVar)
-				called.CurrentLabel.ScopeOut();
-			//#Singleフラグ付き関数で1が返された。
-			//1752 非0ではなく1と等価であることを見るように修正
-			//1756 全てを終了ではなく#PRIや#LATERのグループごとに修正
-			if (called.IsOnly)
-				called.FinishEvent();
-			else if (called.HasSingleFlag && ret == 1)
-				called.ShiftNextGroup();
-			else
-				called.ShiftNext();//次の同名関数に進む。
-			currentLine = called.CurrentLabel;//関数の始点(@～～)へ移動。呼ぶべき関数が無ければnull
-			if (called.CurrentLabel != null)
-			{
-				lineCount++;
-				if (called.CurrentLabel.hasPrivDynamicVar)
-					called.CurrentLabel.ScopeIn();
-			}
-		}
-		if (trace.Enabled)
-			trace.Remove();
-		//関数終了
-		if (currentLine == null)
-		{
-			currentLine = called.ReturnAddress;
-			functionList.RemoveAt(functionList.Count - 1);
-			if (currentLine == null)
-			{
-				//この時点でfunctionListは空のはず
-				//functionList.Clear();//全て終了。stateEndProcessに処理を返す
-				if (begintype != BeginType.NULL)//BEGIN XXが行なわれていれば
-				{
-					Begin();
-				}
-				return;
-			}
-			lineCount++;
-			//ShfitNextLine();
-			return;
-		}
-		else if (trace.Enabled)
-		{
-			FunctionLabelLine label = called.CurrentLabel!;
-			long line = currentLine.Position!.Value.LineNo;
-			trace.Add(string.Format(trsl.DebugTraceCall.Text, label!.LabelName, label!.Position!.Value.Filename, label.Position!.Value.LineNo, line));
-		}
-		lineCount++;
-		//ShfitNextLine();
-		return;
+		if (callStack.Return(ret) && begintype != BeginType.NULL)
+			Begin();
 	}
 
 	public void IntoFunction(CalledFunction call, UserDefinedFunctionArgument? srcArgs, ExpressionMediator exm)
-	{
-
-		if (call.IsEvent)
-		{
-			foreach (CalledFunction called in functionList)
-			{
-				if (called.IsEvent)
-					throw new CodeEE(trerror.CalleventBeforeFinishEvent.Text);
-			}
-		}
-		if (trace.Enabled)
-		{
-			FunctionLabelLine label = call.CurrentLabel;
-			if (exm != null)
-			{
-				long line = exm.Process.getCurrentLine.Position!.Value.LineNo;
-				if (call.IsJump)
-					trace.Add(string.Format(trsl.DebugTraceJump2.Text, label.LabelName, label.Position!.Value.Filename, label.Position!.Value.LineNo, line));
-				else
-					trace.Add(string.Format(trsl.DebugTraceCall2.Text, label.LabelName, label.Position!.Value.Filename, label.Position!.Value.LineNo, line));
-			}
-			else
-			{
-				if (call.IsJump)
-					trace.Add(string.Format(trsl.DebugTraceJump.Text, label.LabelName, label.Position!.Value.Filename, label.Position!.Value.LineNo));
-				else
-				{
-					string traceLine = $"CALL @{label.LabelName}:{label.Position!.Value.Filename}:{label.Position!.Value.LineNo}";
-					if (call.ReturnAddress != null)
-						traceLine += $" at @{call.ReturnAddress.ParentLabelLine.LabelName}:{call.ReturnAddress.ParentLabelLine.Position!.Value.Filename}:{call.ReturnAddress.Position!.Value.LineNo}";
-					trace.Add(traceLine);
-				}
-			}
-		}
-		if (srcArgs != null)
-		{
-			//引数の値を確定させる
-			srcArgs.SetTransporter(exm!);
-			//プライベート変数更新
-			if (call.TopLabel.hasPrivDynamicVar)
-				call.TopLabel.ScopeIn();
-			//更新した変数へ引数を代入
-			for (int i = 0; i < call.TopLabel.Arg.Length; i++)
-			{
-				if (srcArgs.Arguments[i] != null)
-				{
-					if (call.TopLabel.Arg[i].Identifier.IsReference)
-						((ReferenceToken)call.TopLabel.Arg[i].Identifier).SetRef(srcArgs.TransporterRef[i]);
-					else if (srcArgs.Arguments[i].GetOperandType() == typeof(long))
-						call.TopLabel.Arg[i].SetValue(srcArgs.TransporterInt[i], exm!);
-					else
-						call.TopLabel.Arg[i].SetValue(srcArgs.TransporterStr[i], exm!);
-				}
-			}
-		}
-		else//こっちに来るのはシステムからの呼び出し=引数は存在しない関数のみ ifネストの外に出していい気もしないでもないがはてさて
-		{
-			//プライベート変数更新
-			if (call.TopLabel.hasPrivDynamicVar)
-				call.TopLabel.ScopeIn();
-		}
-		functionList.Add(call);
-		//sequential = false;
-		currentLine = call.CurrentLabel;
-		lineCount++;
-		//ShfitNextLine();
-	}
+		=> callStack.IntoFunction(call, srcArgs, exm);
 
 	#region userdifinedmethod
-	public bool IsFunctionMethod
-	{
-		get
-		{
-			return functionList[currentMin].TopLabel.IsMethod;
-		}
-	}
+	public bool IsFunctionMethod => callStack.IsFunctionMethod;
 
-	public SingleTerm MethodReturnValue = null!;
+	public SingleTerm MethodReturnValue { get => callStack.MethodReturnValue; set => callStack.MethodReturnValue = value; }
 
-	public void ReturnF(SingleTerm ret)
-	{
-		//読み込み時のチェック済みのはず
-		//if (!IsFunctionMethod)
-		//    throw new ExeEE("ReturnFと#FUNCTIONのチェックがおかしい");
-		//sequential = false;//いずれにしろ順列ではない。
-		//呼び出し元はRETURNFコマンドか関数終了時のみ
-		//if (functionList.Count == 0)
-		//    throw new ExeEE("実行中の関数が存在しません");
-		//非イベント呼び出しなので、これは起こりえない
-		//else if (functionList.Count != 1)
-		//    throw new ExeEE("関数が複数ある");
-		if (trace.Enabled)
-		{
-			trace.Remove();
-		}
-		//OutはGetValue側で行う
-		//functionList[0].TopLabel.Out();
-		currentLine = functionList[^1].ReturnAddress;
-		functionList.RemoveAt(functionList.Count - 1);
-		//nextLine = null;
-		MethodReturnValue = ret;
-		return;
-	}
+	public void ReturnF(SingleTerm ret) => callStack.ReturnF(ret);
 
 	#endregion
 
@@ -563,10 +334,12 @@ internal sealed class ProcessState : IProcessState
 	// functionListのコピーを必要とする呼び出し元が無かったのでコピーしないことにする。
 	public ProcessState Clone()
 	{
+		// 候选 4 · 第 2 刀：调用栈历来不随 Clone 复制（functionList / MethodReturnValue /
+		// currentMin / lineCount 全部不复制），只带 PC —— 新 CallStack 为空栈，与原先一致。
 		ProcessState ret = new(trace, traceClearGate)
 		{
 			isClone = true,
-			currentLine = currentLine,
+			CurrentLine = callStack.CurrentLine,
 			sysStateCode = sysStateCode,
 			begintype = begintype
 		};
