@@ -144,25 +144,26 @@ internal static class SrcContentCache
 		try
 		{
 			// 生产序上本写点先于 IR 落盘（Process.Initialize else 分支 vs LoadErbDir 收尾）——
-			// 首建轮 IRCache/<gameKey>/ 目录尚不存在，必须自建（era_ir.dat 写器不管本文件的目录）
-			Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+			// 首建轮 IRCache/<gameKey>/ 目录尚不存在，必须自建（era_ir.dat 写器不管本文件的目录）；
+			// ADR-0048：目录自建已由 SafCompat.OpenWrite 内部承担（父目录预建）。
 			var tmp = path + ".tmp";
-			using (var w = new BinaryWriter(File.Create(tmp)))
+			using (var w = new BinaryWriter(SafCompat.OpenWrite(tmp)))
 			{
 				w.Write(Magic[0]); w.Write(Magic[1]); w.Write(Magic[2]); w.Write(Magic[3]);
 				w.Write(FormatVersion);
 				WriteSection(w, csvEntries);
 				WriteSection(w, erhEntries);
 			}
-			if (new FileInfo(tmp).Length > MaxFileBytes)
+			SafCompat.TryGetFileStats(tmp, out long writtenBytes, out _);
+			if (writtenBytes > MaxFileBytes)
 			{
-				File.Delete(tmp);
+				SafCompat.Delete(tmp);
 				EmueraLog.Info("SrcContentCache", $"write skipped: size exceeds bound {MaxFileBytes}");
 				return false;
 			}
 			if (!SafCompat.TryAtomicReplaceLocal(tmp, path))
 			{
-				try { File.Delete(tmp); } catch { /* 残留 tmp 无害（下次写覆盖） */ }
+				try { SafCompat.Delete(tmp); } catch { /* 残留 tmp 无害（下次写覆盖） */ }
 				return false;
 			}
 			return true;
@@ -200,12 +201,12 @@ internal static class SrcContentCache
 			if (!Config.Config.SrcContentCache || !SafPath.IsContentUri(env.ErbDir))
 				return;
 			var path = GetSrcCachePath(Program.ExeDir);
-			if (!File.Exists(path))
+			if (!SafCompat.FileExists(path))
 				return;
 			var sw = System.Diagnostics.Stopwatch.StartNew();
 			if (!TryReadAndFill(env, path, out var lines, out var reason))
 			{
-				try { File.Delete(path); } catch { /* 删除失败无害（下轮重写覆盖） */ }
+				try { SafCompat.Delete(path); } catch { /* 删除失败无害（下轮重写覆盖） */ }
 				EmueraLog.Info("SrcContentCache", $"miss: {reason} → invalidated (build round rebuilds)");
 				return;
 			}
@@ -236,7 +237,13 @@ internal static class SrcContentCache
 		int totalEntries = 0;
 		try
 		{
-			using var r = new BinaryReader(File.OpenRead(path), Encoding.UTF8, leaveOpen: false);
+			// ADR-0048：读经 SafCompat（本地/content URI 单点）；打不开 = miss（对齐原 catch → false）。
+			if (SafCompat.OpenRead(path) is not { } stream)
+			{
+				reason = "unreadable";
+				return false;
+			}
+			using var r = new BinaryReader(stream, Encoding.UTF8, leaveOpen: false);
 			var mag = new char[4];
 			mag[0] = r.ReadChar(); mag[1] = r.ReadChar(); mag[2] = r.ReadChar(); mag[3] = r.ReadChar();
 			if (mag[0] != Magic[0] || mag[1] != Magic[1] || mag[2] != Magic[2] || mag[3] != Magic[3])

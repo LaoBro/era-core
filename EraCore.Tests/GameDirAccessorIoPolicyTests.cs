@@ -77,11 +77,10 @@ public class GameDirAccessorIoPolicyTests
         // ADR-0036（不可编译分支）+ ADR-0037（可编译读缝）+ ADR-0038（sav 挪档）后**已归零**：
         // 新增游戏树直连 IO 会落进下面的「无登记 ⇒ 违规」分支，立即转红。
 
-        // ── 待收敛（AppPrivate）：应用私有域 / 引擎自有派生数据（F-4 豁免）──────────────
-        // ADR-0048（2026-10-18）：ErbIrCache 的 10 处已归零——文件级走 SafCompat、目录级走 AppDataIo，
-        // 行已删除（守卫要求：计数归零必须删行，清单只保留「现役欠账」）。
-        ["Shared/Runtime/Script/Loader/SrcContentCache.cs"] = new(
-            "issues/10 10-B CSV/ERH 源内容缓存：与 era_ir.dat 同布局、同生命周期", Domain.AppPrivate, 8),
+        // ── 待收敛（AppPrivate）：**已清空** ───────────────────────────────────────
+        // ADR-0048（2026-10-18，14 票批 B/C）：ErbIrCache（10 处）与 SrcContentCache（8 处）全部归零——
+        // 文件级走 SafCompat、目录级走 AppDataIo，两行均已删除。AppPrivate 域此后无欠账：
+        // 新增任何该域的直连 IO 会落进「无登记 ⇒ 违规」分支，立即转红。
 
         // ── 永久豁免（Platform）：依附于具体运行形态，与游戏树无关 —— 不打算收敛 ────────
         ["GamePaths.cs"] = new(
