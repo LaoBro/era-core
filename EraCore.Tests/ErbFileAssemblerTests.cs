@@ -105,6 +105,50 @@ public sealed class ErbFileAssemblerTests
 		Assert.Contains(art.Warnings, w => w.WarningMes.Length > 0);
 	}
 
+	/// <summary>
+	/// ADR-0039：<b>两层断言</b>——27 处显式写入（本文件 12 + <c>PPState</c> 15）与
+	/// <c>LogicalLineParser</c> 等约 54 处经 <c>AsyncLocal</c> 缓冲的间接告警，必须
+	/// <b>按行序交错</b>落在同一个产物列表里，并在 <c>Merge</c> 后保持同一顺序进全局列表。
+	/// <para>
+	/// 语料刻意造成"装配器 → PPState → 装配器"的三行交错：<c>#X</c>（InvalidSharp，装配器直写）、
+	/// <c>[SKIPSTART] extra</c>（HasTooManyArg，来自 PPState）、<c>#Y</c>（再次 InvalidSharp）。
+	/// 任何一处绕过目的地直投全局，中间那条就会提前进全局、<c>Merge</c> 后顺序变成 [2,1,3]——
+	/// 只剩第一层的断言抓不到，必须两层一起比。
+	/// </para>
+	/// </summary>
+	[Fact]
+	public async Task Warnings_from_both_sources_are_interleaved_in_source_order()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		ParserMediator.ClearWarningList();
+		var path = h.WriteErb("W.ERB", "#X\n[IF]\nRETURN\n@F\nRETURN\n");
+
+		var ctx = NewContext(h, new LabelDictionary());
+		var art = ErbFileAssembler.Generate(path, "W.ERB", [], deferCrossFileChecks: false,
+			replayOnFailure: true, ctx, new ErbFileAssembler.Stats());
+
+		// 层 1：产物层——两类来源按行序交错（位置是判别器，与本地化文案无关）
+		var lineNos = art.Warnings.Select(w => w.WarningPos!.Value.LineNo).ToList();
+		Assert.Equal([1, 2, 3], lineNos.Take(3)); // 前三条即 #X(装配器) → [IF](PPState) → RETURN(装配器)
+		var messages = art.Warnings.Select(w => w.WarningMes).ToList();
+		Assert.Equal(3, messages.Take(3).Distinct().Count()); // 三条文案互不相同，顺序断言才有意义
+
+		// 层 2：发射层——Merge 后这三条在全局序列里的相对顺序必须与产物层一致
+		//（用子序列判定而非逐位相等：产物里可能另有无害告警，但交错的三条不能被拆散/重排）
+		_ = ErbFileAssembler.Merge(art, [], ctx);
+		var emitted = EmittedWarnings(h);
+		var positions = new List<int>();
+		foreach (var message in messages.Take(3))
+		{
+			var at = emitted.FindIndex(line => line.Contains(message));
+			Assert.True(at >= 0, $"该警告未发射到全局序列：{message}");
+			positions.Add(at);
+		}
+		Assert.True(positions[0] < positions[1] && positions[1] < positions[2],
+			$"两条来源的警告序被打乱：产物层 1→2→3，全局层落在 {string.Join(",", positions)}");
+	}
+
 	// ===== 夹具 =====
 
 	/// <summary>一次完整装配：按 <paramref name="defer"/> 决定跨文件检查即时还是延后。</summary>

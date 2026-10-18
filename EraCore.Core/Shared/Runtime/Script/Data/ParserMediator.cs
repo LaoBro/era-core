@@ -138,7 +138,40 @@ internal partial class ParserMediator
 
 	public static void Warn(string str, ScriptPosition? pos, int level)
 	{
-		Warn(str, pos, level, null!);
+		// ADR-0039：目的地改为显式参数——缓冲激活时进 per-file 缓冲，否则进全局列表。
+		// 过滤规则与 WarnTo 共用，不再经四参重载绕一圈。
+		WarnTo(warningBuffer.Value ?? warningList, str, pos, level);
+	}
+
+	/// <summary>
+	/// ADR-0039：全局警告列表（E 组等"立即进全局"的调用方显式引用它，不再依赖隐式默认）。
+	/// </summary>
+	internal static List<ParserWarning> GlobalWarningTarget => warningList;
+
+	/// <summary>
+	/// ADR-0039：把一条警告写入<b>指定目的地</b>。
+	/// <para>
+	/// 过滤规则与原 <c>Warn(str, pos, level)</c> 逐字相同（级别门 + console 门）——27 处注入点与
+	/// 缓冲/全局两条老路径共用本方法，避免"通道实现里复制一份过滤"造成的漂移。
+	/// </para>
+	/// <para>写全局列表时加锁（并行 worker 共用）；写 per-file 产物列表时不加锁（单写者契约）。</para>
+	/// </summary>
+	internal static void WarnTo(List<ParserWarning> destination, string str, ScriptPosition? pos, int level)
+	{
+		if (level < Config.DisplayWarningLevel && !Program.AnalysisMode)
+			return;
+		if (console == null || console.RunERBFromMemory)
+			return;
+		var warning = new ParserWarning(str, pos, level, null!);
+		if (ReferenceEquals(destination, warningList))
+		{
+			lock (warningListLock)
+			{
+				warningList.Add(warning);
+			}
+			return;
+		}
+		destination.Add(warning);
 	}
 
 	public static void Warn(string str, ScriptPosition? pos, int level, string stack)
@@ -236,4 +269,15 @@ internal partial class ParserMediator
 		console?.PrintSingleLine(str);
 	}
 
+}
+
+/// <summary>
+/// ADR-0039：把 <c>List&lt;ParserMediator.ParserWarning&gt;</c> 当作警告目的地使用——27 处注入点写
+/// <c>warnings.Warn(str, position, 1)</c> 而不是 <c>ParserMediator.Warn(...)</c>，
+/// 过滤规则统一由 <see cref="ParserMediator.WarnTo"/> 承担。
+/// </summary>
+internal static class ParserWarningSinkExtensions
+{
+	internal static void Warn(this List<ParserMediator.ParserWarning> destination, string str, ScriptPosition? pos, int level)
+		=> ParserMediator.WarnTo(destination, str, pos, level);
 }

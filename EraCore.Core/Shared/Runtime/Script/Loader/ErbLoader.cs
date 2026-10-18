@@ -1594,7 +1594,8 @@ internal sealed class ErbLoader
 		FunctionLabelLine? label = null;
 		LogicalLine tail = null!;
 		// [ 预处理评估：源路径重演 [SKIPSTART][SKIPEND] 等保「故意不平衡」块不被误解析；blob 源无 [ 行则 no-op。
-		var ppstate = new PPState(env, idDic);
+		// ADR-0039：惰性物化路径没有 per-file 缓冲，显式指定全局目标（与改动前"立即进全局"逐位一致）。
+		var ppstate = new PPState(env, idDic, ParserMediator.GlobalWarningTarget);
 		MaterializeDiag? mdiag = _materializeDiag;
 		// issue 07 P1b：词法归属切换（mdiag == null 时完全不碰静态字段——运行期物化路径零侵入）。
 		ParserProbeScope EnterScope(ParserProbeScope sc)

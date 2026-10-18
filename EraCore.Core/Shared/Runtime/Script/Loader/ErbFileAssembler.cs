@@ -237,7 +237,9 @@ internal static class ErbFileAssembler
 			art.ConsoleOps.Add(c => c.PrintError(string.Format(trerror.FailedOpenFile.Text, eReader.Filename)));
 			return; // ADR-0019：文件打不开直接跳过，避免空 eReader 进入解析循环
 		}
-		var ppstate = new PPState(ctx.Env, ctx.IdDic);
+		// ADR-0039：警告目的地显式注入（本文件产物列表）——Begin/End 缓冲协议仍保留，
+		// 因为 LogicalLineParser 等被调方还有 ~54 处经 AsyncLocal 落进同一个列表（见 ADR 事实 4）。
+		var ppstate = new PPState(ctx.Env, ctx.IdDic, art.Warnings);
 		// 并行调度：跨文件 #ONLY 重複检查延后（共享 isOnlyEvent 是同窗口其他文件未合并的不完整快照），
 		// 传独立空视图禁用即时检查；串行调度传共享快照即时检查（01 行为）。
 		List<string> mergedOnlyView = deferCrossFileChecks ? [] : isOnlyEvent;
@@ -287,11 +289,11 @@ internal static class ErbFileAssembler
 				LexicalAnalyzer.SkipWhiteSpace(st);
 				string token2 = LexicalAnalyzer.ReadSingleIdentifier(st);
 				if (string.IsNullOrEmpty(token) || st.Current != ']')
-					ParserMediator.Warn(trerror.InvalidSBrackets.Text, position, 1);
+					art.Warnings.Warn(trerror.InvalidSBrackets.Text, position, 1);
 				ppstate.AddKeyWord(token, token2, position);
 				st.ShiftNext();
 				if (!st.EOS)
-					ParserMediator.Warn(string.Format(trerror.IgnoreAfterPreprosessor.Text, token), position, 1);
+					art.Warnings.Warn(string.Format(trerror.IgnoreAfterPreprosessor.Text, token), position, 1);
 				continue;
 			}
 			//if ((skip) || (env.DebugMode && ifndebug) || (!env.DebugMode && ifdebug))
@@ -304,7 +306,7 @@ internal static class ErbFileAssembler
 			{
 				if (lastLine == null || lastLine is not FunctionLabelLine funcLine)
 				{
-					ParserMediator.Warn(trerror.InvalidSharp.Text, position, 1);
+					art.Warnings.Warn(trerror.InvalidSharp.Text, position, 1);
 					continue;
 				}
 				// 占位锚：本 # 行首个警告的槽位（跨文件 ONLY 检查占位须插到这里——
@@ -358,7 +360,7 @@ internal static class ErbFileAssembler
 					{
 						art.HasError = true;
 
-						ParserMediator.Warn(nextLine.ErrMes, position, 2);
+						art.Warnings.Warn(nextLine.ErrMes, position, 2);
 					}
 					else// if (label is FunctionLabelLine)
 					{
@@ -383,7 +385,7 @@ internal static class ErbFileAssembler
 								if (seniorLabel != null)
 								{
 									//output.NewLine();
-									ParserMediator.Warn(string.Format(trerror.FuncIsAlreadyDefined.Text, label.LabelName, seniorLabel.Position!.Value.Filename, seniorLabel.Position!.Value.LineNo.ToString()), position, 1);
+									art.Warnings.Warn(string.Format(trerror.FuncIsAlreadyDefined.Text, label.LabelName, seniorLabel.Position!.Value.Filename, seniorLabel.Position!.Value.LineNo.ToString()), position, 1);
 									funcCount = -1;
 								}
 							}
@@ -414,7 +416,7 @@ internal static class ErbFileAssembler
 							if (byName.TryGetValue(gotoLabel.LabelName, out GotoLabelLine? firstGoto))
 							{
 								ScriptPosition pos = firstGoto.Position!.Value;
-								ParserMediator.Warn(string.Format(trerror.LabelIsAlreadyDefined.Text, gotoLabel.LabelName, pos.Filename, pos.LineNo.ToString()), position, 2);
+								art.Warnings.Warn(string.Format(trerror.LabelIsAlreadyDefined.Text, gotoLabel.LabelName, pos.Filename, pos.LineNo.ToString()), position, 2);
 							}
 							else
 								byName.Add(gotoLabel.LabelName, gotoLabel);
@@ -424,7 +426,7 @@ internal static class ErbFileAssembler
 				if (nextLine is InvalidLine)
 				{
 					art.HasError = true;
-					ParserMediator.Warn(nextLine.ErrMes, position, 2);
+					art.Warnings.Warn(nextLine.ErrMes, position, 2);
 				}
 			}
 			else
@@ -446,7 +448,7 @@ internal static class ErbFileAssembler
 				//    st = new StringStream(replacedLine);
 				//}
 				if (lastLabelLine == null)
-					ParserMediator.Warn(trerror.LineBeforeFunc.Text, position, 1);
+					art.Warnings.Warn(trerror.LineBeforeFunc.Text, position, 1);
 				nextLine = LogicalLineParser.ParseLine(st, position, ctx.Output, lastLabelLine!);
 
 
@@ -455,7 +457,7 @@ internal static class ErbFileAssembler
 				if (nextLine is InvalidLine)
 				{
 					art.HasError = true;
-					ParserMediator.Warn(nextLine.ErrMes, position, 2);
+					art.Warnings.Warn(nextLine.ErrMes, position, 2);
 				}
 				else if (ctx.UseNewRandom &&
 										nextLine is InstructionLine instruction)
@@ -463,13 +465,13 @@ internal static class ErbFileAssembler
 					switch (instruction.FunctionCode)
 					{
 						case FunctionCode.RANDOMIZE:
-							ParserMediator.Warn(trerror.IgnoreRandomize.Text, position, 0);
+							art.Warnings.Warn(trerror.IgnoreRandomize.Text, position, 0);
 							break;
 						case FunctionCode.DUMPRAND:
-							ParserMediator.Warn(trerror.CanNotUseDumprand.Text, position, 0);
+							art.Warnings.Warn(trerror.CanNotUseDumprand.Text, position, 0);
 							break;
 						case FunctionCode.INITRAND:
-							ParserMediator.Warn(trerror.CanNotUseInitrand.Text, position, 0);
+							art.Warnings.Warn(trerror.CanNotUseInitrand.Text, position, 0);
 							break;
 						default:
 							break;

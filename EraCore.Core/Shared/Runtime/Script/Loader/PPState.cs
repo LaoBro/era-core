@@ -13,8 +13,8 @@ namespace MinorShift.Emuera.Runtime.Script.Loader;
 /// 「与宿主之间无双向依赖」列为设计属性），故外移为顶层 <c>internal</c> 共享件。
 /// </para>
 /// <para>
-/// 自包含：只经构造注入 <c>env</c> / <c>idDic</c>（ADR-0012，原走 <c>Program.DebugMode</c> /
-/// <c>GlobalStatic.IdentifierDictionary</c> 静态），其余只碰 <see cref="ParserMediator"/> 静态。
+/// 自包含：经构造注入 <c>env</c> / <c>idDic</c>（ADR-0012）与警告目的地 <c>warnings</c>（ADR-0039，
+/// 原走 <see cref="ParserMediator"/> 静态）。
 /// 因与两处消费方同命名空间，外移后调用点无需改动。
 /// </para>
 /// </summary>
@@ -24,7 +24,14 @@ internal sealed class PPState
 	// 现经构造注入从外层 ErbLoader 传入。
 	readonly LoaderEnv env;
 	readonly IdentifierDictionary idDic;
-	internal PPState(LoaderEnv env, IdentifierDictionary idDic) { this.env = env; this.idDic = idDic; }
+	// ADR-0039：警告目的地显式注入——装配期传文件产物列表，惰性物化传全局目标。
+	readonly List<ParserMediator.ParserWarning> warnings;
+	internal PPState(LoaderEnv env, IdentifierDictionary idDic, List<ParserMediator.ParserWarning> warnings)
+	{
+		this.env = env;
+		this.idDic = idDic;
+		this.warnings = warnings;
+	}
 
 	bool skip;
 	bool done;
@@ -41,12 +48,12 @@ internal sealed class PPState
 			case "SKIPSTART":
 				if (!string.IsNullOrEmpty(token2))
 				{
-					ParserMediator.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
+					warnings.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
 					break;
 				}
 				if (skip)
 				{
-					ParserMediator.Warn(trerror.DuplicateSkipstart.Text, position, 1);
+					warnings.Warn(trerror.DuplicateSkipstart.Text, position, 1);
 					break;
 				}
 				ppMatch.Push("SKIPEND");
@@ -59,7 +66,7 @@ internal sealed class PPState
 			case "IF_DEBUG":
 				if (!string.IsNullOrEmpty(token2))
 				{
-					ParserMediator.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
+					warnings.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
 					break;
 				}
 				ppMatch.Push("ELSEIF");
@@ -71,7 +78,7 @@ internal sealed class PPState
 			case "IF_NDEBUG":
 				if (!string.IsNullOrEmpty(token2))
 				{
-					ParserMediator.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
+					warnings.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
 					break;
 				}
 				ppMatch.Push("ELSEIF");
@@ -83,7 +90,7 @@ internal sealed class PPState
 			case "IF":
 				if (string.IsNullOrEmpty(token2))
 				{
-					ParserMediator.Warn(string.Format(trerror.MissingArguments.Text, token), position, 1);
+					warnings.Warn(string.Format(trerror.MissingArguments.Text, token), position, 1);
 					break;
 				}
 				ppMatch.Push("ELSEIF");
@@ -95,12 +102,12 @@ internal sealed class PPState
 			case "ELSEIF":
 				if (string.IsNullOrEmpty(token2))
 				{
-					ParserMediator.Warn(string.Format(trerror.MissingArguments.Text, token), position, 1);
+					warnings.Warn(string.Format(trerror.MissingArguments.Text, token), position, 1);
 					break;
 				}
 				if (ppMatch.Count == 0 || ppMatch.Pop() != "ELSEIF")
 				{
-					ParserMediator.Warn(string.Format(trerror.IsInvalid.Text, "[ELSEIF]"), position, 1);
+					warnings.Warn(string.Format(trerror.IsInvalid.Text, "[ELSEIF]"), position, 1);
 					break;
 				}
 				ppMatch.Push("ELSEIF");
@@ -110,12 +117,12 @@ internal sealed class PPState
 			case "ELSE":
 				if (!string.IsNullOrEmpty(token2))
 				{
-					ParserMediator.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
+					warnings.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
 					break;
 				}
 				if (ppMatch.Count == 0 || ppMatch.Pop() != "ELSEIF")
 				{
-					ParserMediator.Warn(string.Format(trerror.IsInvalid.Text, "[ELSE]"), position, 1);
+					warnings.Warn(string.Format(trerror.IsInvalid.Text, "[ELSE]"), position, 1);
 					break;
 				}
 				ppMatch.Push("ENDIF");
@@ -127,13 +134,13 @@ internal sealed class PPState
 				{
 					if (!string.IsNullOrEmpty(token2))
 					{
-						ParserMediator.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
+						warnings.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
 						break;
 					}
 					string match = ppMatch.Count == 0 ? "" : ppMatch.Pop();
 					if (match != "SKIPEND")
 					{
-						ParserMediator.Warn(trerror.UnexpectedSkipend.Text, position, 1);
+						warnings.Warn(trerror.UnexpectedSkipend.Text, position, 1);
 						break;
 					}
 					skip = false;
@@ -145,13 +152,13 @@ internal sealed class PPState
 				{
 					if (!string.IsNullOrEmpty(token2))
 					{
-						ParserMediator.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
+						warnings.Warn(string.Format(trerror.HasTooManyArg.Text, token), position, 1);
 						break;
 					}
 					string match = ppMatch.Count == 0 ? "" : ppMatch.Pop();
 					if (match != "ENDIF" && match != "ELSEIF")
 					{
-						ParserMediator.Warn(trerror.UnexpectedMacroEndif.Text, position, 1);
+						warnings.Warn(trerror.UnexpectedMacroEndif.Text, position, 1);
 						break;
 					}
 					Disabled = disabledStack.Pop();
@@ -159,7 +166,7 @@ internal sealed class PPState
 				}
 				break;
 			default:
-				ParserMediator.Warn(trerror.UnrecognizedPreprosessor.Text, position, 1);
+				warnings.Warn(trerror.UnrecognizedPreprosessor.Text, position, 1);
 				break;
 		}
 		if (skip)
@@ -173,7 +180,7 @@ internal sealed class PPState
 			string match = ppMatch.Pop();
 			if (match == "ELSEIF")
 				match = "ENDIF";
-			ParserMediator.Warn(string.Format(trerror.TheresNo.Text, match), position, 1);
+			warnings.Warn(string.Format(trerror.TheresNo.Text, match), position, 1);
 		}
 	}
 }
