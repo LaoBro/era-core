@@ -114,7 +114,7 @@ internal sealed class ErbLoadScheduler
 			return;
 		int window = Math.Clamp(TestWindowOverride ?? strategy.FileWindow, 1, pending.Count);
 		// 06-K1 自证：knob= 壳层请求词表值，window= 生效值（auto=与无旋钮逐位一致）——取证以此对账
-		EmueraLog.Info("ErbLoader", $"LoadPendingParallel: files={pending.Count}, window={window} knob={strategy.DegreeKnobString}");
+		EmueraLog.Info("ErbLoadScheduler", $"LoadPendingParallel: files={pending.Count}, window={window} knob={strategy.DegreeKnobString}");
 		// 外部取消（预留 reload/会话退出）+ 内部取消（本轮首错收束）链接；worker 只见合成令牌
 		using var cts = CancellationTokenSource.CreateLinkedTokenSource(externalCt);
 		// 运行表只持有窗口内任务（旧实现：tasks[pending.Count] 全量数组长期持有全部任务引用）
@@ -146,7 +146,7 @@ internal sealed class ErbLoadScheduler
 				if (result.Exception != null)
 				{
 					// 首错按序处理：回放该文件已有的控制台输出/警告一次，保留原异常类型与堆栈抛出
-					EmueraLog.Error("ErbLoader",
+					EmueraLog.Error("ErbLoadScheduler",
 						$"LoadPendingParallel: fail idx={result.Index} file={result.Filename} stage={(result.Canceled ? "cancel" : "generate")} ex={result.Exception.GetType().Name}");
 					if (result.Artifact != null)
 					{
@@ -160,7 +160,7 @@ internal sealed class ErbLoadScheduler
 				// 判别日志（handoff §6.3）：每 32 文件输出窗口占用 + GC 增量，卡住阶段可由 logcat 直接判别
 				if ((merged & 0x1F) == 0)
 				{
-					EmueraLog.Info("ErbLoader", $"LoadPendingParallel: merged={merged}/{pending.Count} active={running.Count} window={window} ms={phaseSw.ElapsedMilliseconds} {GcSnapshot.Diff(gcLast)}");
+					EmueraLog.Info("ErbLoadScheduler", $"LoadPendingParallel: merged={merged}/{pending.Count} active={running.Count} window={window} ms={phaseSw.ElapsedMilliseconds} {GcSnapshot.Diff(gcLast)}");
 					gcLast = GcSnapshot.Take();
 				}
 			}
@@ -181,16 +181,16 @@ internal sealed class ErbLoadScheduler
 				catch (Exception ex)
 				{
 					// 次生异常（含取消 OCE）：只记录，不覆盖正在传播的首错
-					EmueraLog.Error("ErbLoader", $"LoadPendingParallel: tail idx={kv.Key} ended with {ex.GetType().Name}: {ex.Message}");
+					EmueraLog.Error("ErbLoadScheduler", $"LoadPendingParallel: tail idx={kv.Key} ended with {ex.GetType().Name}: {ex.Message}");
 				}
 			}
-			EmueraLog.Info("ErbLoader",
+			EmueraLog.Info("ErbLoadScheduler",
 				$"LoadPendingParallel: window={window} started={nextToStart} merged={merged} peakActive={peakActive} canceled={Volatile.Read(ref canceledCount)} ms={phaseSw.ElapsedMilliseconds}");
 			// issues/17 取证：本轮 genmerge 的「IR 桩 / 回落读源」分账。
 			// H1 判据：irAvailable=True 时 fallbackOnIrHit 应恒为 0；非 0 即"IR 命中轮白读全库源文件"。
 			// issues/17 观测行（A′ 体检）：命中轮 fallbackSrc 应为 0、irNoFunc 应为"0 函数文件数"；
 			// fallbackOnIrHit 恒 0 否则判据有漏。冷枚举轮（IR 不可用）fallbackSrc=n、irStub=0 属常态。
-			EmueraLog.Info("ErbLoader",
+			EmueraLog.Info("ErbLoadScheduler",
 				$"LoadPendingParallel(issues/17): irStub={Volatile.Read(ref stats.IrStubFiles)} irNoFunc={Volatile.Read(ref stats.IrNoFuncFiles)} fallbackSrc={Volatile.Read(ref stats.SourceFallbackFiles)} fallbackOnIrHit={Volatile.Read(ref stats.SourceFallbackOnIrHit)}");
 		}
 	}
