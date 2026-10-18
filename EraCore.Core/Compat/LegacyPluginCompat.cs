@@ -33,7 +33,7 @@ internal static class LegacyPluginCompat
     /// 幂等安装 <see cref="AssemblyLoadContext.Default.Resolving"/> 处理器，并记住插件目录与其访问器。
     /// <para>
     /// <b>不变量 F-1</b>：依赖探测的存在性判定原为裸 <c>File.Exists</c>；已改走
-    /// <paramref name="dirAccessor"/> ——该项已收敛，<b>不再</b>计入 ARCHITECTURE.md §4.3 例外清单。
+    /// <paramref name="dirAccessor"/> ——该项已收敛。
     /// 注意此处<b>不</b>放宽 <see cref="CanLoadPluginsHere"/>：<c>Assembly.LoadFrom</c> 仍需真实路径，
     /// content URI 下本resolver 只是恒解析不到（既有权衡，未变）。
     /// </para>

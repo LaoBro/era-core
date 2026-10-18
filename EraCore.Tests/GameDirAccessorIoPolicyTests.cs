@@ -11,10 +11,15 @@ namespace MinorShift.Emuera.Tests;
 /// <summary>
 /// 不变量 F-1 的清单守卫：<see cref="IGameDirAccessor"/> 是游戏树 IO 的唯一接缝，
 /// Core 内任何直连 <c>File.*</c> / <c>Directory.*</c> / <c>new FileStream/FileInfo/DirectoryInfo</c>
-/// 都必须<b>显式登记并说明理由</b>。登记项带调用数上限＝快照，
+/// 都必须<b>在这里显式登记并说明理由</b>。登记项带调用数上限＝快照，
 /// <b>减少调用无需改清单（Cap 是上限），但计数归零必须删行</b>；<b>新增或换(new)文件必转红</b>——让「例外蔓延」在 CI 上被拦下。
 /// <para>
-/// 与 <see cref="SafIoPolicyTests"/> 的分工：本类守「全 Core 例外清单」（ARCHITECTURE.md 4.3）；
+/// ⚠️ <b>本表是例外清单的唯一真值</b>：<see cref="KnownDirectIo"/> 的 <c>Reason</c> / <c>Domain_</c> / <c>Cap</c>
+/// 就是那条清单本身，不再向任何文档镜像。ARCHITECTURE.md §4 只保留不变量 F-1 / F-4 / F-5 与指向本类的指针——
+/// 「两处维护」正是过去清单与文档悄悄漂移的根因。
+/// </para>
+/// <para>
+/// 与 <see cref="SafIoPolicyTests"/> 的分工：本类守「全 Core 例外清单」；
 /// 后者守 SAF content URI 的路径语义（特定的非法 <c>Path.*</c> 用法），二者不重叠。
 /// </para>
 /// </summary>
@@ -30,7 +35,7 @@ public class GameDirAccessorIoPolicyTests
     /// <summary>
     /// 豁免域 itself —— 直连 IO 在这些文件里是<c>设计意图</c>，不计入例外清单：
     /// <list type="bullet">
-    /// <item><c>FileSystemGameDirAccessor.cs</c>：<see cref="IGameDirAccessor"/> 的文件系统实现本体（ARCHITECTURE.md 4.3 明确合规）。</item>
+    /// <item><c>FileSystemGameDirAccessor.cs</c>：<see cref="IGameDirAccessor"/> 的文件系统实现本体（合规调用）。</item>
     /// <item><c>AppDataIo.cs</c>：F-4 应用私有域的唯一 IO 窄口子。</item>
     /// </list>
     /// </summary>
@@ -60,15 +65,13 @@ public class GameDirAccessorIoPolicyTests
     private static readonly string[] AppPrivateRoots = ["AppDataPaths", "AppDataIo", "ErbIrCache"];
 
     /// <summary>
-    /// 例外清单（ARCHITECTURE.md 4.3 的机读形态）。键 = 相对 <c>EraCore.Core</c> 的路径。
+    /// 例外清单本身。键 = 相对 <c>EraCore.Core</c> 的路径。
     /// <para>
-    /// <b>与 4.3 的两段一一对应：</b><see cref="Domain.AppPrivate"/> = 「待收敛（真欠账）」，
-    /// <see cref="Domain.Platform"/> = 「永久豁免（不打算收敛）」。文档分段与这里的 <c>Domain</c> 字段
-    /// 是同一事实的两种写法——改一边必须改另一边。
+    /// 本表就是那条清单（见类 remarks）：文档不复制它，改这个 Dictionary 即可。
     /// </para>
     /// <para>
     /// <b>Cap 是当前实测调用数：</b>删掉若干处调用使实际数下降时无需改本表；新增一处即超出 → 转红。
-    /// 故本表只减不增（ARCHITECTURE.md 4.3 不变量 F-5 的同义表述）。
+    /// 故本表只减不增（不变量 F-5 的实践形态：新增即转红）。
     /// </para>
     /// </summary>
     private static readonly IReadOnlyDictionary<string, Exemption> KnownDirectIo = new Dictionary<string, Exemption>(StringComparer.Ordinal)
@@ -135,7 +138,7 @@ public class GameDirAccessorIoPolicyTests
             }
             if (listed == 0)
                 violations.Add($"{relativePath}: exemption row is stale (no direct I/O left — converged, or removed " +
-                               "with a dead compile branch; see ARCHITECTURE.md 4.3) — remove the row.");
+                               "with a dead compile branch) — remove the row.");
         }
 
         Assert.True(violations.Count == 0,

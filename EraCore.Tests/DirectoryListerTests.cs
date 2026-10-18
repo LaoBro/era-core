@@ -9,9 +9,8 @@ namespace MinorShift.Emuera.Tests;
 
 /// <summary>
 /// 目录列举的外侧行为锁——重点盯 <c>ComputeParentPath</c>：
-/// 该实现从裸 <c>Directory.GetParent</c> 换成经 <see cref="IGameDirAccessor.GetParentPath"/>
-/// （不变量 F-1，ARCHITECTURE.md 4.3 待收敛例外之一）。二者的计算语义有一处差异
-/// （尾部分隔符处理），故以「与 <c>Directory.GetParent</c> 等价」作为回归锚点。
+/// 该实现从裸 <c>Directory.GetParent</c> 换成经 <see cref="IGameDirAccessor.GetParentPath"/>（不变量 F-1）。
+/// 二者的计算语义有一处差异（尾部分隔符处理），故以「与 <c>Directory.GetParent</c> 等价」作为回归锚点。
 /// </summary>
 public class DirectoryListerTests : IDisposable
 {
