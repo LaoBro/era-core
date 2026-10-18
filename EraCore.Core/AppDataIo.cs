@@ -73,6 +73,34 @@ internal static class AppDataIo
     /// </summary>
     internal static Stream OpenReadShared(AppDataPath path)
         => new FileStream(path.Value, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+
+    /// <summary>截断/创建并写打开（等价 <c>File.Create</c>：Create + Write + 独占共享）。</summary>
+    internal static Stream OpenWrite(AppDataPath path)
+        => new FileStream(path.Value, FileMode.Create, FileAccess.Write, FileShare.None);
+
+    /// <summary>删除文件。<c>File.Delete</c> 对不存在的目标是 no-op，故本方法天然幂等。</summary>
+    internal static void DeleteFile(AppDataPath path) => File.Delete(path.Value);
+
+    /// <summary>目录存在性。</summary>
+    internal static bool DirectoryExists(AppDataPath path) => Directory.Exists(path.Value);
+
+    /// <summary>
+    /// 枚举子目录的绝对路径。<b>目录不存在时返回空数组</b>——调用方（缓存孤儿治理）拿它当
+    /// 「没有可清理的东西」处理，省掉调用点再写一次存在性判断。
+    /// </summary>
+    internal static string[] EnumerateDirectories(AppDataPath path)
+        => Directory.Exists(path.Value) ? Directory.GetDirectories(path.Value) : [];
+
+    /// <summary>目录的 UTC 最后写入时间；目录不存在时返回 <see cref="DateTime.MinValue"/>。</summary>
+    internal static DateTime GetDirectoryLastWriteUtc(AppDataPath path)
+        => Directory.Exists(path.Value) ? Directory.GetLastWriteTimeUtc(path.Value) : DateTime.MinValue;
+
+    /// <summary>递归删除目录；不存在视为成功（幂等）。</summary>
+    internal static void DeleteDirectoryTree(AppDataPath path)
+    {
+        if (Directory.Exists(path.Value))
+            Directory.Delete(path.Value, recursive: true);
+    }
 }
 
 /// <summary>
