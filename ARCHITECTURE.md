@@ -77,8 +77,8 @@
 |---|---|
 | `Input/` | 输入轴：`InputPort` 门面、`InputFrame` 与输入状态应用 |
 | `Output/` | 输出轴：`OutputPort` 门面、`Turn` 信封与帧形状权威 |
-| `Files/` | 文件轴：`GameTree` 门面、`IGameDirAccessor` 与路径代数 |
-| `Sessions/` | 会话轴：`CoreSession` 组装根、生命周期、交付编排与 `SessionRegistry` |
+| `Files/` | 文件轴：`GameTree` 门面、`IGameDirAccessor`、路径代数与会话作用域根环境（`GameRootEnvironment`） |
+| `Sessions/` | 会话轴：`CoreSession` 组装根（含游戏根环境的建立与销毁）、生命周期、交付编排与 `SessionRegistry` |
 | `Agent/` | Agent 协议、回合生成和按钮逻辑 |
 | `Terminal/` | CLI/VT 输入、终端解析、渲染和滚动 |
 | `Server/` | 共享层：回合协议 + 控制状态机 + WS 旁路 + `HttpListenerHost`（MAUI 托管宿主），双宿主复用的传输无关逻辑 |
@@ -130,6 +130,7 @@ SQL 方言键引入 Core 的**唯一原生依赖**：`Microsoft.Data.Sqlite` →
 服务器会话约束：
 
 - 同一时间只有一个活跃 `CoreSession`，同时最多一个 Controller（`kind: agent|user`）。
+- 游戏根是**会话作用域**的：`CoreSession` 在游戏循环流内建立根环境、循环退出即销毁；拆除期间的旧循环始终读自己那一局的根，后续装配改写不了它（`GamePaths.Current` 只是该环境的只读视图）。
 - `POST /load-game` 校验目录、重建运行时并创建新会话；已有活跃会话时返回冲突。
 - `DELETE /session` 结束当前会话并回到空闲态。空闲时 `POST /session` 返回 503，不经 `load-game` 不能建局。
 - `GET /ws` 与 HTTP 长轮询共用同一会话输入通道；旁观者只读 WS。

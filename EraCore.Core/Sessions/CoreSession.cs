@@ -122,6 +122,14 @@ public sealed class CoreSession : IDisposable
     private readonly CoreSessionProtocolFactory? _protocolFactory;
     private readonly Func<AgentProtocolBase, Task>? _runLoop;
 
+    /// <summary>
+    /// 本会话的游戏根（issue-007）。<see cref="GameRootEnvironment"/> 的唯一建立者是组装根，
+    /// 而建立点 <see cref="GameLoopAsync"/> 运行在 <c>Task.Run</c> 之后的独立流里——
+    /// 所以根必须在构造/启动时就钉在本字段上，不能等到循环流里再读视图。
+    /// 公共路径在 <see cref="StartAsync"/> 内校验后赋值；宿主路径取构造时本流的根环境。
+    /// </summary>
+    private GamePaths? _root;
+
     private EmueraConsole? _console;
     private DisplayState? _displayState;
     private OutputPort? _outputPort;
@@ -196,6 +204,9 @@ public sealed class CoreSession : IDisposable
         _teardownTimeout = teardownTimeout ?? TimeSpan.FromSeconds(5);
         _inputHost = new DefaultInputHost(capabilities);
         _dispatchValue = value => _io.EnqueueInput(GameServerProtocol.BuildInputJsonl(value));
+        // 宿主路径（Server / MAUI / CLI / 测试）在构造本会话前已完成装配期提交，
+        // 此处把「本流此刻的根」钉成会话的根——之后任何流上的提交都改写不了它。
+        _root = GameRootEnvironment.Current;
         Files = files ?? CreateDefaultFiles();
         Input = new InputPort(_inputHost, value => _dispatchValue(value));
         Controller = new Controller(agentLease);
@@ -272,7 +283,10 @@ public sealed class CoreSession : IDisposable
 
                 try
                 {
-                    GamePaths.SetCurrent(paths);
+                    // 会话的根先钉在字段上（建立点在游戏循环流内）；再做装配期提交，
+                    // 让尚未迁移的进程级读者（HTTP /assets、UI 线程）读到本会话的根。
+                    _root = paths;
+                    GameRootEnvironment.Commit(paths);
                     var (configData, terminalSetup) = EmueraRuntimeInitializer.Initialize(paths, _dirAccessor!);
                     _configData = configData;
                     _terminalSetup = terminalSetup;
@@ -358,6 +372,11 @@ public sealed class CoreSession : IDisposable
 
     private async Task GameLoopAsync()
     {
+        // 本会话的根环境：建立在游戏循环流的最外层，随循环退出销毁（issue-007）。
+        // 从这里往后的所有引擎读取（Program.* 转发、ConsoleStateManager、Process、SafCompat……）
+        // 读的都是本会话的根——别的流上稍后发生的装配提交改不到它；
+        // 反过来，本会话停止后这个作用域也不再残留，下一次启动从它自己的根开始。
+        using var rootScope = GameRootEnvironment.Establish(_root ?? GameRootEnvironment.Current);
         try
         {
             var result = await GameLoopComposer.RunAsync(
@@ -529,9 +548,9 @@ public sealed class CoreSession : IDisposable
 
     internal bool IsCurrentController(ControlIdentity identity) => Controller.IsCurrent(identity);
 
-    private static GameTree CreateDefaultFiles()
+    private GameTree CreateDefaultFiles()
     {
-        var paths = GamePaths.Current;
+        var paths = _root;
         return paths == null
             ? new GameTree(AppContext.BaseDirectory, new FileSystemGameDirAccessor())
             : new GameTree(paths.ExeDir, paths.DirAccessor);

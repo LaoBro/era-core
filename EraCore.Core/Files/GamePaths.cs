@@ -5,7 +5,15 @@ namespace MinorShift.Emuera.Files;
 
 internal sealed class GamePaths
 {
-    public static GamePaths Current { get; private set; } = null!;
+    /// <summary>
+    /// 游戏根的<b>只读视图</b>（issue-007）——不再是可写的进程级单例字段。
+    /// 值来自 <see cref="GameRootEnvironment"/>：本执行作用域建立的根优先，
+    /// 其次装配期最后一次提交的根。
+    /// <para>保留它是为了给尚未迁移的读者（<c>Program.*</c> 转发、HTTP /assets、MAUI UI 线程、
+    /// 既有测试脚手架）一个不断档的读法；引擎调用点在 issue-008 分批改为显式根，
+    /// issue-009 删除装配期视图。</para>
+    /// </summary>
+    public static GamePaths Current => GameRootEnvironment.Current!;
 
     public string ExeDir { get; }
     public string CsvDir { get; }
@@ -46,20 +54,25 @@ internal sealed class GamePaths
         }
     }
 
+    /// <summary>
+    /// 构造根并<b>提交到根环境</b>（<see cref="ResolvePreview"/> 与它的差异只剩这一步）。
+    /// issue-007 起提交动作写的是 <see cref="GameRootEnvironment"/>（作用域层 + 装配期视图），
+    /// 不再存在「改写一个进程级单例字段」这回事。
+    /// </summary>
     public static GamePaths Resolve(string? exeDirArg, IGameDirAccessor dirAccessor)
     {
         var paths = ResolvePreview(exeDirArg, dirAccessor);
-        Current = paths;
+        GameRootEnvironment.Commit(paths);
         return paths;
     }
 
     /// <summary>
-    /// 只构造并可随后 <see cref="Validate"/>，**不写** <see cref="Current"/>。
+    /// 只构造、可随后 <see cref="Validate"/>，**不提交**给根环境。
     ///
-    /// issue-001：/load-game 需在「拆旧会话」之前完成路径校验（拆旧前拦路径级错误），
-    /// 而 <see cref="Resolve"/> 会把 <see cref="Current"/> 指向新目录。旧游戏循环仍在运行时
-    /// （拆除超时、尚未退出）读到被改写的 <see cref="Current"/> 会去新目录找 ERB/CSV——
-    /// 故校验阶段必须用本方法，<see cref="Resolve"/> 推迟到旧循环确实退出之后再提交。
+    /// issue-001：/load-game 需在「拆旧会话」之前完成路径校验（拆旧前拦路径级错误）。
+    /// issue-007 起这条顺序不再是必需的安全措施——会话作用域的根环境建立后，
+    /// 后续提交改写不了正在拆除的旧循环读到的根；但校验阶段确实还没有根要提交，
+    /// 所以本方法仍是校验的唯一入口（两者的差异只剩「是否提交」）。
     /// </summary>
     public static GamePaths ResolvePreview(string? exeDirArg, IGameDirAccessor dirAccessor)
     {
@@ -70,13 +83,11 @@ internal sealed class GamePaths
     }
 
     /// <summary>
-    /// 显式重设静态 <see cref="Current"/>——issue 05 /load-game 校验失败时回滚到旧值。
-    /// 仅 server 内部使用，CLI / 启动期不调。
+    /// 旧 API：提交一个已构造好的根给根环境（等价于 <see cref="Resolve"/> 的提交那一步，
+    /// 不重新构造）。issue 05 /load-game 校验失败时用它回滚装配期视图；
+    /// 迁移完成的 issue-009 删除。
     /// </summary>
-    internal static void SetCurrent(GamePaths paths)
-    {
-        Current = paths;
-    }
+    internal static void SetCurrent(GamePaths paths) => GameRootEnvironment.Commit(paths);
 
     private static string DetectDefault()
     {
