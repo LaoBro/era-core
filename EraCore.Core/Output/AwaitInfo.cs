@@ -30,17 +30,24 @@ namespace MinorShift.Emuera.Output;
 ///
 /// <para><b>不上 wire 的内部标记</b>：<c>InputRequest.IsYield</c> 只是服务端让路识别（drain）的判据，
 /// 永不序列化；客户端在意的是「下一帧立刻到」（<c>durationMs:0</c>），不是那个旗标叫什么。</para>
+///
+/// <para>公开只读：宿主可读三个维度，但构造权留在 Core（无公开构造器与公开工厂）。</para>
 /// </summary>
-internal sealed record AwaitInfo
+public sealed record AwaitInfo
 {
+    [System.Text.Json.Serialization.JsonConstructor]
+    internal AwaitInfo()
+    {
+    }
+
     /// <summary>是否期待客户端发输入（<c>InputType != Void</c> 时出现）。</summary>
-    public AwaitInput? input { get; init; }
+    public AwaitInput? input { get; internal init; }
 
     /// <summary>是否有一段有上界的等待（<c>Timelimit &gt;= 0</c> 时出现）。三态见类型注释。</summary>
-    public AwaitWait? wait { get; init; }
+    public AwaitWait? wait { get; internal init; }
 
     /// <summary>终态（<c>Quit</c> / <c>Error</c>）。出现时 <see cref="input"/> / <see cref="wait"/> 必为 null。</summary>
-    public AwaitEnded? ended { get; init; }
+    public AwaitEnded? ended { get; internal init; }
 
     /// <summary>
     /// 单一工厂（§2.2 的两条维度判据）：只看两个问题 ——
@@ -52,8 +59,11 @@ internal sealed record AwaitInfo
     ///
     /// <para><paramref name="timedOut"/> 是服务端的一次性旗标（B3 超时续跑），
     /// 只挂在 <c>wait</c> 上且仅在 <c>Timelimit &gt; 0</c> 时出现（§1.1 ②）。</para>
+    ///
+    /// <para>入参是引擎内部状态（<see cref="InputRequest"/> / <see cref="ConsoleState"/>），
+    /// 故工厂保持 internal——构造权留在 Core。</para>
     /// </summary>
-    public static AwaitInfo Of(InputRequest? req, ConsoleState state, bool timedOut)
+    internal static AwaitInfo Of(InputRequest? req, ConsoleState state, bool timedOut)
     {
         // 终态：input / wait 保持 null（互斥键先行，杜绝「Quit 帧还带 inputType」的残留形态）。
         if (state is ConsoleState.Quit or ConsoleState.Error)
@@ -93,23 +103,40 @@ internal sealed record AwaitInfo
 }
 
 /// <summary>「是否期待客户端发输入」维度（spec §2.2）。</summary>
-internal sealed record AwaitInput(string type);
+public sealed record AwaitInput
+{
+    [System.Text.Json.Serialization.JsonConstructor]
+    internal AwaitInput(string type) => this.type = type;
+
+    public string type { get; }
+}
 
 /// <summary>
 /// 「是否有一段有上界的等待」维度（spec §2.2 / §1.2 规则 5）。
 /// <paramref name="durationMs"/> 的三态 = wait 的三态（缺省 = 无 wait 对象）。
 /// </summary>
-internal sealed record AwaitWait(long durationMs)
+public sealed record AwaitWait
 {
+    [System.Text.Json.Serialization.JsonConstructor]
+    internal AwaitWait(long durationMs) => this.durationMs = durationMs;
+
+    public long durationMs { get; }
+
     /// <summary>是否显示倒计时（仅 true 时出现；ERB 可用 <c>TINPUT t,d,0</c> 要求不显示）。</summary>
-    public bool? displayTime { get; init; }
+    public bool? displayTime { get; internal init; }
 
     /// <summary>超时文案（仅 <c>durationMs &gt; 0</c> 时可能携带）。</summary>
-    public string? timeUpMessage { get; init; }
+    public string? timeUpMessage { get; internal init; }
 
     /// <summary>本帧是超时续跑驱动（仅 true 时出现；一次性，挂在 wait 上而不是顶层）。</summary>
-    public bool? timedOut { get; init; }
+    public bool? timedOut { get; internal init; }
 }
 
 /// <summary>终态键（与 <see cref="AwaitInfo.input"/> / <see cref="AwaitInfo.wait"/> 互斥）。</summary>
-internal sealed record AwaitEnded(string terminal);
+public sealed record AwaitEnded
+{
+    [System.Text.Json.Serialization.JsonConstructor]
+    internal AwaitEnded(string terminal) => this.terminal = terminal;
+
+    public string terminal { get; }
+}

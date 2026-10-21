@@ -40,6 +40,8 @@ namespace MinorShift.Emuera.GameView
         // Phase 4-2：CLI 自有 DisplayState（Q7）。AgentCliProtocol 构造持有，FlushBuffer 帧级 TryUpdate。
         // 与 server 路径的 DisplayState（Session 持有、BuildTurn 回合级 TryUpdate）独立。
         private readonly DisplayState _displayState;
+        /// <summary>输出轴门面（issue-004）：CLI 渲染只走简单路径（快照），没有回合流。</summary>
+        private readonly OutputPort _outputPort;
         // ADR-0006：Scroll Status Bar 渲染器，独立于 TerminalRenderer。
         private ScrollStatusBarRenderer? _scrollStatusBar;
 
@@ -117,9 +119,11 @@ namespace MinorShift.Emuera.GameView
             // 与 Session.cs:83 同一取值表达式。TerminalRenderer + ButtonSelectionMode 均注入此实例。
             var defaultFontName = configData.GetConfigValue<string>(ConfigCode.FontName) ?? "";
             _displayState = new DisplayState(console, defaultFontName);
+            // CLI 不消费增量回合流（VT 渲染是快照消费方）⇒ OutputPort 无 hub，Turns 为 null。
+            _outputPort = new OutputPort(_displayState);
             // VT-only 后 ANSI 始终可用，渲染器假设 _screen 在 VT 主循环内必非 null。
             // Phase 4-1：TerminalRenderer 数据源换成 DisplayState.Current.lines。
-            _renderer = new TerminalRenderer(console, _scroll, null, _displayState);
+            _renderer = new TerminalRenderer(console, _scroll, null, _outputPort);
             // Phase 3-3b：ButtonSelectionMode 注入 DisplayState，RefreshButtonRegionsFromSnapshot 启用。
             _buttons = new ButtonSelectionMode(
                 console,

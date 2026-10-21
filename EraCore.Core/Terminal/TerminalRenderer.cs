@@ -26,7 +26,8 @@ namespace MinorShift.Emuera.GameView
         private readonly IButtonDisplayContext _buttonContext;
         private readonly ScrollController _scroll;
         private IAgentCliVtScreen? _screen;
-        private readonly IDisplayState _displayState;
+        /// <summary>输出轴门面：CLI 是输出轴的快照消费者，只经 <see cref="OutputPort.Snapshot"/> 取画面。</summary>
+        private readonly OutputPort _output;
 
         private int _lastRenderedLineNo = -1;
         // Phase 4-1：CLEARLINE 检测——行数减少时重置 delta tracking（R1）
@@ -68,12 +69,12 @@ namespace MinorShift.Emuera.GameView
             IButtonDisplayContext buttonContext,
             ScrollController scroll,
             IAgentCliVtScreen? screen,
-            IDisplayState displayState)
+            OutputPort output)
         {
             _buttonContext = buttonContext;
             _scroll = scroll;
             _screen = screen;
-            _displayState = displayState;
+            _output = output;
         }
 
         /// <summary>FlushBuffer：帧级刷新快照 + 渲染 delta（Phase 4-2 帧级 TryUpdate）。
@@ -81,9 +82,9 @@ namespace MinorShift.Emuera.GameView
         /// 返回 true 表示快照确有变更并重绘（False = no-op 帧，无重绘）。</summary>
         public bool FlushBuffer()
         {
-            bool changed = _displayState.TryUpdate();
+            bool changed = _output.TryUpdate();
             if (!changed) return false;
-            FlushBuffer(_displayState.Current);
+            FlushBuffer(_output.Snapshot);
             return true;
         }
 
@@ -233,7 +234,7 @@ namespace MinorShift.Emuera.GameView
         /// Phase 4-1：内部调 _displayState.Current 保证最新快照。</summary>
         public void FullRefresh(string reason = "?")
         {
-            var snapshot = _displayState.Current;
+            var snapshot = _output.Snapshot;
             FullRefresh(snapshot, reason);
         }
 

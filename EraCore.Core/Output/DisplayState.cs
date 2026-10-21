@@ -20,16 +20,39 @@ namespace MinorShift.Emuera.Output;
 /// timeUpMessage 全部退场，改由 `awaiting` 单一下发（TINPUT 计时元数据在 `awaiting.wait`）。
 /// 快照**没有** timedOut —— 它表示「当前状态」，「上一帧是否超时触发」对晚加入者无意义。
 /// </summary>
-internal record DisplaySnapshot(
-    List<DisplayLine> lines,
-    string? bgColor,
-    // v12（spec §5.2 第 4 项）：GET /snapshot 也下发 awaiting ——「晚加入者拿到的第一张画面
-    // 不能是另一套契约形状」。⚠️ 快照**没有** timedOut（见类型注释），故 timedOut 固定传 false。
-    AwaitInfo awaiting,
-    int protocolVersion,
-    long generation,
-    List<BgImageState>? bgImages = null
-);
+public sealed record DisplaySnapshot
+{
+    [JsonConstructor]
+    internal DisplaySnapshot(
+        List<DisplayLine> lines,
+        string? bgColor,
+        // v12（spec §5.2 第 4 项）：GET /snapshot 也下发 awaiting ——「晚加入者拿到的第一张画面
+        // 不能是另一套契约形状」。⚠️ 快照**没有** timedOut（见类型注释），故 timedOut 固定传 false。
+        AwaitInfo awaiting,
+        int protocolVersion,
+        long generation,
+        List<BgImageState>? bgImages = null)
+    {
+        this.lines = lines;
+        this.bgColor = bgColor;
+        this.awaiting = awaiting;
+        this.protocolVersion = protocolVersion;
+        this.generation = generation;
+        this.bgImages = bgImages;
+    }
+
+    public List<DisplayLine> lines { get; }
+
+    public string? bgColor { get; }
+
+    public AwaitInfo awaiting { get; }
+
+    public int protocolVersion { get; }
+
+    public long generation { get; }
+
+    public List<BgImageState>? bgImages { get; }
+}
 
 /// <summary>
 /// 快照中的单行（ADR-0013 决策二）。
@@ -44,12 +67,25 @@ internal record DisplaySnapshot(
 /// record 默认 Equals 会纳入这两个字段——Phase 2 的 <see cref="DisplayState.LinesEqual"/> 已手写深度值比较
 /// 绕过 record.Equals，故 diff 正确性不受影响。
 /// </summary>
-internal record DisplayLine(
-    List<DisplayEntry> entries,
-    string? align,
-    bool isLineEnd
-)
+public sealed record DisplayLine
 {
+    [JsonConstructor]
+    internal DisplayLine(
+        List<DisplayEntry> entries,
+        string? align,
+        bool isLineEnd)
+    {
+        this.entries = entries;
+        this.align = align;
+        this.isLineEnd = isLineEnd;
+    }
+
+    public List<DisplayEntry> entries { get; }
+
+    public string? align { get; }
+
+    public bool isLineEnd { get; }
+
     /// <summary>
     /// CLI 渲染专用：原 ConsoleDisplayLine.LineNo（Q1）。用于 delta 算法比较。
     /// BuildSnapshot 从 line.LineNo 传入。不进入 JSON。
@@ -73,16 +109,25 @@ internal record DisplayLine(
     /// Web 路径不访问此字段（前端用 CSS 处理 align，col 保持相对）。不进入 JSON。
     /// </summary>
     [JsonIgnore] internal int AlignOffset { get; set; }
-};
+}
 
 /// <summary>
 /// 行内条目（ADR-0013 决策二）。
 /// 含 segments[]（复用 PrintSegment）+ button（ButtonRef?，含 col/width）。
 /// </summary>
-internal record DisplayEntry(
-    List<PrintSegment> segments,
-    ButtonRef? button
-);
+public sealed record DisplayEntry
+{
+    [JsonConstructor]
+    internal DisplayEntry(List<PrintSegment> segments, ButtonRef? button)
+    {
+        this.segments = segments;
+        this.button = button;
+    }
+
+    public List<PrintSegment> segments { get; }
+
+    public ButtonRef? button { get; }
+}
 
 /// <summary>
 /// DisplayState 模块（ADR-0013 决策一/二；ADR-0014 推翻决策四）。
@@ -94,7 +139,7 @@ internal record DisplayEntry(
 /// 持有当前 DisplaySnapshot（_current），以 _pendingOps 为权威变更信号做变更检测（TryUpdate）。
 /// _gate 锁保护跨线程读写——游戏线程 BuildTurn 调 TryUpdate，HTTP 线程 GET /snapshot 读 Current。
 /// </summary>
-internal sealed class DisplayState : IDisplayState
+internal sealed class DisplayState
 {
     /// <summary>
     /// DisplaySnapshot 的 JSON 序列化选项（ADR-0013 决策二）。
@@ -226,9 +271,6 @@ internal sealed class DisplayState : IDisplayState
         _defaultFontName = defaultFontName;
         _fullDiffOnFirstTurn = fullDiffOnFirstTurn;
     }
-
-    bool IDisplayState.TryUpdate() => TryUpdate();
-    DisplaySnapshot IDisplayState.Current => Current;
 
     /// <summary>
     /// 当前快照（线程安全）。读取时先 TryUpdate 保证最新。

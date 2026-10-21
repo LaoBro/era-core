@@ -4,13 +4,20 @@ using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Primitives;
-using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Terminal.Platform;
 using MinorShift.Emuera.UI.Game;
 using Xunit;
 
 namespace Emuera.Headless.Tests;
 
+/// <summary>
+/// TerminalRenderer 快照渲染回归（issue-004 起经 <see cref="OutputPort.Snapshot"/> 取画面）。
+///
+/// <para>原先注入 <c>IDisplayState</c> 假实现来喂合成快照；该假接缝已随 issue-004 删除
+/// （单实现接口 = 假接缝）。现在用<b>真实</b> <c>EmueraConsole</c> + <c>DisplayState</c>：
+/// 行的增删/替换就是引擎真实产生的画面变化，快照由同一套 <c>BuildSnapshot</c> 产出。</para>
+/// </summary>
 public class TerminalRendererPipelineTests
 {
     private sealed class FakeButtonContext : IButtonDisplayContext
@@ -19,42 +26,40 @@ public class TerminalRendererPipelineTests
         public TerminalCharWidthConfig CharWidthConfig => TerminalCharWidthConfig.Default;
     }
 
-    private sealed class FakeDisplayState : IDisplayState
+    /// <summary>真实引擎装配：console → DisplayState → OutputPort（CLI 的快照路径）。</summary>
+    private sealed class Harness : IDisposable
     {
-        private readonly IReadOnlyList<DisplaySnapshot> _snapshots;
-        private int _index = -1;
+        private readonly IDisposable _scope;
 
-        internal FakeDisplayState(params DisplaySnapshot[] snapshots)
+        internal EmueraConsole Console { get; }
+        internal OutputPort Output { get; }
+
+        internal Harness()
         {
-            _snapshots = snapshots;
+            _scope = GlobalStatic.OpenScope(new ConfigData());
+            Console = new EmueraConsole(new HeadlessConsole(), new NullTerminalSetup());
+            Output = new OutputPort(new DisplayState(Console, "MS Gothic"));
         }
 
-        public bool TryUpdate()
-        {
-            if (_index >= _snapshots.Count - 1) return false;
-            _index++;
-            return true;
-        }
+        internal void Add(ConsoleDisplayLine line) => Console.DisplayLineList.Add(line);
 
-        public DisplaySnapshot Current => _snapshots[_index >= 0 ? _index : 0];
+        internal void RemoveAt(int index) => Console.DisplayLineList.RemoveAt(index);
+
+        internal void Clear() => Console.DisplayLineList.Clear();
+
+        public void Dispose() => _scope.Dispose();
     }
 
-    private static ConsoleDisplayLine MakeSource() =>
-        new(Array.Empty<ConsoleButtonString>(), isLogical: true, temporary: false);
-
-    private static DisplayLine MakeLine(int lineNo, ConsoleDisplayLine? source = null, bool isLineEnd = true)
+    private static ConsoleDisplayLine MakeSource(int lineNo, bool lineEnd = true)
     {
-        var src = source ?? MakeSource();
-        var line = new DisplayLine(new List<DisplayEntry>(), "left", isLineEnd: isLineEnd);
+        var line = new ConsoleDisplayLine(
+            Array.Empty<ConsoleButtonString>(), isLogical: true, temporary: false, lineEnd: lineEnd);
         line.LineNo = lineNo;
-        line.SourceLine = src;
         return line;
     }
 
-    private static DisplaySnapshot Snapshot(params DisplayLine[] lines) =>
-        new(new List<DisplayLine>(lines), null,
-            AwaitInfo.Of(new InputRequest { InputType = InputType.EnterKey }, ConsoleState.WaitInput, timedOut: false),
-            5, 0);
+    private static TerminalRenderer NewRenderer(Harness harness, BufferedVtScreen screen, ScrollController? scroll = null) =>
+        new(new FakeButtonContext(), scroll ?? new ScrollController(1), screen, harness.Output);
 
     private static string CaptureOutput(Action action, BufferedVtScreen screen)
     {
@@ -66,11 +71,9 @@ public class TerminalRendererPipelineTests
     [Fact]
     public void FullRefresh_empty_produces_only_clearscreen()
     {
-        using var scope = GlobalStatic.OpenScope(new ConfigData());
+        using var harness = new Harness();
         var screen = new BufferedVtScreen(80, 25);
-        var renderer = new TerminalRenderer(
-            new FakeButtonContext(), new ScrollController(1), screen,
-            new FakeDisplayState(Snapshot()));
+        var renderer = NewRenderer(harness, screen);
 
         string output = CaptureOutput(() => renderer.FullRefresh("test"), screen);
 
@@ -81,11 +84,12 @@ public class TerminalRendererPipelineTests
     [Fact]
     public void FullRefresh_with_content_writes_all_lines()
     {
-        using var scope = GlobalStatic.OpenScope(new ConfigData());
+        using var harness = new Harness();
+        harness.Add(MakeSource(0));
+        harness.Add(MakeSource(1));
+        harness.Add(MakeSource(2));
         var screen = new BufferedVtScreen(80, 25);
-        var renderer = new TerminalRenderer(
-            new FakeButtonContext(), new ScrollController(1), screen,
-            new FakeDisplayState(Snapshot(MakeLine(0), MakeLine(1), MakeLine(2))));
+        var renderer = NewRenderer(harness, screen);
 
         string output = CaptureOutput(() => renderer.FullRefresh("test"), screen);
 
@@ -103,11 +107,11 @@ public class TerminalRendererPipelineTests
     [Fact]
     public void FlushBuffer_initial_content_renders_full()
     {
-        using var scope = GlobalStatic.OpenScope(new ConfigData());
+        using var harness = new Harness();
+        harness.Add(MakeSource(0));
+        harness.Add(MakeSource(1));
         var screen = new BufferedVtScreen(80, 25);
-        var renderer = new TerminalRenderer(
-            new FakeButtonContext(), new ScrollController(1), screen,
-            new FakeDisplayState(Snapshot(MakeLine(0), MakeLine(1))));
+        var renderer = NewRenderer(harness, screen);
 
         string output = CaptureOutput(() => renderer.FlushBuffer(), screen);
 
@@ -126,20 +130,16 @@ public class TerminalRendererPipelineTests
     [Fact]
     public void FlushBuffer_new_lines_trigger_fullrefresh()
     {
-        using var scope = GlobalStatic.OpenScope(new ConfigData());
+        using var harness = new Harness();
+        harness.Add(MakeSource(0));
+        harness.Add(MakeSource(1));
         var screen = new BufferedVtScreen(80, 25);
-        var src0 = MakeSource();
-        var src1 = MakeSource();
-        var src2 = MakeSource();
-        var displayState = new FakeDisplayState(
-            Snapshot(MakeLine(0, src0), MakeLine(1, src1)),
-            Snapshot(MakeLine(0, src0), MakeLine(1, src1), MakeLine(2, src2)));
-        var renderer = new TerminalRenderer(
-            new FakeButtonContext(), new ScrollController(1), screen, displayState);
+        var renderer = NewRenderer(harness, screen);
 
         renderer.FlushBuffer();
         screen.Clear();
 
+        harness.Add(MakeSource(2));
         renderer.FlushBuffer();
         string output = screen.GetOutput();
 
@@ -155,11 +155,11 @@ public class TerminalRendererPipelineTests
     [Fact]
     public void FlushBuffer_no_change_produces_no_output()
     {
-        using var scope = GlobalStatic.OpenScope(new ConfigData());
-        var displayState = new FakeDisplayState(Snapshot(MakeLine(0), MakeLine(1)));
+        using var harness = new Harness();
+        harness.Add(MakeSource(0));
+        harness.Add(MakeSource(1));
         var screen = new BufferedVtScreen(80, 25);
-        var renderer = new TerminalRenderer(
-            new FakeButtonContext(), new ScrollController(1), screen, displayState);
+        var renderer = NewRenderer(harness, screen);
 
         renderer.FlushBuffer();
         screen.Clear();
@@ -173,17 +173,17 @@ public class TerminalRendererPipelineTests
     [Fact]
     public void FlushBuffer_clear_after_content_emits_clearscreen()
     {
-        using var scope = GlobalStatic.OpenScope(new ConfigData());
-        var displayState = new FakeDisplayState(
-            Snapshot(MakeLine(0), MakeLine(1), MakeLine(2)),
-            Snapshot());
+        using var harness = new Harness();
+        harness.Add(MakeSource(0));
+        harness.Add(MakeSource(1));
+        harness.Add(MakeSource(2));
         var screen = new BufferedVtScreen(80, 25);
-        var renderer = new TerminalRenderer(
-            new FakeButtonContext(), new ScrollController(1), screen, displayState);
+        var renderer = NewRenderer(harness, screen);
 
         renderer.FlushBuffer();
         screen.Clear();
 
+        harness.Clear();
         renderer.FlushBuffer();
         string output = screen.GetOutput();
 
@@ -198,17 +198,18 @@ public class TerminalRendererPipelineTests
     [Fact]
     public void FlushBuffer_clearline_triggers_fullrefresh()
     {
-        using var scope = GlobalStatic.OpenScope(new ConfigData());
-        var displayState = new FakeDisplayState(
-            Snapshot(MakeLine(0, MakeSource()), MakeLine(1, MakeSource()), MakeLine(2, MakeSource())),
-            Snapshot(MakeLine(1, MakeSource())));
+        using var harness = new Harness();
+        harness.Add(MakeSource(0));
+        harness.Add(MakeSource(1));
+        harness.Add(MakeSource(2));
         var screen = new BufferedVtScreen(80, 25);
-        var renderer = new TerminalRenderer(
-            new FakeButtonContext(), new ScrollController(1), screen, displayState);
+        var renderer = NewRenderer(harness, screen);
 
         renderer.FlushBuffer();
         screen.Clear();
 
+        harness.RemoveAt(0);
+        harness.RemoveAt(0);
         renderer.FlushBuffer();
         string output = screen.GetOutput();
 
@@ -220,15 +221,12 @@ public class TerminalRendererPipelineTests
     [Fact]
     public void FullRefresh_with_offset_shows_correct_start_line()
     {
-        using var scope = GlobalStatic.OpenScope(new ConfigData());
+        using var harness = new Harness();
         var screen = new BufferedVtScreen(80, 10);
         var scroll = new ScrollController(scrollVisibleLines: 1);
-        var lines = new List<DisplayLine>();
         for (int i = 0; i < 15; i++)
-            lines.Add(MakeLine(i));
-        var renderer = new TerminalRenderer(
-            new FakeButtonContext(), scroll, screen,
-            new FakeDisplayState(Snapshot(lines.ToArray())));
+            harness.Add(MakeSource(i));
+        var renderer = NewRenderer(harness, screen, scroll);
 
         scroll.ScrollBy(3, 15);
 
@@ -244,26 +242,21 @@ public class TerminalRendererPipelineTests
     [Fact]
     public void FlushBuffer_auto_follow_resets_scroll_on_new_output()
     {
-        using var scope = GlobalStatic.OpenScope(new ConfigData());
+        using var harness = new Harness();
         var screen = new BufferedVtScreen(80, 25);
         var scroll = new ScrollController(scrollVisibleLines: 1);
         var autoFollowCalled = false;
-        // Share same SourceLine references to avoid spurious CLEARLINE detection
-        var src0 = MakeSource();
-        var src1 = MakeSource();
-        var src2 = MakeSource();
-        var src3 = MakeSource();
-        var displayState = new FakeDisplayState(
-            Snapshot(MakeLine(0, src0), MakeLine(1, src1), MakeLine(2, src2)),
-            Snapshot(MakeLine(0, src0), MakeLine(1, src1), MakeLine(2, src2), MakeLine(3, src3)));
-        var renderer = new TerminalRenderer(
-            new FakeButtonContext(), scroll, screen, displayState);
+        harness.Add(MakeSource(0));
+        harness.Add(MakeSource(1));
+        harness.Add(MakeSource(2));
+        var renderer = NewRenderer(harness, screen, scroll);
         renderer.OnScrollAutoFollow = () => autoFollowCalled = true;
 
         renderer.FlushBuffer();
         scroll.ScrollBy(1, 3);
         screen.Clear();
 
+        harness.Add(MakeSource(3));
         renderer.FlushBuffer();
 
         Assert.True(autoFollowCalled);
@@ -273,18 +266,15 @@ public class TerminalRendererPipelineTests
     [Fact]
     public void FlushBuffer_lastLineNotEnd_triggers_fullrefresh()
     {
-        using var scope = GlobalStatic.OpenScope(new ConfigData());
+        using var harness = new Harness();
+        harness.Add(MakeSource(0, lineEnd: false));
         var screen = new BufferedVtScreen(80, 25);
-        var src0 = MakeSource();
-        var displayState = new FakeDisplayState(
-            Snapshot(MakeLine(0, src0, isLineEnd: false)),
-            Snapshot(MakeLine(1, src0)));
-        var renderer = new TerminalRenderer(
-            new FakeButtonContext(), new ScrollController(1), screen, displayState);
+        var renderer = NewRenderer(harness, screen);
 
         renderer.FlushBuffer();
         screen.Clear();
 
+        harness.Add(MakeSource(1));
         renderer.FlushBuffer();
         string output = screen.GetOutput();
 
@@ -294,22 +284,31 @@ public class TerminalRendererPipelineTests
     [Fact]
     public void FlushBuffer_sourceLine_change_detects_clearline()
     {
-        using var scope = GlobalStatic.OpenScope(new ConfigData());
+        using var harness = new Harness();
+        harness.Add(MakeSource(0));
+        harness.Add(MakeSource(1));
+        harness.Add(MakeSource(2));
         var screen = new BufferedVtScreen(80, 25);
-        var srcOld = MakeSource();
-        var srcNew = MakeSource();
-        var displayState = new FakeDisplayState(
-            Snapshot(MakeLine(0, srcOld), MakeLine(1, srcOld), MakeLine(2, srcOld)),
-            Snapshot(MakeLine(0, srcOld), MakeLine(1, srcOld), MakeLine(2, srcNew)));
-        var renderer = new TerminalRenderer(
-            new FakeButtonContext(), new ScrollController(1), screen, displayState);
+        var renderer = NewRenderer(harness, screen);
 
         renderer.FlushBuffer();
         screen.Clear();
 
+        // 末行被新对象替换（LineNo 不变）——CLEARLINE + reprint 的反例。
+        harness.RemoveAt(2);
+        harness.Add(MakeSource(2));
         renderer.FlushBuffer();
         string output = screen.GetOutput();
 
         Assert.Contains("\x1b[2J\x1b[H", output);
+    }
+
+    private sealed class NullTerminalSetup : ITerminalSetup
+    {
+        public bool IsAnsiEnabled => false;
+        public bool TryEnableAnsi() => false;
+        public bool TrySetConsoleSize(int cols, int rows) => false;
+        public string? DetectFont() => null;
+        public bool TryPrepareVtInput() => false;
     }
 }

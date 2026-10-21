@@ -14,7 +14,7 @@ namespace MinorShift.Emuera.Output;
 /// 序列化路径产出；任何“拿到 Record 再自己序列化一次”的写法都会绕过本类型的同一性保证。
 /// </para>
 /// </summary>
-internal sealed class Turn
+public sealed class Turn
 {
     internal Turn(TurnRecord record, string wire)
     {
@@ -23,8 +23,8 @@ internal sealed class Turn
     }
 
     /// <summary>类型化回合记录（协议 v12 形状）。</summary>
-    internal TurnRecord Record { get; }
+    public TurnRecord Record { get; }
 
     /// <summary>与 <see cref="Record"/> 对应的序列化结果；转发的唯一读取面。</summary>
-    internal string Wire { get; }
+    public string Wire { get; }
 }
