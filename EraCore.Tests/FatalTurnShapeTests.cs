@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Runtime;
 using Xunit;
 

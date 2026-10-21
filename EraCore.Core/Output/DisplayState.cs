@@ -4,12 +4,13 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
+using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.UI.Game;
 
-namespace MinorShift.Emuera.GameView;
+namespace MinorShift.Emuera.Output;
 
 /// <summary>
 /// 当前全量显示状态的快照（ADR-0013 决策二 / ADR-0016 / v12 收拢到 awaiting）。

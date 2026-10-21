@@ -1,5 +1,6 @@
 using System.Threading.Tasks;
 using Microsoft.Maui.Controls;
+using MinorShift.Emuera.Output;
 
 namespace EraCore.Maui.JsBridge;
 

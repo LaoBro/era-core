@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Input;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Runtime.Config;

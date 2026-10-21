@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Server;
 using Xunit;

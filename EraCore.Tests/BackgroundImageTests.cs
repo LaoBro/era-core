@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Terminal.Platform;
 using MinorShift.Emuera.UI.Game;

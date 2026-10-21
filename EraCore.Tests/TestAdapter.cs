@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Output;
 
 namespace Emuera.Headless.Tests;
 

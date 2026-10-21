@@ -1,6 +1,7 @@
+using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime;
 
-namespace MinorShift.Emuera.GameView;
+namespace MinorShift.Emuera.Output;
 
 /// <summary>
 /// v12 的唯一契约字段：<b>服务端此刻在等什么</b>（spec v5 §1 / §5.4）。

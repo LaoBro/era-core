@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Server;
 using MinorShift.Emuera.UI.Game;
 using Xunit;

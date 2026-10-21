@@ -1,4 +1,4 @@
-namespace MinorShift.Emuera.GameView;
+namespace MinorShift.Emuera.Output;
 
 internal interface IDisplayState
 {

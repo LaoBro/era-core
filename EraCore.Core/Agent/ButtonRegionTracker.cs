@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.UI.Game;
 
 namespace MinorShift.Emuera.GameView

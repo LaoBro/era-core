@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Runtime.Config.JSON;
 
 namespace MinorShift.Emuera.GameView;

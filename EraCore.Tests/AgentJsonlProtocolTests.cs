@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Server;

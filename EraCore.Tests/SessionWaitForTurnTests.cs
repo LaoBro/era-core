@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Server;
 using MinorShift.Emuera.Terminal.Platform;

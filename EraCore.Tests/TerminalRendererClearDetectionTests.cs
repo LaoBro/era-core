@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.UI.Game;
 using Xunit;

@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.Terminal.Platform;

@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
+using MinorShift.Emuera.Output;
 using Microsoft.Extensions.Options;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Server;

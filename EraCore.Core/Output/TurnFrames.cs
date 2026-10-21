@@ -1,9 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
+using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime;
 
-namespace MinorShift.Emuera.GameView;
+namespace MinorShift.Emuera.Output;
 
 /// <summary>
 /// 回合帧<b>形状权威</b>：合法帧的形状与序列化的唯一出口。

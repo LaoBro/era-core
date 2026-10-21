@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Server;
 using Xunit;
 

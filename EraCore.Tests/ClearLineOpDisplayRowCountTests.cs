@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Runtime.Config;

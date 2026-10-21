@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Runtime.Config;

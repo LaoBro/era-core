@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using MinorShift.Emuera.Output;
 
 namespace MinorShift.Emuera.Server;
 

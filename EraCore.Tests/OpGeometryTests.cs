@@ -1,6 +1,7 @@
 using System;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Utils.EvilMask;
 using MinorShift.Emuera.UI.Game;

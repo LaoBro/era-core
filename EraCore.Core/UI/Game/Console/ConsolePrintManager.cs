@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Runtime.Config;

@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Input;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.UI.Game;
 
 namespace MinorShift.Emuera.Server;

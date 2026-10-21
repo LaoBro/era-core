@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Channels;
 
-namespace MinorShift.Emuera.Server;
+namespace MinorShift.Emuera.Output;
 
 /// <summary>
 /// 输出广播中枢（Hub 旁路模式）。

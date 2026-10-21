@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Timers;
 using MinorShift.Emuera.Primitives;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.GameProc;
 using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Runtime.Config;
