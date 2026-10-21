@@ -1,4 +1,5 @@
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Input;
 using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.Runtime.Utils.EvilMask;
 using MinorShift.Emuera.Terminal.Platform;
