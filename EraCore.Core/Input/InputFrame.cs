@@ -7,26 +7,28 @@ namespace MinorShift.Emuera.Input;
 /// 宿主按序处理后电平已归零 ⇒ 按键被压成零宽度脉冲 ⇒ 快速按键的触发整条丢失。
 /// 一帧含多条 <c>keys</c> 只用于「同时按下」的组合键，不是跨时间合并。
 /// </para>
-/// </summary>
 /// <remarks>
 /// 2026-10-19 自 <c>Agent/JsonlCommand.cs</c> 下移至输入侧：它是两个 wire 入口
 /// （<c>JsonlCommand</c> 协议帧 / <c>HttpInput</c> HTTP body）<b>共用</b>的字段类型，
 /// 放在 Agent 会让 Server 反向引用协议层。
 /// </remarks>
+/// </summary>
 internal sealed record InputKeyEvent(int code, bool down);
 
 /// <summary>console 局部坐标（<b>左上基准</b>，ADR-0031 §8）。仅 <c>Geometry</c> 宿主发送；M5b 前不启用。</summary>
 internal sealed record InputGeometry(int x, int y);
 
 /// <summary>
-/// 上行输入事件 —— <b>输入侧的一等类型</b>，两个 wire 入口的共同终点。
+/// 上行输入帧 —— <b>输入侧唯一的一等形状</b>（value / hover / keys / geometry / focus）。
 /// <para>
-/// <b>为什么要有它</b>：上行输入状态原先有四处形状真相 —— 前端 <c>InputExtra</c>、
-/// HTTP body POCO <c>HttpInput</c>、手拼的 <c>JsonObject</c>、协议帧 <c>JsonlCommand</c>。
-/// 前三者无法物理合并（分属 TS / 反射 POCO / 源生成 record 三种序列化机制），
-/// 但它们<b>都能收敛到本类型</b>：wire 层各自保持扁平（契约不变），
-/// 进入 Core 的第一步就转成 <see cref="InputStateEvent"/>，
-/// 其后的翻译链路只有这一个类型。
+/// 上行输入原有四处形状真相 —— 前端 <c>InputExtra</c>、HTTP body POCO <c>HttpInput</c>、
+/// 手拼的 <c>JsonObject</c>、协议帧 <c>JsonlCommand</c>。前三者无法物理合并（分属 TS /
+/// 反射 POCO / 源生成 record 三种序列化机制），但它们都只负责<b>构造本类型</b>：
+/// wire 层各自保持扁平（契约不变），进入 Core 后的状态应用与派发决策只有这一条链路。
+/// </para>
+/// <para>
+/// 两个 wire 入口共用 <see cref="FromWire"/> 作为<b>唯一</b>的字段转换实现；
+/// 不允许再出现第二份「wire 字段 → 输入状态」的映射。
 /// </para>
 /// <para>
 /// 与 <see cref="InputSnapshot"/> 的关系：本类型是 <b>push 面</b>（宿主/前端写进来），
@@ -38,17 +40,33 @@ internal sealed record InputGeometry(int x, int y);
 /// 需要比较时逐字段断言，不要直接 <c>Assert.Equal</c> 两个实例。
 /// </para>
 /// </summary>
-internal sealed record InputStateEvent(
+internal sealed record InputFrame(
+    string? Value = null,
     string? HoverValue = null,
     InputKeyEvent[]? Keys = null,
     InputGeometry? Geometry = null,
     bool? Focus = null)
 {
-    public static InputStateEvent Empty { get; } = new();
+    public static InputFrame Empty { get; } = new();
+
+    /// <summary>是否携带提交值。为 true 时本帧派发并产回音；否则只写状态、不派发、不产帧。</summary>
+    public bool HasValue => Value != null;
 
     /// <summary>
-    /// 是否携带任一状态字段（<b>不含</b>提交值 <c>value</c>）。
+    /// 是否携带任一状态字段（<b>不含</b>提交值 <see cref="Value"/>）。
     /// spec-v3 §5.3：为 true 时即使 <c>value</c> 缺省也是合法输入（「状态类」帧）。
     /// </summary>
-    public bool HasAny => HoverValue != null || Keys != null || Geometry != null || Focus.HasValue;
+    public bool HasState => HoverValue != null || Keys != null || Geometry != null || Focus.HasValue;
+
+    /// <summary>
+    /// wire 字段 → 输入帧：<b>全链路唯一的转换实现</b>。
+    /// 协议帧（<see cref="MinorShift.Emuera.GameView.JsonlCommand"/>）与 HTTP body 都只调用这里。
+    /// </summary>
+    public static InputFrame FromWire(
+        string? value,
+        string? hoverValue,
+        InputKeyEvent[]? keys,
+        InputGeometry? geometry,
+        bool? focus)
+        => new(value, hoverValue, keys, geometry, focus);
 }

@@ -8,9 +8,8 @@ namespace MinorShift.Emuera.Input;
 /// <para>
 /// <b>两个适配器 ⇒ 这是真接缝</b>（不是假设接缝）：
 /// <list type="bullet">
-/// <item><b>wire 入口</b> <see cref="Apply(InputStateEvent, IInputHost)"/> ——
-/// Server / MAUI / JSONL 管道：前端/客户端把 <see cref="InputStateEvent"/> 捎带在
-/// <c>input</c> 帧里上报。</item>
+/// <item><b>wire 入口</b> <see cref="Apply(InputFrame, IInputHost)"/> ——
+/// Server / MAUI / JSONL 管道：前端/客户端把状态字段捎带在 <c>input</c> 帧里上报。</item>
 /// <item><b>指针入口</b> <see cref="ApplyPointerGeometry"/> / <see cref="ApplyPointerKey"/> ——
 /// CLI：VT 解析器把终端鼠标事件直接交给宿主，不经 wire。</item>
 /// </list>
@@ -18,17 +17,17 @@ namespace MinorShift.Emuera.Input;
 /// 且<b>门卫口径不一致</b>：CLI 判能力位、wire 侧不判。收进本模块后口径统一。
 /// </para>
 /// <para>
-/// <b>位置</b>：<see cref="InputStateEvent"/> 下移后本模块只依赖输入侧类型，
-/// 故住在 <c>Shared/UI/Game</c>（<see cref="IInputHost"/> 的邻域），
-/// 不再让底层反向引用协议层。
+/// <b>位置</b>：本模块只依赖输入侧类型，住在 <c>Input/</c>（<see cref="IInputHost"/> 的邻域），
+/// 不让底层反向引用协议层。
 /// </para>
 /// </summary>
 internal static class InputStateApplier
 {
     /// <summary>
-    /// wire 入口：把一帧捎带的状态字段写进宿主。
+    /// wire 入口：把一帧的状态字段写进宿主。提交值 <see cref="InputFrame.Value"/> 由调用方
+    /// 决定是否派发，本方法不读它。
     /// <para>
-    /// 全部字段都是<b>可选</b>的：一个都不带时本方法是空操作（旧客户端行为不变）。
+    /// 全部状态字段都是<b>可选</b>的：一个都不带时本方法是空操作（旧客户端行为不变）。
     /// 宿主未声明对应能力位时该字段被丢弃（<see cref="NullInputHost"/> 全丢弃）。
     /// </para>
     /// <para>
@@ -44,7 +43,7 @@ internal static class InputStateApplier
     /// 本方法必须<b>先于</b> <c>DispatchInput</c>，否则脚本本轮读到的仍是旧值。
     /// </para>
     /// </summary>
-    internal static void Apply(InputStateEvent e, IInputHost host)
+    internal static void Apply(InputFrame e, IInputHost host)
     {
         // 能力位门卫（与指针入口同口径）：宿主没声明的通道不通电，
         // 写了也无消费者 —— 只会让快照里留下一份无人读的状态。

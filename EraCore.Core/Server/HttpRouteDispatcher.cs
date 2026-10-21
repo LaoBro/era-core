@@ -155,14 +155,21 @@ internal sealed class HttpRouteDispatcher
         var input = Parse<HttpInput>(request.BodyText);
         if (input == null)
             return InvalidJsonInput();
+
+        // 结构化 body 与预构建命令帧进入 Core 后是同一个 InputFrame；
+        // 字段映射的唯一实现在 InputFrame.FromWire（协议帧经 JsonlCommand.ToFrame 走同一处）。
+        var frame = InputFrame.FromWire(
+            input.value, input.hoverValue, input.keys, input.geometry, input.focus);
+
         // spec-v3 §5.3：状态类输入不带 value（只更新按键/悬停/坐标），同样是合法输入。
-        if (input.value == null && !input.HasInputState)
+        if (!frame.HasValue && !frame.HasState)
             return MissingInputValue();
-        return _protocol.PostInputJsonl(BuildInputJsonl(input), ResolveIdentity(request, input.token));
+
+        return _protocol.PostInputJsonl(SerializeInputFrame(frame), ResolveIdentity(request, input.token));
     }
 
     /// <summary>
-    /// HTTP body → 协议循环消费的 input jsonl。
+    /// InputFrame → 协议循环消费的 input jsonl。这里只做 <b>wire 编码</b>，不翻译输入状态。
     /// <para>
     /// 2026-10-19：由<b>手工拼 <c>JsonObject</c></b> 改为序列化 <see cref="JsonlCommand"/> ——
     /// 手拼版本把 wire 键名抄了第二份（原注释自陈「键名与 JsonlCommand 逐一对应」），
@@ -174,9 +181,9 @@ internal sealed class HttpRouteDispatcher
     /// 输出与旧手拼版语义等价（<c>token</c> 属于 HTTP 传输层，仍不进协议帧）。
     /// </para>
     /// </summary>
-    private static string BuildInputJsonl(HttpInput i)
+    private static string SerializeInputFrame(InputFrame frame)
         => JsonSerializer.Serialize(
-            new JsonlCommand("input", i.value, i.hoverValue, i.keys, i.geometry, i.focus),
+            new JsonlCommand("input", frame.Value, frame.HoverValue, frame.Keys, frame.Geometry, frame.Focus),
             EmueraJsonContext.Default.JsonlCommand);
 
     private HttpResult HandleLoadGame(HttpRequestData request)
@@ -301,6 +308,10 @@ internal sealed class HttpRouteDispatcher
     /// <summary>
     /// POST /input body。spec-v3 §5.1：<c>value</c> 之外的字段为可选状态捎带，
     /// 与 WS 上行帧（<c>JsonlCommand</c>）同源 —— 这里只是 HTTP 的入口形状。
+    /// <para>
+    /// 本类不提供 wire → 输入状态的转换：状态与提交值统一由 <see cref="InputFrame.FromWire"/>
+    /// 构造，避免出现第二份字段映射。
+    /// </para>
     /// </summary>
     internal sealed class HttpInput
     {
@@ -310,16 +321,6 @@ internal sealed class HttpRouteDispatcher
         public InputKeyEvent[]? keys { get; set; }
         public InputGeometry? geometry { get; set; }
         public bool? focus { get; set; }
-
-        /// <summary>
-        /// wire → 输入侧：把捎带的状态字段转成 <see cref="InputStateEvent"/>。
-        /// 与 <see cref="JsonlCommand.ToInputState"/> 同构 —— 上行状态的两个 wire 入口
-        /// （HTTP body / 协议帧）在此收敛到同一个类型。
-        /// </summary>
-        public InputStateEvent ToInputState() => new(hoverValue, keys, geometry, focus);
-
-        /// <summary>是否携带状态字段（不含 value）。为 true 时即使 value 缺省也是合法输入（状态类）。</summary>
-        public bool HasInputState => ToInputState().HasAny;
     }
 
     /// <summary>POST /control/acquire|release body（token 可选）。</summary>

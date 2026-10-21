@@ -46,7 +46,7 @@ public sealed class InputStateApplierTests
     {
         var host = NewServerLikeHost();
 
-        InputStateApplier.Apply(InputStateEvent.Empty, host);
+        InputStateApplier.Apply(InputFrame.Empty, host);
 
         Assert.Same(InputSnapshot.Empty, host.Current);
     }
@@ -57,7 +57,11 @@ public sealed class InputStateApplierTests
         var host = NullInputHost.Instance;
 
         InputStateApplier.Apply(
-            new InputStateEvent("42", new[] { new InputKeyEvent(65, true) }, new InputGeometry(1, 2), false),
+            new InputFrame(
+                HoverValue: "42",
+                Keys: new[] { new InputKeyEvent(65, true) },
+                Geometry: new InputGeometry(1, 2),
+                Focus: false),
             host);
 
         // 无能力即无效果：宿主不该被写出任何状态（骨架阶段的可观测不变式）
@@ -71,11 +75,11 @@ public sealed class InputStateApplierTests
     {
         var host = NewServerLikeHost();
 
-        InputStateApplier.Apply(new InputStateEvent(Keys: new[] { new InputKeyEvent(65, true) }), host);
+        InputStateApplier.Apply(new InputFrame(Keys: new[] { new InputKeyEvent(65, true) }), host);
         Assert.True(host.Current.Keys.IsDown(65));
 
         // 松开：前端分帧上报 up，本模块不合成、不补全 —— 只做「这一帧写进宿主」
-        InputStateApplier.Apply(new InputStateEvent(Keys: new[] { new InputKeyEvent(65, false) }), host);
+        InputStateApplier.Apply(new InputFrame(Keys: new[] { new InputKeyEvent(65, false) }), host);
         Assert.False(host.Current.Keys.IsDown(65));
     }
 
@@ -85,7 +89,7 @@ public sealed class InputStateApplierTests
         var host = NewServerLikeHost();
 
         InputStateApplier.Apply(
-            new InputStateEvent(Keys: new[]
+            new InputFrame(Keys: new[]
             {
                 new InputKeyEvent(-1, true),      // 下越界
                 new InputKeyEvent(256, true),     // 上越界（KeyStateSet 只有 256 槽）
@@ -104,7 +108,7 @@ public sealed class InputStateApplierTests
     {
         var host = NewAllCapableHost();
 
-        InputStateApplier.Apply(new InputStateEvent(Geometry: new InputGeometry(120, 100)), host);
+        InputStateApplier.Apply(new InputFrame(Geometry: new InputGeometry(120, 100)), host);
 
         // console 局部坐标、左上基准（ADR-0031 §8）——翻译只做搬运，不做换算
         Assert.Equal(new EmuPoint(120, 100), host.Current.CursorPosition);
@@ -115,7 +119,7 @@ public sealed class InputStateApplierTests
     {
         var host = NewServerLikeHost();
 
-        InputStateApplier.Apply(new InputStateEvent(HoverValue: "42"), host);
+        InputStateApplier.Apply(new InputFrame(HoverValue: "42"), host);
 
         Assert.Equal("42", host.Current.HoverValue);
     }
@@ -132,7 +136,7 @@ public sealed class InputStateApplierTests
     {
         var host = NewServerLikeHost();   // 无 Geometry
 
-        InputStateApplier.Apply(new InputStateEvent(Geometry: new InputGeometry(120, 100)), host);
+        InputStateApplier.Apply(new InputFrame(Geometry: new InputGeometry(120, 100)), host);
 
         Assert.Null(host.Current.CursorPosition);
     }
@@ -142,7 +146,7 @@ public sealed class InputStateApplierTests
     {
         var host = NewCliLikeHost();      // 无 Hover
 
-        InputStateApplier.Apply(new InputStateEvent(HoverValue: "42"), host);
+        InputStateApplier.Apply(new InputFrame(HoverValue: "42"), host);
 
         Assert.Null(host.Current.HoverValue);
     }
@@ -152,7 +156,7 @@ public sealed class InputStateApplierTests
     {
         var host = new DefaultInputHost(InputCapability.Focus);   // 无 KeyboardState
 
-        InputStateApplier.Apply(new InputStateEvent(Keys: new[] { new InputKeyEvent(65, true) }), host);
+        InputStateApplier.Apply(new InputFrame(Keys: new[] { new InputKeyEvent(65, true) }), host);
 
         Assert.False(host.Current.Keys.IsDown(65));
     }
@@ -162,7 +166,7 @@ public sealed class InputStateApplierTests
     {
         var host = NewCliLikeHost();      // 无 Focus
 
-        InputStateApplier.Apply(new InputStateEvent(Focus: false), host);
+        InputStateApplier.Apply(new InputFrame(Focus: false), host);
 
         Assert.True(host.Current.Focused);   // 快照默认 true，未被改写
     }
@@ -175,7 +179,11 @@ public sealed class InputStateApplierTests
         var host = NewAllCapableHost();
 
         InputStateApplier.Apply(
-            new InputStateEvent("42", new[] { new InputKeyEvent(65, true) }, new InputGeometry(3, 4), true),
+            new InputFrame(
+                HoverValue: "42",
+                Keys: new[] { new InputKeyEvent(65, true) },
+                Geometry: new InputGeometry(3, 4),
+                Focus: true),
             host);
 
         var snap = host.Current;
@@ -196,10 +204,10 @@ public sealed class InputStateApplierTests
     public void Focus_loss_event_clears_key_level()
     {
         var host = NewServerLikeHost();
-        InputStateApplier.Apply(new InputStateEvent(Keys: new[] { new InputKeyEvent(65, true) }), host);
+        InputStateApplier.Apply(new InputFrame(Keys: new[] { new InputKeyEvent(65, true) }), host);
         Assert.True(host.Current.Keys.IsDown(65));
 
-        InputStateApplier.Apply(new InputStateEvent(Focus: false), host);
+        InputStateApplier.Apply(new InputFrame(Focus: false), host);
 
         Assert.False(host.Current.Keys.IsDown(65));
         Assert.False(host.Current.Focused);
@@ -234,22 +242,28 @@ public sealed class InputStateApplierTests
     // === wire → 输入侧的形状转换 ===
 
     [Fact]
-    public void JsonlCommand_ToInputState_carries_every_field()
+    public void JsonlCommand_ToFrame_carries_every_field()
     {
         var cmd = new JsonlCommand("input", "1", "42", new[] { new InputKeyEvent(65, true) }, new InputGeometry(3, 4), false);
 
-        var e = cmd.ToInputState();
+        var e = cmd.ToFrame();
 
+        Assert.Equal("1", e.Value);
         Assert.Equal("42", e.HoverValue);
         Assert.Equal(new InputGeometry(3, 4), e.Geometry);
         Assert.False(e.Focus!.Value);
         Assert.Single(e.Keys!);
         Assert.Equal(65, e.Keys![0].code);
-        Assert.True(e.HasAny);
+        Assert.True(e.HasValue);
+        Assert.True(e.HasState);
     }
 
+    /// <summary>
+    /// HTTP 结构化 body 与协议帧走同一个 <see cref="InputFrame.FromWire"/> ——
+    /// 这是「不存在第二份 wire → 输入状态转换」的可执行断言。
+    /// </summary>
     [Fact]
-    public void HttpInput_ToInputState_carries_every_field()
+    public void Structured_http_input_builds_the_same_frame()
     {
         var input = new HttpRouteDispatcher.HttpInput
         {
@@ -260,13 +274,16 @@ public sealed class InputStateApplierTests
             focus = false,
         };
 
-        var e = input.ToInputState();
+        var e = InputFrame.FromWire(
+            input.value, input.hoverValue, input.keys, input.geometry, input.focus);
 
+        Assert.Equal("1", e.Value);
         Assert.Equal("42", e.HoverValue);
         Assert.Equal(new InputGeometry(3, 4), e.Geometry);
         Assert.False(e.Focus!.Value);
         Assert.Single(e.Keys!);
-        Assert.True(input.HasInputState);   // HasInputState 已委托给 HasAny
+        Assert.True(e.HasValue);
+        Assert.True(e.HasState);
     }
 
     /// <summary>

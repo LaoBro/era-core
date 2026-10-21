@@ -221,16 +221,17 @@ namespace MinorShift.Emuera.GameView
                 if (cmd?.type != "input")
                     continue;
 
-                // spec-v3 §5.1/§5.3：先把捎带的状态字段写进 IInputHost，再决定派发与否。
+                // spec-v3 §5.1/§5.3：先把帧的状态字段写进 IInputHost，再决定派发与否。
                 // 顺序要紧 —— 写状态必须**先于** DispatchInput，否则脚本本轮读到的仍是旧值。
-                // 翻译本体见 InputStateApplier（wire → 输入宿主），本类只保留这段编排顺序。
-                InputStateApplier.Apply(cmd.ToInputState(), ui.Input);
+                // 翻译本体见 InputStateApplier（InputFrame → 输入宿主），本类只保留这段编排顺序。
+                var frame = cmd.ToFrame();
+                InputStateApplier.Apply(frame, ui.Input);
 
                 // 状态类（value 缺省）：只更新状态，不派发、不产帧。
-                if (cmd.value == null)
+                if (!frame.HasValue)
                     continue;
 
-                var stepTurn = await StepAsync(cmd.value);
+                var stepTurn = await StepAsync(frame.Value!);
                 if (stepTurn != null)
                     _io.WriteLine(stepTurn);
                 else

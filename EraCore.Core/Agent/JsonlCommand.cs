@@ -16,8 +16,8 @@ namespace MinorShift.Emuera.GameView;
 /// <para>
 /// 🔴 <b>状态字段的键名必须扁平</b>：本 record 是 wire 契约本身（前端 <c>InputExtra</c>
 /// 与 HTTP body 都按这套扁平键名发送），不得把四个字段收进嵌套对象 —— 那会改 wire。
-/// 形状收口改在 Core 侧做：进 Core 第一步就 <see cref="ToInputState"/> 成
-/// <see cref="InputStateEvent"/>，其后的翻译链路只有那一个类型。
+/// 形状收口改在 Core 侧做：进 Core 第一步就 <see cref="ToFrame"/> 成
+/// <see cref="InputFrame"/>，其后的状态应用与派发链路只有那一个类型。
 /// </para>
 /// </summary>
 /// <remarks>
@@ -35,8 +35,8 @@ internal record JsonlCommand(
     bool? focus = null)
 {
     /// <summary>
-    /// wire → 输入侧：把捎带的状态字段转成 <see cref="InputStateEvent"/>。
-    /// 这是上行状态进入 Core 的<b>唯一</b>形状转换点（<c>HttpInput</c> 也有同构的一个）。
+    /// wire → 输入侧：构造 <see cref="InputFrame"/>。
+    /// 字段映射的唯一实现在 <see cref="InputFrame.FromWire"/>（HTTP body 入口也走它）。
     /// </summary>
-    public InputStateEvent ToInputState() => new(hoverValue, keys, geometry, focus);
+    public InputFrame ToFrame() => InputFrame.FromWire(value, hoverValue, keys, geometry, focus);
 }

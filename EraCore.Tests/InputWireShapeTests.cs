@@ -21,7 +21,7 @@ namespace MinorShift.Emuera.Tests;
 /// <item><see cref="JsonlCommand"/>（协议帧 record，源生成）—— 见本文件。</item>
 /// </list>
 /// 剩下 ② 与 ④ 无法物理合并（分属两种序列化机制，且 HTTP body 多一个传输层的 <c>token</c>），
-/// 故用<b>契约测试</b>守住二者不漂移，并以 <see cref="InputStateEvent"/> 作为共同终点。
+/// 故用<b>契约测试</b>守住二者不漂移，并以 <see cref="InputFrame"/> 作为共同终点。
 /// </para>
 /// </summary>
 public sealed class InputWireShapeTests
@@ -55,15 +55,15 @@ public sealed class InputWireShapeTests
     }
 
     /// <summary>
-    /// 两边从同一组字段出发必须收敛到<b>同一个</b> <see cref="InputStateEvent"/> ——
+    /// 两边从同一组字段出发必须收敛到<b>同一个</b> <see cref="InputFrame"/> ——
     /// 这是「进 Core 第一步就单点化」的可执行断言。
     /// </summary>
     [Fact]
-    public void Both_wire_entries_converge_to_the_same_state_event()
+    public void Both_wire_entries_converge_to_the_same_input_frame()
     {
         var keys = new[] { new InputKeyEvent(65, true) };
 
-        var fromJsonl = new JsonlCommand("input", "1", "42", keys, new InputGeometry(3, 4), false).ToInputState();
+        var fromJsonl = new JsonlCommand("input", "1", "42", keys, new InputGeometry(3, 4), false).ToFrame();
         var fromHttp = new HttpInput
         {
             value = "1",
@@ -71,15 +71,18 @@ public sealed class InputWireShapeTests
             keys = keys,
             geometry = new InputGeometry(3, 4),
             focus = false,
-        }.ToInputState();
+        };
+        var httpFrame = InputFrame.FromWire(
+            fromHttp.value, fromHttp.hoverValue, fromHttp.keys, fromHttp.geometry, fromHttp.focus);
 
-        Assert.Equal(fromJsonl.HoverValue, fromHttp.HoverValue);
-        Assert.Equal(fromJsonl.Geometry, fromHttp.Geometry);
-        Assert.Equal(fromJsonl.Focus, fromHttp.Focus);
-        Assert.Equal(fromJsonl.Keys!.Length, fromHttp.Keys!.Length);
-        Assert.Equal(fromJsonl.Keys[0], fromHttp.Keys[0]);
-        Assert.Equal(fromJsonl.HasAny, fromHttp.HasAny);
-        Assert.True(fromHttp.HasAny);
+        Assert.Equal(fromJsonl.Value, httpFrame.Value);
+        Assert.Equal(fromJsonl.HoverValue, httpFrame.HoverValue);
+        Assert.Equal(fromJsonl.Geometry, httpFrame.Geometry);
+        Assert.Equal(fromJsonl.Focus, httpFrame.Focus);
+        Assert.Equal(fromJsonl.Keys!.Length, httpFrame.Keys!.Length);
+        Assert.Equal(fromJsonl.Keys[0], httpFrame.Keys[0]);
+        Assert.Equal(fromJsonl.HasState, httpFrame.HasState);
+        Assert.True(httpFrame.HasState);
     }
 
     /// <summary>
@@ -87,12 +90,15 @@ public sealed class InputWireShapeTests
     /// <c>token</c> 是 HTTP 传输层（不进协议帧）。状态字段集合不得把它们混进来。
     /// </summary>
     [Fact]
-    public void State_event_carries_no_value_or_token()
+    public void Frame_carries_value_but_not_token()
     {
         Assert.DoesNotContain("value", StateFields);
         Assert.DoesNotContain("token", StateFields);
-        Assert.False(new InputStateEvent().HasAny);
-        Assert.False(new HttpInput { value = "1" }.HasInputState);
-        Assert.True(new HttpInput { token = "t" }.HasInputState == false);
+        Assert.False(InputFrame.Empty.HasValue);
+        Assert.False(InputFrame.Empty.HasState);
+
+        var valueOnly = InputFrame.FromWire("1", null, null, null, null);
+        Assert.True(valueOnly.HasValue);
+        Assert.False(valueOnly.HasState);   // token 属于 HTTP 传输层，不进输入帧
     }
 }
