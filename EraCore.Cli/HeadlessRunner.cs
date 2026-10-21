@@ -73,14 +73,14 @@ internal static class HeadlessRunner
                         return Task.CompletedTask;
                     },
                     dialectProfileId,
-                    // ADR-0031 / spec-v3 M4/M4b：CLI 声明两项能力
-                    // - Geometry：VT 鼠标位置换算成 console 局部像素
-                    //   （AgentCliProtocol.SubmitPointerGeometry）⇒ MOUSEX / MOUSEY / MOUSEB 有真值。
-                    // - KeyboardState：VT 鼠标键电平（SubmitPointerKey）⇒ GETKEY / GETKEYTRIGGERED
-                    //   有真值。此前 VT 路径从不写 IInputHost，脚本侧恒 0 —— COMF413:135 的出口
-                    //   GETKEYTRIGGERED(0x01) 因此永远不成立（M4b 补齐）。
+                    // ADR-0031 / spec-v3 M4/M4b：CLI 只声明能力位，宿主实例由组装根创建
+                    // （issue-002：宿主不再接触内部输入主机）。
+                    // - Geometry：VT 鼠标位置换算成 console 局部像素 ⇒ MOUSEX / MOUSEY / MOUSEB 有真值。
+                    // - KeyboardState：VT 鼠标键电平 ⇒ GETKEY / GETKEYTRIGGERED 有真值
+                    //   （M4b 前 VT 路径从不写输入宿主，COMF413:135 的出口永远不成立）。
                     // 注：CLI **键盘**尚未映射到 VK（VT 只给 ConsoleKey/字符），故键盘键仍恒 0。
-                    new DefaultInputHost(InputCapability.Geometry | InputCapability.KeyboardState));
+                    inputCapabilities: new InputCapabilities(
+                        InputCapability.Geometry | InputCapability.KeyboardState));
 
                 if (result == GameLoopResult.Aborted)
                 {

@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Input;
 using MinorShift.Emuera.Runtime.Config;
 
 namespace MinorShift.Emuera.Server;
@@ -162,27 +163,18 @@ internal sealed class GameServerProtocol
         }
     }
 
-    /// <summary>POST /input —— 提交输入（value 已由宿主解析，此处做门禁 + 入队）。</summary>
+    /// <summary>POST /input —— 只提交 value 的便捷形态；与带状态字段的形态走同一个门面。</summary>
     public HttpResult PostInput(string value, ControlIdentity identity)
-    {
-        var session = _sessions.CurrentSession;
-
-        if (session == null)
-            return Json(new JsonObject { ["error"] = "No active session" }, 404);
-
-        var gate = session.Controller.CheckInput(identity, session.HasEnded);
-        if (gate.Status != ControlGateStatus.Allowed)
-            return ControlErrorResult(gate.Reason, "Input is allowed only for the current Controller", session);
-
-        session.IO.EnqueueInput(BuildInputJsonl(value));
-        return Json(new JsonObject { ["received"] = true });
-    }
+        => PostInputFrame(new InputFrame(Value: value), identity);
 
     /// <summary>
-    /// POST /input（spec-v3 §5.1 扩展形态）—— 入队一条<b>已构造好</b>的 input jsonl。
-    /// 与 <see cref="PostInput"/> 的唯一差别是调用方自行拼帧（携带按键/悬停/坐标等状态字段）。
+    /// POST /input（spec-v3 §5.1 扩展形态）—— 把一帧输入交给会话的输入门面。
+    /// <para>
+    /// issue-002：状态字段由 <see cref="InputPort.Submit"/> 同步写入输入宿主；value 由门面的
+    /// 派发通道编码成 value-only 的 input 帧入队，交给游戏循环线程推进——HTTP 线程不直接跑引擎。
+    /// </para>
     /// </summary>
-    public HttpResult PostInputJsonl(string jsonl, ControlIdentity identity)
+    public HttpResult PostInputFrame(InputFrame frame, ControlIdentity identity)
     {
         var session = _sessions.CurrentSession;
 
@@ -193,7 +185,7 @@ internal sealed class GameServerProtocol
         if (gate.Status != ControlGateStatus.Allowed)
             return ControlErrorResult(gate.Reason, "Input is allowed only for the current Controller", session);
 
-        session.IO.EnqueueInput(jsonl);
+        session.Input.Submit(frame);
         return Json(new JsonObject { ["received"] = true });
     }
 

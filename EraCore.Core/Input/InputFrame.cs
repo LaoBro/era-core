@@ -13,10 +13,10 @@ namespace MinorShift.Emuera.Input;
 /// 放在 Agent 会让 Server 反向引用协议层。
 /// </remarks>
 /// </summary>
-internal sealed record InputKeyEvent(int code, bool down);
+public sealed record InputKeyEvent(int code, bool down);
 
 /// <summary>console 局部坐标（<b>左上基准</b>，ADR-0031 §8）。仅 <c>Geometry</c> 宿主发送；M5b 前不启用。</summary>
-internal sealed record InputGeometry(int x, int y);
+public sealed record InputGeometry(int x, int y);
 
 /// <summary>
 /// 上行输入帧 —— <b>输入侧唯一的一等形状</b>（value / hover / keys / geometry / focus）。
@@ -40,7 +40,7 @@ internal sealed record InputGeometry(int x, int y);
 /// 需要比较时逐字段断言，不要直接 <c>Assert.Equal</c> 两个实例。
 /// </para>
 /// </summary>
-internal sealed record InputFrame(
+public sealed record InputFrame(
     string? Value = null,
     string? HoverValue = null,
     InputKeyEvent[]? Keys = null,

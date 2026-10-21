@@ -6,15 +6,10 @@ namespace MinorShift.Emuera.Input;
 /// 上行输入翻译（ADR-0031 / spec-v3 §5.1）：把各宿主的<b>上行事件</b>写进
 /// <see cref="IInputHost"/>。与下行帧形状权威 <c>TurnFrames</c> 对称。
 /// <para>
-/// <b>两个适配器 ⇒ 这是真接缝</b>（不是假设接缝）：
-/// <list type="bullet">
-/// <item><b>wire 入口</b> <see cref="Apply(InputFrame, IInputHost)"/> ——
-/// Server / MAUI / JSONL 管道：前端/客户端把状态字段捎带在 <c>input</c> 帧里上报。</item>
-/// <item><b>指针入口</b> <see cref="ApplyPointerGeometry"/> / <see cref="ApplyPointerKey"/> ——
-/// CLI：VT 解析器把终端鼠标事件直接交给宿主，不经 wire。</item>
-/// </list>
-/// 两者原先各写各的（前者在 <c>AgentJsonlProtocol</c>，后者在 <c>AgentCliProtocol</c>），
-/// 且<b>门卫口径不一致</b>：CLI 判能力位、wire 侧不判。收进本模块后口径统一。
+/// <b>唯一的状态写入点</b>（issue-002）：宿主提交经 <see cref="InputPort.Submit"/> 汇入
+/// <see cref="Apply(InputFrame, IInputHost)"/>；wire 入口（<c>AgentJsonlProtocol</c>）也调用同一份。
+/// CLI 的 VT 指针事件不再另写一套 —— 它们同样先构造成 <see cref="InputFrame"/> 再走门面。
+/// 曾经的指针专用入口（各写各的、门卫口径不一致）已删除。
 /// </para>
 /// <para>
 /// <b>位置</b>：本模块只依赖输入侧类型，住在 <c>Input/</c>（<see cref="IInputHost"/> 的邻域），
@@ -65,30 +60,5 @@ internal static class InputStateApplier
                 continue;
             host.SubmitKey(k.code, k.down);
         }
-    }
-
-    /// <summary>
-    /// 指针入口（CLI / VT）：上报 console 局部坐标（左上基准）。
-    /// 宿主未声明 <see cref="InputCapability.Geometry"/> 时静默丢弃 ——
-    /// 写了也无消费者（<c>MoveMouse</c> 不会被调用）。
-    /// </summary>
-    internal static void ApplyPointerGeometry(IInputHost host, EmuPoint point)
-    {
-        if (!host.Capabilities.Has(InputCapability.Geometry))
-            return;
-
-        host.SubmitGeometry(point);
-    }
-
-    /// <summary>
-    /// 指针入口（CLI / VT）：上报鼠标键的按下/松开（VK 键码）。
-    /// 宿主未声明 <see cref="InputCapability.KeyboardState"/> 时静默丢弃。
-    /// </summary>
-    internal static void ApplyPointerKey(IInputHost host, int virtualKey, bool down)
-    {
-        if (!host.Capabilities.Has(InputCapability.KeyboardState))
-            return;
-
-        host.SubmitKey(virtualKey, down);
     }
 }

@@ -77,6 +77,16 @@ internal sealed class Session : IDisposable
     /// </summary>
     private readonly DefaultInputHost _inputHost = new(
         InputCapability.KeyboardState | InputCapability.Hover | InputCapability.Focus);
+
+    /// <summary>
+    /// 输入轴宿主门面（issue-002）：HTTP 入口只经它提交帧。
+    /// <para>
+    /// server 的派发不能同步跑引擎——HTTP 线程与游戏循环线程分离，故 value 重新编码成
+    /// value-only 的 input 帧入队，由 <c>AgentJsonlProtocol.RunLoopAsync</c> 在循环线程上派发。
+    /// 状态字段在 <see cref="InputPort.Submit"/> 内同步写入宿主（线程安全快照），不受排队影响。
+    /// </para>
+    /// </summary>
+    public InputPort Input { get; }
     private EmueraConsole? _console;
     private DisplayState? _displayState;
     private AgentJsonlProtocol? _protocol;
@@ -98,6 +108,7 @@ internal sealed class Session : IDisposable
     public Session(HttpSessionIO io, ITerminalSetup terminalSetup, ConfigData configData, TimeSpan? agentLease = null, bool fullDiffOnFirstTurn = false, string? dialectProfileId = null)
     {
         _io = io;
+        Input = new InputPort(_inputHost, value => _io.EnqueueInput(GameServerProtocol.BuildInputJsonl(value)));
         _configData = configData;
         _terminalSetup = terminalSetup;
         _dialectProfileId = dialectProfileId;
@@ -190,7 +201,7 @@ internal sealed class Session : IDisposable
                     }
                 },
                 _dialectProfileId,
-                _inputHost);
+                inputHost: _inputHost);
         }
         catch (OperationCanceledException) when (_cts.IsCancellationRequested || _disposed)
         {

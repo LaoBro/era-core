@@ -4,7 +4,6 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Input;
 using MinorShift.Emuera.UI.Game;
 
@@ -165,26 +164,8 @@ internal sealed class HttpRouteDispatcher
         if (!frame.HasValue && !frame.HasState)
             return MissingInputValue();
 
-        return _protocol.PostInputJsonl(SerializeInputFrame(frame), ResolveIdentity(request, input.token));
+        return _protocol.PostInputFrame(frame, ResolveIdentity(request, input.token));
     }
-
-    /// <summary>
-    /// InputFrame → 协议循环消费的 input jsonl。这里只做 <b>wire 编码</b>，不翻译输入状态。
-    /// <para>
-    /// 2026-10-19：由<b>手工拼 <c>JsonObject</c></b> 改为序列化 <see cref="JsonlCommand"/> ——
-    /// 手拼版本把 wire 键名抄了第二份（原注释自陈「键名与 JsonlCommand 逐一对应」），
-    /// 任一处改字段名都会静默漂移。现在上行 input 帧的键名<b>只有 JsonlCommand 一处真相</b>。
-    /// </para>
-    /// <para>
-    /// 序列化走 <c>EmueraJsonContext.Default.JsonlCommand</c>（源生成，NativeAOT 安全）；
-    /// 该上下文 <c>DefaultIgnoreCondition = WhenWritingNull</c> ⇒ 未携带的可选字段不落 wire，
-    /// 输出与旧手拼版语义等价（<c>token</c> 属于 HTTP 传输层，仍不进协议帧）。
-    /// </para>
-    /// </summary>
-    private static string SerializeInputFrame(InputFrame frame)
-        => JsonSerializer.Serialize(
-            new JsonlCommand("input", frame.Value, frame.HoverValue, frame.Keys, frame.Geometry, frame.Focus),
-            EmueraJsonContext.Default.JsonlCommand);
 
     private HttpResult HandleLoadGame(HttpRequestData request)
     {

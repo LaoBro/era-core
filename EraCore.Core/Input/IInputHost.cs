@@ -13,7 +13,7 @@ namespace MinorShift.Emuera.Input;
 	/// </para>
 	/// </summary>
 	[Flags]
-	internal enum InputCapability
+	public enum InputCapability
 	{
 		None = 0,
 
@@ -30,7 +30,7 @@ namespace MinorShift.Emuera.Input;
 		Focus = 1 << 3,
 	}
 
-	internal readonly record struct InputCapabilities(InputCapability Flags)
+	public readonly record struct InputCapabilities(InputCapability Flags)
 	{
 		public static InputCapabilities None => new(InputCapability.None);
 
@@ -299,7 +299,18 @@ namespace MinorShift.Emuera.Input;
 				return down && version != last;
 			}
 
-			public void ResetState() => Volatile.Write(ref _current, InputSnapshot.Empty);
+			/// <summary>
+		/// 清空全部输入状态：快照归空，<b>连同触发读位置</b>（<see cref="_lastRead"/>）一起归零。
+		/// <para>
+		/// 只清 <c>_current</c> 不够：版本号随快照归零后，残留的 <c>_lastRead</c> 会让重置后的
+		/// 首次按下恰好「版本相等」⇒ <c>GETKEYTRIGGERED</c> 漏掉一次触发（与失焦清键同一陷阱）。
+		/// </para>
+		/// </summary>
+		public void ResetState()
+		{
+			Array.Clear(_lastRead);
+			Volatile.Write(ref _current, InputSnapshot.Empty);
+		}
 
 			private void Update(Func<InputSnapshot, InputSnapshot> mutator)
 			{

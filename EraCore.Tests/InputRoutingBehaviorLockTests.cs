@@ -152,6 +152,46 @@ public sealed class InputRoutingBehaviorLockTests
     }
 
     /// <summary>
+    /// issue-002：server 的接线口径 —— <see cref="InputPort"/> 先写状态，value 经
+    /// <c>BuildInputJsonl</c> 入队，协议循环读回后派发并产回音。门面与循环之间不出现第二份状态翻译。
+    /// </summary>
+    [Fact]
+    public async Task Port_value_submission_reaches_the_loop_and_emits_echo_turn()
+    {
+        using var h = new Harness(AllCapabilities);
+        var port = new InputPort(h.Host, value => h.IO.Feed(GameServerProtocol.BuildInputJsonl(value)));
+
+        port.Submit(new InputFrame(Value: "1", HoverValue: "42"));
+        h.IO.Complete();
+        await h.Protocol.RunLoopAsync(false, CancellationToken.None);
+
+        Assert.Equal(new[] { "1" }, h.Protocol.Dispatched);
+        Assert.Equal(2, h.IO.Output.Count);   // 首帧 + 一次回音
+        Assert.Equal("42", h.Host.Current.HoverValue);
+        Assert.Equal("42", Assert.Single(h.Protocol.SnapshotsAtDispatch).HoverValue);
+    }
+
+    [Fact]
+    public async Task Port_state_only_submission_writes_state_without_turn()
+    {
+        using var h = new Harness(AllCapabilities);
+        var port = new InputPort(h.Host, value => h.IO.Feed(GameServerProtocol.BuildInputJsonl(value)));
+
+        port.Submit(new InputFrame(
+            HoverValue: "42",
+            Keys: new[] { new InputKeyEvent(65, true) },
+            Geometry: new InputGeometry(7, 9)));
+        h.IO.Complete();
+        await h.Protocol.RunLoopAsync(false, CancellationToken.None);
+
+        Assert.Empty(h.Protocol.Dispatched);
+        Assert.Single(h.IO.Output);   // 只有首帧，没有回音
+        Assert.Equal("42", h.Host.Current.HoverValue);
+        Assert.True(h.Host.Current.Keys.IsDown(65));
+        Assert.Equal(new EmuPoint(7, 9), h.Host.Current.CursorPosition);
+    }
+
+    /// <summary>
     /// 两条 HTTP 入口的帧形状：结构化字段序列化出的命令帧，与客户端预构建的命令帧，
     /// 进入同一条循环后必须得到逐项一致的状态。
     /// </summary>

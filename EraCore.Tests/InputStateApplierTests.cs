@@ -21,9 +21,9 @@ namespace MinorShift.Emuera.Tests;
 /// 写进 <see cref="IInputHost"/>」此前完全没有守护。本文件补的就是这一层。
 /// </para>
 /// <para>
-/// 2026-10-19（候选 5 深化）：模块下移到输入侧并收进 CLI 的指针入口后，
-/// 本文件追加两批断言 —— ①<b>能力位门卫</b>（wire 与指针两个入口同口径）；
-/// ②<b>指针入口</b>本身。
+/// 2026-10-19（候选 5 深化）：模块下移到输入侧，断言补齐<b>能力位门卫</b>。
+/// 2026-10-21（issue-002）：CLI 指针入口也改走 <see cref="InputPort"/>，指针专用入口已删除；
+/// 指针形状的用例见 <c>InputPortTests</c>。
 /// </para>
 /// </summary>
 public sealed class InputStateApplierTests
@@ -211,32 +211,6 @@ public sealed class InputStateApplierTests
 
         Assert.False(host.Current.Keys.IsDown(65));
         Assert.False(host.Current.Focused);
-    }
-
-    // === 指针入口（CLI / VT，不经 wire）===
-
-    [Fact]
-    public void Pointer_geometry_is_written_only_with_capability()
-    {
-        var withCap = NewCliLikeHost();
-        InputStateApplier.ApplyPointerGeometry(withCap, new EmuPoint(7, 9));
-        Assert.Equal(new EmuPoint(7, 9), withCap.Current.CursorPosition);
-
-        var without = NullInputHost.Instance;
-        InputStateApplier.ApplyPointerGeometry(without, new EmuPoint(7, 9));
-        Assert.Null(without.Current.CursorPosition);
-    }
-
-    [Fact]
-    public void Pointer_key_is_written_only_with_capability()
-    {
-        var withCap = NewCliLikeHost();
-        InputStateApplier.ApplyPointerKey(withCap, 1, true);     // VK_LBUTTON
-        Assert.True(withCap.Current.Keys.IsDown(1));
-
-        var without = new DefaultInputHost(InputCapability.Geometry);   // 无 KeyboardState
-        InputStateApplier.ApplyPointerKey(without, 1, true);
-        Assert.False(without.Current.Keys.IsDown(1));
     }
 
     // === wire → 输入侧的形状转换 ===

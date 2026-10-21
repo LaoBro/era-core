@@ -17,6 +17,11 @@ namespace MinorShift.Emuera.GameView
         // 本类只做编排，不再持有输入缓冲与进程级清理钩子的内联状态。
         private readonly CliInputBuffer _input;
         private readonly VtTerminalLifecycle _vtLifecycle;
+        /// <summary>
+        /// 输入轴宿主门面（issue-002）：VT 指针事件与值提交都经它，不再直接操作内部输入主机。
+        /// CLI 的线程模型是同步的，派发通道直接接到 <see cref="AgentProtocolBase.DispatchInput"/>。
+        /// </summary>
+        private readonly InputPort _inputPort;
 
         // VT 模式状态（DA1 探测通过后非 null）
         private AgentCliVtScreen? _screen;
@@ -75,8 +80,8 @@ namespace MinorShift.Emuera.GameView
             int x = TerminalViewportGeometry.PointXAtViewportCol(col);
             int y = TerminalViewportGeometry.PointYAtViewportRow(row);
 
-            // 门卫（能力位判定）已收进 InputStateApplier，与 wire 入口同口径
-            InputStateApplier.ApplyPointerGeometry(ui.Input, new EmuPoint(x, y));
+            // 能力门控在门面内统一执行（与 wire 入口同一份 InputStateApplier）
+            _inputPort.Submit(new InputFrame(Geometry: new InputGeometry(x, y)));
         }
 
         /// <summary>
@@ -89,8 +94,8 @@ namespace MinorShift.Emuera.GameView
         /// </summary>
         void IVtHost.SubmitPointerKey(int virtualKey, bool down)
         {
-            // 门卫（能力位判定）已收进 InputStateApplier，与 wire 入口同口径
-            InputStateApplier.ApplyPointerKey(ui.Input, virtualKey, down);
+            // 能力门控在门面内统一执行（与 wire 入口同一份 InputStateApplier）
+            _inputPort.Submit(new InputFrame(Keys: new[] { new InputKeyEvent(virtualKey, down) }));
         }
 
         /// <summary>当前 Scroll Offset（IVtHost 门卫读取）。ADR-0009：从 ScrollController 读。</summary>
@@ -101,8 +106,9 @@ namespace MinorShift.Emuera.GameView
         {
             _terminalSetup = terminalSetup;
             _terminalInput = terminalInput;
+            _inputPort = new InputPort(ui.Input, DispatchInput);
             // 职责拆分：输入行缓冲与 VT 生命周期独立成类，协议侧只做编排。
-            _input = new CliInputBuffer(DispatchInput, Echo);
+            _input = new CliInputBuffer(SubmitValue, Echo);
             _vtLifecycle = new VtTerminalLifecycle(Stop, CleanupVt);
             // ADR-0009：ScrollController 构造占位（visibleLines=1），RunVtLoop 内 UpdateVisibleLines(WindowHeight-2)。
             _scroll = new ScrollController(scrollVisibleLines: 1);
@@ -118,7 +124,7 @@ namespace MinorShift.Emuera.GameView
                 console,
                 _scroll,
                 () => _screen,
-                input => DispatchInput(input),
+                SubmitValue,
                 _input.Clear,
                 _displayState);
             _countdown = new CountdownRenderer(console, () => _scroll.ScrollOffset, () => _screen, () => _renderer.LastContentRow);
@@ -329,7 +335,7 @@ namespace MinorShift.Emuera.GameView
             // Phase 3-3：value-based dispatch——isInteger 时 value 是 long 装箱，
             // 否则是 string。Generation 校验由服务端 ConsoleInputHandler 兜底。
             string input = isInteger ? value.ToString()! : (string)value;
-            DispatchInput(input);
+            SubmitValue(input);
         }
 
         void IVtHost.DispatchMouseMiss()
@@ -346,10 +352,16 @@ namespace MinorShift.Emuera.GameView
             // 注：AnyValue 不在清单内——其空输入经 DispatchInput 必被 long.TryParse("") 拒绝，
             // 与"忽略"净效果相同，故此处不再单独派发（非回归）。
             if (AllowsEmptyInput(req.InputType))
-                DispatchInput("");
+                SubmitValue("");
         }
 
         #endregion
+
+        /// <summary>
+        /// 值提交的唯一入口（键盘回车 / 按钮 / 鼠标点击）：经输入门面构造提交帧。
+        /// 门面内部先写状态（本帧无状态字段）再派发，与 wire 入口同一套语义。
+        /// </summary>
+        private void SubmitValue(string value) => _inputPort.Submit(new InputFrame(Value: value));
 
         /// <summary>输入回显：经 VT 备用屏（与光标/滚动状态一致）。ADR-0005 VT-only 后
         /// _screen 在输入等待态必非 null，故直接断言解引用，不再保留主屏降级分支。</summary>
