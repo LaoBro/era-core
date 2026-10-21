@@ -69,7 +69,7 @@ public class WsConnectionHandlerTests
         var ws = new RecordingWebSocket();
         var task = WsRelay.RunConnectionAsync(ws, sub);
 
-        io.WriteLine("turn-1");
+        io.WriteLine(TestTurnFactory.Wire("turn-1"));
         await WaitUntilAsync(() => ws.SentFrames.Count > 0, TimeSpan.FromSeconds(5));
         Assert.Equal("turn-1", ws.SentFrames[0]);
 

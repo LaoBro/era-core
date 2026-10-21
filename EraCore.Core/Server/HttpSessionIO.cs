@@ -20,13 +20,13 @@ internal sealed class HttpSessionIO : SessionIO, ITurnSink
         SingleReader = true,
         SingleWriter = false
     });
-    private readonly Channel<string> _output = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
+    private readonly Channel<Turn> _output = Channel.CreateUnbounded<Turn>(new UnboundedChannelOptions
     {
         SingleReader = false,
         SingleWriter = false
     });
     private volatile bool _closed;
-    private readonly ConcurrentQueue<string> _unread = new();
+    private readonly ConcurrentQueue<Turn> _unread = new();
 
     /// <summary>
     /// 注入旁路广播中枢：所有 <see cref="WriteLine"/> 的 turn <b>既</b>写入 HTTP 长轮询消费的
@@ -60,14 +60,14 @@ internal sealed class HttpSessionIO : SessionIO, ITurnSink
         }
     }
 
-    public override void WriteLine(string text)
+    public override void WriteLine(Turn turn)
     {
         if (_closed)
             return;
-        _output.Writer.TryWrite(text);
-        // 旁路广播：同一份 turn 字符串广播给所有 WS 等观察者，无需任何转换
-        // （turn 已是合法的 TurnRecord v2 JSON，与 GET /turn 响应体字节一致）。
-        _broadcaster.Publish(text);
+        _output.Writer.TryWrite(turn);
+        // 旁路广播：同一个 Turn 实例广播给所有 WS 等观察者，无需任何转换
+        // （Wire 已是与 GET /turn 响应体字节一致的 TurnRecord v12 JSON）。
+        _broadcaster.Publish(turn);
     }
 
     /// <summary>
@@ -101,9 +101,9 @@ internal sealed class HttpSessionIO : SessionIO, ITurnSink
     /// CancellationToken 取消时抛 OperationCanceledException，由调用方处理。
     /// 注意：output Channel 配置为 SingleReader=false，多 reader 并发安全。
     /// </summary>
-    public List<string> DrainOutput()
+    public List<Turn> DrainOutput()
     {
-        var turns = new List<string>();
+        var turns = new List<Turn>();
         while (_unread.TryDequeue(out var unread))
             turns.Add(unread);
         while (_output.Reader.TryRead(out var turn))
@@ -115,12 +115,12 @@ internal sealed class HttpSessionIO : SessionIO, ITurnSink
     /// 把刚读出的 turn 放回队列头部，供后续 Drain/Read 再消费。
     /// 用于控制权变更时：in-flight GET /turn 已取出回合但不能交给旧 Controller。
     /// </summary>
-    public void UnreadOutput(string turn)
+    public void UnreadOutput(Turn turn)
     {
         _unread.Enqueue(turn);
     }
 
-    public async Task<string?> ReadOutputAsync(CancellationToken ct)
+    public async Task<Turn?> ReadOutputAsync(CancellationToken ct)
     {
         if (_unread.TryDequeue(out var unread))
             return unread;

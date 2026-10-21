@@ -131,7 +131,7 @@ public class HttpListenerHostTests
 
         // 经测试接缝注入 marker turn（WriteLine 立即入 _output Channel，与游戏循环无关）
         const string marker = "{\"type\":\"turn\",\"test\":true}";
-        host.Sessions.CurrentSession!.IO.WriteLine(marker);
+        host.Sessions.CurrentSession!.IO.WriteLine(TestTurnFactory.Wire(marker));
 
         // 轮询消费：游戏循环可能先产出若干 turn，直到拿到 marker
         string? got = null;

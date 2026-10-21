@@ -247,7 +247,7 @@ internal sealed class Session : IDisposable
     /// </summary>
     private void FinalizeEndedLoop()
     {
-        string? finalTurn = null;
+        Turn? finalTurn = null;
         try
         {
             finalTurn = _protocol?.BuildFinalTurn();
@@ -386,5 +386,5 @@ internal sealed class Session : IDisposable
 
 internal readonly record struct ControlAcquireSessionResult(
     ControlAcquireResult Control,
-    string? Turn,
+    Turn? Turn,
     int TurnsAdvanced);

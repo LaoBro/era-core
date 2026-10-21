@@ -48,7 +48,7 @@ namespace MinorShift.Emuera.GameView
             _displayState = displayState;
         }
 
-        internal async Task<string?> GetInitialTurnAsync()
+        internal async Task<Turn?> GetInitialTurnAsync()
         {
             if (!await WaitForInputAsync())
                 return null;
@@ -57,7 +57,7 @@ namespace MinorShift.Emuera.GameView
             return BuildTurn(isInitial: true, allowSuppression: false);
         }
 
-        internal async Task<string?> StepAsync(string input)
+        internal async Task<Turn?> StepAsync(string input)
         {
             if (IsStopped)
                 return null;
@@ -110,7 +110,7 @@ namespace MinorShift.Emuera.GameView
         /// ADR-0016：进入此路径前置 _pendingTimeoutFlag=true，让下一帧 BuildTurn 写出
         /// `awaiting.wait.timedOut=true`，前端据此显示超时通知（issue 04 的启发式检测已删）。
         /// </summary>
-        internal async Task<string?> SubmitTimeoutAsync()
+        internal async Task<Turn?> SubmitTimeoutAsync()
         {
             _pendingTimeoutFlag = true;
             console.SubmitTimeout();
@@ -124,7 +124,7 @@ namespace MinorShift.Emuera.GameView
         /// 写入 SessionIO 供 GET /turn 取走。复用 BuildTurn 逻辑，保持 turn 结构一致。
         /// </summary>
         // 终帧：会话的最后一次交付（Quit/Error 状态转换），永不抑制。
-        internal string? BuildFinalTurn() => BuildTurn(allowSuppression: false);
+        internal Turn? BuildFinalTurn() => BuildTurn(allowSuppression: false);
 
         /// <summary>执行超时处理并将 turn 写入 IO，返回 true。</summary>
         private async Task<bool> HandleTimeoutAndWriteAsync()
@@ -321,7 +321,7 @@ namespace MinorShift.Emuera.GameView
         /// 而「客户端输入 → 回合」是应答链路，抑制了会让客户端对一次输入收不到回应，
         /// 且 StepAsync 的 null 返回在 RunLoopAsync 里被当作「退出循环」，语义冲突。
         /// </param>
-        private string? BuildTurn(bool isInitial = false, bool allowSuppression = true)
+        private Turn? BuildTurn(bool isInitial = false, bool allowSuppression = true)
         {
             // plan C（v5）：ComputeDiff 原子化刷新 _current 并 drain 分类权威清空信号，
             // 不再前置 TryUpdate（避免跨调用窗口 + 清空信号错配，见 DisplayState.ComputeDiff）。

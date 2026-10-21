@@ -271,7 +271,7 @@ public sealed class InputRoutingBehaviorLockTests
             }
         }
 
-        public override void WriteLine(string text) => Output.Add(text);
+        public override void WriteLine(Turn turn) => Output.Add(turn.Wire);
         public override void Close() => _input.Writer.TryComplete();
         public override bool IsConnected => true;
     }

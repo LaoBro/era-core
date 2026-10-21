@@ -10,7 +10,8 @@ namespace MinorShift.Emuera.Tests;
 /// <summary>
 /// 不变量 O-3' / O-4 的行为锁：<c>HttpSessionIO.WriteLine</c> 的<b>双写语义</b>——一个 turn 必须
 /// 同时送达 HTTP 长轮询（<c>_output</c> Channel）与旁路广播（<c>OutputHub</c> → WS 观察者的独占 reader），
-/// 且两侧拿到的是<b>同一份字符串实例</b>，不是"内容相等的两份"（见下方对 <c>Assert.Same</c> 的说明）。
+/// 且两侧拿到的是<b>同一个 <see cref="Turn"/> 实例</b>（同一份 <c>Wire</c> 字节），
+/// 不是"内容相等的两份"（见下方对 <c>Assert.Same</c> 的说明）。
 /// <para>
 /// 被锁住的事故模式：有人只给一侧做加工（WS 侧裁剪字段 / HTTP 侧攒批再发 / 重新序列化一次），
 /// <c>/turn</c> 与 WS 就永久看到两个不同的世界，症状是"WebSocket 模式下按钮不刷新、HTTP 模式下正常"
@@ -25,14 +26,16 @@ namespace MinorShift.Emuera.Tests;
 /// </summary>
 public class HttpSessionIoDualWriteTests
 {
-    private const string Turn = """{"protocolVersion":12,"generation":1,"type":"turn"}""";
+    private const string WireJson = """{"protocolVersion":12,"generation":1,"type":"turn"}""";
+
+    private static Turn NewTurn(string wire = WireJson) => TestTurnFactory.Wire(wire);
 
     /// <summary>
-    /// O-4 的正向：写入一次，两条路径各拿到一份。
+    /// O-4 的正向：写入一次，两条路径各拿到同一实例。
     /// <para>
-    /// <b>为什么是 <c>Assert.Same</c> 而非 <c>Assert.Equal</c></b>：O-4 要求的是"同一份 turn，无需任何转换"。
-    /// 任一侧一旦重新序列化、Trim、繁简转换或 rebuffering，<c>Equal</c> 仍会通过而 <c>Same</c> 立即转红——
-    /// 这正是本文件要拦的那类改动。
+    /// <b>为什么是 <c>Assert.Same</c> 而非只比 <c>Wire</c></b>：信封化的目的就是让"同一份"由类型承载。
+    /// 任一侧一旦重新构造 <see cref="Turn"/>（重新序列化、Trim、繁简转换或 rebuffering），
+    /// <c>Wire</c> 仍可能相等而实例不同——<c>Same</c> 立即转红。这正是本文件要拦的那类改动。
     /// </para>
     /// </summary>
     [Fact]
@@ -41,15 +44,18 @@ public class HttpSessionIoDualWriteTests
         var hub = new OutputHub();
         var ws = hub.Subscribe();
         var io = new HttpSessionIO(hub);
+        var turn = NewTurn();
 
-        io.WriteLine(Turn);
+        io.WriteLine(turn);
 
         Assert.True(ws.TryRead(out var viaWs), "WS observer must receive the turn.");
         var viaHttp = io.DrainOutput();
 
         Assert.Single(viaHttp);
-        Assert.Same(Turn, viaWs);
-        Assert.Same(Turn, viaHttp[0]);
+        Assert.Same(turn, viaWs);
+        Assert.Same(turn, viaHttp[0]);
+        Assert.Equal(turn.Wire, viaWs!.Wire);
+        Assert.Equal(turn.Wire, viaHttp[0].Wire);
     }
 
     /// <summary>
@@ -63,13 +69,14 @@ public class HttpSessionIoDualWriteTests
         var first = hub.Subscribe();
         var second = hub.Subscribe();
         var io = new HttpSessionIO(hub);
+        var turn = NewTurn();
 
-        io.WriteLine(Turn);
+        io.WriteLine(turn);
 
         Assert.True(first.TryRead(out var viaFirst), "the first observer must receive the turn.");
         Assert.True(second.TryRead(out var viaSecond), "the second observer must receive its own copy.");
-        Assert.Same(Turn, viaFirst);
-        Assert.Same(Turn, viaSecond);
+        Assert.Same(turn, viaFirst);
+        Assert.Same(turn, viaSecond);
     }
 
     /// <summary>
@@ -82,17 +89,28 @@ public class HttpSessionIoDualWriteTests
         var hub = new OutputHub();
         var ws = hub.Subscribe();
         var io = new HttpSessionIO(hub);
-        var turns = new List<string> { Turn, Turn + "-b", Turn + "-c" };
+        var turns = new List<Turn> { NewTurn(), NewTurn(WireJson + "-b"), NewTurn(WireJson + "-c") };
 
         foreach (var turn in turns)
             io.WriteLine(turn);
 
-        Assert.Equal(turns, io.DrainOutput());
+        var viaHttp = io.DrainOutput();
+        Assert.Equal(turns.Count, viaHttp.Count);
+        for (int i = 0; i < turns.Count; i++)
+        {
+            Assert.Same(turns[i], viaHttp[i]);
+            Assert.Equal(turns[i].Wire, viaHttp[i].Wire);
+        }
 
-        var viaWs = new List<string>();
+        var viaWs = new List<Turn>();
         while (ws.TryRead(out var turn))
             viaWs.Add(turn);
-        Assert.Equal(turns, viaWs);
+        Assert.Equal(turns.Count, viaWs.Count);
+        for (int i = 0; i < turns.Count; i++)
+        {
+            Assert.Same(turns[i], viaWs[i]);
+            Assert.Equal(turns[i].Wire, viaWs[i].Wire);
+        }
     }
 
     /// <summary>
@@ -105,17 +123,18 @@ public class HttpSessionIoDualWriteTests
         var hub = new OutputHub();
         var ws = hub.Subscribe();
         var io = new HttpSessionIO(hub);
+        var turn = NewTurn();
 
-        io.WriteLine(Turn);
+        io.WriteLine(turn);
         io.Close();
         io.Close(); // 幂等：重复关闭不得改变副作用
 
         // 关闭前发布的 turn 仍须可读——Complete 不等于丢弃。
         var drained = io.DrainOutput();
         Assert.Single(drained);
-        Assert.Same(Turn, drained[0]);
+        Assert.Same(turn, drained[0]);
         Assert.True(ws.TryRead(out var pending), "the turn published before Close must survive Close.");
-        Assert.Same(Turn, pending);
+        Assert.Same(turn, pending);
 
         // 两侧都已排空并终结：读耗尽后返回终态，而不是挂住调用方。
         Assert.False(await ws.WaitToReadAsync(), "the WS observer channel must complete on Close.");
@@ -133,7 +152,7 @@ public class HttpSessionIoDualWriteTests
         var io = new HttpSessionIO(hub);
 
         io.Close();
-        io.WriteLine(Turn);
+        io.WriteLine(NewTurn());
 
         Assert.False(ws.TryRead(out _), "no turn may reach a WS observer after Close.");
         Assert.Empty(io.DrainOutput());

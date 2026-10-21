@@ -70,7 +70,7 @@ public class SessionTeardownDuringAnimationTests
         while (DateTime.UtcNow < frameDeadline)
         {
             var wait = await session.WaitForTurnAsync(1000, CancellationToken.None);
-            if (wait.Status == TurnWaitStatus.Turn && wait.Turn != null && wait.Turn.Contains("ANIMLONG-"))
+            if (wait.Status == TurnWaitStatus.Turn && wait.Turn != null && wait.Turn.Wire.Contains("ANIMLONG-"))
                 return session;
             if (wait.Status is TurnWaitStatus.Closed or TurnWaitStatus.ControlLost)
                 break;

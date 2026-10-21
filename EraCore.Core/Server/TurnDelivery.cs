@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using MinorShift.Emuera.Output;
 
 namespace MinorShift.Emuera.Server;
 
@@ -22,10 +23,10 @@ internal interface IControlSignal
 /// </summary>
 internal interface ITurnSink
 {
-    Task<string?> ReadOutputAsync(CancellationToken ct);
-    void UnreadOutput(string turn);
-    List<string> DrainOutput();
-    void WriteLine(string text);
+    Task<Turn?> ReadOutputAsync(CancellationToken ct);
+    void UnreadOutput(Turn turn);
+    List<Turn> DrainOutput();
+    void WriteLine(Turn turn);
     void Close();
 }
 
@@ -78,7 +79,7 @@ internal sealed class TurnDelivery : IDisposable
     /// 与 WaitForTurn 共享 <see cref="_turnAccessLock"/>，保证取水路径单一逻辑读者。
     /// 返回 (已推进的 turn 数, 最后一个 turn，可能为 null)。
     /// </summary>
-    public (int Advanced, string? Last) DrainOnAcquire()
+    public (int Advanced, Turn? Last) DrainOnAcquire()
     {
         _turnAccessLock.Wait();
         try
@@ -97,7 +98,7 @@ internal sealed class TurnDelivery : IDisposable
     /// finalTurn 可为 null（脚本退出但 BuildFinalTurn 失败/为空）：此时不写，等待者走 Closed。
     /// 保证「等待中的 GET /turn 拿到 final turn 而非被当作 control_lost/404」。
     /// </summary>
-    public void EndOfGame(string? finalTurn)
+    public void EndOfGame(Turn? finalTurn)
     {
         lock (_turnLock)
         {
@@ -216,7 +217,7 @@ internal sealed class TurnDelivery : IDisposable
                     return ClosedOrControlLost();
                 }
 
-                string? turn;
+                Turn? turn;
                 try
                 {
                     turn = await readTask;
@@ -274,6 +275,6 @@ internal enum TurnWaitStatus
 /// <summary>WaitForTurnAsync 的返回值：状态 + turn 内容（仅 Status=Turn 时非 null）。</summary>
 internal readonly record struct TurnWaitResult(
     TurnWaitStatus Status,
-    string? Turn,
+    Turn? Turn,
     string? Reason = null,
     DateTimeOffset? At = null);

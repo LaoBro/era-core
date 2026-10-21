@@ -43,6 +43,6 @@ public class SessionInitFailureTests
         // 错误原因必须经 IO 可达前端：error JSON 行先于 final turn 入队
         var wait = await session.WaitForTurnAsync(1000, CancellationToken.None);
         Assert.Equal(TurnWaitStatus.Turn, wait.Status);
-        Assert.Contains("error", wait.Turn ?? "");
+        Assert.Contains("error", wait.Turn?.Wire ?? "");
     }
 }

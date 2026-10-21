@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Input;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Runtime.Config;
 
 namespace MinorShift.Emuera.Server;
@@ -151,7 +152,7 @@ internal sealed class GameServerProtocol
         switch (result.Status)
         {
             case TurnWaitStatus.Turn:
-                return HttpResult.Text(result.Turn!, "application/json", 200);
+                return HttpResult.Text(result.Turn!.Wire, "application/json", 200);
             case TurnWaitStatus.Timeout:
                 return HttpResult.NoContent();
             case TurnWaitStatus.Closed:
@@ -501,17 +502,17 @@ internal sealed class GameServerProtocol
         };
     }
 
-    private static JsonNode ParseTurn(string? turn)
+    private static JsonNode ParseTurn(Turn? turn)
     {
         if (turn == null)
             return null!;
         try
         {
-            return JsonNode.Parse(turn) ?? JsonValue.Create(turn)!;
+            return JsonNode.Parse(turn.Wire) ?? JsonValue.Create(turn.Wire)!;
         }
         catch (JsonException)
         {
-            return JsonValue.Create(turn)!;
+            return JsonValue.Create(turn.Wire)!;
         }
     }
 

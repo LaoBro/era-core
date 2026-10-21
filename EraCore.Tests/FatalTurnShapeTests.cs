@@ -24,9 +24,9 @@ public sealed class FatalTurnShapeTests
     [Fact]
     public void Fatal_turn_is_a_wellformed_terminal_frame()
     {
-        var json = TurnFrames.Fatal("boom");
+        var turn = TurnFrames.Fatal("boom");
 
-        using var doc = JsonDocument.Parse(json);
+        using var doc = JsonDocument.Parse(turn.Wire);
         var root = doc.RootElement;
 
         // v12：顶层 state 已退场——终态只由 awaiting.ended 表达。
@@ -52,9 +52,9 @@ public sealed class FatalTurnShapeTests
         var errorInfo = new ErrorInfo("System.InvalidOperationException", "boom",
             new ErrorInfo("System.IO.IOException", "disk"));
 
-        var json = TurnFrames.Error("boom (full stack)", errorInfo);
+        var turn = TurnFrames.Error("boom (full stack)", errorInfo);
 
-        using var doc = JsonDocument.Parse(json);
+        using var doc = JsonDocument.Parse(turn.Wire);
         var root = doc.RootElement;
 
         Assert.False(root.TryGetProperty("state", out _), "v12 起顶层 state 不得再出现");

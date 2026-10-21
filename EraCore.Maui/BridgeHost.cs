@@ -412,9 +412,9 @@ internal sealed class BridgeHost : IDisposable
     /// <see cref="IDispatcher.Dispatch"/> 是 fire-and-forget——不阻塞 turn 泵读取。
     /// </para>
     /// </summary>
-    private void OnTurnFromGame(string turnJson)
+    private void OnTurnFromGame(Turn turn)
     {
-        _dispatcher.Dispatch(() => _jsBridge.PostTurn(turnJson));
+        _dispatcher.Dispatch(() => _jsBridge.PostTurn(turn.Wire));
     }
 
     /// <summary>
@@ -2061,7 +2061,7 @@ internal sealed class BridgeHost : IDisposable
     /// turn 泵：从 OutputHub 订阅 reader 读 turn，转发给 WebView（<see cref="OnTurnFromGame"/> 内
     /// Dispatcher.Dispatch 切 UI 线程 PostTurn）。reader 完成（session 结束 hub.Complete）或取消（Dispose）即退出。
     /// </summary>
-    private async Task TurnPumpAsync(ChannelReader<string> reader, OutputHub hub)
+    private async Task TurnPumpAsync(ChannelReader<Turn> reader, OutputHub hub)
     {
         try
         {
@@ -2241,8 +2241,8 @@ internal sealed class BridgeHost : IDisposable
             var errorTurn = TurnFrames.Fatal(message);
             // _jsBridge.PostTurn 内部 fire-and-forget（async void），异常被自身 catch 不抛——
             // 但 try/catch 兜底防御：PostTurn 之外的序列化失败也走 DisplayAlert fallback。
-            _dispatcher.Dispatch(() => _jsBridge.PostTurn(errorTurn));
-            Console.WriteLine($"[bridge] error turn pushed to Vue: {errorTurn}");
+            _dispatcher.Dispatch(() => _jsBridge.PostTurn(errorTurn.Wire));
+            Console.WriteLine($"[bridge] error turn pushed to Vue: {errorTurn.Wire}");
             AgentLog.Instance.Write($"[bridge] error turn pushed to Vue");
         }
         catch (Exception postEx)

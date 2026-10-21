@@ -34,12 +34,12 @@ public class SessionWaitForTurnTests
         using var sessionCleanup = session;
 
         const string turn = "{\"type\":\"turn\",\"value\":\"Hello\"}";
-        io.WriteLine(turn);
+        io.WriteLine(TestTurnFactory.Wire(turn));
 
         var result = await session.WaitForTurnAsync(1000, CancellationToken.None);
 
         Assert.Equal(TurnWaitStatus.Turn, result.Status);
-        Assert.Equal(turn, result.Turn);
+        Assert.Equal(turn, result.Turn!.Wire);
     }
 
     [Fact]
@@ -74,14 +74,14 @@ public class SessionWaitForTurnTests
         var (session, io) = CreateSession();
         using var sessionCleanup = session;
 
-        io.WriteLine("turn-1");
-        io.WriteLine("turn-2");
+        io.WriteLine(TestTurnFactory.Wire("turn-1"));
+        io.WriteLine(TestTurnFactory.Wire("turn-2"));
 
         var first = await session.WaitForTurnAsync(1000, CancellationToken.None);
         var second = await session.WaitForTurnAsync(1000, CancellationToken.None);
 
-        Assert.Equal("turn-1", first.Turn);
-        Assert.Equal("turn-2", second.Turn);
+        Assert.Equal("turn-1", first.Turn!.Wire);
+        Assert.Equal("turn-2", second.Turn!.Wire);
     }
 
     /// <summary>GET /snapshot 503 的触发条件：session 未初始化（_displayState == null）时 GetDisplaySnapshot() 返回 null。</summary>
@@ -101,18 +101,18 @@ public class SessionWaitForTurnTests
         var agent = ControlIdentity.Agent("agent-1");
 
         Assert.Equal(ControlAcquireStatus.Acquired, session.AcquireControl(agent).Control.Status);
-        io.WriteLine("old-1");
-        io.WriteLine("old-2");
+        io.WriteLine(TestTurnFactory.Wire("old-1"));
+        io.WriteLine(TestTurnFactory.Wire("old-2"));
 
         var drained = session.AcquireControl(agent);
         Assert.Equal(ControlAcquireStatus.Acquired, drained.Control.Status);
         Assert.Equal(2, drained.TurnsAdvanced);
-        Assert.Equal("old-2", drained.Turn);
+        Assert.Equal("old-2", drained.Turn!.Wire);
 
-        io.WriteLine("new-1");
+        io.WriteLine(TestTurnFactory.Wire("new-1"));
         var next = await session.WaitForTurnAsync(1000, agent, CancellationToken.None);
         Assert.Equal(TurnWaitStatus.Turn, next.Status);
-        Assert.Equal("new-1", next.Turn);
+        Assert.Equal("new-1", next.Turn!.Wire);
     }
 
     [Fact]
@@ -167,7 +167,7 @@ public class SessionWaitForTurnTests
 
         var waitTask = session.WaitForTurnAsync(5000, agent, CancellationToken.None);
         await Task.Delay(80);
-        io.WriteLine("raced-turn");
+        io.WriteLine(TestTurnFactory.Wire("raced-turn"));
         var stolen = session.AcquireControl(ControlIdentity.User);
         var waitResult = await waitTask;
 
@@ -188,7 +188,7 @@ public class SessionWaitForTurnTests
             toUser = drained.TurnsAdvanced > 0 ? drained.Turn : null;
         }
 
-        var delivered = new[] { toAgent, toUser }.Where(t => t != null).ToArray();
+        var delivered = new[] { toAgent, toUser }.Where(t => t != null).Select(t => t!.Wire).ToArray();
         Assert.Equal(new[] { "raced-turn" }, delivered);   // 恰好一次：不丢、不双交付
     }
 

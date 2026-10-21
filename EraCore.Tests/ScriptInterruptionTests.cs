@@ -155,7 +155,7 @@ public class ScriptInterruptionTests
         {
             var result = await session.WaitForTurnAsync(500, CancellationToken.None);
             if (result.Status == TurnWaitStatus.Turn && result.Turn != null)
-                return result.Turn;
+                return result.Turn.Wire;
             if (result.Status == TurnWaitStatus.Closed)
                 throw new Xunit.Sdk.XunitException("会话 IO 已关闭，但期望还有 turn 产出（脚本是否提前终止了？）");
             if (result.Status == TurnWaitStatus.ControlLost)

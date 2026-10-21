@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Server;
 using Xunit;
 
@@ -81,20 +82,20 @@ public class TeardownControlOrderTests
     {
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public async Task<string?> ReadOutputAsync(CancellationToken ct)
+        public async Task<Turn?> ReadOutputAsync(CancellationToken ct)
         {
             Entered.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, ct);
             return null;
         }
 
-        public void UnreadOutput(string turn)
+        public void UnreadOutput(Turn turn)
         {
         }
 
-        public List<string> DrainOutput() => [];
+        public List<Turn> DrainOutput() => [];
 
-        public void WriteLine(string text)
+        public void WriteLine(Turn turn)
         {
         }
 

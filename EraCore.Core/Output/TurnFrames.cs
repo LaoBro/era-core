@@ -51,8 +51,8 @@ internal static class TurnFrames
     /// LineOp/TurnOp 抽象基类直接序列化只输出 type 鉴别符，diff 内容丢失
     /// （test_snapshot 抓到的 {"lineOps":[{"type":"append"}]} 空壳回归，2026.8.7）。
     /// </summary>
-    internal static string SerializeTurn(TurnRecord turn)
-        => JsonSerializer.Serialize(turn, (JsonTypeInfo<TurnRecord>)TurnJsonOptions.GetTypeInfo(typeof(TurnRecord)));
+    internal static Turn SerializeTurn(TurnRecord turn)
+        => new(turn, JsonSerializer.Serialize(turn, (JsonTypeInfo<TurnRecord>)TurnJsonOptions.GetTypeInfo(typeof(TurnRecord))));
 
     /// <summary>
     /// 主流回合帧：正常停稳点产出的增量帧（含终帧 <c>BuildFinalTurn</c>）。
@@ -61,7 +61,7 @@ internal static class TurnFrames
     /// 唯一机会，故携带；后续帧不带。调用方传 <c>isInitial</c> 而非裸版本号，
     /// 「何时盖章」的规则收在此处。</para>
     /// </summary>
-    internal static string Ok(
+    internal static Turn Ok(
         DisplayDiff? diff,
         AwaitInfo awaiting,
         string? error,
@@ -79,7 +79,7 @@ internal static class TurnFrames
     /// 无 <c>diff</c> / <c>generation</c> 形参——「Quit 帧还带 inputType/timeLimit」的残留形态
     /// 在此结构性不可构造。
     /// </summary>
-    internal static string Quit() => SerializeTurn(new TurnRecord(
+    internal static Turn Quit() => SerializeTurn(new TurnRecord(
         diff: null,
         awaiting: AwaitInfo.Of(null, ConsoleState.Quit, timedOut: false)));
 
@@ -93,7 +93,7 @@ internal static class TurnFrames
     /// ——那是<b>没有 Converters</b> 的上下文，历史上只因 fatal turn 的 <c>diff:null</c> 才侥幸不炸；
     /// <c>awaiting</c> 一变成内嵌对象，这条路径的风险就不再是「改一行注册」的量级。</para>
     /// </summary>
-    internal static string Fatal(string message) => SerializeTurn(new TurnRecord(
+    internal static Turn Fatal(string message) => SerializeTurn(new TurnRecord(
         diff: null,
         awaiting: AwaitInfo.Of(null, ConsoleState.Error, timedOut: false),
         error: message));
@@ -112,7 +112,7 @@ internal static class TurnFrames
     /// <para><paramref name="errorText"/> 由调用方决定粒度：<c>Session</c> 传完整串（含堆栈）以兼容
     /// 既有消费者，脚本运行期异常传 <c>ex.Message</c>。</para>
     /// </summary>
-    internal static string Error(string errorText, ErrorInfo? errorInfo)
+    internal static Turn Error(string errorText, ErrorInfo? errorInfo)
         => SerializeTurn(new TurnRecord(
             diff: null,
             awaiting: AwaitInfo.Of(null, ConsoleState.Error, timedOut: false),

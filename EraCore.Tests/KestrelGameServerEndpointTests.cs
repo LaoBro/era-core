@@ -164,7 +164,7 @@ public class KestrelGameServerEndpointTests
 
         // 直接经测试接缝注入（WriteLine 立即入 _output Channel，与游戏循环无关）
         const string marker = "{\"type\":\"turn\",\"test\":true}";
-        server.Sessions.CurrentSession!.IO.WriteLine(marker);
+        server.Sessions.CurrentSession!.IO.WriteLine(TestTurnFactory.Wire(marker));
 
         // 轮询消费：游戏循环可能先产出若干 turn，直到拿到 marker
         string? got = null;

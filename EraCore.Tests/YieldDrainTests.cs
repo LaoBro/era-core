@@ -82,7 +82,7 @@ public class YieldDrainTests
         {
             var result = await session.WaitForTurnAsync(TurnPollMs, CancellationToken.None);
             if (result.Status == TurnWaitStatus.Turn && result.Turn != null)
-                return result.Turn;
+                return result.Turn.Wire;
             if (result.Status == TurnWaitStatus.Closed)
                 throw new Xunit.Sdk.XunitException("会话 IO 已关闭，但期望还有 turn 产出（脚本是否提前终止了？）");
             if (result.Status == TurnWaitStatus.ControlLost)
@@ -101,8 +101,8 @@ public class YieldDrainTests
             var result = await session.WaitForTurnAsync(TurnPollMs, CancellationToken.None);
             if (result.Status == TurnWaitStatus.Turn && result.Turn != null)
             {
-                turns.Add(result.Turn);
-                if (TurnState(result.Turn) == "Quit")
+                turns.Add(result.Turn.Wire);
+                if (TurnState(result.Turn.Wire) == "Quit")
                     break;
                 continue;
             }
@@ -124,9 +124,9 @@ public class YieldDrainTests
             var result = await session.WaitForTurnAsync(TurnPollMs, CancellationToken.None);
             if (result.Status == TurnWaitStatus.Turn && result.Turn != null)
             {
-                collected.Add(result.Turn);
-                if (result.Turn.Contains(marker, StringComparison.Ordinal))
-                    return result.Turn;
+                collected.Add(result.Turn.Wire);
+                if (result.Turn.Wire.Contains(marker, StringComparison.Ordinal))
+                    return result.Turn.Wire;
                 continue;
             }
             if (result.Status is TurnWaitStatus.Closed or TurnWaitStatus.ControlLost)
@@ -252,14 +252,13 @@ public class YieldDrainTests
 
             SendInput(session, "16");   // @TEST_YIELDWAIT：5 步让路 → 真 WAIT（INPUT）
             var frames = new List<string> { await WaitTurnAsync(session) };
-
             // 让路帧先到齐（WAITFRAME-0 在应答帧里，1..4 由 drain 交付）。
             var deadline = DateTime.UtcNow.Add(CollectWindow);
             while (frames.Count < 5 && DateTime.UtcNow < deadline)
             {
                 var result = await session.WaitForTurnAsync(TurnPollMs, CancellationToken.None);
                 if (result.Status == TurnWaitStatus.Turn && result.Turn != null)
-                    frames.Add(result.Turn);
+                    frames.Add(result.Turn.Wire);
                 else if (result.Status is TurnWaitStatus.Closed or TurnWaitStatus.ControlLost)
                     break;
             }

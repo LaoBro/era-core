@@ -44,7 +44,7 @@ public sealed class TurnAwaitingV12Tests
     {
         public readonly List<string> Written = new();
         public override Task<string?> ReadLineAsync(CancellationToken ct) => Task.FromResult<string?>(null);
-        public override void WriteLine(string text) => Written.Add(text);
+        public override void WriteLine(Turn turn) => Written.Add(turn.Wire);
         public override void Close() { }
         public override bool IsConnected => true;
     }
@@ -89,6 +89,8 @@ public sealed class TurnAwaitingV12Tests
 
     /// <summary>解析帧 JSON。JsonDocument 故意不释放——JsonElement 依赖其生命周期（测试内短命）。</summary>
     private static JsonElement Parse(string json) => JsonDocument.Parse(json).RootElement;
+
+    private static JsonElement Parse(Turn turn) => Parse(turn.Wire);
 
     private static JsonElement Awaiting(JsonElement frame) => frame.GetProperty("awaiting");
 
@@ -403,11 +405,11 @@ public sealed class TurnAwaitingV12Tests
             "QUIT\n");
         var host = await StartAsync(harness);
 
-        var frames = new List<string> { (await host.Protocol.GetInitialTurnAsync())! };
-        frames.Add((await host.Protocol.StepAsync(""))!);      // WAIT → AWAIT 5000
-        frames.Add((await host.Protocol.SubmitTimeoutAsync())!); // AWAIT 5000 超时 → TINPUT
-        frames.Add((await host.Protocol.StepAsync("3"))!);     // TINPUT → INPUT
-        frames.Add((await host.Protocol.StepAsync("9"))!);     // INPUT → QUIT
+        var frames = new List<string> { (await host.Protocol.GetInitialTurnAsync())!.Wire };
+        frames.Add((await host.Protocol.StepAsync(""))!.Wire);      // WAIT → AWAIT 5000
+        frames.Add((await host.Protocol.SubmitTimeoutAsync())!.Wire); // AWAIT 5000 超时 → TINPUT
+        frames.Add((await host.Protocol.StepAsync("3"))!.Wire);     // TINPUT → INPUT
+        frames.Add((await host.Protocol.StepAsync("9"))!.Wire);     // INPUT → QUIT
 
         foreach (var json in frames)
         {

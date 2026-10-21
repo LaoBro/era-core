@@ -8,7 +8,7 @@ namespace MinorShift.Emuera.Output;
 /// <summary>
 /// 输出广播中枢（Hub 旁路模式）。
 ///
-/// 游戏循环 <c>HttpSessionIO.WriteLine(turn)</c> 时，turn 字符串既推入 HTTP 长轮询消费
+/// 游戏循环 <c>HttpSessionIO.WriteLine(turn)</c> 时，<see cref="Turn"/> 实例既推入 HTTP 长轮询消费
 /// 的 <c>_output</c> Channel，也经本 Hub 广播给所有经 <see cref="Subscribe"/> 挂上来的
 /// 旁路传输（WebSocket 连接等观察者）。
 ///
@@ -36,7 +36,7 @@ namespace MinorShift.Emuera.Output;
 internal sealed class OutputHub
 {
     private readonly object _subscribersLock = new();
-    private readonly List<(ChannelReader<string> Reader, ChannelWriter<string> Writer)> _subscribers = new();
+    private readonly List<(ChannelReader<Turn> Reader, ChannelWriter<Turn> Writer)> _subscribers = new();
     private bool _completed;
 
     /// <summary>
@@ -44,9 +44,9 @@ internal sealed class OutputHub
     /// 晚加入者只收连接之后新产生的 turn（订阅 Channel 不回放历史）。
     /// 若 Hub 已 <see cref="Complete"/>（session 已结束），返回已完成的 reader。
     /// </summary>
-    public ChannelReader<string> Subscribe()
+    public ChannelReader<Turn> Subscribe()
     {
-        var channel = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
+        var channel = Channel.CreateUnbounded<Turn>(new UnboundedChannelOptions
         {
             SingleReader = true,
             SingleWriter = false
@@ -70,12 +70,12 @@ internal sealed class OutputHub
     /// 向所有当前订阅者各推送一次 turn。已 <see cref="Complete"/> 后无操作。
     /// 新订阅者在本次 Publish 快照之后注册，将只收后续 turn（可接受的最终一致性）。
     /// </summary>
-    public void Publish(string turn)
+    public void Publish(Turn turn)
     {
         if (turn == null)
             return;
 
-        List<ChannelWriter<string>> writers;
+        List<ChannelWriter<Turn>> writers;
         lock (_subscribersLock)
         {
             if (_completed)
@@ -91,7 +91,7 @@ internal sealed class OutputHub
     /// 移除一个观察者（WS 断开 / 取消订阅时调用）。同时完成其 writer 以结束其发送循环。
     /// 未找到对应 reader 时安全无操作。
     /// </summary>
-    public void Unsubscribe(ChannelReader<string> reader)
+    public void Unsubscribe(ChannelReader<Turn> reader)
     {
         lock (_subscribersLock)
         {
@@ -111,7 +111,7 @@ internal sealed class OutputHub
     /// </summary>
     public void Complete()
     {
-        List<ChannelWriter<string>> writers;
+        List<ChannelWriter<Turn>> writers;
         lock (_subscribersLock)
         {
             if (_completed)

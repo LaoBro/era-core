@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Server;
 using Xunit;
 
@@ -37,7 +38,7 @@ public class TurnDeliveryTests
         var r = await delivery.WaitForTurnAsync(1000, CancellationToken.None);
 
         Assert.Equal(TurnWaitStatus.Turn, r.Status);
-        Assert.Equal("T", r.Turn);
+        Assert.Equal("T", r.Turn!.Wire);
     }
 
     [Fact]
@@ -109,11 +110,11 @@ public class TurnDeliveryTests
 
         var wait = delivery.WaitForTurnAsync(5000, CancellationToken.None);
         await Task.Yield();
-        delivery.EndOfGame("FINAL");
+        delivery.EndOfGame(TestTurnFactory.Wire("FINAL"));
         var r = await wait;
 
         Assert.Equal(TurnWaitStatus.Turn, r.Status);
-        Assert.Equal("FINAL", r.Turn);
+        Assert.Equal("FINAL", r.Turn!.Wire);
         Assert.True(delivery.IsFinalTurnDelivered);
         Assert.True(sink.SinkClosed);
     }
@@ -122,12 +123,12 @@ public class TurnDeliveryTests
     public async Task Final_turn_is_delivered_exactly_once()
     {
         var (delivery, sink, _) = Create();
-        delivery.EndOfGame("FINAL");
+        delivery.EndOfGame(TestTurnFactory.Wire("FINAL"));
 
         // 首次等待消费 final turn
         var first = await delivery.WaitForTurnAsync(50, CancellationToken.None);
         Assert.Equal(TurnWaitStatus.Turn, first.Status);
-        Assert.Equal("FINAL", first.Turn);
+        Assert.Equal("FINAL", first.Turn!.Wire);
 
         // delivered 旗标已置位后，再到的多余 turn 被丢弃（防御性 continue → 超时）
         sink.ProvideTurn("EXTRA");
@@ -142,12 +143,12 @@ public class TurnDeliveryTests
     {
         var (delivery, sink, _) = Create();
 
-        sink.WriteLine("a");
-        sink.WriteLine("b");
+        sink.WriteLine(TestTurnFactory.Wire("a"));
+        sink.WriteLine(TestTurnFactory.Wire("b"));
         var (advanced, last) = delivery.DrainOnAcquire();
 
         Assert.Equal(2, advanced);
-        Assert.Equal("b", last);
+        Assert.Equal("b", last!.Wire);
     }
 
     [Fact]
@@ -227,7 +228,7 @@ public class TurnDeliveryTests
         // 下一位持有者 drain 时能拿到它（复用真实接线那条测试的语义，此处确定性）
         var (advanced, last) = delivery.DrainOnAcquire();
         Assert.Equal(1, advanced);
-        Assert.Equal("raced", last);
+        Assert.Equal("raced", last!.Wire);
     }
 
     [Fact]
@@ -238,12 +239,12 @@ public class TurnDeliveryTests
 
         var wait = delivery.WaitForTurnAsync(5000, ControlIdentity.Agent("agent-1"), CancellationToken.None);
         await Task.Yield();
-        delivery.EndOfGame("FINAL");
+        delivery.EndOfGame(TestTurnFactory.Wire("FINAL"));
         var r = await wait;
 
         // game_end（有 final）应交付 final turn，而非因 End 清空 _current 被误判 409 ControlLost
         Assert.Equal(TurnWaitStatus.Turn, r.Status);
-        Assert.Equal("FINAL", r.Turn);
+        Assert.Equal("FINAL", r.Turn!.Wire);
         Assert.True(delivery.IsFinalTurnDelivered);
     }
 
@@ -269,7 +270,7 @@ public class TurnDeliveryTests
     {
         var (delivery, _, _) = Create();
 
-        delivery.EndOfGame("FINAL");   // game_end：final 已就绪并入队
+        delivery.EndOfGame(TestTurnFactory.Wire("FINAL"));   // game_end：final 已就绪并入队
         delivery.Dispose();            // 随后拆除（teardown 旗标置位）
 
         var r = await delivery.WaitForTurnAsync(1000, CancellationToken.None);
@@ -277,16 +278,18 @@ public class TurnDeliveryTests
         // 四种终止态归一：已就绪的 final 优先于拆除（spec L38「game_end → 交付 final」），
         // 拆除旗标不得在循环顶早退处把它丢弃成 404 Closed。
         Assert.Equal(TurnWaitStatus.Turn, r.Status);
-        Assert.Equal("FINAL", r.Turn);
+        Assert.Equal("FINAL", r.Turn!.Wire);
         Assert.True(delivery.IsFinalTurnDelivered);
     }
 
     private sealed class FakeTurnSink : ITurnSink
     {
         private readonly ConcurrentQueue<string?> _available = new();
-        private TaskCompletionSource<string?>? _pending;
+        private TaskCompletionSource<Turn?>? _pending;
         public List<string> UnreadLog { get; } = new();
         public bool SinkClosed { get; private set; }
+
+        private static Turn? ToTurn(string? value) => value == null ? null : TestTurnFactory.Wire(value);
 
         private void Push(string? value)
         {
@@ -294,7 +297,7 @@ public class TurnDeliveryTests
             if (pending != null)
             {
                 _pending = null;
-                pending.TrySetResult(value);
+                pending.TrySetResult(ToTurn(value));
             }
             else
             {
@@ -302,11 +305,11 @@ public class TurnDeliveryTests
             }
         }
 
-        public Task<string?> ReadOutputAsync(CancellationToken ct)
+        public Task<Turn?> ReadOutputAsync(CancellationToken ct)
         {
             if (_available.TryDequeue(out var value))
-                return Task.FromResult(value);
-            var tcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+                return Task.FromResult(ToTurn(value));
+            var tcs = new TaskCompletionSource<Turn?>(TaskCreationOptions.RunContinuationsAsynchronously);
             _pending = tcs;
             ct.Register(() => tcs.TrySetCanceled(ct));
             return tcs.Task;
@@ -316,20 +319,20 @@ public class TurnDeliveryTests
 
         public void ProvideTurn(string? turn) => Push(turn);
 
-        public void UnreadOutput(string turn)
+        public void UnreadOutput(Turn turn)
         {
-            UnreadLog.Add(turn);
-            Push(turn);
+            UnreadLog.Add(turn.Wire);
+            Push(turn.Wire);
         }
 
-        public void WriteLine(string text) => Push(text);
+        public void WriteLine(Turn turn) => Push(turn.Wire);
 
-        public List<string> DrainOutput()
+        public List<Turn> DrainOutput()
         {
-            var list = new List<string>();
+            var list = new List<Turn>();
             while (_available.TryDequeue(out var v))
                 if (v != null)
-                    list.Add(v);
+                    list.Add(TestTurnFactory.Wire(v));
             return list;
         }
 

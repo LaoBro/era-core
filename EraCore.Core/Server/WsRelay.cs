@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using MinorShift.Emuera.Output;
 
 namespace MinorShift.Emuera.Server;
 
@@ -64,7 +65,7 @@ internal static class WsRelay
     }
 
     /// <summary>发送循环：从 hub 订阅 reader 读 turn，逐个以裸 JSON 文本帧下发。reader 完成（session 结束）即退出。</summary>
-    private static async Task SendLoopAsync(WebSocket ws, ChannelReader<string> reader, CancellationToken ct)
+    private static async Task SendLoopAsync(WebSocket ws, ChannelReader<Turn> reader, CancellationToken ct)
     {
         try
         {
@@ -72,7 +73,7 @@ internal static class WsRelay
             {
                 if (ws.State != WebSocketState.Open)
                     break;
-                var bytes = Encoding.UTF8.GetBytes(turn);
+                var bytes = Encoding.UTF8.GetBytes(turn.Wire);
                 await ws.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct);
             }
         }

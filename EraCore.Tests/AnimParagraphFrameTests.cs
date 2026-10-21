@@ -88,8 +88,8 @@ public class AnimParagraphFrameTests
             var result = await session.WaitForTurnAsync(TurnPollMs, CancellationToken.None);
             if (result.Status == TurnWaitStatus.Turn && result.Turn != null)
             {
-                turns.Add(result.Turn);
-                if (TurnTerminal(result.Turn) == "Quit")
+                turns.Add(result.Turn.Wire);
+                if (TurnTerminal(result.Turn.Wire) == "Quit")
                     break;
                 continue;
             }

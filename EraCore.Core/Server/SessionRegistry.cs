@@ -664,6 +664,6 @@ internal readonly record struct LoadGameResult(LoadGameStatus Status, string? Co
 /// <summary>WS 订阅三元组：session + 独占 reader + 所属 hub（finally 退订用）。</summary>
 internal sealed record WsSubscription(
     Session Session,
-    ChannelReader<string> Reader,
+    ChannelReader<Turn> Reader,
     OutputHub Hub,
     ControlIdentity Identity = default);

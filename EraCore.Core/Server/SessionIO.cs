@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using MinorShift.Emuera.Output;
 
 namespace MinorShift.Emuera.Server;
 
@@ -14,7 +15,7 @@ internal abstract class SessionIO
     /// 实现应支持 CancellationToken 取消（TINPUT timeout 通过 CancelAfter 实现）。
     /// </summary>
     public abstract Task<string?> ReadLineAsync(CancellationToken ct);
-    public abstract void WriteLine(string text);
+    public abstract void WriteLine(Turn turn);
     public abstract void Close();
     public abstract bool IsConnected { get; }
 }

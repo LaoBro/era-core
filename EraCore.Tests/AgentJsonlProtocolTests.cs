@@ -71,7 +71,7 @@ public class AgentJsonlProtocolTests : IDisposable
         var json = await _protocol.GetInitialTurnAsync();
 
         Assert.NotNull(json);
-        using var doc = JsonDocument.Parse(json!);
+        using var doc = JsonDocument.Parse(json!.Wire);
         var root = doc.RootElement;
 
         Assert.Equal(12, root.GetProperty("protocolVersion").GetInt32()); // v12：awaiting 容器
@@ -107,7 +107,7 @@ public class AgentJsonlProtocolTests : IDisposable
         var json = await _protocol.GetInitialTurnAsync();
 
         Assert.NotNull(json);
-        using var doc = JsonDocument.Parse(json!);
+        using var doc = JsonDocument.Parse(json!.Wire);
         var root = doc.RootElement;
 
         Assert.False(root.TryGetProperty("timeLimit", out _), "顶层 timeLimit 已退场");
@@ -133,7 +133,7 @@ public class AgentJsonlProtocolTests : IDisposable
         var json = await _protocol.GetInitialTurnAsync();
 
         Assert.NotNull(json);
-        using var doc = JsonDocument.Parse(json!);
+        using var doc = JsonDocument.Parse(json!.Wire);
         var wait = doc.RootElement.GetProperty("awaiting").GetProperty("wait");
 
         Assert.Equal(3000L, wait.GetProperty("durationMs").GetInt64());
@@ -154,7 +154,7 @@ public class AgentJsonlProtocolTests : IDisposable
         var json = await _protocol.GetInitialTurnAsync();
 
         Assert.NotNull(json);
-        using var doc = JsonDocument.Parse(json!);
+        using var doc = JsonDocument.Parse(json!.Wire);
         var root = doc.RootElement;
 
         Assert.False(root.TryGetProperty("timeLimit", out _), "顶层 timeLimit 已退场");
@@ -182,7 +182,7 @@ public class AgentJsonlProtocolTests : IDisposable
         var json = await _protocol.SubmitTimeoutAsync();
 
         Assert.NotNull(json);
-        using var doc = JsonDocument.Parse(json!);
+        using var doc = JsonDocument.Parse(json!.Wire);
         Assert.False(doc.RootElement.TryGetProperty("timedOut", out _),
             "v12 起顶层 timedOut 已退场");
 
@@ -190,7 +190,7 @@ public class AgentJsonlProtocolTests : IDisposable
         _console._state.State = ConsoleState.WaitInput;
         var json2 = await _protocol.GetInitialTurnAsync();
         Assert.NotNull(json2);
-        using var doc2 = JsonDocument.Parse(json2!);
+        using var doc2 = JsonDocument.Parse(json2!.Wire);
         Assert.False(doc2.RootElement.TryGetProperty("timedOut", out _),
             "_pendingTimeoutFlag 必须一次性——读出后清空");
     }
@@ -205,7 +205,7 @@ public class AgentJsonlProtocolTests : IDisposable
         var json = await _protocol.GetInitialTurnAsync();
 
         Assert.NotNull(json);
-        using var doc = JsonDocument.Parse(json!);
+        using var doc = JsonDocument.Parse(json!.Wire);
         Assert.Equal(12, doc.RootElement.GetProperty("protocolVersion").GetInt32()); // v12：awaiting 容器
     }
 
@@ -225,7 +225,7 @@ public class AgentJsonlProtocolTests : IDisposable
         // StepAsync = DispatchInput（req==null 直接 return）+ WaitForInputAsync + BuildTurn
         var stepJson = await _protocol.StepAsync("");
         Assert.NotNull(stepJson);
-        using var doc = JsonDocument.Parse(stepJson!);
+        using var doc = JsonDocument.Parse(stepJson!.Wire);
         Assert.False(doc.RootElement.TryGetProperty("protocolVersion", out _),
             "非初始帧 protocolVersion 应为 null（WhenWritingNull 不出现）");
     }
@@ -238,7 +238,7 @@ public class AgentJsonlProtocolTests : IDisposable
     {
         public override Task<string?> ReadLineAsync(CancellationToken ct)
             => Task.FromResult<string?>(null);
-        public override void WriteLine(string text) { }
+        public override void WriteLine(Turn text) { }
         public override void Close() { }
         public override bool IsConnected => true;
     }

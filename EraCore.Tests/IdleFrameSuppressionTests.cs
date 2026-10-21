@@ -84,7 +84,7 @@ public class IdleFrameSuppressionTests
         {
             var result = await session.WaitForTurnAsync(TurnPollMs, CancellationToken.None);
             if (result.Status == TurnWaitStatus.Turn && result.Turn != null)
-                return result.Turn;
+                return result.Turn.Wire;
             if (result.Status == TurnWaitStatus.Closed)
                 throw new Xunit.Sdk.XunitException("会话 IO 已关闭，但期望还有 turn 产出（脚本是否提前终止了？）");
             if (result.Status == TurnWaitStatus.ControlLost)
@@ -103,8 +103,8 @@ public class IdleFrameSuppressionTests
             var result = await session.WaitForTurnAsync(TurnPollMs, CancellationToken.None);
             if (result.Status == TurnWaitStatus.Turn && result.Turn != null)
             {
-                turns.Add(result.Turn);
-                if (TurnState(result.Turn) == "Quit")
+                turns.Add(result.Turn.Wire);
+                if (TurnState(result.Turn.Wire) == "Quit")
                     break;
                 continue;
             }

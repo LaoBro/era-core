@@ -187,12 +187,12 @@ public class OutputHubTests
         var hub = new OutputHub();
         var reader = hub.Subscribe();
 
-        hub.Publish("a");
-        hub.Publish("b");
+        hub.Publish(TestTurnFactory.Wire("a"));
+        hub.Publish(TestTurnFactory.Wire("b"));
         hub.Complete();
 
-        Assert.Equal("a", await reader.ReadAsync());
-        Assert.Equal("b", await reader.ReadAsync());
+        Assert.Equal("a", (await reader.ReadAsync()).Wire);
+        Assert.Equal("b", (await reader.ReadAsync()).Wire);
     }
 
     [Fact]
@@ -202,18 +202,18 @@ public class OutputHubTests
         var r1 = hub.Subscribe();
         var r2 = hub.Subscribe();
 
-        hub.Publish("x");
+        hub.Publish(TestTurnFactory.Wire("x"));
         hub.Unsubscribe(r1);
-        hub.Publish("y");
+        hub.Publish(TestTurnFactory.Wire("y"));
         hub.Complete();
 
         // r1 只收到退订前的 x；之后再读抛 ChannelClosedException
-        Assert.Equal("x", await r1.ReadAsync());
+        Assert.Equal("x", (await r1.ReadAsync()).Wire);
         await Assert.ThrowsAsync<ChannelClosedException>(async () => await r1.ReadAsync());
 
         // r2 收到全部
-        Assert.Equal("x", await r2.ReadAsync());
-        Assert.Equal("y", await r2.ReadAsync());
+        Assert.Equal("x", (await r2.ReadAsync()).Wire);
+        Assert.Equal("y", (await r2.ReadAsync()).Wire);
     }
 
     [Fact]
