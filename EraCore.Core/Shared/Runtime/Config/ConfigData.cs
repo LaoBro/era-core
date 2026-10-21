@@ -28,9 +28,12 @@ internal sealed class ConfigData
 	#region eee_カレントディレクトリー
 	// Issue 12：configPath 从 static readonly 改为实例 readonly 字段——
 	// /load-game 切换游戏目录后，新 ConfigData 必须读取新目录的 emuera.config。
-	// 构造时根据当前 GamePaths.Current.ExeDir（以分隔符结尾）确定；
-	// 启动期 / CLI 无 GamePaths 时 fallback 到 Program.ExeDir。
+	// issue-008：构造时捕获游戏根（调用方显式注入，或取根环境当前值）；
+	// 此后本实例的加载链只读捕获根，不再随进程级根视图漂移。
 	readonly string configPath;
+	readonly GamePaths? _root;
+	/// <summary>构造时捕获的游戏根——issue-008 根选择回归的观测点。</summary>
+	internal GamePaths? Root => _root;
 	#endregion
 	private static string ConfigDebugPath => SafCompat.CombinePath(Program.DebugDir, "debug.config");
 
@@ -113,14 +116,17 @@ internal sealed class ConfigData
 	/// </summary>
 	public DimLockPolicy? OverrideDimLockPolicy { get; set; }
 
-	internal ConfigData()
+	internal ConfigData() : this(GameRootEnvironment.Current) { }
+
+	internal ConfigData(GamePaths? root)
 	{
-		// Issue 12：构造时绑定当前游戏目录的 emuera.config 路径。
-		// /load-game 会先 GamePaths.Resolve(newDir) 再 new ConfigData()，
-		// 因此此处读取的是新目录；启动期 GamePaths.Current 可能已指向 --ExeDir。
+		// Issue 12：构造时绑定游戏目录的 emuera.config 路径。
+		// issue-008：root 由组装根显式传入（EmueraRuntimeInitializer）；测试/旧路径省略时
+		// 取根环境当前值，再退到进程启动目录。
 		// SAF：禁止 ExeDir + "emuera.config" 字符串拼接（documentId 会粘成错误段）。
-		var exeDir = GamePaths.Current?.ExeDir ?? Program.ExeDir;
-		configPath = CombineConfigPath(exeDir, "emuera.config");
+		_root = root;
+		var exeDir = root?.ExeDir ?? Program.ExeDir;
+		configPath = CombineConfigPath(root?.DirAccessor, exeDir, "emuera.config");
 		setDefault();
 		BuildIndex();
 	}
@@ -832,45 +838,47 @@ internal sealed class ConfigData
 	public bool LoadConfig()
 	{
 		// ADR-0038 决策三：accessor 在入口取一次，显式穿参到真正做 IO 的那一段。
-		return LoadConfigCore(configPath, Program.CsvDir, GamePaths.Current?.DirAccessor);
+		// issue-008：根来自构造期捕获，不随进程级根视图变化。
+		return LoadConfigCore(
+			configPath,
+			_root?.CsvDir ?? Program.CsvDir,
+			_root?.DirAccessor ?? Program.DirAccessor);
 	}
 
 	/// <summary>
 	/// Issue 12：显式指定游戏目录加载 config——/load-game 切换目录后使用。
-	/// 避免依赖构造时 GamePaths.Current 的时序，直接读 exeDir 下的 emuera.config
+	/// 避免依赖构造时根环境的时序，直接读 exeDir 下的 emuera.config
 	/// 及 exeDir/csv 下的 default/fixed config。
 	/// </summary>
 	public bool LoadConfig(string exeDir)
 	{
 		// ADR-0038 决策三：同上，accessor 在入口取一次后显式下传。
-		var accessor = GamePaths.Current?.DirAccessor;
+		var accessor = _root?.DirAccessor ?? Program.DirAccessor;
 		string csvDir;
 		if (SafPath.IsContentUri(exeDir))
 		{
-			csvDir = accessor != null
-				? accessor.ResolveSubPath(exeDir, "csv")
-				: CombineConfigPath(exeDir, "csv");
+			csvDir = accessor.ResolveSubPath(exeDir, "csv");
 		}
 		else
 			csvDir = Path.Combine(exeDir, "csv") + Path.DirectorySeparatorChar;
-		string configPathLocal = CombineConfigPath(exeDir, "emuera.config");
+		string configPathLocal = CombineConfigPath(accessor, exeDir, "emuera.config");
 		return LoadConfigCore(configPathLocal, csvDir, accessor);
 	}
 
-	private bool LoadConfigCore(string configPathLocal, string csvDir, IGameDirAccessor? dirAccessor)
+	private bool LoadConfigCore(string configPathLocal, string csvDir, IGameDirAccessor dirAccessor)
 	{
-		string defaultConfigPath = CombineConfigPath(csvDir, "_default.config");
-		string fixedConfigPath = CombineConfigPath(csvDir, "_fixed.config");
+		string defaultConfigPath = CombineConfigPath(dirAccessor, csvDir, "_default.config");
+		string fixedConfigPath = CombineConfigPath(dirAccessor, csvDir, "_fixed.config");
 		if (!ConfigFileExists(defaultConfigPath))
-			defaultConfigPath = CombineConfigPath(csvDir, "default.config");
+			defaultConfigPath = CombineConfigPath(dirAccessor, csvDir, "default.config");
 		if (!ConfigFileExists(fixedConfigPath))
-			fixedConfigPath = CombineConfigPath(csvDir, "fixed.config");
+			fixedConfigPath = CombineConfigPath(dirAccessor, csvDir, "fixed.config");
 
 		_unknownKeys.Clear();
 		_preservedUnknownLines.Clear();
-		bool loadedDefault = loadConfig(defaultConfigPath, ConfigSourceRole.Default);
-		bool loadedMain = loadConfig(configPathLocal, ConfigSourceRole.Main);
-		bool loadedFixed = loadConfig(fixedConfigPath, ConfigSourceRole.Fixed);
+		bool loadedDefault = loadConfig(defaultConfigPath, ConfigSourceRole.Default, dirAccessor);
+		bool loadedMain = loadConfig(configPathLocal, ConfigSourceRole.Main, dirAccessor);
+		bool loadedFixed = loadConfig(fixedConfigPath, ConfigSourceRole.Fixed, dirAccessor);
 
 		// 候选 2 / ADR-0009：原 Config.SetConfig(this) 已坍缩——视图（Config）是薄转发层，
 		// 无副本可刷新；clamp/语言/存档目录逻辑下沉为实例方法 ApplyPostLoadEffects。
@@ -898,13 +906,12 @@ internal sealed class ConfigData
 	}
 
 	/// <summary>游戏目录下拼配置文件路径：SAF 走 DirAccessor.CombinePath，本地走字符串拼接（ExeDir 已带分隔符）。</summary>
-	private static string CombineConfigPath(string dir, string fileName)
+	private static string CombineConfigPath(IGameDirAccessor? accessor, string dir, string fileName)
 	{
 		if (string.IsNullOrEmpty(dir))
 			return fileName;
 		if (SafPath.IsContentUri(dir))
 		{
-			var accessor = GamePaths.Current?.DirAccessor;
 			if (accessor != null)
 				return accessor.CombinePath(dir, fileName);
 			return dir.TrimEnd('/') + "/" + fileName;
@@ -988,7 +995,7 @@ internal sealed class ConfigData
 		// SAF：跳过本地 Directory + 根目录挪档；仅确保 sav 目录可建（方案 B）
 		if (GetConfigValue<bool>(ConfigCode.UseSaveFolder))
 		{
-			if (SafPath.IsContentUri(Program.ExeDir))
+			if (SafPath.IsContentUri(_root?.ExeDir ?? Program.ExeDir))
 			{
 				try
 				{
@@ -1014,8 +1021,9 @@ internal sealed class ConfigData
 	{
 		get
 		{
-			string forceSavDir = SafCompat.ResolveSubPath(Program.ExeDir, "sav");
-			return GetConfigValue<bool>(ConfigCode.UseSaveFolder) ? forceSavDir : Program.ExeDir;
+			var exeDir = _root?.ExeDir ?? Program.ExeDir;
+			string forceSavDir = SafCompat.ResolveSubPath(exeDir, "sav");
+			return GetConfigValue<bool>(ConfigCode.UseSaveFolder) ? forceSavDir : exeDir;
 		}
 	}
 
@@ -1081,7 +1089,7 @@ internal sealed class ConfigData
 	/// </para>
 	/// </summary>
 	/// <param name="role">来源角色：决定是否强制项（fixed）与是否留存原始行（main）。</param>
-	private bool loadConfig(string confPath, ConfigSourceRole role)
+	private bool loadConfig(string confPath, ConfigSourceRole role, IGameDirAccessor dirAccessor)
 	{
 		bool fix = role == ConfigSourceRole.Fixed;
 		// SAF：必须用 SafCompat / DirAccessor，File.Exists(content://) 恒 false
@@ -1090,8 +1098,7 @@ internal sealed class ConfigData
 		string logicalName = SafPath.GetLogicalFileName(confPath);
 		// 编码体检（只读一次原始字节，经 accessor 故本地/SAF 同源）：0 = 读不到，跳过体检。
 		int configCodePage = 0;
-		var probeAccessor = GamePaths.Current?.DirAccessor;
-		if (probeAccessor != null && probeAccessor.ReadAllBytes(confPath) is { Length: > 0 } rawBytes)
+		if (dirAccessor.ReadAllBytes(confPath) is { Length: > 0 } rawBytes)
 			configCodePage = EncodingHandler.DetectEncoding(rawBytes).CodePage;
 		int unknownStart = _unknownKeys.Count;
 		// 编码不符的专门告警：把"编码坏了（键名根本没解对）"与"作者写了别的键名"区分开。

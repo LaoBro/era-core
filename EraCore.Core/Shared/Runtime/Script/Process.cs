@@ -263,7 +263,7 @@ internal sealed partial class Process(EmueraConsole view)
 	public async Task ReloadErb()
 	{
 		// erb-loader-parallel 03：两棵树并行预载收敛为单一入口（02 引入 WhenAll，03 收敛调用方）
-		await Preload.LoadTreesAsync(Program.ErbDir, Program.CsvDir, GamePaths.Current.DirAccessor);
+		await Preload.LoadTreesAsync(_loaderEnv.ErbDir, _loaderEnv.CsvDir, _loaderEnv.DirAccessor);
 		saveCurrentState(false);
 		state.SystemState = SystemStateCode.System_Reloaderb;
 		// ADR-0012：ErbLoader F2 构造注入，不再传 Process。复用 _loaderEnv。
@@ -276,7 +276,7 @@ internal sealed partial class Process(EmueraConsole view)
 	{
 		saveCurrentState(false);
 		state.SystemState = SystemStateCode.System_Reloaderb;
-		await Preload.Load(paths, GamePaths.Current.DirAccessor);
+		await Preload.Load(paths, _loaderEnv.DirAccessor);
 		var loader = new ErbLoader(console, exm, idDic, _loaderEnv, line => scaningLine = line);
 		await loader.LoadErbList(paths, labelDic);
 		console.ReadAnyKey();
@@ -571,7 +571,7 @@ internal sealed partial class Process(EmueraConsole view)
 		if (extents != ".erb" && extents != ".csv")
 			return "";
 		string filename = position!.Value.Filename;
-		string fullPath = GamePaths.Current.DirAccessor.CombinePath(
+		string fullPath = Program.DirAccessor.CombinePath(
 			extents == ".csv" ? Program.CsvDir : Program.ErbDir,
 			filename);
 		string[]? lines = Preload.TryGetFileLines(fullPath);
@@ -594,9 +594,7 @@ internal sealed partial class Process(EmueraConsole view)
 		try
 		{
 			var fullPath = Preload.TryGetFullPath(filename, out var indexed) ? indexed : fallbackFullPath;
-			var accessor = GamePaths.Current?.DirAccessor;
-			if (accessor == null)
-				return null;
+			var accessor = Program.DirAccessor;
 			var bytes = accessor.ReadAllBytes(fullPath);
 			return bytes == null ? null : EncodingHandler.ReadAllLinesFromBytes(bytes);
 		}

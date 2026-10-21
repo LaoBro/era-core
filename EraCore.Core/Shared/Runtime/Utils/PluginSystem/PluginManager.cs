@@ -277,7 +277,7 @@ namespace MinorShift.Emuera.Runtime.Utils.PluginSystem
 		[UnconditionalSuppressMessage("Trimming", "IL2072", Justification = "插件加载仅真实路径 + JIT 形态；纯 AOT 由 CanLoadPluginsHere 拦截")]
 		public void LoadPlugins()
 		{
-			var accessor = GamePaths.Current.DirAccessor;
+			var accessor = Program.DirAccessor;
 			// 大小写不敏感定位插件目录：eraTW 用小写 plugins/，Android/Linux 真实路径大小写敏感；
 			// 目录枚举统一走 accessor（与 SAF 语义一致，对齐 CLAUDE.md 通配约定）。
 			var pluginDir = ResolvePluginsDir(accessor);

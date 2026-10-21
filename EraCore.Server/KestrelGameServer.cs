@@ -1,4 +1,3 @@
-using MinorShift.Emuera.Files;
 using System;
 using System.IO;
 using System.Text;
@@ -297,9 +296,10 @@ internal sealed class KestrelGameServer : IDisposable
     {
         // issue 05：四步（消毒/白名单/读字节/MIME）收敛到 AssetChannel——与 MAUI 双平台
         // （Windows 拦截 + 安卓 PathHandler）共用同一函数，spec Q5「单点实现」真正成立。
-        var paths = GamePaths.Current;
-        if (paths?.DirAccessor == null
-            || !AssetChannel.TryGetImage(paths.DirAccessor, paths.ExeDir, path, out var bytes, out var mime))
+        // issue-008：请求流没有会话作用域，根取自活动会话的文件门面，不读进程级根视图。
+        var session = _sessions.CurrentSession;
+        if (session == null
+            || !AssetChannel.TryGetImage(session.Files.DirAccessor, session.Files.Root, path, out var bytes, out var mime))
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return;

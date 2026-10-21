@@ -288,7 +288,7 @@ public class ErbIrCacheTests
 			await Preload.Load(erbDir, accessor);
 			var fromCache = Preload.GetFilesFromCache(erbDir, ".ERB", "test");
 			Assert.NotNull(fromCache);
-			var fromConfig = Config.GetFiles(erbDir, "*.ERB");
+			var fromConfig = Config.GetFiles(erbDir, "*.ERB", accessor);
 			Assert.NotEmpty(fromConfig);
 
 			// logical 集合相等（命中轮/预判定与建库轮同树枚举一致）

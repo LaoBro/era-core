@@ -181,7 +181,7 @@ internal sealed class LoaderTestHarness : IDisposable
 	{
 		if (Interlocked.CompareExchange(ref _preInitDone, 1, 0) != 0) return;
 		JSONConfig.Data ??= new JSONConfigData();
-		try { Lang.LoadLanguageFiles(); } catch { /* 嵌入资源缺失不致命 */ }
+		try { Lang.LoadLanguageFiles(GamePaths.Current); } catch { /* 嵌入资源缺失不致命 */ }
 		try { Lang.SetLanguage(); } catch { /* 默认语言即日文，早退或失败均不阻断 */ }
 	}
 

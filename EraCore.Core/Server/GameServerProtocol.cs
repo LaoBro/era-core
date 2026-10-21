@@ -223,7 +223,7 @@ internal sealed class GameServerProtocol
                 payload["lastError"] = session.LastError;
             payload["sessionId"] = session.Id;
             payload["createdAt"] = session.CreatedAt;
-            payload["gameDir"] = GamePaths.Current.ExeDir;
+            payload["gameDir"] = session.Files.Root;
         }
         payload["windowWidth"] = m.WindowWidth;
         payload["fontSize"] = m.FontSize;

@@ -1337,9 +1337,9 @@ internal sealed partial class Lang
 	[GeneratedRegex(@".*emuera.*\.xml")]
 	private static partial Regex LangFileRegex();
 	
-	private static void AddLanguageFile(string path)
+	private static void AddLanguageFile(string path, IGameDirAccessor? accessor = null)
 	{
-		XmlDocument xml = LoadXmlFile(path);
+		XmlDocument xml = LoadXmlFile(path, accessor);
 		var langName = xml.SelectSingleNode("/lang/name")?.InnerText.Trim();
 		var culture = xml.SelectSingleNode("/lang/culture")?.InnerText.Trim();
 		if (langName == null)
@@ -1349,16 +1349,22 @@ internal sealed partial class Lang
 			localeList.TryAdd(culture, langName);
 	}
 
-	public static void LoadLanguageFiles()
+	/// <summary>
+	/// issue-008：语言资源列表与读取都走显式游戏根——不再读进程级根视图。
+	/// </summary>
+	public static void LoadLanguageFiles(GamePaths paths)
 	{
 		langList.Clear();
 		localeList.Clear();
 		foreach (var pair in trItems) pair.Value.Clear();
-		if (SafCompat.DirectoryExists(LangDir))
+		var langDir = SafPath.IsContentUri(paths.ExeDir)
+			? paths.DirAccessor.ResolveSubPath(paths.ExeDir, "lang")
+			: Path.Combine(paths.ExeDir, "lang") + Path.DirectorySeparatorChar;
+		if (paths.DirAccessor.DirectoryExists(langDir))
 		{
-			foreach (var path in GamePaths.Current.DirAccessor.GetFiles(LangDir, "emuera.*.xml", SearchOption.TopDirectoryOnly))
+			foreach (var path in paths.DirAccessor.GetFiles(langDir, "emuera.*.xml", SearchOption.TopDirectoryOnly))
 			{
-				AddLanguageFile(path);
+				AddLanguageFile(path, paths.DirAccessor);
 			}
 		}
 		
@@ -1444,7 +1450,7 @@ internal sealed partial class Lang
 		loadLangXML(xml);
 	}
 
-	private static XmlDocument LoadXmlFile(string path)
+	private static XmlDocument LoadXmlFile(string path, IGameDirAccessor? accessor = null)
 	{
 		XmlDocument xml = new();
 		if (path.StartsWith("MinorShift"))
@@ -1457,7 +1463,7 @@ internal sealed partial class Lang
 		}
 		else
 		{
-			using var stream = SafCompat.OpenRead(path)
+			using var stream = (accessor != null ? accessor.OpenRead(path) : SafCompat.OpenRead(path))
 				?? throw new FileNotFoundException(path);
 			xml.Load(stream);
 		}

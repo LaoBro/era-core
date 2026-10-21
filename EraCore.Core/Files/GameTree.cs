@@ -29,6 +29,9 @@ public sealed class GameTree
     /// <summary>游戏根（本地绝对路径或 SAF 根 URI）——仅供宿主标识/转交，不能用于拼相对路径。</summary>
     public string Root { get; }
 
+    /// <summary>本门面的目录访问实现——issue-008：无会话作用域的宿主请求流（HTTP /assets）经会话文件门面取用。</summary>
+    internal IGameDirAccessor DirAccessor => _accessor;
+
     /// <summary>游戏目录名（UI 列表展示用）。</summary>
     public string Name => _accessor.GetFileName(Root);
 

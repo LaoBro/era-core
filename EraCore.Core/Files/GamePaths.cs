@@ -9,9 +9,8 @@ internal sealed class GamePaths
     /// 游戏根的<b>只读视图</b>（issue-007）——不再是可写的进程级单例字段。
     /// 值来自 <see cref="GameRootEnvironment"/>：本执行作用域建立的根优先，
     /// 其次装配期最后一次提交的根。
-    /// <para>保留它是为了给尚未迁移的读者（<c>Program.*</c> 转发、HTTP /assets、MAUI UI 线程、
-    /// 既有测试脚手架）一个不断档的读法；引擎调用点在 issue-008 分批改为显式根，
-    /// issue-009 删除装配期视图。</para>
+    /// <para>保留它是为了给尚未迁移的读者（MAUI UI 线程、既有测试脚手架）一个不断档的读法；
+    /// 引擎与服务端调用点已在 issue-008 分批改为显式根，issue-009 删除装配期视图。</para>
     /// </summary>
     public static GamePaths Current => GameRootEnvironment.Current!;
 

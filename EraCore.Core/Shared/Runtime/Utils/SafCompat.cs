@@ -10,6 +10,7 @@ namespace MinorShift.Emuera.Runtime.Utils;
 /// <summary>ADR-0019：运行时脚本 File.*/Directory.* 调用的 SAF 兼容包装。
 /// <para>SAF content URI 路径走 DirAccessor，本地路径走原始 System.IO。</para>
 /// <para>方案 B：写路径（CreateDirectory / OpenWrite / Delete / WriteAllText）已接通，不再静默跳过。</para>
+/// <para>issue-008：根来源经 <see cref="Program.DirAccessor"/>（会话作用域优先），不再直读进程级根视图。</para>
 /// </summary>
 internal static class SafCompat
 {
@@ -18,28 +19,28 @@ internal static class SafCompat
 
     private static IGameDirAccessor RequireAccessor(string op)
     {
-        var acc = GamePaths.Current?.DirAccessor;
+        var acc = Program.DirAccessor;
         if (acc == null)
-            throw new IOException($"SAF {op} requires GamePaths.DirAccessor");
+            throw new IOException($"SAF {op} requires a game root accessor");
         return acc;
     }
 
     internal static bool FileExists(string path)
     {
         if (!IsContentUri(path)) return File.Exists(path);
-        return GamePaths.Current?.DirAccessor?.FileExists(path) ?? false;
+        return Program.DirAccessor.FileExists(path);
     }
 
     internal static bool DirectoryExists(string path)
     {
         if (!IsContentUri(path)) return Directory.Exists(path);
-        return GamePaths.Current?.DirAccessor?.DirectoryExists(path) ?? false;
+        return Program.DirAccessor.DirectoryExists(path);
     }
 
     internal static string ReadAllText(string path)
     {
         if (!IsContentUri(path)) return File.ReadAllText(path);
-        return GamePaths.Current?.DirAccessor?.ReadAllText(path) ?? "";
+        return Program.DirAccessor.ReadAllText(path);
     }
 
     internal static string ReadAllText(string path, Encoding encoding)
@@ -87,7 +88,7 @@ internal static class SafCompat
     {
         if (!IsContentUri(path))
             return File.Exists(path) ? File.OpenRead(path) : null;
-        return GamePaths.Current?.DirAccessor?.OpenRead(path);
+        return Program.DirAccessor.OpenRead(path);
     }
 
     /// <summary>
@@ -98,19 +99,19 @@ internal static class SafCompat
     /// <c>ENUMFILES</c>、<c>GetDatFiles</c> 少列文件。accessor 由 <see cref="GamePaths"/> 按路径形态注入。
     /// </summary>
     internal static string[] GetFiles(string path, string searchPattern, SearchOption searchOption)
-        => GamePaths.Current?.DirAccessor?.GetFiles(path, searchPattern, searchOption) ?? [];
+        => Program.DirAccessor.GetFiles(path, searchPattern, searchOption);
 
     internal static byte[]? ReadAllBytes(string path)
     {
         if (!IsContentUri(path)) return File.ReadAllBytes(path);
-        return GamePaths.Current?.DirAccessor?.ReadAllBytes(path);
+        return Program.DirAccessor.ReadAllBytes(path);
     }
 
     internal static string[] ReadAllLines(string path)
     {
         if (!IsContentUri(path)) return File.ReadAllLines(path);
         return EncodingHandler.ReadAllLinesFromBytes(
-            GamePaths.Current?.DirAccessor?.ReadAllBytes(path) ?? []);
+            Program.DirAccessor.ReadAllBytes(path) ?? []);
     }
 
     internal static FileAttributes GetAttributes(string path)
@@ -193,7 +194,7 @@ internal static class SafCompat
             || segment == "." || segment == ".." || segment.Contains(':')))
             return false;
 
-        var directory = GamePaths.Current?.ExeDir;
+        var directory = Program.ExeDir;
         if (string.IsNullOrEmpty(directory))
             return false;
         for (var index = 0; index < segments.Length - 1; index++)

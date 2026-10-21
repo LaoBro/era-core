@@ -269,17 +269,17 @@ internal sealed class Config
 	}
 
 	/// <summary>KeyValuePair&lt;相对路径, 完全路径&gt; 列表。</summary>
-	public static List<KeyValuePair<string, string>> GetFiles(string rootdir, string pattern)
+	public static List<KeyValuePair<string, string>> GetFiles(string rootdir, string pattern, IGameDirAccessor dirAccessor)
 	{
-		return getFiles(rootdir, rootdir, pattern, !SearchSubdirectory, SortWithFilename);
+		return getFiles(rootdir, rootdir, pattern, !SearchSubdirectory, SortWithFilename, dirAccessor);
 	}
 
-	public static List<KeyValuePair<string, string>> GetFiles(string dir, string rootdir, string pattern)
+	public static List<KeyValuePair<string, string>> GetFiles(string dir, string rootdir, string pattern, IGameDirAccessor dirAccessor)
 	{
-		return getFiles(dir, rootdir, pattern, !SearchSubdirectory, SortWithFilename);
+		return getFiles(dir, rootdir, pattern, !SearchSubdirectory, SortWithFilename, dirAccessor);
 	}
 
-	private static List<KeyValuePair<string, string>> getFiles(string dir, string rootdir, string pattern, bool toponly, bool sort)
+	private static List<KeyValuePair<string, string>> getFiles(string dir, string rootdir, string pattern, bool toponly, bool sort, IGameDirAccessor dirAccessor)
 	{
 		List<KeyValuePair<string, string>> retList = [];
 
@@ -302,7 +302,7 @@ internal sealed class Config
 			if (!RelativePath.EndsWith('\\') && !RelativePath.EndsWith('/'))
 				RelativePath += "\\";
 		}
-		string[] filepaths = GamePaths.Current.DirAccessor.GetFiles(dir, pattern, SearchOption.TopDirectoryOnly);
+		string[] filepaths = dirAccessor.GetFiles(dir, pattern, SearchOption.TopDirectoryOnly);
 		if (sort)
 			Array.Sort(filepaths);
 		for (int i = 0; i < filepaths.Length; i++)
@@ -311,13 +311,13 @@ internal sealed class Config
 
 		if (!toponly)
 		{
-			string[] dirList = GamePaths.Current.DirAccessor.GetDirectories(dir);
+			string[] dirList = dirAccessor.GetDirectories(dir);
 			if (dirList.Length > 0)
 			{
 				if (sort)
 					Array.Sort(dirList);
 				for (int i = 0; i < dirList.Length; i++)
-					retList.AddRange(getFiles(dirList[i], rootdir, pattern, toponly, sort));
+					retList.AddRange(getFiles(dirList[i], rootdir, pattern, toponly, sort, dirAccessor));
 			}
 		}
 

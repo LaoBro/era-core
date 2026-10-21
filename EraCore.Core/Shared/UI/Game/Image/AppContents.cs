@@ -39,22 +39,23 @@ static class AppContents
 	/// </summary>
 	public static ASprite GetSprite(string name)
 	{
-		var paths = GamePaths.Current;
-		if (string.IsNullOrEmpty(name) || paths?.DirAccessor == null)
+		var accessor = Program.DirAccessor;
+		var gameRoot = Program.ExeDir;
+		if (string.IsNullOrEmpty(name))
 			return null!;
 		lock (_stubSync)
 		{
 			// 缓存按游戏根隔离：/load-game 切目录后同名 sprite 可能是新文件
-			if (_stubRoot != paths.ExeDir)
+			if (_stubRoot != gameRoot)
 			{
-				_stubRoot = paths.ExeDir;
+				_stubRoot = gameRoot;
 				_stubs = new ConcurrentDictionary<string, ASprite>(StringComparer.OrdinalIgnoreCase);
 			}
 			if (_stubs.TryGetValue(name, out var cached))
 				return cached;
 		}
 		// 1. 直接相对路径（test_game 的 img/test.png 形态）——无裁切，Dest=Source=整图
-		if (ProbeFile(paths, name, out var fw, out var fh) && fw > 0 && fh > 0)
+		if (ProbeFile(accessor, gameRoot, name, out var fw, out var fh) && fw > 0 && fh > 0)
 		{
 			var full = new EmuSize(fw, fh);
 			var stub = new HeadlessSprite(name, full);
@@ -62,9 +63,9 @@ static class AppContents
 			return stub;
 		}
 		// 2. sprite 名表（era 的 Face_1 → resources/1_Face.png）：Dest=裁切尺寸；越界（OoR）宽容回退整图
-		if (ImageNameTable.TryResolveEntry(paths.DirAccessor, paths.ExeDir, name, out var entry)
+		if (ImageNameTable.TryResolveEntry(accessor, gameRoot, name, out var entry)
 			&& entry != null
-			&& ProbeFile(paths, entry.RelativePath, out var sfw, out var sfh)
+			&& ProbeFile(accessor, gameRoot, entry.RelativePath, out var sfw, out var sfh)
 			&& sfw > 0 && sfh > 0)
 		{
 			var source = new EmuSize(sfw, sfh);
@@ -118,16 +119,17 @@ static class AppContents
 	{
 		width = 0;
 		height = 0;
-		var paths = GamePaths.Current;
-		if (string.IsNullOrEmpty(name) || paths?.DirAccessor == null)
+		var accessor = Program.DirAccessor;
+		var gameRoot = Program.ExeDir;
+		if (string.IsNullOrEmpty(name))
 			return false;
 		// 1. 直接相对路径（test_game 的 img/test.png 形态）
-		if (ProbeFile(paths, name, out width, out height))
+		if (ProbeFile(accessor, gameRoot, name, out width, out height))
 			return true;
 		// 2. sprite 名表（era 的 Face_1 → resources/1_Face.png）
-		if (ImageNameTable.TryResolveEntry(paths.DirAccessor, paths.ExeDir, name, out var entry)
+		if (ImageNameTable.TryResolveEntry(accessor, gameRoot, name, out var entry)
 			&& entry != null
-			&& ProbeFile(paths, entry.RelativePath, out var fileW, out var fileH))
+			&& ProbeFile(accessor, gameRoot, entry.RelativePath, out var fileW, out var fileH))
 		{
 			// 裁切越界（OoR）宽容回退整图尺寸——与 GetSprite 替身同策略
 			if (entry.Crop is SpriteCrop c && c.X + c.Width <= fileW && c.Y + c.Height <= fileH)
@@ -145,10 +147,10 @@ static class AppContents
 		return false;
 	}
 
-	private static bool ProbeFile(GamePaths paths, string relativePath, out int width, out int height)
+	private static bool ProbeFile(IGameDirAccessor accessor, string gameRoot, string relativePath, out int width, out int height)
 	{
-		var fullPath = paths.DirAccessor!.CombinePath(paths.ExeDir, relativePath);
-		return ImageSizeProbe.TryGetPixelSize(paths.DirAccessor, fullPath, out width, out height);
+		var fullPath = accessor.CombinePath(gameRoot, relativePath);
+		return ImageSizeProbe.TryGetPixelSize(accessor, fullPath, out width, out height);
 	}
 }
 

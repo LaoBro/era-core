@@ -65,17 +65,10 @@ internal sealed partial class EraStreamReader : IDisposable
 		}
 		// ADR-0037：原来在 accessor 读空之后还有一段「直连文件系统最后兜底」（File.ReadAllBytes），
 		// 现一并删除 —— 它是 EraCore.Core 里最后一条可编译、可达的直连读缝。
-		// 触发条件本就不成立：GamePaths.Current.DirAccessor 在 Program 静态初始化后恒非 null；
+		// 触发条件本就不成立：根访问器（经 Program 垫片取当前会话根）恒非 null；
 		// 而 ReadAllBytes 返回 null 意味着 SAF/文件系统都说文件不存在，此时本地同名 File.* 要么
 		// 同样读不到，要么拿到 URI 路径直接抛。失败因此显性化，不再绕开 F-1。
-		var dirAccessor = GamePaths.Current?.DirAccessor;
-		if (dirAccessor == null)
-		{
-			EmueraLog.Warn("EraStreamReader", $"DirAccessor unavailable: {path}");
-			Dispose();
-			return false;
-		}
-		var bytes = dirAccessor.ReadAllBytes(path);
+		var bytes = Program.DirAccessor.ReadAllBytes(path);
 		if (bytes == null)
 		{
 			EmueraLog.Warn("EraStreamReader", $"read FAILED: {path}");

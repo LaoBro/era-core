@@ -126,6 +126,8 @@ internal sealed class ConstantData
 	private Dictionary<long, CharacterTemplate>? _noMap;
 	private Dictionary<long, CharacterTemplate>? _csvNoMap;
 	private EmueraConsole output = null!;
+	// issue-008：LoadData 注入的会话根访问器——ERD 在脚本执行期读取，无加载参数可用。
+	private IGameDirAccessor? _dirAccessor;
 
 	public ConstantData()
 	{
@@ -633,6 +635,7 @@ internal sealed class ConstantData
 		// T-027 降级：SAF 排障哨兵改走门面 Debug（画面不再显示，agent.log 全量可查）
 		EmueraLog.Debug("diag-ld", $"Step0 {csvDir}");
 		output = console;
+		_dirAccessor = dirAccessor;
 		loadVariableSizeData(dirAccessor.CombinePath(csvDir, "VariableSize.CSV"), disp, dirAccessor);
 		for (int i = 0; i < countNameCsv; i++)
 		{
@@ -740,7 +743,7 @@ internal sealed class ConstantData
 		{
 			string[] nameArray = new string[varlength];
 			names[ERD_NAMES_INDEX] = nameArray;
-			loadDataTo(filepath, ERD_NAMES_INDEX, null!, disp, GamePaths.Current?.DirAccessor ?? new FileSystemGameDirAccessor());
+			loadDataTo(filepath, ERD_NAMES_INDEX, null!, disp, _dirAccessor ?? Program.DirAccessor);
 			names[ERD_NAMES_INDEX] = null!;
 			//逆引き辞書を作成
 			for (int j = 0; j < nameArray.Length; j++)
@@ -1261,7 +1264,7 @@ internal sealed class ConstantData
 	{
 		if (!dirAccessor.DirectoryExists(csvDir))
 			return;
-		List<KeyValuePair<string, string>> csvPaths = Config.Config.GetFiles(csvDir, "CHARA*.CSV");
+		List<KeyValuePair<string, string>> csvPaths = Config.Config.GetFiles(csvDir, "CHARA*.CSV", dirAccessor);
 
 		for (int i = 0; i < csvPaths.Count; i++)
 			loadCharacterDataFile(csvPaths[i].Value, csvPaths[i].Key, disp);

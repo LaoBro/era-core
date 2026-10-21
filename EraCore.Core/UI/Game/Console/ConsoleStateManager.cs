@@ -71,9 +71,17 @@ internal sealed class ConsoleStateManager
 			_ui.Focus();
 		}
 		_console.ClearDisplay();
-		var env = new LoaderEnv(Program.CsvDir, Program.ErbDir, Program.AnalysisMode, Program.AnalysisFiles, Program.DebugMode)
+		// issue-008：根取会话装配的 ConfigData 捕获根（GlobalStatic scope 内必在），
+		// 不再读进程级根视图；Program 只作 scope 外兜底。
+		var root = ConfigData.Current?.Root;
+		var env = new LoaderEnv(
+			root?.CsvDir ?? Program.CsvDir,
+			root?.ErbDir ?? Program.ErbDir,
+			Program.AnalysisMode,
+			Program.AnalysisFiles,
+			Program.DebugMode)
 		{
-			DirAccessor = GamePaths.Current.DirAccessor
+			DirAccessor = root?.DirAccessor ?? Program.DirAccessor
 		};
 		if (!await _state.process!.Initialize(env, logWriter))
         {
@@ -315,7 +323,8 @@ internal sealed class ConsoleStateManager
         SearchOption op = SearchOption.AllDirectories;
         if (!Config.SearchSubdirectory)
             op = SearchOption.TopDirectoryOnly;
-        var fnames = GamePaths.Current.DirAccessor.GetFiles(erbPath, "*.ERB", op);
+        var accessor = ConfigData.Current?.Root?.DirAccessor ?? Program.DirAccessor;
+        var fnames = accessor.GetFiles(erbPath, "*.ERB", op);
         foreach (var fname in fnames)
         {
             var logicalName = SafPath.GetLogicalFileName(fname);

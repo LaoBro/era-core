@@ -99,8 +99,8 @@ internal static class SrcContentCache
 				|| !SafPath.IsContentUri(env.ErbDir))
 				return;
 			var sw = System.Diagnostics.Stopwatch.StartNew();
-			var csvEntries = CollectSection(env.CsvDir, CsvRootExts);
-			var erhEntries = CollectSection(env.ErbDir, ErbRootExts);
+			var csvEntries = CollectSection(env.DirAccessor, env.CsvDir, CsvRootExts);
+			var erhEntries = CollectSection(env.DirAccessor, env.ErbDir, ErbRootExts);
 			if (csvEntries.Count + erhEntries.Count == 0)
 				return; // 无可缓存内容（空 CSV/ERH）不生成——命中轮本就无懒读可省
 			if (TryWrite(GetSrcCachePath(Program.ExeDir), csvEntries, erhEntries))
@@ -114,10 +114,10 @@ internal static class SrcContentCache
 	}
 
 	/// <summary>收集一个根树下的可缓存条目（相对名 + 行）。行来源 = Preload.files（建库轮已全量装载）。</summary>
-	private static List<(string Rel, string[] Lines)> CollectSection(string root, string[] exts)
+	private static List<(string Rel, string[] Lines)> CollectSection(IGameDirAccessor accessor, string root, string[] exts)
 	{
 		var result = new List<(string Rel, string[] Lines)>();
-		if (string.IsNullOrEmpty(root) || !GamePaths.Current?.DirAccessor?.DirectoryExists(root) == true)
+		if (string.IsNullOrEmpty(root) || !accessor.DirectoryExists(root))
 			return result;
 		foreach (var key in Preload.GetAllCachedKeys())
 		{

@@ -88,7 +88,7 @@ internal static class EmueraRuntimeInitializer
         // 候选 2 / ADR-0009：ConfigData/Config 是 AsyncLocal scope 注入，但启动期 scope 未开，
         // 此处先 SetCurrent 让 Lang.SetLanguage（scope 外）能读到 ConfigData.Current / Config.Current。
         // 后续 GlobalStatic.OpenScope(configData) 会重新 SetCurrent（幂等覆盖）。
-        ConfigData configData = new();
+        ConfigData configData = new(paths);
         // --loading-report / --no-loading-report / MAUI 开关：在 LoadConfigCore 三源合并前置位，让拦截生效。
         configData.OverrideDisplayReport = displayReportOverride;
         configData.LoadConfig();
@@ -97,7 +97,7 @@ internal static class EmueraRuntimeInitializer
         JSONConfig.Load();
 
         // === 语言 ===
-        Lang.LoadLanguageFiles();
+        Lang.LoadLanguageFiles(paths);
         Lang.SetLanguage();
 
         // 路径校验（GamePaths.Validate）由调用方在拿到返回值后自行 try/catch——
