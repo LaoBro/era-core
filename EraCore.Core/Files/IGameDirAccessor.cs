@@ -1,8 +1,5 @@
-using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace MinorShift.Emuera.Files;
 
@@ -12,9 +9,6 @@ namespace MinorShift.Emuera.Files;
 /// </summary>
 public interface IGameDirAccessor
 {
-    // ── 目录选择 ──────────────────────────────────
-    Task<string?> PickDirectoryAsync(CancellationToken ct = default);
-
     // ── 目录枚举 ──────────────────────────────────
     bool DirectoryExists(string path);
     string[] GetDirectories(string path);

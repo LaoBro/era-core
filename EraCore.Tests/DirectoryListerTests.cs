@@ -2,8 +2,6 @@ using MinorShift.Emuera.Files;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
 using Xunit;
 
 namespace MinorShift.Emuera.Tests;
@@ -92,7 +90,6 @@ public class DirectoryListerTests : IDisposable
     {
         public List<string> Calls { get; } = [];
 
-        public Task<string?> PickDirectoryAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public bool DirectoryExists(string path) => Directory.Exists(path);
         public string[] GetDirectories(string path) => Directory.Exists(path) ? Directory.GetDirectories(path) : [];
         public string[] GetDirectories(string path, string searchPattern, SearchOption searchOption) => GetDirectories(path);

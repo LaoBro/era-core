@@ -2,8 +2,6 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace MinorShift.Emuera.Files;
 
@@ -15,9 +13,6 @@ namespace MinorShift.Emuera.Files;
 /// </summary>
 public sealed class FileSystemGameDirAccessor : IGameDirAccessor
 {
-    public Task<string?> PickDirectoryAsync(CancellationToken ct = default)
-        => throw new NotSupportedException("FileSystemGameDirAccessor does not implement a directory picker.");
-
     // ===== issues/20：精确名读取的大小写容错 =====
 
     /// <summary>

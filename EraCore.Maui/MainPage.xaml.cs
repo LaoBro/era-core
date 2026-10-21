@@ -298,12 +298,12 @@ public partial class MainPage : ContentPage
             }
 
             var accessor = BridgeHost.ResolveDirAccessor(effective);
-            var exists = GameScanner.RootDirectoryExists(effective, accessor);
-            var games = exists ? GameScanner.Scan(effective, accessor) : Array.Empty<GameEntry>();
+            var exists = GameLibrary.RootExists(effective, accessor);
+            var games = exists ? GameLibrary.Scan(effective, accessor) : Array.Empty<GameTree>();
             var arr = new JsonArray();
             foreach (var g in games)
             {
-                arr.Add((JsonNode)new JsonObject { ["name"] = g.Name, ["fullPath"] = g.FullPath });
+                arr.Add((JsonNode)new JsonObject { ["name"] = g.Name, ["fullPath"] = g.Root });
             }
             var payload = new JsonObject
             {

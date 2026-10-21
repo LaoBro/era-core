@@ -41,7 +41,7 @@ const MAIN_GAME_DIR_STORAGE_KEY = 'app.mainGameDir';
 const LAST_PLAYED_GAME_STORAGE_KEY = 'app.lastPlayedGame';
 
 /**
- * game-library spec ID1：扫描到的游戏条目（与 C# `GameEntry` record 对称）。
+ * game-library spec ID1：扫描到的游戏条目（与 C# `GameTree` 扫描结果对称）。
  *
  * issues/05：irCached/irCacheBytes/irCacheBuiltUtc 为 IR 缓存存在性提示（非有效性承诺）——
  * 游戏更新后下次加载自动重建，提示随下次库刷新更新。仅 MAUI 桥接（gamesScanned）携带，
@@ -1130,7 +1130,7 @@ export const useGameStore = defineStore('game', () => {
    * 同步更新 scannedGames / scanRootDir / scanStatus——
    * 列表页 watch scannedGames 重新渲染，scanStatus='idle' 关闭 loading 占位。
    *
-   * @param games C# GameScanner.Scan 返回的游戏列表
+   * @param games C# GameLibrary.Scan 返回的游戏列表
    * @param rootDir 扫描时使用的主目录路径（C# 回复中携带）
    * @param rootDirExists 主目录是否存在（C# 经 IGameDirAccessor 检查；可选）
    * @param displayPath issues/15：rootDir 的可读形态（SAF content URI → 「内部存储 / games / eratoho」）。
@@ -1171,7 +1171,7 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
-   * Web/HTTP 模式：请求 server 扫描主目录下的游戏（复用 C# `GameScanner.Scan`）。
+   * Web/HTTP 模式：请求 server 扫描主目录下的游戏（复用 C# `GameLibrary.Scan`）。
    *
    * 浏览器沙箱不能枚举本地文件系统（GamePicker 因此只能手动输入路径），但 C# server
    * 运行在本机可访问文件系统——由它代扫，MAUI 同款游戏列表即可在 Web 模式复用。

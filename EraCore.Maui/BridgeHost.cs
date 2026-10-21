@@ -702,8 +702,23 @@ internal sealed class BridgeHost : IDisposable
     }
 
     /// <summary>
+    /// 目录选择器属于 UI 关注点，已移出 <see cref="IGameDirAccessor"/> 契约——宿主在平台实现上直接调用。
+    /// </summary>
+    private static async Task<string?> PickSafDirectoryPathAsync()
+    {
+#if ANDROID
+        return SafGameDirAccessor.Instance is { } picker
+            ? await picker.PickDirectoryAsync()
+            : null;
+#else
+        await Task.CompletedTask;
+        return null;
+#endif
+    }
+
+    /// <summary>
     /// ADR-0019：处理 Vue 端 pickSafDirectory 消息——Android SAF 原生目录选择器。
-    /// 通过 <see cref="IGameDirAccessor.PickDirectoryAsync"/> 弹出系统原生目录选择器。
+    /// 选择器属于 UI 关注点，不在 <see cref="IGameDirAccessor"/> 契约内——这里直接用平台实现。
     /// </summary>
     private async void HandlePickSafDirectory()
     {
@@ -712,11 +727,11 @@ internal sealed class BridgeHost : IDisposable
         try
         {
 #if ANDROID
-            var dirAccessor = (IGameDirAccessor?)SafGameDirAccessor.Instance;
+            IGameDirAccessor? picker = SafGameDirAccessor.Instance;
 #else
-            IGameDirAccessor? dirAccessor = null;
+            IGameDirAccessor? picker = null;
 #endif
-            if (dirAccessor == null)
+            if (picker == null)
             {
                 Console.WriteLine("[bridge] HandlePickSafDirectory: no DirAccessor");
 #if ANDROID
@@ -732,7 +747,7 @@ internal sealed class BridgeHost : IDisposable
                 return;
             }
 
-            var result = await dirAccessor.PickDirectoryAsync();
+            var result = await PickSafDirectoryPathAsync();
             if (result == null)
             {
                 var cancelJson = JsonSerializer.Serialize(
@@ -776,14 +791,11 @@ internal sealed class BridgeHost : IDisposable
             // 拿它去提示「请重新选择目录」是误报。
             if (stayingOnSaf)
             {
-                var hasWrite = dirAccessor.HasWriteAccess();
+                var hasWrite = picker.HasWriteAccess();
                 var writeProbeOk = false;
                 var writeProbeDetail = "";
 #if ANDROID
-                if (dirAccessor is SafGameDirAccessor saf)
-                {
-                    writeProbeOk = saf.TryWriteProbe(out writeProbeDetail);
-                }
+                writeProbeOk = ((SafGameDirAccessor)picker).TryWriteProbe(out writeProbeDetail);
 #endif
                 Console.WriteLine(
                     $"[bridge] HandlePickSafDirectory: hasWrite={hasWrite}, writeProbeOk={writeProbeOk}, detail={writeProbeDetail}");
@@ -836,8 +848,8 @@ internal sealed class BridgeHost : IDisposable
         rootDir = NormalizeMainDirForDirectAccess(rootDir);
 
         var dirAccessor = ResolveDirAccessor(rootDir);
-        bool rootDirExists = GameScanner.RootDirectoryExists(rootDir, dirAccessor);
-        var games = GameScanner.Scan(rootDir, dirAccessor);
+        bool rootDirExists = GameLibrary.RootExists(rootDir, dirAccessor);
+        var games = GameLibrary.Scan(rootDir, dirAccessor);
         var gamesPayload = BuildGamePayloadWithIrInfo(games);
         // issues/15：顺带把 rootDir 的可读形态推给前端（SAF content URI → 「内部存储 / games / eratoho」）。
         // 没有它，路径行与空态只能把一切 content:// 折叠成「Android 存储目录」常量，
@@ -855,13 +867,13 @@ internal sealed class BridgeHost : IDisposable
     /// 并为每个游戏填充 IR 缓存存在性提示（非有效性承诺：大小 + 构建时间取 era_ir.dat mtime）。
     /// 存在性语义——指纹有效性要等加载期才能算，库扫描期不算也不该算。
     /// </summary>
-    private static List<GameInfoDto> BuildGamePayloadWithIrInfo(IReadOnlyList<GameEntry> games)
+    private static List<GameInfoDto> BuildGamePayloadWithIrInfo(IReadOnlyList<GameTree> games)
     {
-        ErbIrCache.CleanupOrphans(games.Select(g => g.FullPath).ToList(), Program.ExeDir);
+        ErbIrCache.CleanupOrphans(games.Select(g => g.Root).ToList(), Program.ExeDir);
         return games.Select(g =>
         {
-            bool cached = ErbIrCache.TryGetCacheInfo(g.FullPath, out long bytes, out DateTime builtUtc);
-            return new GameInfoDto(g.Name, g.FullPath, cached, bytes,
+            bool cached = ErbIrCache.TryGetCacheInfo(g.Root, out long bytes, out DateTime builtUtc);
+            return new GameInfoDto(g.Name, g.Root, cached, bytes,
                 cached ? builtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture) : null);
         }).ToList();
     }
@@ -902,7 +914,7 @@ internal sealed class BridgeHost : IDisposable
     /// <list type="number">
     ///   <item>读 <c>msg.rootDir</c>——若未提供则用 <see cref="_mainGameDir"/></item>
     ///   <item>若 rootDir 非空且与 <see cref="_mainGameDir"/> 不同——更新 <see cref="_mainGameDir"/> + 写 Preferences</item>
-    ///   <item>调 <see cref="GameScanner.Scan"/> 扫描</item>
+    ///   <item>调 <see cref="GameLibrary.Scan"/> 扫描</item>
     ///   <item>回复 <c>{"type":"gamesScanned","games":[{name,fullPath}],"rootDir":...}</c></item>
     /// </list>
     /// </para>
@@ -944,8 +956,8 @@ internal sealed class BridgeHost : IDisposable
         }
         // game-library spec ID13：检查主目录是否存在——Vue 端区分「目录不存在」vs「无游戏」
         var dirAccessor = ResolveDirAccessor(rootDir);
-        bool rootDirExists = GameScanner.RootDirectoryExists(rootDir, dirAccessor);
-        var games = GameScanner.Scan(rootDir, dirAccessor);
+        bool rootDirExists = GameLibrary.RootExists(rootDir, dirAccessor);
+        var games = GameLibrary.Scan(rootDir, dirAccessor);
         var gamesPayload = BuildGamePayloadWithIrInfo(games);
         var msgJson = JsonSerializer.Serialize(
             new GamesScannedMessage("gamesScanned", gamesPayload, rootDir, rootDirExists,

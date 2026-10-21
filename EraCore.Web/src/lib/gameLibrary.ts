@@ -19,7 +19,7 @@ import {
  * - http（httpGameLibrarySource）：走 C# server 的 HTTP 端点（/game/scan、/game/dirs），
  *   选目录用页面内目录浏览（浏览器沙箱无原生选择器）——故 `listDirs` 只有它实现。
  *
- * 两者底层最终都调 Core 的 GameScanner.Scan / DirectoryLister，store 状态完全共享，
+ * 两者底层最终都调 Core 的 GameLibrary.Scan / DirectoryLister，store 状态完全共享，
  * 所以列表页的展示/设计（GameLibraryView.vue）只需维护一份。
  */
 

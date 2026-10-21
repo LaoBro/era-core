@@ -48,8 +48,8 @@ public class SafCompatContentUriTests
     {
         var accessor = new InMemoryContentDirAccessor(Root);
 
-        Assert.True(GameScanner.RootDirectoryExists(Root, accessor));
-        Assert.False(GameScanner.RootDirectoryExists(
+        Assert.True(GameLibrary.RootExists(Root, accessor));
+        Assert.False(GameLibrary.RootExists(
             "content://com.android.externalstorage.documents/tree/primary%3Amissing/document/primary%3Amissing",
             accessor));
     }

@@ -392,7 +392,7 @@ internal sealed class GameServerProtocol
     /// POST /game/scan —— 扫描主目录下的有效游戏（Web 模式游戏选择界面）。
     ///
     /// 浏览器沙箱不能枚举本地文件系统（GamePicker 因此只能手动输入路径），但 C# server
-    /// 运行在本机可访问文件系统——复用 MAUI 同款 <see cref="GameScanner.Scan"/>（本地 FS 访问器）。
+    /// 运行在本机可访问文件系统——复用 MAUI 同款 <see cref="GameLibrary.Scan"/>（本地 FS 访问器）。
     /// rootDir 不存在不视为错误：返回 200 + rootDirExists=false + 空列表，前端据此展示空状态。
     /// </summary>
     public static HttpResult ScanGameDir(string? rootDir)
@@ -403,13 +403,13 @@ internal sealed class GameServerProtocol
                 400);
 
         var accessor = new FileSystemGameDirAccessor();
-        var exists = GameScanner.RootDirectoryExists(rootDir, accessor);
-        var games = exists ? GameScanner.Scan(rootDir, accessor) : Array.Empty<GameEntry>();
+        var exists = GameLibrary.RootExists(rootDir, accessor);
+        var games = exists ? GameLibrary.Scan(rootDir, accessor) : Array.Empty<GameTree>();
 
         var arr = new JsonArray();
         foreach (var g in games)
         {
-            arr.Add((JsonNode)new JsonObject { ["name"] = g.Name, ["fullPath"] = g.FullPath });
+            arr.Add((JsonNode)new JsonObject { ["name"] = g.Name, ["fullPath"] = g.Root });
         }
 
         return Json(new JsonObject

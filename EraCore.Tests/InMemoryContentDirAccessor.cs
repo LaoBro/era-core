@@ -4,8 +4,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace MinorShift.Emuera.Tests;
 
@@ -40,9 +38,6 @@ internal sealed class InMemoryContentDirAccessor : IGameDirAccessor
 
     /// <summary>模拟 SAF 的写权限状态（缺写时宿主应引导重新选目录）。</summary>
     public bool WriteAccess { get; set; } = true;
-
-    // issue-005：目录选择器即将从 IO 契约移出（UI 关注点）；此桩仅为旧契约编译期占位。
-    public Task<string?> PickDirectoryAsync(CancellationToken ct = default) => Task.FromResult<string?>(null);
 
     // ── 目录枚举 ──────────────────────────────────
 

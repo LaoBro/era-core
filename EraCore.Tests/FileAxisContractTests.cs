@@ -122,23 +122,80 @@ public sealed class FileAxisContractTests
             w.WriteByte(0);
         accessor.CreateDirectory(accessor.CombinePath(fake, "erb"));
 
-        var games = GameScanner.Scan(root, accessor);
+        var games = GameLibrary.Scan(root, accessor);
 
         Assert.Equal(["BBB", "aaa-game", "zelda"], games.Select(g => g.Name).ToArray());
         Assert.All(games, g =>
         {
-            var treeRoot = g.FullPath;
+            var treeRoot = g.Root;
             Assert.True(accessor.DirectoryExists(accessor.CombinePath(treeRoot, "csv")));
             Assert.True(accessor.DirectoryExists(accessor.CombinePath(treeRoot, "erb")));
             Assert.Equal(g.Name, accessor.GetFileName(treeRoot));
         });
 
         // 根不存在 / null / 空 → 空列表（与今天一致，不抛）
-        Assert.True(GameScanner.RootDirectoryExists(root, accessor));
-        Assert.False(GameScanner.RootDirectoryExists(accessor.CombinePath(root, "missing"), accessor));
-        Assert.Empty(GameScanner.Scan(null, accessor));
-        Assert.Empty(GameScanner.Scan("", accessor));
-        Assert.Empty(GameScanner.Scan(accessor.CombinePath(root, "missing"), accessor));
+        Assert.True(GameLibrary.RootExists(root, accessor));
+        Assert.False(GameLibrary.RootExists(accessor.CombinePath(root, "missing"), accessor));
+        Assert.Empty(GameLibrary.Scan(null, accessor));
+        Assert.Empty(GameLibrary.Scan("", accessor));
+        Assert.Empty(GameLibrary.Scan(accessor.CombinePath(root, "missing"), accessor));
+    }
+
+    [Theory]
+    [MemberData(nameof(AccessorKinds))]
+    public void GameTree_exposes_only_relative_paths(string kind)
+    {
+        using var fixture = Fixture.Create(kind);
+        var accessor = fixture.Accessor;
+        var gameRoot = accessor.CombinePath(fixture.Root, "game1");
+        accessor.CreateDirectory(accessor.CombinePath(gameRoot, "sav"));
+
+        var tree = new GameTree(gameRoot, accessor);
+        Assert.Equal("game1", tree.Name);
+        Assert.Equal(gameRoot, tree.Root);
+        Assert.True(tree.CanWrite);
+        Assert.True(tree.Exists());
+        Assert.True(tree.Exists("sav"));
+        Assert.False(tree.Exists("missing"));
+
+        // 写 → 读（相对路径；父目录由实现补建）
+        byte[] payload = [0x10, 0x20, 0xFE];
+        using (var w = tree.Create("sav/global.sav"))
+            w.Write(payload);
+        Assert.True(tree.Exists("sav/global.sav"));
+        Assert.Equal(payload, tree.ReadBytes("sav/global.sav")!);
+        using (var r = tree.OpenRead("sav/global.sav"))
+        {
+            Assert.NotNull(r);
+            using var ms = new MemoryStream();
+            r!.CopyTo(ms);
+            Assert.Equal(payload, ms.ToArray());
+        }
+        using (var w = tree.Create("readme.txt"))
+            w.Write(Encoding.UTF8.GetBytes("hello"));
+        Assert.Equal("hello", tree.ReadText("readme.txt"));
+
+        // 列目录 / 列文件返回相对路径，且可原样回传
+        Assert.Equal(["sav"], tree.ListDirectories().ToArray());
+        Assert.Equal(["readme.txt"], tree.ListFiles().ToArray());
+        Assert.Equal(["sav/global.sav"], tree.ListFiles("sav").ToArray());
+        Assert.Equal(["sav/global.sav"], tree.ListFiles("sav", "*.sav").ToArray());
+        Assert.Empty(tree.ListFiles("missing"));
+
+        var listed = Assert.Single(tree.ListFiles("sav"));
+        Assert.True(tree.Exists(listed));
+        Assert.Equal(payload, tree.ReadBytes(listed)!);
+
+        // 删除幂等
+        tree.Delete("sav/global.sav");
+        Assert.False(tree.Exists("sav/global.sav"));
+        tree.Delete("sav/global.sav");
+
+        // 逃逸：绝对路径 / .. / content URI 在门面处拒绝
+        Assert.Throws<ArgumentException>(() => tree.ReadText("../outside.txt"));
+        Assert.Throws<ArgumentException>(() => tree.OpenRead("sav/../../outside.txt"));
+        Assert.Throws<ArgumentException>(() => tree.Exists("/outside.txt"));
+        Assert.Throws<ArgumentException>(() => tree.Exists("content://example/document/x"));
     }
 
     private static string[] Names(IEnumerable<string> fullPaths)

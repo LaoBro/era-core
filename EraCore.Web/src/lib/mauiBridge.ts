@@ -257,7 +257,7 @@ export function rescanIrCache(path: string): void {
  * C# `BridgeHost.HandleScanGames` 收到后：
  * 1. 读 rootDir——若未提供则用 C# 端 `_mainGameDir` 字段
  * 2. 若 rootDir 与 `_mainGameDir` 不同——更新 + 写 Preferences
- * 3. 调 `GameScanner.Scan(rootDir)` 扫描
+ * 3. 调 `GameLibrary.Scan(rootDir)` 扫描
  * 4. 回复 `{"type":"gamesScanned","games":[{name,fullPath}],"rootDir":...}`
  *
  * @param rootDir 主目录绝对路径——null/undefined/空串时 C# 用已存的主目录

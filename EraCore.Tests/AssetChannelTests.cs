@@ -1,8 +1,6 @@
 using MinorShift.Emuera.Files;
 using System;
 using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
 using MinorShift.Emuera;
 using MinorShift.Emuera.Assets;
 using Xunit;
@@ -136,7 +134,6 @@ public class AssetChannelTests : IDisposable
             return [0x89, 0x50];
         }
 
-        public Task<string?> PickDirectoryAsync(CancellationToken ct = default) => Task.FromResult<string?>(null);
         public bool DirectoryExists(string path) => throw new NotSupportedException();
         public string[] GetDirectories(string path) => throw new NotSupportedException();
         public string[] GetDirectories(string path, string searchPattern, SearchOption searchOption) => throw new NotSupportedException();

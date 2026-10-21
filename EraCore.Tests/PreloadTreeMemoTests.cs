@@ -189,7 +189,6 @@ public class PreloadTreeMemoTests
 
         public byte[]? ReadAllBytes(string path) => [0x40, 0x4D, 0x0A, 0x52, 0x45, 0x54, 0x55, 0x52, 0x4E, 0x0A]; // "@M\nRETURN\n"
 
-        public Task<string?> PickDirectoryAsync(CancellationToken ct = default) => Task.FromResult<string?>(null);
         public string[] GetDirectories(string path) => throw new NotSupportedException();
         public string[] GetDirectories(string path, string searchPattern, SearchOption searchOption) => throw new NotSupportedException();
         public bool FileExists(string path) => throw new NotSupportedException();

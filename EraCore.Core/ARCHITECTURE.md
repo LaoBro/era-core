@@ -110,7 +110,8 @@ HTTP body —— 的共同终点），再由 **`InputStateApplier`** 翻译成�
 
 两个实现：`FileSystemGameDirAccessor`（本地文件系统）与 `SafGameDirAccessor`（Android SAF `content://`，MAUI 侧），
 二者必须**契约一致**（精确名读取大小写不敏感，对齐 SAF 语义）。主要消费者：`GamePaths`（解析/校验游戏根）、
-`GameScanner`、`DirectoryLister`。
+`GameLibrary`（扫描）、`DirectoryLister`。宿主经 `GameTree`（绑定游戏根 + 访问实现的相对路径门面）访问游戏目录；
+目录选择器属于 UI 关注点，不在 IO 契约内。
 
 应用私有域是唯一的**豁免域**：由 `AppDataPaths` 界定、经 `AppDataIo` 这一个窄口子 IO（方法只收「相对私有根的名字」，
 越域在签名上不可表达）。
@@ -128,7 +129,7 @@ HTTP body —— 的共同终点），再由 **`InputStateApplier`** 翻译成�
 ### 4.4 主决策
 
 - [ADR-0019 Android SAF 文件访问替代 MANAGE_EXTERNAL_STORAGE](../docs/adr/0019-android-saf-file-access.md) —— accepted，本轴主决策。
-  相关：`ADR-0017`（MAUI 桥接传输分层，含 `GameScanner` / `DirectoryLister`）。
+  相关：`ADR-0017`（MAUI 桥接传输分层，含 `GameLibrary` / `DirectoryLister`）。
   完整索引见 [`../docs/adr/`](../docs/adr/)。
 
 ---
@@ -149,7 +150,7 @@ HTTP body —— 的共同终点），再由 **`InputStateApplier`** 翻译成�
 |---|---|---|
 | 输入 | `IInputHost` | ADR-0031 proposed；接口 / `DefaultInputHost` / 几何与键盘通道已落地，触屏 E-min 与 `IConsoleUI` 瘦身未落地 |
 | 输出 | `IDisplayState` / `OutputHub` | ADR-0003 / 0013 / 0014 accepted 且已落地；帧形状由 `TurnFrames` 收口（ADR-0032） |
-| 文件 | `IGameDirAccessor` | ADR-0019 accepted 且已落地（双实现）；GameTree 域已归零，剩余豁免由守卫测试机检 |
+| 文件 | `IGameDirAccessor` / `GameTree` | ADR-0019 accepted 且已落地（双实现）；`GameTree` 相对路径门面已落地，选择器移出 IO 契约；剩余豁免由守卫测试机检 |
 
 > 本表随里程碑推进而改，不视为稳定契约。
 
