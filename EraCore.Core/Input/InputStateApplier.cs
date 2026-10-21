@@ -1,6 +1,6 @@
 using MinorShift.Emuera.Primitives;
 
-namespace MinorShift.Emuera.UI.Game;
+namespace MinorShift.Emuera.Input;
 
 /// <summary>
 /// 上行输入翻译（ADR-0031 / spec-v3 §5.1）：把各宿主的<b>上行事件</b>写进

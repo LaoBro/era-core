@@ -1,4 +1,4 @@
-namespace MinorShift.Emuera.UI.Game;
+namespace MinorShift.Emuera.Input;
 
 /// <summary>
 /// 键鼠事件（Win32 VK 键码 + 按下/松开）。鼠标键用 1/2/4（= <c>VK_LBUTTON/RBUTTON/MBUTTON</c>）。

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Input;
 using MinorShift.Emuera.UI.Game;
 using Xunit;
 using HttpInput = MinorShift.Emuera.Server.HttpRouteDispatcher.HttpInput;

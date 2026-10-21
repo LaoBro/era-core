@@ -1,6 +1,7 @@
 using System;
 using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Input;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Terminal.Platform;

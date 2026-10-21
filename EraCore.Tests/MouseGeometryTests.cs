@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Threading.Tasks;
+using MinorShift.Emuera.Input;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Tests;

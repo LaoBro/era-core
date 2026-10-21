@@ -1,5 +1,6 @@
 using MinorShift.Emuera.GameData.Variable;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Input;
 
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Script.Data;

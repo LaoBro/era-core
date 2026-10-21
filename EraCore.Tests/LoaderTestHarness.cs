@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera.GameProc;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Input;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Config.JSON;
 using MinorShift.Emuera.Runtime.Script;

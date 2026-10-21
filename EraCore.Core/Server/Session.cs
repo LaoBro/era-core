@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Input;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Terminal.Platform;
 using MinorShift.Emuera.UI.Game;

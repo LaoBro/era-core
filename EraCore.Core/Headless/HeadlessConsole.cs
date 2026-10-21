@@ -1,4 +1,5 @@
 using System;
+using MinorShift.Emuera.Input;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime.Config;
 

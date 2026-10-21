@@ -1,4 +1,4 @@
-using MinorShift.Emuera.UI.Game;
+using MinorShift.Emuera.Input;
 
 namespace MinorShift.Emuera.GameView;
 
@@ -9,7 +9,7 @@ namespace MinorShift.Emuera.GameView;
 /// <b>两类发送</b>（spec-v3 §5.3）：
 /// <list type="bullet">
 /// <item><b>提交类</b>：带 <c>value</c> ⇒ 经 <c>DispatchInput</c> 推进，并产一帧回音（既有行为）。</item>
-/// <item><b>状态类</b>：<c>value</c> 缺省 ⇒ <b>只写 <see cref="MinorShift.Emuera.UI.Game.IInputHost"/></b>，
+/// <item><b>状态类</b>：<c>value</c> 缺省 ⇒ <b>只写 <see cref="MinorShift.Emuera.Input.IInputHost"/></b>，
 /// 不派发、不产帧（值等待下带空 <c>value</c> 会触发 <c>OnInputRejected</c>，故必须跳过）。</item>
 /// </list>
 /// </para>

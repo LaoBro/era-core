@@ -1,6 +1,6 @@
 using System.Linq;
 using System.Threading.Tasks;
-using MinorShift.Emuera.UI.Game;
+using MinorShift.Emuera.Input;
 using Xunit;
 
 namespace MinorShift.Emuera.Tests;
