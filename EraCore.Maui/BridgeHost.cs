@@ -23,6 +23,7 @@ using MinorShift.Emuera.Runtime.Script.Loader;
 using MinorShift.Emuera.Runtime.Script.Statements;
 using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.Server;
+using MinorShift.Emuera.Sessions;
 using MinorShift.Emuera.Terminal.Platform;
 
 namespace EraCore.Maui;
@@ -32,7 +33,7 @@ namespace EraCore.Maui;
 /// <para>
 /// 持有 <see cref="IJsBridge"/> + 托管 <see cref="HttpListenerHost"/>（issue 05），在游戏会话与
 /// UI 线程之间转发 turn / input：会话由 <see cref="HttpListenerHost"/> 的 <see cref="SessionRegistry"/> 持有
-/// （共享层 <see cref="Session"/>），WebView 经 <see cref="OutputHub"/> 订阅 turn（<see cref="TurnPumpAsync"/>）
+/// （共享层 <see cref="CoreSession"/>），WebView 经 <see cref="OutputHub"/> 订阅 turn（<see cref="TurnPumpAsync"/>）
 /// 转发 + <see cref="HttpSessionIO"/> 入输入；agent 经 localhost HTTP+WS 连接同一会话（单实例共享）。
 /// 订阅 <see cref="IJsBridge.InputReceived"/> 接收 Vue 端 postMessage。
 /// </para>
@@ -43,7 +44,7 @@ namespace EraCore.Maui;
 /// Vue ready 是会话启动的前置条件，第一帧 turn（全量 diff）自然推给已 ready 的 Vue。
 /// </para>
 /// <para>
-/// <b>致命错误处理（spec ID10）</b>：会话游戏循环异常由共享层 <see cref="Session"/> 兜底（写 error turn），
+/// <b>致命错误处理（spec ID10）</b>：会话游戏循环异常由共享层 <see cref="CoreSession"/> 兜底（写 error turn），
 /// 本类仅在宿主构建/订阅失败时 <see cref="ShowFatalError"/> 推 error turn 给 Vue（Vue 渲染 error 字段），
 /// fallback 用 <c>DisplayAlert</c>。单 step 脚本异常（ERB THROW / 除零等）由 <c>AgentJsonlProtocol.StepAsync</c>
 /// 内 catch 处理，不传播到 <see cref="ShowFatalError"/>。
@@ -241,7 +242,7 @@ internal sealed class BridgeHost : IDisposable
     // WebView 经 OutputHub 订阅 turn（TurnPumpAsync）投递 + session.IO 入输入；
     // agent 经 localhost HTTP+WS 连接同一会话（单实例共享，非另起一局）。
     private HttpListenerHost? _serverHost;
-    private Session? _session;
+    private CoreSession? _session;
     private HttpSessionIO? _sessionIO;
     private Task? _turnPump;
     private Task? _controlPump;
@@ -2104,7 +2105,7 @@ internal sealed class BridgeHost : IDisposable
     /// 控制事件泵：长轮询 Controller 控制事件，事件发生时把当前控制状态推给 WebView
     /// （前端据此切 旁观/可操作 UI，输入栏启用/禁用）。首帧先推一次，保证 WebView 就绪即同步。
     /// </summary>
-    private async Task ControlPumpAsync(Session session)
+    private async Task ControlPumpAsync(CoreSession session)
     {
         PushControlStatus(session);
         while (!_cts.IsCancellationRequested)
@@ -2133,7 +2134,7 @@ internal sealed class BridgeHost : IDisposable
     /// 推控制状态给 Vue——<c>{"type":"controlStatus","controller":{kind,leaseExpiresAt}|null,"state":"idle"|"held"}</c>。
     /// 前端 useAppInit 的 handleMauiMessage 调 conn.applyControlStatus 同步 controller ref。
     /// </summary>
-    private void PushControlStatus(Session session)
+    private void PushControlStatus(CoreSession session)
     {
         try
         {
@@ -2349,7 +2350,7 @@ internal sealed class BridgeHost : IDisposable
 
         // 4. 退会话——server 是 app 级共享的，不能 Dispose（否则整个控制面没了）。
         //    只经 SessionRegistry 销毁本 host 建的会话（等价 DELETE /session，无 identity 故不检查控制权）；
-        //    后台线程跑：Session.Dispose 会 join 游戏循环，不阻塞 UI（spec ID9）。
+        //    后台线程跑：CoreSession.Dispose 会 join 游戏循环，不阻塞 UI（spec ID9）。
         //    游戏循环多在 ReadLineAsync await，IO.Close 后毫秒级退出。
         var host = _serverHost;
         _serverHost = null;
@@ -2368,7 +2369,7 @@ internal sealed class BridgeHost : IDisposable
                     AgentLog.Instance.Write($"[bridge] session delete failed: {ex.Message}");
                     Console.WriteLine($"[bridge] session delete failed: {ex}");
                 }
-                // mem-leak-fix：DeleteSessionAsync 已 join 游戏循环（Session.Dispose 内 GetAwaiter().GetResult()），
+                // mem-leak-fix：DeleteSessionAsync 已 join 游戏循环（CoreSession.Dispose 内 GetAwaiter().GetResult()），
                 // 此时 GlobalStatic.Scope.Dispose 的静态根清理必然已完成——在此触发 Full GC，
                 // 让已释放的游戏运行时内存可见回落（Preferences 开关默认 true）。
                 TryCollectAfterGameExit();

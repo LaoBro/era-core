@@ -1,12 +1,14 @@
 using MinorShift.Emuera.Files;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Input;
+using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.Runtime.Utils.EvilMask;
 using MinorShift.Emuera.Terminal.Platform;
 using MinorShift.Emuera.UI;
 using MinorShift.Emuera.UI.Game;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Sessions;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -46,10 +48,17 @@ internal static class HeadlessRunner
 
             using (terminalInput)
             {
-                var result = await GameLoopComposer.RunAsync(
+                // issue-006：CLI 也经 CoreSession 组装（三轴门面由会话持有），
+                // 协议只管渲染与 VT 输入编排。
+                var session = CoreSession.CreateForCli(
                     configData,
                     terminalSetup,
-                    (console, ui, ts) =>
+                    // ADR-0031 / spec-v3 M4/M4b：CLI 只声明能力位，宿主实例由组装根创建。
+                    // - Geometry：VT 鼠标位置换算成 console 局部像素 ⇒ MOUSEX / MOUSEY / MOUSEB 有真值。
+                    // - KeyboardState：VT 鼠标键电平 ⇒ GETKEY / GETKEYTRIGGERED 有真值。
+                    InputCapability.Geometry | InputCapability.KeyboardState,
+                    dialectProfileId,
+                    (console, ui, ts, displayState, input, output) =>
                     {
                         string hint = (termWidthHint ?? "auto").Trim().ToLowerInvariant();
                         TerminalCharWidthConfig charWidthConfig = hint == "auto"
@@ -66,23 +75,33 @@ internal static class HeadlessRunner
                         if (gameColumns > 0 && gameRows > 0)
                             ts.TrySetConsoleSize(gameColumns, gameRows + 4);
 
-                        return SelectCliProtocol(protocolArg, console, ui, ts, terminalInput, configData);
+                        return SelectCliProtocol(protocolArg, console, ui, ts, terminalInput, configData,
+                            input, output, displayState);
                     },
                     p =>
                     {
                         ((AgentCliProtocol)p).RunCliLoop();
                         return Task.CompletedTask;
-                    },
-                    dialectProfileId,
-                    // ADR-0031 / spec-v3 M4/M4b：CLI 只声明能力位，宿主实例由组装根创建
-                    // （issue-002：宿主不再接触内部输入主机）。
-                    // - Geometry：VT 鼠标位置换算成 console 局部像素 ⇒ MOUSEX / MOUSEY / MOUSEB 有真值。
-                    // - KeyboardState：VT 鼠标键电平 ⇒ GETKEY / GETKEYTRIGGERED 有真值
-                    //   （M4b 前 VT 路径从不写输入宿主，COMF413:135 的出口永远不成立）。
-                    // 注：CLI **键盘**尚未映射到 VK（VT 只给 ConsoleKey/字符），故键盘键仍恒 0。
-                    inputCapabilities: new InputCapabilities(
-                        InputCapability.Geometry | InputCapability.KeyboardState));
+                    });
 
+                var result = await session.WaitForLoopAsync();
+
+                if (session.StartupException is ArgumentException argEx)
+                {
+                    EmueraLog.Error("headless", argEx.Message);
+                    Environment.Exit(1);
+                }
+                if (session.StartupException != null)
+                {
+                    EmueraLog.Error("headless", $"致命错误: {session.StartupException.Message}");
+                    AgentLog.Instance.Write("session startup exception: " + session.StartupException);
+                    Environment.Exit(1);
+                }
+                if (session.State == CoreSessionState.Failed)
+                {
+                    EmueraLog.Error("headless", session.LastError ?? "游戏循环异常终止。");
+                    Environment.Exit(1);
+                }
                 if (result == GameLoopResult.Aborted)
                 {
                     Environment.Exit(1);
@@ -108,19 +127,19 @@ internal static class HeadlessRunner
         }
     }
 
-    private static AgentCliProtocol? SelectCliProtocol(string protocolArg, EmueraConsole console, IConsoleUI ui, ITerminalSetup terminalSetup, ITerminalInput terminalInput, ConfigData configData)
+    private static AgentCliProtocol? SelectCliProtocol(string protocolArg, EmueraConsole console, IConsoleUI ui, ITerminalSetup terminalSetup, ITerminalInput terminalInput, ConfigData configData, InputPort inputPort, OutputPort outputPort, DisplayState displayState)
     {
         return protocolArg.Trim().ToLowerInvariant() switch
         {
-            "auto" => DetectCliProtocol(console, ui, terminalSetup, terminalInput, configData),
-            "cli" => new AgentCliProtocol(console, ui, terminalSetup, terminalInput, configData),
+            "auto" => DetectCliProtocol(console, ui, terminalSetup, terminalInput, configData, inputPort, outputPort, displayState),
+            "cli" => new AgentCliProtocol(console, ui, terminalSetup, terminalInput, configData, inputPort, outputPort, displayState),
             "jsonl" => throw new ArgumentException(
                 "stdin 管道 JSONL 模式已废弃（T-024），请使用 --server 模式", nameof(protocolArg)),
             _ => throw new ArgumentException($"未知协议模式: {protocolArg}", nameof(protocolArg))
         };
     }
 
-    private static AgentCliProtocol? DetectCliProtocol(EmueraConsole console, IConsoleUI ui, ITerminalSetup terminalSetup, ITerminalInput terminalInput, ConfigData configData)
+    private static AgentCliProtocol? DetectCliProtocol(EmueraConsole console, IConsoleUI ui, ITerminalSetup terminalSetup, ITerminalInput terminalInput, ConfigData configData, InputPort inputPort, OutputPort outputPort, DisplayState displayState)
     {
         // T-024：stdin 管道模式已废弃，非 server 模式仅支持交互式 CLI 终端。
         if (Console.IsInputRedirected)
@@ -138,7 +157,7 @@ internal static class HeadlessRunner
             return null;
         }
 
-        return new AgentCliProtocol(console, ui, terminalSetup, terminalInput, configData);
+        return new AgentCliProtocol(console, ui, terminalSetup, terminalInput, configData, inputPort, outputPort, displayState);
     }
 
     private static void PrintTerminalGuidance(TerminalCharWidthConfig config)

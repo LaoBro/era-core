@@ -109,7 +109,7 @@ internal static class TurnFrames
     /// <c>awaiting</c>）——v12 起前端要求 <c>awaiting</c> 必填，手拼帧会被判为协议解析失败、
     /// 真实错误反而看不到。</para>
     ///
-    /// <para><paramref name="errorText"/> 由调用方决定粒度：<c>Session</c> 传完整串（含堆栈）以兼容
+    /// <para><paramref name="errorText"/> 由调用方决定粒度：<c>CoreSession</c> 传完整串（含堆栈）以兼容
     /// 既有消费者，脚本运行期异常传 <c>ex.Message</c>。</para>
     /// </summary>
     internal static Turn Error(string errorText, ErrorInfo? errorInfo)

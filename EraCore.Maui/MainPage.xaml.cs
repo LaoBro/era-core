@@ -13,6 +13,7 @@ using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Utils;
 #endif
 using MinorShift.Emuera.Server;
+using MinorShift.Emuera.Sessions;
 using MinorShift.Emuera.Terminal.Platform;
 
 namespace EraCore.Maui;

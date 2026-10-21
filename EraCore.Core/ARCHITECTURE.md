@@ -7,7 +7,7 @@
 **为什么**归 [`../docs/adr/`](../docs/adr/)（本文只点名主 ADR）；**怎么实现**与例外清单归类型 remarks 和守卫测试（机读真值唯一）。
 
 > 本文是根 [`../ARCHITECTURE.md`](../ARCHITECTURE.md) `## Core` 一节的深化。
-> 维护约定：改动任一轴的主接口时同步 §1 / §5。最后核对日期：**2026-10-19**。
+> 维护约定：改动任一轴的主接口时同步 §1 / §5。最后核对日期：**2026-10-22**。
 
 ---
 
@@ -20,12 +20,12 @@ Core 把「引擎与世界的全部接触面」收敛为三条轴，它们**方�
 
 ```text
      ┌──────────── 依赖倒置面（宿主实现 → 引擎消费）────────────┐
-     输入：IInputHost / IVtHost / ITerminalInput   →  引擎只读 Current / Capabilities
-     文件：IGameDirAccessor                        →  引擎的全部游戏树 IO
+     输入：InputPort（宿主门面）→ IInputHost / IVtHost / ITerminalInput  →  引擎只读
+     文件：GameTree（宿主门面）→ IGameDirAccessor          →  引擎的全部游戏树 IO
      └──────────────────────────────────────────────────────────┘
 
      ┌──────────── 产出面（引擎产出 → 宿主消费）───────────────┐
-     输出：DisplayState 快照（拉取） / OutputHub 广播（推送） → 宿主渲染 / 旁路订阅
+     输出：OutputPort（快照 + 增量）→ DisplayState 快照 / OutputHub 广播
      └──────────────────────────────────────────────────────────┘
 ```
 
@@ -33,9 +33,15 @@ Core 把「引擎与世界的全部接触面」收敛为三条轴，它们**方�
 > （profile → 可见面），不增加输入/输出/文件的新接触面；结构、闭包与不变量见
 > [`../docs/guides/dialect-porting.md`](../docs/guides/dialect-porting.md)。
 
-三轴接口一律 `internal`，宿主经 `EraCore.Core.csproj` 的 `InternalsVisibleTo`
-（`EraCore.Server` / `EraCore.Cli` / `EraCore.Maui` / `EraCore.Tests`）访问；
-唯一例外是文件轴的 `IGameDirAccessor`（`public` —— 宿主实现需跨程序集可见）。
+三轴的**宿主门面**（`InputPort` / `OutputPort` / `GameTree`）与组装根 `CoreSession` 是 `public`：
+宿主只认这些类型。门面背后的接口与实现（`IInputHost` / `DisplayState` / `OutputHub` / `GameLoopComposer` /
+`SessionRegistry` 等）保持 `internal`；`EraCore.Core.csproj` 的 `InternalsVisibleTo`
+（`EraCore.Server` / `EraCore.Cli` / `EraCore.Maui` / `EraCore.Tests`）只服务于本仓宿主接入与测试。
+`IGameDirAccessor` 仍是唯一需要外部实现的 `public` 接口。
+
+**会话不是第四条能力轴**，而是三轴的**汇合点**：`CoreSession` 持有 `Input` / `Output` / `Files` 三个门面，
+负责 `StartAsync`（路径校验 → 运行时初始化 → 游戏循环）与 `StopAsync`（有界拆除）。
+宿主从 `StartAsync` 到 `StopAsync` 之间只接触三轴；HTTP / JSONL / WS 协议仍属于 Server，不进组装根。
 
 ---
 
@@ -73,25 +79,26 @@ HTTP body —— 的共同终点），再由 **`InputStateApplier`** 翻译成�
 
 输出有两条**结构不同**的通道，共用同一 turn 串：
 
-- **拉取式快照**（`IDisplayState`）：引擎持有显示状态，宿主按需 `TryUpdate()` / `Current`。
+- **拉取式快照**（`OutputPort.Snapshot`）：引擎持有显示状态，宿主按需 `TryUpdate()` / `Current`。
 - **推送式广播**（`OutputHub`）：turn 写出即广播给所有旁路订阅者（WS），是**唯一**旁路出口，**不设接口层**。
 
 一次 turn 走过的关键角色：**`TurnFrames`**（帧形状的唯一权威，纯静态、不持运行期状态）→
 **`HttpSessionIO`**（写同时入 HTTP 队列与广播）→ **`TurnDelivery`**（长轮询 + 控制权抢占 + final-turn-once + 超时）
 → **`WsRelay`**（WS 传输，Core 共享、BCL only）。帧的 wire 契约与差分操作见 `Agent/TurnRecord.cs`；
-会话相位与拆除顺序由 `SessionRegistry` / `TurnDelivery` 持有（ADR-0049）。
+会话相位与拆除顺序由 `CoreSession` / `SessionRegistry` / `TurnDelivery` 持有（ADR-0049）；
+宿主经 `CoreSession.Output` 拿到 `OutputPort`，看不到 `DisplayState` / `OutputHub`。
 
 ### 3.3 不变量
 
 | # | 规则 | 违反后果 |
 |---|---|---|
-| O-1 | `OutputHub` **纯转发**：不解析 turn、不持业务状态、不依赖 `Session` / 协议层 / 引擎层 | 旁路耦合进业务 |
+| O-1 | `OutputHub` **纯转发**：不解析 turn、不持业务状态、不依赖 `CoreSession` / 协议层 / 引擎层 | 旁路耦合进业务 |
 | O-3 | `OutputHub` 是**唯一**旁路广播出口且**不设接口层**（理由见该类型 remarks）。若真出现第二个投递目标，须在此重开讨论后再引入抽象 | 抽象面 1 处 vs 具体面 4 处，「已解耦」的假象复活却换不来任何测试能力 |
 | O-4 | `WriteLine` 必须**同时**入 HTTP 队列与旁路广播，两侧**同序、同一字符串实例**，不得在任一侧再加工 —— 行为锁 `HttpSessionIoDualWriteTests` | HTTP 与 WS 输出分叉（症状：WS 下按钮不刷新而 HTTP 下正常，最难归因） |
 | O-6 | 协议版本变更须**同步**更新 `TurnRecord.CurrentProtocolVersion` 与 Python 侧 `tests/emuera_server.py:PROTOCOL_VERSION` | 前后端版本错配 |
 | O-7 | 生产代码**只能**经 `TurnFrames`（`Ok` / `Quit` / `Fatal` / `Error`）构造帧；终态帧只能经 `Quit` / `Fatal` / `Error` 三个语义入口 | 「Quit 帧带 diff」「错误帧照抄 `console.State`」等非法形态复活 |
 
-> 其余输出侧约束（订阅者独占 reader 且不回放历史、`Session` 只做组装不参与取水、`TurnFrames` 不持运行期状态）落在 `OutputHub` / `TurnDelivery` / `TurnFrames` 的 remarks 与 ADR-0032。
+> 其余输出侧约束（订阅者独占 reader 且不回放历史、`CoreSession` 只做组装不参与取水、`TurnFrames` 不持运行期状态）落在 `OutputHub` / `TurnDelivery` / `TurnFrames` 的 remarks 与 ADR-0032。
 
 ### 3.4 主决策
 
@@ -138,19 +145,20 @@ HTTP body —— 的共同终点），再由 **`InputStateApplier`** 翻译成�
 
 | 宿主 | 声明的输入能力位 | 输入 | 输出 | 文件 | 方言 profile |
 |---|---|---|---|---|---|
-| **Cli** | `Geometry \| KeyboardState` | 造平台 `ITerminalInput`（Windows/Posix）→ VT `AgentCliProtocol` | `AgentCliProtocol` + `TerminalRenderer`；视口 `CliViewport` | `FileSystemGameDirAccessor` + `GamePaths`（`HeadlessEntry`） | `--profile`（启动期 fail-fast；缺省 `v24pure`） |
-| **Server / HTTP** | `KeyboardState \| Hover \| Focus` | 经共享层 `Session` 内置的 `DefaultInputHost`（`s.IO.EnqueueInput`） | Kestrel 壳路由 + `WsConnectionHandler` → `WsRelay`；`HttpSessionIO` 双写 | `GamePaths.Current.DirAccessor`（`KestrelGameServer`） | 同 Cli（`ServerRunner` 透传） |
-| **Maui** | 复用 Server 同一 `DefaultInputHost` | 同 Server | `BridgeHost.TurnPumpAsync` 订阅 `OutputHub` | `BridgeHost.ResolveDirAccessor`：`content://` → `SafGameDirAccessor.Instance`，否则 `FileSystemGameDirAccessor` | 设置项 `app.dialectProfile`（建会话前读，重载游戏生效） |
+| **Cli** | `Geometry \| KeyboardState` | 经 `CoreSession.Input`（`CreateForCli` 组装根；VT `AgentCliProtocol` 同步派发） | 经 `CoreSession.Output`（`AgentCliProtocol` + `TerminalRenderer`；视口 `CliViewport`） | 经 `CoreSession.Files`（`FileSystemGameDirAccessor` + `GamePaths`） | `--profile`（启动期 fail-fast；缺省 `v24pure`） |
+| **Server / HTTP** | `KeyboardState \| Hover \| Focus` | 经 `CoreSession.Input`（会话持有的 `DefaultInputHost`；value 由门面编码成 input JSONL 入队） | Kestrel 壳路由 + `WsConnectionHandler` → `WsRelay`；`CoreSession.Output` + `HttpSessionIO` 双写 | `GamePaths.Current.DirAccessor`（`KestrelGameServer`） | 同 Cli（`ServerRunner` 透传） |
+| **Maui** | 复用 Server 同一 `DefaultInputHost` | 同 Server（经 `CoreSession.Input`） | `BridgeHost.TurnPumpAsync` 订阅 `OutputHub`（会话由 `CoreSession` 持有） | `BridgeHost.ResolveDirAccessor`：`content://` → `SafGameDirAccessor.Instance`，否则 `FileSystemGameDirAccessor` | 设置项 `app.dialectProfile`（建会话前读，重载游戏生效） |
 
 ---
 
-## 6. 落地状态快照（截至 2026-10-19）
+## 6. 落地状态快照（截至 2026-10-22）
 
 | 轴 | 主接口 | 状态 |
 |---|---|---|
-| 输入 | `IInputHost` | ADR-0031 proposed；接口 / `DefaultInputHost` / 几何与键盘通道已落地，触屏 E-min 与 `IConsoleUI` 瘦身未落地 |
-| 输出 | `IDisplayState` / `OutputHub` | ADR-0003 / 0013 / 0014 accepted 且已落地；帧形状由 `TurnFrames` 收口（ADR-0032） |
-| 文件 | `IGameDirAccessor` / `GameTree` | ADR-0019 accepted 且已落地（双实现）；`GameTree` 相对路径门面已落地，选择器移出 IO 契约；剩余豁免由守卫测试机检 |
+| 输入 | `InputPort` / `IInputHost` | ADR-0031 proposed；`InputPort` 门面与 `InputFrame` 已落地并接入 CLI/server；接口 / `DefaultInputHost` / 几何与键盘通道已落地，触屏 E-min 与 `IConsoleUI` 瘦身未落地 |
+| 输出 | `OutputPort` / `OutputHub` | ADR-0003 / 0013 / 0014 accepted 且已落地；帧形状由 `TurnFrames` 收口（ADR-0032），宿主经 `OutputPort` 读快照/增量 |
+| 文件 | `GameTree` / `IGameDirAccessor` | ADR-0019 accepted 且已落地（双实现）；`GameTree` 相对路径门面已落地，选择器移出 IO 契约；剩余豁免由守卫测试机检 |
+| 会话 | `CoreSession` / `CoreSessionOptions` | issue-006 落地：公共组装根（`StartAsync` / `StopAsync` + 三轴）；CLI/server/MAUI 复用同一实现；公共面白名单守卫 `SessionsPublicSurfaceTests` |
 
 > 本表随里程碑推进而改，不视为稳定契约。
 

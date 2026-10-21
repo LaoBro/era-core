@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Output;
+using MinorShift.Emuera.Sessions;
 
 namespace MinorShift.Emuera.Server;
 
@@ -125,7 +126,7 @@ internal static class WsRelay
 
     /// <summary>WS 输入帧已是 <c>{"type":"input","value":"..."}</c> 格式，直接入队。
     /// 协议层 <c>AgentJsonlProtocol</c> 会校验 <c>type=="input"</c>，无效帧自然被忽略。</summary>
-    private static void HandleWsInput(string text, Session session, ControlIdentity identity)
+    private static void HandleWsInput(string text, CoreSession session, ControlIdentity identity)
     {
         var gate = session.Controller.CheckInput(identity, session.HasEnded);
         if (gate.Status == ControlGateStatus.Allowed)

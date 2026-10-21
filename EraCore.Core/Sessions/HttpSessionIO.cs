@@ -6,7 +6,7 @@ using System.Threading.Channels;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Output;
 
-namespace MinorShift.Emuera.Server;
+namespace MinorShift.Emuera.Sessions;
 
 /// <summary>
 /// 基于内存 Channel 的 SessionIO，用于 HTTP 长轮询模式。

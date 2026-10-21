@@ -68,7 +68,7 @@ internal sealed class GameConfigService
     /// ConfigData.configPath（实例 readonly，构造时绑定）绑定到旧目录。
     ///
     /// 注意：本方法不持锁（锁归 <see cref="SessionRegistry"/>）；
-    /// ConfigData.SetCurrent（AsyncLocal）与之后的新 Session 构造必须在同一 async 流内
+    /// ConfigData.SetCurrent（AsyncLocal）与之后的新 CoreSession 构造必须在同一 async 流内
     /// 连续执行（AsyncLocal 经 ExecutionContext 传播给 Task.Run 起的游戏循环，
     /// 供其间接读 Config.Current）——调用方禁止在两者之间插 Task.Run。
     /// </summary>

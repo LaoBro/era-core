@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Input;
 using MinorShift.Emuera.Output;
+using MinorShift.Emuera.Sessions;
 using MinorShift.Emuera.UI.Game;
 
 namespace MinorShift.Emuera.Server;

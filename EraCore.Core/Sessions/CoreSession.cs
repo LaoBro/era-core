@@ -7,54 +7,99 @@ using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Input;
 using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Server;
 using MinorShift.Emuera.Terminal.Platform;
 using MinorShift.Emuera.UI.Game;
 
-namespace MinorShift.Emuera.Server;
+namespace MinorShift.Emuera.Sessions;
 
-internal sealed class Session : IDisposable
+/// <summary>
+/// 组装根：把三轴（<see cref="Input"/> / <see cref="Output"/> / <see cref="Files"/>）与游戏循环
+/// 装成一个可启动单元（issue-006 / spec §3.3）。
+///
+/// <para><b>公共两阶段用法</b>：构造（只给宿主能理解的参数）→ <see cref="StartAsync"/> →
+/// 只经三轴读写 → <see cref="StopAsync"/>。构造权留在 Core：宿主拿不到输入宿主、显示状态或广播中枢。</para>
+///
+/// <para><b>与协议层的关系</b>：HTTP / JSONL / WS 仍在 Server 侧，不属于三轴。本类只负责
+/// 「游戏循环 + 三轴」的装配；Server 的 <see cref="SessionRegistry"/> 经 internal 构造复用同一实现，
+/// 自行持有 <see cref="OutputHub"/> 与 <see cref="HttpSessionIO"/>。</para>
+///
+/// <para><b>停止后语义</b>：<see cref="State"/> 变为 <see cref="CoreSessionState.Stopped"/>；
+/// <see cref="Input"/> 的提交被静默丢弃（IO 已关闭）；<see cref="Output"/> 仍可读终止画面；
+/// <see cref="Files"/> 始终可用。重复 <see cref="StopAsync"/> 幂等。</para>
+/// </summary>
+public sealed class CoreSession : IDisposable
 {
+    /// <summary>会话标识（短 GUID）。</summary>
     public string Id { get; } = Guid.NewGuid().ToString("N")[..8];
+
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
-    public bool IsRunning => _gameTask != null && !_gameTask.IsCompleted;
-    /// <summary>游戏循环是否已结束（runLoop 回调 finally 置位）。</summary>
-    private volatile bool _hasEnded;
-    public bool HasEnded => _hasEnded;
+
+    /// <summary>输入轴门面。构造后即可用；停止后提交被丢弃。</summary>
+    public InputPort Input { get; }
 
     /// <summary>
-    /// 游戏循环最后一次未料异常（如 SAVEGLOBAL IOException）。崩溃/退出因果的诊断字段，
-    /// GET /state 据此透出 lastError；null 表示无未料异常（正常 Quit 不记录）。
-    /// volatile：游戏循环 Task 线程写、HTTP 线程读（对标 _hasEnded）。
+    /// 输出轴门面。仅在 <see cref="StartAsync"/> 成功返回后可用（游戏循环初始化完成）。
+    /// 停止后仍可读取终止画面。
     /// </summary>
-    private volatile string? _lastError;
+    public OutputPort Output => _outputPort
+        ?? throw new InvalidOperationException("输出轴在 StartAsync 成功后才可用。");
+
+    /// <summary>文件轴门面（以游戏根为界）。构造后即可用，与游戏循环状态无关。</summary>
+    public GameTree Files { get; }
+
+    /// <summary>当前会话状态。</summary>
+    public CoreSessionState State
+    {
+        get
+        {
+            if (_failed)
+                return CoreSessionState.Failed;
+            if (_gameTask == null)
+                return _stopRequested ? CoreSessionState.Stopped : CoreSessionState.Created;
+            if (_hasEnded)
+            {
+                if (_stopRequested)
+                    return CoreSessionState.Stopped;
+                if (_lastError != null || _console?.State == ConsoleState.Error)
+                    return CoreSessionState.Failed;
+                return CoreSessionState.Completed;
+            }
+            if (_loading)
+                return CoreSessionState.Starting;
+            return _console?.State switch
+            {
+                ConsoleState.Running => CoreSessionState.Running,
+                ConsoleState.WaitInput => CoreSessionState.WaitingForInput,
+                ConsoleState.Quit => CoreSessionState.Completed,
+                ConsoleState.Error => CoreSessionState.Failed,
+                _ => CoreSessionState.Starting,
+            };
+        }
+    }
+
+    /// <summary>最近一次未料异常（初始化失败 / 游戏循环崩溃）。null = 无错误。</summary>
     public string? LastError => _lastError;
-    public HttpSessionIO IO => _io;
-    public Controller Controller { get; }
-    /// <summary>
-    /// Issue 11 D1：当前显示状态字符串。
-    /// - <c>"Loading"</c>：Session.Start() 已排 GameLoopAsync 到独立 Task，但 runLoop 回调尚未启动
-    ///   （即 <c>console.Initialize()</c>——含 Preload.Load + Process.Initialize——仍在跑）。
-    ///   /load-game 同步返回时 _loading=true，前端据此显示"加载中…"而非"Idle"。
-    /// - <c>_console.State.ToString()</c>：runLoop 启动后 _loading=false，状态由 EmueraConsole 维护
-    ///   （Running / WaitInput / Quit / Error）。
-    /// - <c>"Idle"</c>：理论上不会到达（StateString 仅在 session 已存在时被读），保留作兜底。
-    /// </summary>
-    public string StateString => _loading ? "Loading" : (_console?.State.ToString() ?? "Idle");
-    public bool IsFinalTurnDelivered => _delivery.IsFinalTurnDelivered;
 
+    internal bool IsRunning => _gameTask != null && !_gameTask.IsCompleted;
+    /// <summary>游戏循环是否已结束（runLoop 回调 finally 置位）。</summary>
+    internal bool HasEnded => _hasEnded;
+    internal HttpSessionIO IO => _io;
+    internal Controller Controller { get; }
     /// <summary>
-    /// 生成当前显示状态的全量快照 JSON（ADR-0013 决策一/二）。
-    /// 供 GET /snapshot 端点调用——WS 晚加入者先调此端点拿初始状态，再订阅 WS 收增量 diff。
-    ///
-    /// Phase 1：改用 Session 持有的单个 DisplayState 实例（_displayState），经 Current → TryUpdate
-    /// 保证快照随游戏打印实时推进，且与 BuildTurn 同步（BuildTurn 调 TryUpdate 刷新 _current）。
-    /// Phase 5-3：TryUpdate 消费式清空 _pendingOps，不再由 BuildTurn 调 TakePendingOps。
-    ///
-    /// session 未初始化（_displayState==null，通常发生在 POST /session 后极短时间内）→ 返回 null，
-    ///   调用方返回 503；
-    /// session 运行中或已结束（HasEnded=true，_console 已 Dispose 但 DisplayLineList 仍可读）→ 返回快照 JSON。
+    /// 供 Server 的字符串协议沿用（Loading / Running / WaitInput / Quit / Error）。
+    /// 公共宿主应使用 <see cref="State"/>。
     /// </summary>
-    public string? GetDisplaySnapshot()
+    internal string StateString => _loading ? "Loading" : (_console?.State.ToString() ?? "Idle");
+    internal bool IsFinalTurnDelivered => _delivery.IsFinalTurnDelivered;
+
+    /// <summary>当前会话的协议，供 CLI 宿主等待循环结束时判定 Aborted。</summary>
+    internal bool IsAborted { get; private set; }
+
+    /// <summary>初始化阶段抛出/捕获的原始异常（供 CLI 保留原有诊断与退出码）。</summary>
+    internal Exception? StartupException => _startupException;
+
+    internal string? GetDisplaySnapshot()
     {
         var state = _displayState;
         if (state == null)
@@ -63,138 +108,297 @@ internal sealed class Session : IDisposable
     }
 
     private readonly HttpSessionIO _io;
-    private readonly ConfigData _configData;
-    private readonly ITerminalSetup _terminalSetup;
+    private readonly OutputHub? _hub;
+    private ConfigData _configData;
+    private ITerminalSetup _terminalSetup;
+    private readonly bool _standalone;
+    private readonly string? _gameRoot;
+    private readonly IGameDirAccessor? _dirAccessor;
     private readonly bool _fullDiffOnFirstTurn;
-    /// <summary>会话级方言 profile id（实现票 25）。null = v24pure（移植前行为）。</summary>
     private readonly string? _dialectProfileId;
-    /// <summary>
-    /// 会话级统一输入宿主（ADR-0031 / spec-v3 M2）。会话独占 —— 换游戏重建 Session 时
-    /// 旧宿主随会话一起丢弃，天然消除 <c>keytoggle</c> 时代的跨会话状态泄漏。
-    /// M2 声明 <see cref="InputCapability.KeyboardState"/>；M5a 追加 <see cref="InputCapability.Hover"/>
-    /// （Web 前端上报真实 <c>mouseenter</c>/<c>mouseleave</c> ⇒ <c>MOUSEB()</c> 有真悬停值）；
-    /// M6 追加 <see cref="InputCapability.Focus"/>（前端 <c>blur</c>/<c>focus</c> 上报 ⇒
-    /// <c>ISACTIVE</c> 有真值，且失焦自动清键）。
-    /// <c>Geometry</c> 待 M5b（Web 无坐标语义）。
-    /// </summary>
-    private readonly DefaultInputHost _inputHost = new(
-        InputCapability.KeyboardState | InputCapability.Hover | InputCapability.Focus);
+    private readonly IInputHost _inputHost;
+    private readonly TimeSpan _teardownTimeout;
+    private Action<string> _dispatchValue;
+    private readonly CoreSessionProtocolFactory? _protocolFactory;
+    private readonly Func<AgentProtocolBase, Task>? _runLoop;
 
-    /// <summary>
-    /// 输入轴宿主门面（issue-002）：HTTP 入口只经它提交帧。
-    /// <para>
-    /// server 的派发不能同步跑引擎——HTTP 线程与游戏循环线程分离，故 value 重新编码成
-    /// value-only 的 input 帧入队，由 <c>AgentJsonlProtocol.RunLoopAsync</c> 在循环线程上派发。
-    /// 状态字段在 <see cref="InputPort.Submit"/> 内同步写入宿主（线程安全快照），不受排队影响。
-    /// </para>
-    /// </summary>
-    public InputPort Input { get; }
     private EmueraConsole? _console;
     private DisplayState? _displayState;
-    private AgentJsonlProtocol? _protocol;
+    private OutputPort? _outputPort;
+    private AgentProtocolBase? _protocol;
+    private AgentJsonlProtocol? _jsonlProtocol;
     private Task? _gameTask;
+    private Task<GameLoopResult>? _loopAwaiter;
     private readonly CancellationTokenSource _cts = new();
-    /// <summary>turn 投递深模块：独占长轮询/抢占/final-turn-once 竞态不变式（含消费侧锁）。</summary>
     private readonly TurnDelivery _delivery;
     private bool _disposed;
-    /// <summary>Controller 已释放（<see cref="ReleaseController"/> 幂等守卫）。</summary>
     private bool _controllerReleased;
-    /// <summary>
-    /// Issue 11 D1：加载中标志——Session.Start() 设 true，runLoop 回调首行设 false。
-    /// volatile：HTTP 线程（/load-game / GET /state / GET /snapshot）读、游戏循环 Task 线程写。
-    /// </summary>
     private volatile bool _loading;
-    /// <summary>测试接缝：替代真实游戏循环的任务（null = 生产路径）。见 internal 构造。</summary>
+    private volatile bool _hasEnded;
+    private volatile bool _stopRequested;
+    private volatile bool _failed;
+    private volatile string? _lastError;
+    private Exception? _startupException;
     private readonly Task? _loopOverride;
+    private readonly TaskCompletionSource<bool> _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly SemaphoreSlim _startGate = new(1, 1);
 
-    public Session(HttpSessionIO io, ITerminalSetup terminalSetup, ConfigData configData, TimeSpan? agentLease = null, bool fullDiffOnFirstTurn = false, string? dialectProfileId = null)
+    /// <summary>
+    /// 公共组装入口。参数只包含宿主能理解的输入：游戏根、目录访问实现、输入能力位、可选方言 profile。
+    /// 运行时（编码 / 配置 / 语言）与路径校验在 <see cref="StartAsync"/> 内完成。
+    /// </summary>
+    public CoreSession(CoreSessionOptions options)
     {
-        _io = io;
-        Input = new InputPort(_inputHost, value => _io.EnqueueInput(GameServerProtocol.BuildInputJsonl(value)));
-        _configData = configData;
-        _terminalSetup = terminalSetup;
-        _dialectProfileId = dialectProfileId;
-        Controller = new Controller(agentLease);
-        _delivery = new TurnDelivery(io, Controller);
-        _fullDiffOnFirstTurn = fullDiffOnFirstTurn;
-        // 注意：HeadlessConsole / EmueraConsole / AgentJsonlProtocol 的构造推迟到
-        // GameLoopAsync 内、GlobalStatic.OpenScope 之后——它们构造时读 Config.*（候选 2/ADR-0009
-        // 后 Config 仅经 scope 注入），scope 未开即构造会 NPE（POST /session 500）。
-        // 此处的 Start() 仅把游戏循环排到独立 Task，构造留待 scope 内。
+        ArgumentNullException.ThrowIfNull(options);
+        _standalone = true;
+        _gameRoot = options.GameRoot;
+        _dirAccessor = options.DirAccessor;
+        _hub = new OutputHub();
+        _io = new HttpSessionIO(_hub);
+        _configData = null!;
+        _terminalSetup = null!;
+        _fullDiffOnFirstTurn = options.FullDiffOnFirstTurn;
+        _dialectProfileId = options.DialectProfileId;
+        _teardownTimeout = options.TeardownTimeout;
+        if (_teardownTimeout <= TimeSpan.Zero && _teardownTimeout != Timeout.InfiniteTimeSpan)
+            throw new ArgumentOutOfRangeException(nameof(options), "TeardownTimeout 必须为正，或 Timeout.InfiniteTimeSpan。");
+        _inputHost = new DefaultInputHost(options.InputCapabilities.Flags);
+        _dispatchValue = value => _io.EnqueueInput(GameServerProtocol.BuildInputJsonl(value));
+        Files = new GameTree(options.GameRoot, options.DirAccessor);
+        Input = new InputPort(_inputHost, value => _dispatchValue(value));
+        Controller = new Controller(agentLease: null);
+        _delivery = new TurnDelivery(_io, Controller);
     }
 
     /// <summary>
-    /// 测试接缝（ADR-0049 D4）：用给定任务替代真实游戏循环，供 registry 的相位迁移
-    /// （timeout → Retiring → 拒绝建会话）确定性复现。
-    /// <para>
-    /// 接缝刻意只有<b>一个 <see cref="Task"/> 引用</b>——与 <see cref="BoundedLoopWait"/> 同一手法；
-    /// 不引入 <c>ISession</c> 接口（成员数会逼近实现，属浅模块）。生产路径不得使用本构造。
-    /// </para>
-    /// <para>
-    /// 注意：注入的循环不会走 <c>FinalizeEndedLoop</c>，故 <see cref="HasEnded"/> 恒为 false、
-    /// <see cref="StateString"/> 恒为 <c>Loading</c>。用例据此只断言「循环是否退出」相关语义。
-    /// </para>
+    /// Server / 测试组装：hub、io、配置与终端已由调用方建好，本类只接管生命周期。
     /// </summary>
-    internal Session(HttpSessionIO io, ITerminalSetup terminalSetup, ConfigData configData, TimeSpan? agentLease, bool fullDiffOnFirstTurn, string? dialectProfileId, Task loop)
+    internal CoreSession(
+        HttpSessionIO io,
+        ITerminalSetup terminalSetup,
+        ConfigData configData,
+        TimeSpan? agentLease = null,
+        bool fullDiffOnFirstTurn = false,
+        string? dialectProfileId = null,
+        InputCapability capabilities = InputCapability.KeyboardState | InputCapability.Hover | InputCapability.Focus,
+        OutputHub? hub = null,
+        GameTree? files = null,
+        TimeSpan? teardownTimeout = null,
+        CoreSessionProtocolFactory? protocolFactory = null,
+        Func<AgentProtocolBase, Task>? runLoop = null)
+    {
+        _io = io;
+        _hub = hub;
+        _configData = configData;
+        _terminalSetup = terminalSetup;
+        _fullDiffOnFirstTurn = fullDiffOnFirstTurn;
+        _dialectProfileId = dialectProfileId;
+        _teardownTimeout = teardownTimeout ?? TimeSpan.FromSeconds(5);
+        _inputHost = new DefaultInputHost(capabilities);
+        _dispatchValue = value => _io.EnqueueInput(GameServerProtocol.BuildInputJsonl(value));
+        Files = files ?? CreateDefaultFiles();
+        Input = new InputPort(_inputHost, value => _dispatchValue(value));
+        Controller = new Controller(agentLease);
+        _delivery = new TurnDelivery(_io, Controller);
+        _protocolFactory = protocolFactory;
+        _runLoop = runLoop;
+    }
+
+    /// <summary>
+    /// CLI 组装：宿主自带渲染协议（<see cref="AgentCliProtocol"/>），但输入 / 输出 / 文件三轴
+    /// 仍由本组装根持有。协议工厂拿到的是会话的三轴门面，不得自建第二套。
+    /// </summary>
+    internal static CoreSession CreateForCli(
+        ConfigData configData,
+        ITerminalSetup terminalSetup,
+        InputCapability capabilities,
+        string? dialectProfileId,
+        CoreSessionProtocolFactory protocolFactory,
+        Func<AgentProtocolBase, Task> runLoop)
+    {
+        var io = new HttpSessionIO(new OutputHub());
+        return new CoreSession(
+            io,
+            terminalSetup,
+            configData,
+            agentLease: null,
+            fullDiffOnFirstTurn: false,
+            dialectProfileId,
+            capabilities,
+            hub: null,
+            files: null,
+            teardownTimeout: null,
+            protocolFactory,
+            runLoop);
+    }
+
+    /// <summary>
+    /// 测试接缝（ADR-0049 D4）：用给定任务替代真实游戏循环。
+    /// </summary>
+    internal CoreSession(HttpSessionIO io, ITerminalSetup terminalSetup, ConfigData configData, TimeSpan? agentLease, bool fullDiffOnFirstTurn, string? dialectProfileId, Task loop)
         : this(io, terminalSetup, configData, agentLease, fullDiffOnFirstTurn, dialectProfileId)
         => _loopOverride = loop ?? throw new ArgumentNullException(nameof(loop));
 
-    public void Start()
+    /// <summary>
+    /// 公共启动入口：校验游戏目录、初始化运行时，等游戏循环进入可交互状态后返回。
+    /// 目录/配置级失败以 <see cref="CoreSessionStartResult"/> 返回，不杀进程。
+    /// </summary>
+    public async Task<CoreSessionStartResult> StartAsync(CancellationToken cancellationToken = default)
     {
-        // Issue 11 D1：进入 Task.Run 前置 _loading=true——/load-game 同步返回时
-        // GameLoopAsync 可能尚未跑到 console.Initialize()，但 _loading 已可见（volatile）。
-        // runLoop 回调首行（console.Initialize 完成后）置 false。
+        await _startGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_failed)
+                return CoreSessionStartResult.Failure("SESSION_FAILED", _lastError ?? "会话启动已失败。");
+            if (_stopRequested)
+                return CoreSessionStartResult.Failure("SESSION_STOPPED", "会话已停止，不能重新启动。");
+
+            if (_standalone && _gameTask == null)
+            {
+                GamePaths paths;
+                try
+                {
+                    paths = GamePaths.ResolvePreview(_gameRoot, _dirAccessor!);
+                    paths.Validate();
+                }
+                catch (GamePathValidationException ex)
+                {
+                    return FailStart(ex.Code, ex.Message, ex);
+                }
+                catch (Exception ex)
+                {
+                    return FailStart("INVALID_GAME_ROOT", ex.Message, ex);
+                }
+
+                try
+                {
+                    GamePaths.SetCurrent(paths);
+                    var (configData, terminalSetup) = EmueraRuntimeInitializer.Initialize(paths, _dirAccessor!);
+                    _configData = configData;
+                    _terminalSetup = terminalSetup;
+                }
+                catch (Exception ex)
+                {
+                    return FailStart("INIT_FAILED", ex.Message, ex);
+                }
+            }
+
+            Start();
+            await _ready.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+            if (_startupException != null)
+                return CoreSessionStartResult.Failure("INIT_FAILED", _startupException.Message);
+            if (_console?.State == ConsoleState.Error)
+                return CoreSessionStartResult.Failure("INIT_FAILED", _lastError ?? "游戏初始化失败。");
+
+            return CoreSessionStartResult.Success();
+        }
+        finally
+        {
+            _startGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// 公共停止入口：请求拆除并有界等待游戏循环退出。幂等。
+    /// 返回 <c>false</c> = 上界内循环仍在运行（应视为明确失败，而不是继续启动新会话）。
+    /// </summary>
+    public async Task<bool> StopAsync(CancellationToken cancellationToken = default)
+    {
+        _stopRequested = true;
+        RequestTeardown();
+        var exited = await WaitForLoopExitAsync(_teardownTimeout).WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (exited)
+            ReleaseController();
+        return exited;
+    }
+
+    internal void Start()
+    {
+        if (_gameTask != null)
+            return;
+
         _loading = true;
         _gameTask = _loopOverride ?? Task.Run(GameLoopAsync);
+        if (_loopOverride != null)
+            _ready.TrySetResult(true);
+        _loopAwaiter = ObserveLoopAsync(_gameTask);
+    }
+
+    /// <summary>CLI 宿主用：启动并等待游戏循环自然结束（含 QUIT）。</summary>
+    internal Task<GameLoopResult> WaitForLoopAsync()
+    {
+        Start();
+        return _loopAwaiter!;
+    }
+
+    private async Task<GameLoopResult> ObserveLoopAsync(Task loop)
+    {
+        try
+        {
+            await loop.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Instance.Write("session game loop task faulted: " + ex);
+        }
+        return IsAborted ? GameLoopResult.Aborted : GameLoopResult.Completed;
+    }
+
+    private CoreSessionStartResult FailStart(string code, string message, Exception exception)
+    {
+        _lastError = message;
+        _startupException = exception;
+        _failed = true;
+        _hasEnded = true;
+        _loading = false;
+        _ready.TrySetResult(false);
+        return CoreSessionStartResult.Failure(code, message);
     }
 
     private async Task GameLoopAsync()
     {
-        // 失败可见切片（handoff-nativeaot-parallel-erb §6.2）：RunAsync 内 await console.Initialize()
-        // 与 runLoop 回调之间没有保护——初始化阶段（OpenScope / console 构造 / Initialize）抛出时，
-        // 若不在此收束，_gameTask 静默 fault、_loading 永久为 true、前端永远 Loading。此 catch 仅作
-        // 最后防线；正常失败路径由 ConsoleStateManager 置 State=Error、runLoop 回调内 catch 处理。
         try
         {
-            await GameLoopComposer.RunAsync(
+            var result = await GameLoopComposer.RunAsync(
                 _configData,
                 _terminalSetup,
                 (console, ui, ts) =>
                 {
                     _console = console;
-                    // Phase 1：单个 DisplayState 实例由 Session 持有，注入 AgentJsonlProtocol。
-                    // HTTP 线程上 Config.Current 不可用（AsyncLocal 仅在游戏循环 task 设置），
-                    // 直接从 ConfigData 读默认字体名，传给 DisplayState 避免 BuildPrintOpsForLine 访问 Config.FontName 时 NRE。
                     var defaultFontName = _configData.GetConfigValue<string>(ConfigCode.FontName) ?? "";
-                    // MAUI 托管模式（fullDiffOnFirstTurn=true）：WebView 桥接无 GET /snapshot 端点为入口，
-                    // 首帧 diff 是唯一画面来源——ComputeDiff 首帧返回全量 AppendLinesOp 而非 null。
-                    // HTTP 模式靠 GET /snapshot 拿画面，首帧 diff=null 正确（默认 false）。
                     _displayState = new DisplayState(_console, defaultFontName, _fullDiffOnFirstTurn);
-                    _protocol = new AgentJsonlProtocol(_console, ui, _io, _displayState);
-                    return _protocol;
+                    _outputPort = new OutputPort(_displayState, _hub);
+
+                    var protocol = _protocolFactory != null
+                        ? _protocolFactory(console, ui, ts, _displayState, Input, _outputPort)
+                        : new AgentJsonlProtocol(console, ui, _io, _displayState);
+
+                    _protocol = protocol;
+                    _jsonlProtocol = protocol as AgentJsonlProtocol;
+                    if (protocol is AgentCliProtocol cli)
+                        _dispatchValue = cli.DispatchValue;
+                    return protocol;
                 },
                 async p =>
                 {
-                    // Issue 11 D1：runLoop 被 GameLoopComposer 调用时 console.Initialize() 已完成
-                    // （无论成败——ConsoleStateManager.Initialize 失败时置 State=Error 并 return，不抛）。
-                    // 故 runLoop 开始即加载结束，立即置 _loading=false 让 StateString 返真实状态。
                     _loading = false;
+                    _ready.TrySetResult(true);
                     try
                     {
-                        await ((AgentJsonlProtocol)p).RunLoopAsync(enableTimeout: true, _cts.Token);
+                        if (_runLoop != null)
+                            await _runLoop(p);
+                        else
+                            await ((AgentJsonlProtocol)p).RunLoopAsync(enableTimeout: true, _cts.Token);
                     }
                     catch (GameExitException)
                     {
-                        // 脚本 QUIT/EXIT：正常终结 session，走 finally 清理（BuildFinalTurn/IO.Close）
+                        // 脚本 QUIT/EXIT：正常终结 session，走 finally 清理。
                     }
                     catch (Exception ex)
                     {
                         AgentLog.Instance.Write("session game loop exception: " + ex);
-                        // 目标 3：记录 LastError，GET /state 透出 lastError（threadAlive=false 的因果）。
                         _lastError = ex.ToString();
-                        // 目标 1：errorInfo 结构化（type/message/inner），agent 一次定位；error 保留完整串兼容既有消费者。
-                        // v12：改用共享构造点——终态形状 awaiting.ended{terminal:"Error"}（原先手拼 JsonObject
-                        // 带旧顶层 state 且无 awaiting，前端会判为协议解析失败，真实错误反而看不到）。
                         _io.WriteLine(TurnFrames.Error(ex.ToString(), ErrorInfo.From(ex)));
                     }
                     finally
@@ -204,14 +408,16 @@ internal sealed class Session : IDisposable
                 },
                 _dialectProfileId,
                 inputHost: _inputHost);
+
+            IsAborted = result == GameLoopResult.Aborted;
+            _ready.TrySetResult(true);
         }
         catch (OperationCanceledException) when (_cts.IsCancellationRequested || _disposed)
         {
-            // Dispose/服务器关闭导致的初始化期取消：session_ended 已由 TurnDelivery/TurnDelivery.Dispose
-            // 表达，不发错误回合，只收束本地标志防止 StateString 停在 "Loading"。
             AgentLog.Instance.Write("session game loop canceled during initialization");
             _loading = false;
             _hasEnded = true;
+            _ready.TrySetResult(false);
         }
         catch (Exception ex)
         {
@@ -219,134 +425,76 @@ internal sealed class Session : IDisposable
         }
     }
 
-    /// <summary>
-    /// 初始化阶段失败的干净收束：与 runLoop 回调内 catch/finally 同构——记 LastError、
-    /// 向 IO 写结构化 error 行（前端由此读到错误原因）、派发 final turn、Dispose 控制台并置位 HasEnded。
-    /// </summary>
     private void DeliverInitStageFailure(Exception ex)
     {
         AgentLog.Instance.Write("session game loop exception (init stage): " + ex);
         _lastError = ex.ToString();
+        _startupException = ex;
         _loading = false;
         try
         {
-            // v12：与 runLoop 回调内 catch 同一条共享构造点（终态 awaiting.ended{terminal:"Error"}）。
             _io.WriteLine(TurnFrames.Error(ex.ToString(), ErrorInfo.From(ex)));
         }
         catch (Exception wex)
         {
-            // IO 已断开等写失败不阻断清理——LastError/HasEnded 已保证 /state 侧可诊断。
             AgentLog.Instance.Write("failed to deliver init-stage error line: " + wex.Message);
         }
         FinalizeEndedLoop();
+        _ready.TrySetResult(false);
     }
 
-    /// <summary>
-    /// 游戏循环终结的公共收尾（原 runLoop 回调 finally 的主体）：产出最终 turn（可失败/为空）、
-    /// 保序交 TurnDelivery.EndOfGame、停协议、Dispose 控制台并置位 HasEnded。
-    /// scope 由 GameLoopComposer 的 using 块退出时 Dispose（Pfc.Dispose + Current 归 null），RAII 单一归属。
-    /// </summary>
     private void FinalizeEndedLoop()
     {
         Turn? finalTurn = null;
         try
         {
-            finalTurn = _protocol?.BuildFinalTurn();
+            finalTurn = _jsonlProtocol?.BuildFinalTurn();
         }
         catch (Exception ex)
         {
-            // 最终 turn 生成失败不阻断 Dispose；HasEnded 会让 GET /turn 返回 404
             AgentLog.Instance.Write("final turn build failed: " + ex.Message);
         }
         _delivery.EndOfGame(finalTurn);
         _protocol?.Stop();
         _console?.Dispose();
         _hasEnded = true;
-        // scope 在 composer 的 using 块退出时自动 Dispose（Pfc.Dispose + Current 归 null）。
-        // 旧 Reset() 已删除——RAII 单一归属。
     }
 
-    /// <summary>
-    /// 异步等待一个 turn。用于 GET /turn 长轮询，转交 <see cref="TurnDelivery"/>。
-    /// - 拿到 turn（含 finalTurn）→ Turn；Time out → Timeout（204）；session 结束 → Closed（404）
-    /// - externalCt 取消（服务器关闭）→ 抛 OperationCanceledException
-    /// - 控制权中途易主 → ControlLost（409），已取 turn 回滚给新持有者
-    /// </summary>
-    public Task<TurnWaitResult> WaitForTurnAsync(int timeoutMs, CancellationToken externalCt)
-    {
-        return _delivery.WaitForTurnAsync(timeoutMs, externalCt);
-    }
+    internal Task<TurnWaitResult> WaitForTurnAsync(int timeoutMs, CancellationToken externalCt)
+        => _delivery.WaitForTurnAsync(timeoutMs, externalCt);
 
-    public Task<TurnWaitResult> WaitForTurnAsync(
+    internal Task<TurnWaitResult> WaitForTurnAsync(
         int timeoutMs,
         ControlIdentity identity,
         CancellationToken externalCt)
-    {
-        return _delivery.WaitForTurnAsync(timeoutMs, identity, externalCt);
-    }
+        => _delivery.WaitForTurnAsync(timeoutMs, identity, externalCt);
 
     public void Dispose()
     {
-        // 保留 IDisposable 契约：拆除请求 + 无上界等待。
-        // 内部复用有界等待的实现（Timeout.InfiniteTimeSpan 即无上界）。
+        _stopRequested = true;
         RequestTeardown();
         WaitForLoopExitAsync(Timeout.InfiniteTimeSpan).GetAwaiter().GetResult();
         ReleaseController();
     }
 
     /// <summary>
-    /// 发出拆除请求并**立即返回**（不等待游戏循环）。
-    ///
-    /// issue-001：原 <see cref="Dispose"/> 内含同步 join（<c>_gameTask.GetAwaiter().GetResult()</c>），
-    /// 而 join 发生在 <c>SessionRegistry</c> 的会话锁内。游戏循环线程若正阻塞在长回合脚本里
-    /// （无 AWAIT 等让路点，见 test_game/erb/LONGLOOP.ERB），join 永不返回且锁一直被占——
-    /// 所有需要该锁的端点全部无限阻塞，server 整体失去响应。
-    ///
-    /// 拆成两段的意义：调用方先在锁内做「发拆除请求 + 摘引用」（本方法，微秒级），
-    /// 再在锁外做有界等待（<see cref="WaitForLoopExitAsync"/>），从而让其他端点恢复可响应。
-    ///
-    /// 幂等：重复调用只生效一次。
-    ///
-    /// <para><b>拆除顺序的唯一编排点</b>（ADR-0049 D1）：控制权终止（<c>Controller.End</c>）由
-    /// <see cref="TurnDelivery.Dispose"/> 在置拆除旗标<b>之后</b>发出。调用方不得自行先调
-    /// <c>Controller.End</c>——那会在「End 已发布、旗标未置」的窗口里让在途 GET /turn
-    /// 把 404 误报成 409。</para>
+    /// 发出拆除请求并立即返回（不等待游戏循环）。幂等。
+    /// 拆除顺序的唯一编排点是 <see cref="TurnDelivery.Dispose"/>：置旗标 → <c>Controller.End</c> → <c>Close</c>。
     /// </summary>
-    /// <param name="reason">控制权终止原因：<c>session_ended</c>（删除/关停）或 <c>session_replaced</c>（换游戏/重开）。</param>
-    public void RequestTeardown(string reason = "session_ended")
+    internal void RequestTeardown(string reason = "session_ended")
     {
         if (_disposed)
             return;
 
         _disposed = true;
-        // 会话拆除交 TurnDelivery（置旗标 → End(reason) → Close[即 _io.Close]，保留 Controller 归属权）
         _delivery.Dispose(reason);
-        // issue-002：把停止信号送达脚本层 —— 此前没有任何一步触及脚本的运行判据，
-        // 脚本唯一的出口是它自己跑到 QUIT/ERROR，拆除只能干等。
-        // 发出后 IsRunning 恒假，脚本在下一个指令边界停下（ScriptProc.Run 的循环体首部）。
         _console?.RequestStop();
         _cts.Cancel();
         _protocol?.Stop();
         _console?.Dispose();
     }
 
-    /// <summary>
-    /// 有界等待游戏循环（含其 finally 中的清理与 scope 释放）彻底结束。
-    ///
-    /// 返回 <c>true</c> = 游戏循环已退出（<paramref name="timeout"/> 内）；
-    /// <c>false</c> = 超时，循环仍在运行 —— 调用方<b>不得</b>在此状态下启动新游戏循环
-    /// （旧循环仍会读 <see cref="GamePaths.Current"/> 等进程级静态，而新循环初始化会清掉它们）。
-    ///
-    /// 超时<b>不</b>抛异常也不硬杀线程：issue-002 之后脚本层已有中断检查点，绝大多数长回合
-    /// 会在下一个指令边界自行收敛；issue-003 之后连 <c>AWAIT</c> 也走回合边界。
-    /// 换言之，脚本层已无「外部插不上手」的窗口 —— 本分支如今是<b>兜底</b>：
-    /// 进程级异常、单条指令内部的原生阻塞等仍可能撞上它，故机制必须保留。
-    /// 失败以返回值表达，调用方据此回明确错误（spec 决策一/二）。
-    ///
-    /// 等待与异常观察本身收在 <see cref="BoundedLoopWait"/>（窄接缝 = 一个 Task），
-    /// 使「超时」分支可用永不完成的任务确定性覆盖 —— 集成层面已构造不出该窗口。
-    /// </summary>
-    public async Task<bool> WaitForLoopExitAsync(TimeSpan timeout)
+    internal async Task<bool> WaitForLoopExitAsync(TimeSpan timeout)
     {
         bool unbounded = timeout == Timeout.InfiniteTimeSpan;
         var exited = await BoundedLoopWait.ForCompletionAsync(_gameTask, timeout, ex =>
@@ -361,7 +509,6 @@ internal sealed class Session : IDisposable
         return exited;
     }
 
-    /// <summary>游戏循环已确认退出后释放控制权。超时路径下不调用——控制器状态需留给仍存活的循环。</summary>
     private void ReleaseController()
     {
         if (_controllerReleased)
@@ -370,20 +517,34 @@ internal sealed class Session : IDisposable
         Controller.Dispose();
     }
 
-    public ControlAcquireSessionResult AcquireControl(ControlIdentity identity)
+    internal ControlAcquireSessionResult AcquireControl(ControlIdentity identity)
     {
         var result = Controller.Acquire(identity);
         if (result.Status != ControlAcquireStatus.Acquired)
             return new ControlAcquireSessionResult(result, null, 0);
 
-        // 排水转交 TurnDelivery（内含 _turnAccessLock 边界）
         var (advanced, last) = _delivery.DrainOnAcquire();
         return new ControlAcquireSessionResult(result, last, advanced);
     }
 
-    /// <summary>测试和 WS 接缝使用的身份判定。</summary>
-    public bool IsCurrentController(ControlIdentity identity) => Controller.IsCurrent(identity);
+    internal bool IsCurrentController(ControlIdentity identity) => Controller.IsCurrent(identity);
+
+    private static GameTree CreateDefaultFiles()
+    {
+        var paths = GamePaths.Current;
+        return paths == null
+            ? new GameTree(AppContext.BaseDirectory, new FileSystemGameDirAccessor())
+            : new GameTree(paths.ExeDir, paths.DirAccessor);
+    }
 }
+
+internal delegate AgentProtocolBase? CoreSessionProtocolFactory(
+    EmueraConsole console,
+    IConsoleUI ui,
+    ITerminalSetup terminalSetup,
+    DisplayState displayState,
+    InputPort input,
+    OutputPort output);
 
 internal readonly record struct ControlAcquireSessionResult(
     ControlAcquireResult Control,

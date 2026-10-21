@@ -6,6 +6,8 @@ using System.Threading.Tasks;
 using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Server;
+using MinorShift.Emuera.Sessions;
+using Session = MinorShift.Emuera.Sessions.CoreSession;
 using MinorShift.Emuera.Terminal.Platform;
 using Xunit;
 

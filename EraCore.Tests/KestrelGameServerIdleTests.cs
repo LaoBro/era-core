@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Server;
+using MinorShift.Emuera.Sessions;
 using MinorShift.Emuera.Terminal.Platform;
 using Xunit;
 

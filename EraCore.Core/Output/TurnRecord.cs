@@ -111,7 +111,7 @@ public sealed record ErrorInfo
 
     /// <summary>
     /// 转为 JsonObject（NativeAOT 安全：JsonNode 手拼，不走匿名类型反射序列化）。
-    /// 供 Session 游戏循环异常的 errorInfo 兜底分支使用（该路径不经 TurnRecord 源生成序列化）。
+    /// 供 CoreSession 游戏循环异常的 errorInfo 兜底分支使用（该路径不经 TurnRecord 源生成序列化）。
     /// </summary>
     internal JsonObject ToJsonObject()
     {

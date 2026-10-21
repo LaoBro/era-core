@@ -2,12 +2,12 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace MinorShift.Emuera.Server;
+namespace MinorShift.Emuera.Sessions;
 
 /// <summary>
 /// 深模块：独占「有界等待一个长跑任务收束」这一条不变式，供会话拆除路径复用。
 ///
-/// <para><b>为什么从 <see cref="Session"/> 抽出来</b>（issue-003 实现记录）：
+/// <para><b>为什么从 <see cref="CoreSession"/> 抽出来</b>（issue-003 实现记录）：
 /// 这条不变式的关键分支是<b>超时</b>，而在集成层面构造超时要求游戏循环卡在一个
 /// 「外部插不上手」的窗口里。issue-002（脚本层每条指令前的检查点）与 issue-003
 /// （<c>AWAIT</c> 对齐成等待输入态）把这类窗口逐个堵掉之后，引擎里已<b>不存在</b>

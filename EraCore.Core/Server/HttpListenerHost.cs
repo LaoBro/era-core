@@ -9,6 +9,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Sessions;
 using MinorShift.Emuera.Terminal.Platform;
 
 namespace MinorShift.Emuera.Server;

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Server;
+using MinorShift.Emuera.Sessions;
 using Xunit;
 
 namespace MinorShift.Emuera.Tests;

@@ -39,10 +39,10 @@
                                     |
                          +----------v-----------+
                          | EraCore.Core |
-                         |  (共享层 Server/:      |
+                         |  (Sessions/CoreSession |
+                         |   + 共享层 Server/:    |
                          |   GameServerProtocol /|
-                         |   WsRelay / Session   |
-                         |   / Controller ...)   |
+                         |   WsRelay / Controller)|
                          +----------------------+
 
        EraCore.Cli -> Core + Server
@@ -65,7 +65,8 @@
 - 游戏路径、配置、预加载和运行时初始化。
 - `EmueraConsole`、显示状态、输入请求和按钮状态。
 - Agent 协议、CLI 终端循环和终端渲染。
-- **共享层 `Server/`**（issue 05「抽共享层 + 双宿主」）：回合协议（`GameServerProtocol`）、控制状态机（`Controller`）、会话（`Session` / `SessionRegistry` / `HttpSessionIO` / `OutputHub` / `WsRelay`）与 `HttpListenerHost`（BCL 托管宿主）——不依赖 ASP.NET Core，供 Kestrel 与 MAUI 双宿主复用。
+- **三轴（`Input/` / `Output/` / `Files/`）与会话组装根（`Sessions/CoreSession`）**：宿主只经 `InputPort` / `OutputPort` / `GameTree` 接触引擎，`CoreSession` 负责启动、停止与三轴装配。
+- **共享层 `Server/`**（issue 05「抽共享层 + 双宿主」）：回合协议（`GameServerProtocol`）、控制状态机（`Controller`）、WS 旁路（`WsRelay`）与 `HttpListenerHost`（BCL 托管宿主）——不依赖 ASP.NET Core，供 Kestrel 与 MAUI 双宿主复用；会话装配由 `Sessions/CoreSession` 承担。
 - 从旧 WinForms 源码迁移而来的共享运行时，位于 `Shared/`。
 
 > Core 内部的三条能力轴（输入 / 输出 / 文件）抽象、实现映射与不变量清单，见 [`EraCore.Core/ARCHITECTURE.md`](EraCore.Core/ARCHITECTURE.md)。
@@ -74,9 +75,13 @@
 
 | 路径 | 职责 |
 |---|---|
+| `Input/` | 输入轴：`InputPort` 门面、`InputFrame` 与输入状态应用 |
+| `Output/` | 输出轴：`OutputPort` 门面、`Turn` 信封与帧形状权威 |
+| `Files/` | 文件轴：`GameTree` 门面、`IGameDirAccessor` 与路径代数 |
+| `Sessions/` | 会话轴：`CoreSession` 组装根、生命周期、交付编排与 `SessionRegistry` |
 | `Agent/` | Agent 协议、回合生成和按钮逻辑 |
 | `Terminal/` | CLI/VT 输入、终端解析、渲染和滚动 |
-| `Server/` | 共享层：回合协议 + 控制状态机 + 会话 + WS 旁路 + `HttpListenerHost`（MAUI 托管宿主），双宿主复用的传输无关逻辑 |
+| `Server/` | 共享层：回合协议 + 控制状态机 + WS 旁路 + `HttpListenerHost`（MAUI 托管宿主），双宿主复用的传输无关逻辑 |
 | `UI/Game/` | `EmueraConsole` 和游戏控制台状态 |
 | `Shared/` | 从旧 WinForms 迁移的共享运行时和 UI 代码 |
 | `Headless/` | 无头替换实现，如声音、剪贴板和字符串测量 |
@@ -118,12 +123,13 @@ SQL 方言键引入 Core 的**唯一原生依赖**：`Microsoft.Data.Sqlite` →
 `EraCore.Server/` 提供单进程、单活跃会话的 HTTP 服务（**Kestrel 宿主壳**——路由、静态资源、body/token 解析与 HttpResult→IResult 映射，业务协议委托给 Core 共享层）：
 
 - `KestrelGameServer`：Kestrel 构建 + 路由注册 + 静态资源，端点委托 `GameServerProtocol`。
-- 共享层会话与传输（在 `EraCore.Core/Server/`）：`Session`（一次游戏会话的 console/protocol/IO）、`HttpSessionIO`（HTTP 输入/输出队列）、`OutputHub`（向 WS 客户端旁路广播）、`WsRelay`（WS 旁路循环）、`SessionRegistry`（会话生命周期 + /load-game 原子序列）、`GameServerProtocol`（传输无关回合协议 + 控制状态机）、`Controller`（控制权状态机）。
+- 会话与三轴（在 `EraCore.Core/Sessions/`、`Input/`、`Output/`、`Files/`）：`CoreSession`（三轴 + 生命周期的组装根）、`SessionRegistry`（会话生命周期 + /load-game 原子序列）、`HttpSessionIO`（HTTP 输入/输出队列）、`OutputHub`（向 WS 客户端旁路广播）、`TurnDelivery`（长轮询/控制权交付）、`Controller`（控制权状态机）。
+- 传输协议（在 `EraCore.Core/Server/`）：`GameServerProtocol`（传输无关回合协议）、`WsRelay`（WS 旁路循环）。
 - `HttpListenerHost`（Core 内，BCL `System.Net.HttpListener`）：MAUI 托管宿主，与 Kestrel 共用同一 `GameServerProtocol`/`WsRelay`，wire 契约逐字节一致。
 
 服务器会话约束：
 
-- 同一时间只有一个活跃 `Session`，同时最多一个 Controller（`kind: agent|user`）。
+- 同一时间只有一个活跃 `CoreSession`，同时最多一个 Controller（`kind: agent|user`）。
 - `POST /load-game` 校验目录、重建运行时并创建新会话；已有活跃会话时返回冲突。
 - `DELETE /session` 结束当前会话并回到空闲态。空闲时 `POST /session` 返回 503，不经 `load-game` 不能建局。
 - `GET /ws` 与 HTTP 长轮询共用同一会话输入通道；旁观者只读 WS。
@@ -145,7 +151,7 @@ T-024 后已删除 stdin pipe 和 JSONL stdin/stdout 模式。脚本、自动化
 `EraCore.Maui/` 是 Windows/Android 应用壳：
 
 - `MainPage` 承载 WebView。
-- `BridgeHost` 编排托管会话（issue 05）：起 `HttpListenerHost`、建共享层 `Session`、订阅 `OutputHub` turn 转发 WebView、`HttpSessionIO` 入输入、`ControlPumpAsync` 推控制状态、写 agent 发现记录。
+- `BridgeHost` 编排托管会话（issue 05）：起 `HttpListenerHost`、经 `CoreSession` 建会话、订阅 `OutputHub` turn 转发 WebView、`HttpSessionIO` 入输入、`ControlPumpAsync` 推控制状态、写 agent 发现记录。
 - `HttpListenerHost`（Core 内，BCL `System.Net.HttpListener`）：MAUI 托管 Server，起 HTTP+WS，agent 经 localhost 连接**同一会话**（单实例共享）。
 - `JsBridge/` 提供 Windows/Android 平台桥接实现。
 - `MauiProgram` 负责 MAUI 依赖注入和应用启动。

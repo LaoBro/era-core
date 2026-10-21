@@ -6,6 +6,7 @@ using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Input;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Server;
+using MinorShift.Emuera.Sessions;
 using MinorShift.Emuera.UI.Game;
 using Xunit;
 

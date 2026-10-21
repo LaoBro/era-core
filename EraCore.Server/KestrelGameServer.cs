@@ -13,6 +13,7 @@ using Microsoft.Extensions.Logging;
 using MinorShift.Emuera.Assets;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Sessions;
 using MinorShift.Emuera.Terminal.Platform;
 
 namespace MinorShift.Emuera.Server;
@@ -215,7 +216,7 @@ internal sealed class KestrelGameServer : IDisposable
     /// <summary>
     /// POST /load-game {gameDir} —— 原子重载游戏目录（协议语义见 <see cref="GameServerProtocol.LoadGame"/>：
     /// 400 {error:{code,message}} 路径/格式错误、500 LOAD_FAILED、成功 200 {sessionId,state,gameDir}；
-    /// body 解析/校验/身份在 dispatcher）。路径校验/拆旧/重建 ConfigData/建新 Session 的原子序列
+    /// body 解析/校验/身份在 dispatcher）。路径校验/拆旧/重建 ConfigData/建新 CoreSession 的原子序列
     /// 见 <see cref="SessionRegistry.ReplaceForLoadGameAsync"/>。
     /// </summary>
     internal Task<IResult> HandleLoadGameAsync(HttpContext context) => DispatchApiAsync("POST", "/load-game", context);

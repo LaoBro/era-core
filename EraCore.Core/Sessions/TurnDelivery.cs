@@ -4,7 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Output;
 
-namespace MinorShift.Emuera.Server;
+namespace MinorShift.Emuera.Sessions;
 
 /// <summary>
 /// TurnDelivery 消费的控制信号窄接缝：供代轮等待循环判断控制权是否已易主/结束。

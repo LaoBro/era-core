@@ -603,7 +603,7 @@ internal sealed class DisplayState
     /// 提取为 internal static 以便单元测试（DisplayStateTests）直测序列化，无需构造 EmueraConsole。
     ///
     /// defaultFontName 参数：默认字体名，传给 BuildPrintOpsForLine 判断 segment fontname 是否为默认。
-    /// 调用方负责传入——DisplayState.Rebuild 从构造函数注入的值传（HTTP 线程由 Session 从 ConfigData 读）。
+    /// 调用方负责传入——DisplayState.Rebuild 从构造函数注入的值传（HTTP 线程由 CoreSession 从 ConfigData 读）。
     ///
     /// 3.3（S0）：本方法等价于以空缓存调 <see cref="BuildSnapshotIncremental"/>（每行全 miss 重建），
     /// 产物与增量路径值相等——供单元测试直测完整映射（不构造 EmueraConsole）以及无缓存降级路径。

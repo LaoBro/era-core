@@ -13,7 +13,7 @@ namespace MinorShift.Emuera.Output;
 /// 旁路传输（WebSocket 连接等观察者）。
 ///
 /// 设计要点：
-/// - 纯转发，不解析、不持有业务状态，也不依赖 <c>Session</c>/协议层/引擎层。
+/// - 纯转发，不解析、不持有业务状态，也不依赖 <c>CoreSession</c>/协议层/引擎层。
 /// - 每个订阅者拿到一个独立、独占的 <see cref="ChannelReader{T}"/>（晚加入者只收后续 turn）。
 /// - 线程安全：游戏循环（Publish）与 WS 处理线程（Subscribe/Unsubscribe）并发访问。
 /// - <see cref="Complete"/> 在 session 结束时调用，完成所有订阅者 Channel，使 WS 发送循环

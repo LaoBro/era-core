@@ -3,6 +3,8 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Server;
+using MinorShift.Emuera.Sessions;
+using Session = MinorShift.Emuera.Sessions.CoreSession;
 using Xunit;
 
 namespace MinorShift.Emuera.Tests;

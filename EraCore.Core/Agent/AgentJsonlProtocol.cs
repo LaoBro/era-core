@@ -8,6 +8,7 @@ using MinorShift.Emuera.Input;
 using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Server;
+using MinorShift.Emuera.Sessions;
 using MinorShift.Emuera.UI.Game;
 
 namespace MinorShift.Emuera.GameView
@@ -103,7 +104,7 @@ namespace MinorShift.Emuera.GameView
         /// <summary>
         /// TINPUT 超时专用路径，调用 EmueraConsole.SubmitTimeout() 后等待游戏进入
         /// WaitInput/Quit/Error 稳定状态再 BuildTurn，避免返回半运行态 turn。
-        /// 仅由 server 模式的 Session 轮询线程调用；JSONL 管道模式不检查 InputTimeoutMs，
+        /// 仅由 server 模式的 CoreSession 轮询线程调用；JSONL 管道模式不检查 InputTimeoutMs，
         /// 不会自动触发超时，客户端不发 input 时进程永久阻塞等待。
         /// I-08：原先同步 BuildTurn 拿快照，绕过 WaitForInputAsync 的 30s 超时与取消保护；
         /// 若 RunEmueraProgram 卡死整个 server 线程被阻塞。
@@ -120,7 +121,7 @@ namespace MinorShift.Emuera.GameView
         }
 
         /// <summary>
-        /// 生成最终 turn（Quit/Error 状态），由 Session.GameLoop 结束时调用一次，
+        /// 生成最终 turn（Quit/Error 状态），由 CoreSession 游戏循环结束时调用一次，
         /// 写入 SessionIO 供 GET /turn 取走。复用 BuildTurn 逻辑，保持 turn 结构一致。
         /// </summary>
         // 终帧：会话的最后一次交付（Quit/Error 状态转换），永不抑制。
@@ -137,7 +138,7 @@ namespace MinorShift.Emuera.GameView
 
         /// <summary>
         /// JSONL 协议主循环（async）：读 input → Step → 写 turn，可选 TINPUT 超时处理。
-        /// 由 server 模式的 Session（Task.Run(GameLoopAsync)）与 JSONL 管道模式
+        /// 由 server 模式的 CoreSession（Task.Run(GameLoopAsync)）与 JSONL 管道模式
         /// （Program.RunHeadless，.GetAwaiter().GetResult()）共享。
         /// enableTimeout=true 启用 TINPUT 超时分支：每轮 linked CTS + CancelAfter，
         /// 超时抛 OperationCanceledException 后调 SubmitTimeout。

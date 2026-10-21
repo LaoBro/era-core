@@ -27,7 +27,7 @@ namespace MinorShift.Emuera.UI.Game
 		public HeadlessConsole(IInputHost? inputHost = null)
 		{
 			_inputHost = inputHost ?? NullInputHost.Instance;
-			// 构造总在 GlobalStatic.OpenScope 内进行（GameLoopComposer / Session 已保证）。
+			// 构造总在 GlobalStatic.OpenScope 内进行（GameLoopComposer / CoreSession 已保证）。
 			// 构造时一次性缓存 Config 值，后续 ClientWidth/ClientHeight/BackColor 访问不再依赖
 			// AsyncLocal scope——scope 外（HTTP 线程 / 后台 task / scope 释放后）读取不会 NRE。
 			_clientWidth = Config.WindowX;
@@ -64,7 +64,7 @@ namespace MinorShift.Emuera.UI.Game
 		/// <summary>
 		/// 脚本 <c>@QUIT/@EXIT</c> 系统命令的退出点。
 		/// 无头模式没有可关闭的窗口，抛出 <see cref="GameExitException"/> 中止游戏循环，
-		/// 由宿主（CLI <see cref="MinorShift.Emuera.HeadlessRunner"/> / Server <see cref="MinorShift.Emuera.Server.Session"/>）
+		/// 由宿主（CLI <see cref="MinorShift.Emuera.HeadlessRunner"/> / Server <see cref="MinorShift.Emuera.Sessions.CoreSession"/>）
 		/// 在循环边界捕获后走正常清理。注意：调用方会收到该异常，需在宿主层 catch。
 		/// </summary>
 		public void Close() => throw new GameExitException();
@@ -99,7 +99,7 @@ namespace MinorShift.Emuera.UI.Game
 		/// <summary>
 		/// 脚本 <c>FORCE_QUIT</c> 系统命令（非重启路径退出的终止点）。
 		/// 无头模式没有可关闭的窗口，抛出 <see cref="GameExitException"/> 中止游戏循环，
-		/// 由宿主（CLI <see cref="MinorShift.Emuera.HeadlessRunner"/> / Server <see cref="MinorShift.Emuera.Server.Session"/>）
+		/// 由宿主（CLI <see cref="MinorShift.Emuera.HeadlessRunner"/> / Server <see cref="MinorShift.Emuera.Sessions.CoreSession"/>）
 		/// 在循环边界捕获后走正常清理。注意：调用方会收到该异常，需在宿主层 catch。
 		/// </summary>
 		public void ExitApplication() => throw new GameExitException();

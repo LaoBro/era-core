@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Server;
+using MinorShift.Emuera.Sessions;
 using Xunit;
 
 namespace MinorShift.Emuera.Tests;

@@ -3,6 +3,7 @@ using System.Net.WebSockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
+using MinorShift.Emuera.Sessions;
 
 namespace MinorShift.Emuera.Server;
 

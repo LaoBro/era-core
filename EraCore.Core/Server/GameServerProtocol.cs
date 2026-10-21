@@ -10,6 +10,7 @@ using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Input;
 using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Sessions;
 
 namespace MinorShift.Emuera.Server;
 
@@ -533,7 +534,7 @@ internal sealed class GameServerProtocol
         }, statusCode: statusCode);
     }
 
-    private static HttpResult ControlErrorResult(string code, string message, Session? session)
+    private static HttpResult ControlErrorResult(string code, string message, CoreSession? session)
     {
         return Json(new JsonObject
         {
@@ -547,7 +548,7 @@ internal sealed class GameServerProtocol
         }, statusCode: 409);
     }
 
-    private static HttpResult ControlLostResult(string reason, DateTimeOffset at, Session session)
+    private static HttpResult ControlLostResult(string reason, DateTimeOffset at, CoreSession session)
     {
         return Json(new JsonObject
         {

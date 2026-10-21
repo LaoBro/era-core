@@ -344,7 +344,7 @@ internal sealed partial class Process(EmueraConsole view)
 		{
 #if HEADLESS
 			// I-11：HeadlessConsole.Close()/ExitApplication() 抛 GameExitException 绕过
-			// Environment.Exit(0)。此处必须 rethrow 让异常穿透到 Session/HeadlessRunner
+			// Environment.Exit(0)。此处必须 rethrow 让异常穿透到 CoreSession/HeadlessRunner
 			// 的 catch，否则 GameExitException 被当脚本错误处理 → Error 状态 → 僵尸 session。
 			if (ec is GameExitException)
 				throw;

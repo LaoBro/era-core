@@ -97,7 +97,7 @@ internal sealed class ConsoleStateManager
             // Process.Initialize catch → handleException → 返回 false → 走上方 false 分支），
             // 本 catch 覆盖圈外剩余段（env 装配 / 控制台初始化 / RunEmueraProgram 等）。
             // 与 "Process.Initialize 返回 false" 分支同构：置 State、输出系统行、刷控制台。
-            // Session 层 catch 仅作最后防线，两层都不静默吞异常（照记 AgentLog/EmueraLog）。
+            // CoreSession 层 catch 仅作最后防线，两层都不静默吞异常（照记 AgentLog/EmueraLog）。
             EmueraLog.Error("csm", $"Initialize EXCEPTION: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
             _state.State = ConsoleState.Error;
             _console.PrintSystemLine($"[Initialize] unexpected error: {ex.GetType().Name}: {ex.Message}");

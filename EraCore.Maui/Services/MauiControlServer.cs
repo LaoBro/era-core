@@ -3,6 +3,7 @@ using System.IO;
 using System.Text.Json.Nodes;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Server;
+using MinorShift.Emuera.Sessions;
 using MinorShift.Emuera.Terminal.Platform;
 
 namespace EraCore.Maui.Services;

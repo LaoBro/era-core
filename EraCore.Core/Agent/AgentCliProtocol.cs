@@ -7,6 +7,7 @@ using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Sessions;
 using MinorShift.Emuera.Terminal.Platform;
 using MinorShift.Emuera.UI.Game;
 
@@ -38,7 +39,7 @@ namespace MinorShift.Emuera.GameView
         private readonly TerminalRenderer _renderer;
         private readonly CliRedrawCoordinator _redraw;
         // Phase 4-2：CLI 自有 DisplayState（Q7）。AgentCliProtocol 构造持有，FlushBuffer 帧级 TryUpdate。
-        // 与 server 路径的 DisplayState（Session 持有、BuildTurn 回合级 TryUpdate）独立。
+        // 与 server 路径的 DisplayState（CoreSession 持有、BuildTurn 回合级 TryUpdate）独立。
         private readonly DisplayState _displayState;
         /// <summary>输出轴门面（issue-004）：CLI 渲染只走简单路径（快照），没有回合流。</summary>
         private readonly OutputPort _outputPort;
@@ -105,22 +106,43 @@ namespace MinorShift.Emuera.GameView
         int IVtHost.ScrollOffset => _scroll.ScrollOffset;
 
         public AgentCliProtocol(EmueraConsole console, IConsoleUI ui, ITerminalSetup terminalSetup, ITerminalInput terminalInput, ConfigData configData)
+            : this(console, ui, terminalSetup, terminalInput, configData, null, null, null)
+        {
+        }
+
+        /// <summary>
+        /// 组装根（<see cref="CoreSession"/>）复用入口：三轴门面与显示状态由会话持有，
+        /// 协议只做 CLI 渲染与 VT 输入编排（issue-006）。
+        /// </summary>
+        internal AgentCliProtocol(
+            EmueraConsole console,
+            IConsoleUI ui,
+            ITerminalSetup terminalSetup,
+            ITerminalInput terminalInput,
+            ConfigData configData,
+            InputPort? inputPort,
+            OutputPort? outputPort,
+            DisplayState? displayState)
             : base(console, ui)
         {
             _terminalSetup = terminalSetup;
             _terminalInput = terminalInput;
-            _inputPort = new InputPort(ui.Input, DispatchInput);
+            _inputPort = inputPort ?? new InputPort(ui.Input, DispatchInput);
             // 职责拆分：输入行缓冲与 VT 生命周期独立成类，协议侧只做编排。
             _input = new CliInputBuffer(SubmitValue, Echo);
             _vtLifecycle = new VtTerminalLifecycle(Stop, CleanupVt);
             // ADR-0009：ScrollController 构造占位（visibleLines=1），RunVtLoop 内 UpdateVisibleLines(WindowHeight-2)。
             _scroll = new ScrollController(scrollVisibleLines: 1);
             // Phase 4-2（Q7/R4）：CLI 自有 DisplayState——从 ConfigData 取 defaultFontName，
-            // 与 Session.cs:83 同一取值表达式。TerminalRenderer + ButtonSelectionMode 均注入此实例。
-            var defaultFontName = configData.GetConfigValue<string>(ConfigCode.FontName) ?? "";
-            _displayState = new DisplayState(console, defaultFontName);
+            // 与 CoreSession 同一取值表达式。TerminalRenderer + ButtonSelectionMode 均注入此实例。
+            if (displayState == null)
+            {
+                var defaultFontName = configData.GetConfigValue<string>(ConfigCode.FontName) ?? "";
+                displayState = new DisplayState(console, defaultFontName);
+            }
+            _displayState = displayState;
             // CLI 不消费增量回合流（VT 渲染是快照消费方）⇒ OutputPort 无 hub，Turns 为 null。
-            _outputPort = new OutputPort(_displayState);
+            _outputPort = outputPort ?? new OutputPort(_displayState);
             // VT-only 后 ANSI 始终可用，渲染器假设 _screen 在 VT 主循环内必非 null。
             // Phase 4-1：TerminalRenderer 数据源换成 DisplayState.Current.lines。
             _renderer = new TerminalRenderer(console, _scroll, null, _outputPort);
@@ -164,9 +186,11 @@ namespace MinorShift.Emuera.GameView
                 _screen!.WindowHeight);
         }
 
+        /// <summary>组装根把 <see cref="CoreSession.Input"/> 的派发接到本协议（CLI 同步线程模型）。</summary>
+        internal void DispatchValue(string value) => DispatchInput(value);
+
         internal void RunCliLoop()
-        {
-            // 顶层异常边界：覆盖 HandleTimeout / DispatchMouseClick /
+        {            // 顶层异常边界：覆盖 HandleTimeout / DispatchMouseClick /
             // DispatchMouseMiss / Initialize 等所有调 RunEmueraProgram 的路径。
             // 脚本运行期异常一律 fatal——Process 内部状态不可逆，恢复无意义。
             // VT 终端恢复由 VtTerminalLifecycle（AppDomain.UnhandledException /

@@ -7,9 +7,10 @@ using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Utils;
+using MinorShift.Emuera.Server;
 using MinorShift.Emuera.Terminal.Platform;
 
-namespace MinorShift.Emuera.Server;
+namespace MinorShift.Emuera.Sessions;
 
 /// <summary>
 /// Session 生命周期管理（issue 03/05 重构）——从 <see cref="KestrelGameServer"/> 拆出。
@@ -42,7 +43,7 @@ internal sealed class SessionRegistry
 {
     private readonly SemaphoreSlim _sessionLock = new(1, 1);
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
-    private volatile Session? _session;
+    private volatile CoreSession? _session;
     private OutputHub? _sessionHub;
     /// <summary>
     /// <b>Retiring 相位</b>（ADR-0049 D2）：<c>_session == null</c> 且上一轮拆除的旧循环仍在跑。
@@ -56,7 +57,7 @@ internal sealed class SessionRegistry
     /// <c>retiring</c> 字段都读它。清除只发生在 <see cref="AwaitTeardownAsync"/> 的成功返回处
     /// （S-2：不由时间清、不由新建会话清）。volatile：变更操作在锁内写、只读端点无锁读。</para>
     /// </summary>
-    private volatile Session? _retiring;
+    private volatile CoreSession? _retiring;
     private readonly ITerminalSetup _terminalSetup;
     private readonly GameConfigService _configService;
     private readonly TimeSpan? _agentLease;
@@ -92,7 +93,7 @@ internal sealed class SessionRegistry
     }
 
     /// <summary>当前 session 引用（volatile 读）——仅供只读端点（/turn /input /snapshot）使用。</summary>
-    public Session? CurrentSession => _session;
+    public CoreSession? CurrentSession => _session;
 
     /// <summary>
     /// 是否处于 Retiring 相位（无 Live 会话，但上一轮拆除的旧循环尚未退出，ADR-0049 D2）。
@@ -107,7 +108,7 @@ internal sealed class SessionRegistry
     /// 完全一致；注入方只决定「会话怎么建」与「它的游戏循环任务是谁」。生产路径为 null。
     /// </para>
     /// </summary>
-    internal Func<HttpSessionIO, ConfigData, Session>? SessionFactory { get; init; }
+    internal Func<HttpSessionIO, ConfigData, CoreSession>? SessionFactory { get; init; }
 
     /// <summary>
     /// POST /session（迁移自原 HandleCreateSessionAsync）。
@@ -125,7 +126,7 @@ internal sealed class SessionRegistry
             if (_retiring != null && !await AwaitTeardownAsync(null))
                 return new SessionCreateResult(SessionCreateStatus.PreviousSessionStillRunning, null, default, null);
 
-            Session? detached;
+            CoreSession? detached;
             await _sessionLock.WaitAsync();
             try
             {
@@ -205,7 +206,7 @@ internal sealed class SessionRegistry
             if (_retiring != null && !await AwaitTeardownAsync(null))
                 return new SessionCreateResult(SessionCreateStatus.PreviousSessionStillRunning, null, default, null);
 
-            Session? detached;
+            CoreSession? detached;
             await _sessionLock.WaitAsync();
             try
             {
@@ -261,7 +262,7 @@ internal sealed class SessionRegistry
             if (_retiring != null && !await AwaitTeardownAsync(null))
                 return new SessionCreateResult(SessionCreateStatus.PreviousSessionStillRunning, null, default, null);
 
-            Session? detached;
+            CoreSession? detached;
             await _sessionLock.WaitAsync();
             try
             {
@@ -306,7 +307,7 @@ internal sealed class SessionRegistry
         await _mutationGate.WaitAsync();
         try
         {
-            Session? detached;
+            CoreSession? detached;
             await _sessionLock.WaitAsync();
             try
             {
@@ -384,7 +385,7 @@ internal sealed class SessionRegistry
         await _mutationGate.WaitAsync();
         try
         {
-            Session? detached;
+            CoreSession? detached;
             // paths 需跨两个锁块使用（校验在锁内、提交在锁外），故声明在此处。
             GamePaths paths;
             await _sessionLock.WaitAsync();
@@ -507,7 +508,7 @@ internal sealed class SessionRegistry
         _mutationGate.Wait();
         try
         {
-            Session? detached;
+            CoreSession? detached;
             _sessionLock.Wait();
             try
             {
@@ -545,7 +546,7 @@ internal sealed class SessionRegistry
     /// <param name="configData">会话使用的 ConfigData（HTTP /load-game 用重载后的 newConfig，其余用 <c>_configService.Current</c>）。</param>
     /// <param name="fullDiffOnFirstTurn">首帧 diff 是否返回全量（MAUI 托管 true）。</param>
     /// <param name="dialectProfileId">本会话的方言 profile 覆盖；<c>null</c> = 用注册表构造时的 <c>_dialectProfileId</c>。</param>
-    private Session CreateSessionCore(ConfigData configData, bool fullDiffOnFirstTurn = false, string? dialectProfileId = null)
+    private CoreSession CreateSessionCore(ConfigData configData, bool fullDiffOnFirstTurn = false, string? dialectProfileId = null)
     {
         // issue 03：SessionRegistry 自持 OutputHub 引用，HttpSessionIO 直持同一实例（2026-10-19 起不再经 IOutputBroadcaster 抽象）。
         // 接缝（ADR-0049 D4）：hub/io 始终由本方法建（WS 订阅路径与生产一致），工厂只替换 Session 本体。
@@ -554,7 +555,8 @@ internal sealed class SessionRegistry
         _sessionHub = hub;
         var session = SessionFactory is { } factory
             ? factory(io, configData)
-            : new Session(io, _terminalSetup, configData, _agentLease, fullDiffOnFirstTurn, dialectProfileId ?? _dialectProfileId);
+            : new CoreSession(io, _terminalSetup, configData, _agentLease, fullDiffOnFirstTurn,
+                dialectProfileId ?? _dialectProfileId, hub: hub);
         session.Start();
         _session = session;
         return session;
@@ -565,7 +567,7 @@ internal sealed class SessionRegistry
     /// <b>不等待游戏循环</b>——调用方必须在锁外做有界等待（<see cref="AwaitTeardownAsync"/>）。
     /// 临界区内不含任何阻塞，故其他端点立即恢复可响应。
     /// </summary>
-    private Session? DetachSessionLocked(string reason = "session_ended")
+    private CoreSession? DetachSessionLocked(string reason = "session_ended")
     {
         var detached = _session;
         // 顺序要点：先摘引用，后发拆除请求。反过来的话，摘引用与请求之间若有读端点
@@ -588,7 +590,7 @@ internal sealed class SessionRegistry
     /// 超时后调用方<b>不得</b>启动新会话——见类型注释的「串行」段。
     /// 本方法可在已持有 <c>_mutationGate</c> 时调用（它不碰任何本类的锁）。
     /// </summary>
-    private async Task<bool> AwaitTeardownAsync(Session? detached)
+    private async Task<bool> AwaitTeardownAsync(CoreSession? detached)
     {
         var target = detached ?? _retiring;
         if (target == null)
@@ -664,7 +666,7 @@ internal readonly record struct LoadGameResult(LoadGameStatus Status, string? Co
 
 /// <summary>WS 订阅三元组：session + 独占 reader + 所属 hub（finally 退订用）。</summary>
 internal sealed record WsSubscription(
-    Session Session,
+    CoreSession Session,
     ChannelReader<Turn> Reader,
     OutputHub Hub,
     ControlIdentity Identity = default);

@@ -3,7 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Output;
 
-namespace MinorShift.Emuera.Server;
+namespace MinorShift.Emuera.Sessions;
 
 /// <summary>
 /// 替换 Console.ReadLine/WriteLine 的抽象，使 AgentJsonlProtocol 不依赖全局 stdin/stdout。

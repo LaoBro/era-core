@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace MinorShift.Emuera.Server;
+namespace MinorShift.Emuera.Sessions;
 
 internal enum ControllerKind
 {
@@ -81,7 +81,7 @@ internal readonly record struct ControlGateResult(
 
 /// <summary>
 /// Session controller state machine. It owns only control ownership and its
-/// notification signals; turn queues remain owned by <see cref="Session"/>.
+/// notification signals; turn queues remain owned by <see cref="CoreSession"/>.
 /// </summary>
 internal sealed class Controller : IControlSignal, IDisposable
 {

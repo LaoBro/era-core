@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Server;
+using MinorShift.Emuera.Sessions;
 using MinorShift.Emuera.UI.Game;
 using Xunit;
 

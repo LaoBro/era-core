@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Server;
+using MinorShift.Emuera.Sessions;
 using Xunit;
 
 namespace MinorShift.Emuera.Tests;
@@ -55,10 +56,10 @@ public class TeardownControlOrderTests
     {
         var root = FindRepositoryRoot();
 
-        var registry = File.ReadAllText(Path.Combine(root, "EraCore.Core", "Server", "SessionRegistry.cs"));
+        var registry = File.ReadAllText(Path.Combine(root, "EraCore.Core", "Sessions", "SessionRegistry.cs"));
         Assert.DoesNotContain("Controller.End(", registry);
 
-        var delivery = File.ReadAllText(Path.Combine(root, "EraCore.Core", "Server", "TurnDelivery.cs"));
+        var delivery = File.ReadAllText(Path.Combine(root, "EraCore.Core", "Sessions", "TurnDelivery.cs"));
         var flag = delivery.IndexOf("_sessionTeardown = true", StringComparison.Ordinal);
         Assert.True(flag >= 0, "TurnDelivery 中找不到拆除旗标置位语句");
         var end = delivery.IndexOf("_signal.End(", flag, StringComparison.Ordinal);

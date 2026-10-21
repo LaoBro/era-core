@@ -7,7 +7,7 @@ using MinorShift.Emuera.UI.Game;
 using System;
 using System.Threading.Tasks;
 
-namespace MinorShift.Emuera;
+namespace MinorShift.Emuera.Sessions;
 
 internal enum GameLoopResult
 {
