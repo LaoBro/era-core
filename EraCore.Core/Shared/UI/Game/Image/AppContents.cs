@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 #if HEADLESS
 using MinorShift.Emuera;
 using MinorShift.Emuera.Primitives;

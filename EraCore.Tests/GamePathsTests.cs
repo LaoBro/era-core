@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using System;
 using System.IO;
 using Xunit;

@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using System;
 using System.Text;
 using MinorShift.Emuera.Runtime.Utils;
@@ -33,7 +34,7 @@ public class EraStreamReaderAccessorTests
 	[Fact]
 	public void Open_reads_lines_through_the_accessor()
 	{
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		var accessor = new InMemoryContentDirAccessor(Root);
 		using var paths = new GamePathsScope(accessor);
 		var path = accessor.CombinePath(Root, "ABL.CSV");
 		accessor.Seed(path, Encoding.UTF8.GetBytes("体力,こんにちは\n気力,さようなら\n"));
@@ -48,7 +49,7 @@ public class EraStreamReaderAccessorTests
 	[Fact]
 	public void Open_returns_false_when_the_accessor_cannot_read_the_file()
 	{
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		var accessor = new InMemoryContentDirAccessor(Root);
 		using var paths = new GamePathsScope(accessor);
 		// content URI 形态：本机磁盘上绝无同名实文件——即便兜底还在也救不回来。
 		// 这里锁的是「失败显性化」：返回 false 而非抛出，也不再尝试本地 IO。
@@ -74,7 +75,7 @@ public class EraStreamReaderAccessorTests
 			System.IO.File.WriteAllBytes(localFile, Encoding.UTF8.GetBytes("disk,行\n"));
 
 			// accessor 是纯内存桩：既不注册该文件，也不触碰磁盘 ⇒ ReadAllBytes 返回 null。
-			var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(tempRoot);
+			var accessor = new InMemoryContentDirAccessor(tempRoot);
 			var previous = GamePaths.Current;
 			_ = GamePaths.Resolve(tempRoot, accessor);
 			try

@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -33,7 +34,7 @@ public class SafScriptFileTests
     [Fact]
 	public void Relative_script_path_in_sav_tree_resolves_and_creates_each_parent_directory()
 	{
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		var accessor = new InMemoryContentDirAccessor(Root);
 		using var gamePaths = new GamePathsScope(accessor);
 
         var resolved = SafCompat.TryResolveGameRelativePath("sav/profiles/note.txt", createParentDirectories: true, out var path);
@@ -51,7 +52,7 @@ public class SafScriptFileTests
 	[InlineData(@"sav\profiles\note.txt", "note.txt")]
 	public void Relative_script_path_allows_root_files_and_backslash_separators(string relativePath, string expectedFileName)
 	{
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		var accessor = new InMemoryContentDirAccessor(Root);
 		using var gamePaths = new GamePathsScope(accessor);
 
 		Assert.True(SafCompat.TryResolveGameRelativePath(relativePath, createParentDirectories: true, out var path));
@@ -71,7 +72,7 @@ public class SafScriptFileTests
 	[InlineData(@"assets\img\a.txt", "a.txt")]
 	public void Relative_script_path_allows_any_descendant_of_game_root(string relativePath, string expectedFileName)
 	{
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		var accessor = new InMemoryContentDirAccessor(Root);
 		using var gamePaths = new GamePathsScope(accessor);
 
 		// 与参考实现 Utils.GetValidPath 对齐：不按目录名设白名单，只挡越界。
@@ -87,7 +88,7 @@ public class SafScriptFileTests
 	[Fact]
 	public void LoadText_reads_animation_frames_outside_sav_tree()
 	{
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		var accessor = new InMemoryContentDirAccessor(Root);
 		using var gamePaths = new GamePathsScope(accessor);
 		using var scope = GlobalStatic.OpenScope(new ConfigData());
 
@@ -110,7 +111,7 @@ public class SafScriptFileTests
     [InlineData("./relative.txt")]
 	public void Relative_script_path_rejects_unsafe_or_unsupported_locations(string input)
 	{
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		var accessor = new InMemoryContentDirAccessor(Root);
 		using var gamePaths = new GamePathsScope(accessor);
 
         Assert.False(SafCompat.TryResolveGameRelativePath(input, createParentDirectories: false, out _));
@@ -119,7 +120,7 @@ public class SafScriptFileTests
     [Fact]
 	public void GetDatFiles_returns_logical_suffixes_for_content_uris()
 	{
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		var accessor = new InMemoryContentDirAccessor(Root);
 		using var gamePaths = new GamePathsScope(accessor);
         var datDir = SafCompat.ResolveSubPath(Root, "dat");
         SafCompat.CreateDirectory(datDir);
@@ -134,7 +135,7 @@ public class SafScriptFileTests
     [Fact]
 	public void SaveText_and_LoadText_support_content_uri_string_and_number_paths()
 	{
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		var accessor = new InMemoryContentDirAccessor(Root);
 		using var gamePaths = new GamePathsScope(accessor);
         using var scope = GlobalStatic.OpenScope(new ConfigData());
         var saveText = FunctionMethodCreator.GetMethodList()["SAVETEXT"];
@@ -172,7 +173,7 @@ public class SafScriptFileTests
 	[Fact]
 	public void SaveText_and_LoadText_share_relative_extension_normalization()
 	{
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		var accessor = new InMemoryContentDirAccessor(Root);
 		using var gamePaths = new GamePathsScope(accessor);
 		using var scope = GlobalStatic.OpenScope(new ConfigData());
 		var saveText = FunctionMethodCreator.GetMethodList()["SAVETEXT"];

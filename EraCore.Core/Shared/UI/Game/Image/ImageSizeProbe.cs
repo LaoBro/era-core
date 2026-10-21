@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using System;
 
 namespace MinorShift.Emuera.UI.Game.Image;

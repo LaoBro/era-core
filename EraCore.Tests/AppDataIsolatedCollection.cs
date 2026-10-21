@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using Xunit;
 
 namespace Emuera.Headless.Tests;

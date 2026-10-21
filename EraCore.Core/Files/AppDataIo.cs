@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 
-namespace MinorShift.Emuera;
+namespace MinorShift.Emuera.Files;
 
 /// <summary>
 /// <see cref="AppDataPaths"/>（应用私有域）的 IO 窄口子 —— 不变量 F-4「<b>唯一豁免域</b>」的可实例化形态。

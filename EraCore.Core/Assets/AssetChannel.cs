@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using MinorShift.Emuera.Terminal.Platform;
 using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.UI.Game.Image;

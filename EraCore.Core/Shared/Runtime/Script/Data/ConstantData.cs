@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Script.Parser;
 using MinorShift.Emuera.Runtime.Script.Statements.Variable;

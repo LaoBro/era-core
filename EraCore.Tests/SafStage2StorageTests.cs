@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using System;
 using System.IO;
 using System.Linq;
@@ -24,7 +25,7 @@ public class SafStage2StorageTests
     [Fact]
 	public void Config_and_macro_saves_write_to_the_SAF_game_root()
     {
-        var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+        var accessor = new InMemoryContentDirAccessor(Root);
         using var gamePaths = new GamePathsScope(Root, accessor);
         using var globals = GlobalStatic.OpenScope(new ConfigData());
         using var macro = new KeyMacroScope();
@@ -50,7 +51,7 @@ public class SafStage2StorageTests
 	[Fact]
 	public void Loading_a_new_SAF_game_does_not_create_a_config()
 	{
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		var accessor = new InMemoryContentDirAccessor(Root);
 		using var gamePaths = new GamePathsScope(Root, accessor);
 		var config = new ConfigData();
 		using var globals = GlobalStatic.OpenScope(config);
@@ -68,7 +69,7 @@ public class SafStage2StorageTests
     [Fact]
     public void Log_path_resolves_nested_relative_names_under_the_SAF_game_root()
     {
-        var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+        var accessor = new InMemoryContentDirAccessor(Root);
 		using var gamePaths = new GamePathsScope(Root, accessor);
 
         Assert.True(SafCompat.TryResolvePathUnderGameRoot("logs/init.log", createParentDirectories: true, out var path));

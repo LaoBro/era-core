@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Runtime.Config;

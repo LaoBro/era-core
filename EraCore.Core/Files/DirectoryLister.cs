@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
-namespace MinorShift.Emuera;
+namespace MinorShift.Emuera.Files;
 
 /// <summary>
 /// game-library spec ID8：目录列举工具——逐层列出子目录，供 Vue DirectoryBrowser 弹窗渲染。

@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using System;
 using System.Threading;
 using System.Threading.Tasks;

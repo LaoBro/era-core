@@ -4,7 +4,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace MinorShift.Emuera;
+namespace MinorShift.Emuera.Files;
 
 /// <summary>
 /// 游戏目录访问抽象——隐藏平台文件系统差异（SAF content:// URI vs 传统文件路径）。

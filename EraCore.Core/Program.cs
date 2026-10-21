@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using System.Collections.Generic;
 
 namespace MinorShift.Emuera;

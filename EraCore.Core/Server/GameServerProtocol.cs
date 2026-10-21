@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using System;
 using System.Text;
 using System.Text.Encodings.Web;

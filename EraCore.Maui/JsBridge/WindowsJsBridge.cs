@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 #if WINDOWS
 using System;
 using System.IO;

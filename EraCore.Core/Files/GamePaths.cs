@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 
-namespace MinorShift.Emuera;
+namespace MinorShift.Emuera.Files;
 
 internal sealed class GamePaths
 {

@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 //新設したコンフィグ設定のロード、セーブ、公開を担当する。
 using System.Text.Json;
 using MinorShift.Emuera.GameView;

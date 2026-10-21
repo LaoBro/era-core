@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 #if ANDROID
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;

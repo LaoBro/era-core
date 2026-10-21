@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using System;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.DependencyInjection;

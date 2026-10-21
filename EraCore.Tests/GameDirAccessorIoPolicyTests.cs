@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -86,7 +87,7 @@ public class GameDirAccessorIoPolicyTests
         // 新增任何该域的直连 IO 会落进「无登记 ⇒ 违规」分支，立即转红。
 
         // ── 永久豁免（Platform）：依附于具体运行形态，与游戏树无关 —— 不打算收敛 ────────
-        ["GamePaths.cs"] = new(
+        ["Files/GamePaths.cs"] = new(
             "宿主安装目录探测（AppContext.BaseDirectory 下的 Data/erb）+ 本地路径归一化 new DirectoryInfo——发生在 accessor 上任之前；游戏树判定已在 Validate 收敛", Domain.Platform, 2),
         ["Shared/Runtime/Utils/SafCompat.cs"] = new(
             "ADR-0019 兼容包装本体：content URI 的本地分支实现（有意保留）", Domain.Platform, 18),

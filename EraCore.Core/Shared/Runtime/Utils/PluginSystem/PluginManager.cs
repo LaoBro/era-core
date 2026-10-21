@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using MinorShift.Emuera.GameProc;
 using MinorShift.Emuera.GameProc.Function;
 using MinorShift.Emuera.Compat;

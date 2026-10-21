@@ -2,7 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 
-namespace MinorShift.Emuera;
+namespace MinorShift.Emuera.Files;
 
 /// <summary>目录子项（一次 children Query 的一行）。Mime 为 Provider 原始字符串。</summary>
 internal readonly record struct ChildEntry(string DocId, string Name, string Mime);

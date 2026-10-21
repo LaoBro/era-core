@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using System.Threading.Tasks;
 using MinorShift.Emuera;
 using MinorShift.Emuera.Runtime.Script.Statements.Variable;

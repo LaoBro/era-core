@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Threading;
 
-namespace MinorShift.Emuera;
+namespace MinorShift.Emuera.Files;
 
 /// <summary>应用私有文件根目录。游戏文件继续由 <see cref="GamePaths"/> 与 <see cref="IGameDirAccessor"/> 管理。</summary>
 /// <para>

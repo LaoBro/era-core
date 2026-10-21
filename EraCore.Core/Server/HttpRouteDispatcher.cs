@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using System;
 using System.Text.Json;
 using System.Text.Json.Nodes;

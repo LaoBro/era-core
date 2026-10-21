@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -109,7 +110,7 @@ public class SrcContentCacheTests
 
 	private const string Root = "content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FSrcContentCache";
 
-	private static void SeedCorpus(SafCompatContentUriTests.InMemoryContentDirAccessor accessor, string csvDir, string erbDir)
+	private static void SeedCorpus(InMemoryContentDirAccessor accessor, string csvDir, string erbDir)
 	{
 		// stub 走显式注册集合（M4/M5 同款）；GetFiles 只返回直接子项 → 平铺语料
 		accessor.Seed(accessor.CombinePath(csvDir, "ABL.CSV"), Encoding.UTF8.GetBytes("1,体力\n2,気力\n"));
@@ -124,14 +125,14 @@ public class SrcContentCacheTests
 	}
 
 	/// <summary>AppData 重定向 + 根化 GamePaths + Config 域（AppDataIsolated 串行集合，镜像 ErbFileListCacheTests）。</summary>
-	private static IDisposable OpenScope(out SafCompatContentUriTests.InMemoryContentDirAccessor accessor,
+	private static IDisposable OpenScope(out InMemoryContentDirAccessor accessor,
 		out LoaderEnv env, out string csvDir, out string erbDir, out string srcPath, bool srcContentCache = true)
 	{
 		var tempAppData = Path.Combine(Path.GetTempPath(), "emuera-srcappdata-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(tempAppData);
 		var previousAppData = AppDataPaths.Directory;
 		AppDataPaths.Configure(tempAppData);
-		accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		accessor = new InMemoryContentDirAccessor(Root);
 		var previousPaths = GamePaths.Current;
 		GamePaths.Resolve(Root, accessor);
 		var config = new ConfigData();

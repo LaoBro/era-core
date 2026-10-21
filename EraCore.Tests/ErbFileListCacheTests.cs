@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -30,7 +31,7 @@ public class ErbFileListCacheTests
 		try
 		{
 			const string Root = "content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FFileListMemo";
-			var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+			var accessor = new InMemoryContentDirAccessor(Root);
 			var previousPaths = GamePaths.Current;
 			GamePaths.Resolve(Root, accessor);
 			var config = new ConfigData();

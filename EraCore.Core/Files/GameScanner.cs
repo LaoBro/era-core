@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
-namespace MinorShift.Emuera;
+namespace MinorShift.Emuera.Files;
 
 /// <summary>
 /// game-library spec ID1：扫描主目录下的有效游戏（含 csv+erb 子目录的文件夹）。

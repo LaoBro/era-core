@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Files;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -273,7 +274,7 @@ public class ErbIrCacheTests
 	public async Task ContentUri_file_listing_consistent_between_cache_and_config()
 	{
 		const string Root = "content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FListingConsistency";
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		var accessor = new InMemoryContentDirAccessor(Root);
 		using var rootedScope = OpenRootedScope(Root, accessor);
 		var erbDir = SafCompat.ResolveSubPath(Root, "erb");
 		SafCompat.CreateDirectory(erbDir);
@@ -358,7 +359,7 @@ public class ErbIrCacheTests
 		// Preload 缓存整体为空。GetFilesFromCache 必须返回 null（而非空列表）让调用方走
 		// Config.GetFiles 枚举兜底，否则 content-URI 命中轮 ERB 清单为空、游戏不加载任何脚本。
 		const string Root = "content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FListingEmptyCache";
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		var accessor = new InMemoryContentDirAccessor(Root);
 		using var rootedScope = OpenRootedScope(Root, accessor);
 		var erbDir = SafCompat.ResolveSubPath(Root, "erb");
 		SafCompat.CreateDirectory(erbDir);
@@ -563,7 +564,7 @@ public class ErbIrCacheTests
 		// 相对名经 accessor.CombinePath 重建目录 document URI 后，子树文件枚举正确
 		//（BuildDocumentUriUsingTree 语义，裸拼接会被 Android 解析成目录本身）。
 		const string Root = "content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FFirstDirOverride";
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		var accessor = new InMemoryContentDirAccessor(Root);
 		using var rootedScope = OpenRootedScope(Root, accessor);
 		var erbDir = SafCompat.ResolveSubPath(Root, "erb");
 		SafCompat.CreateDirectory(erbDir);
@@ -754,7 +755,7 @@ public class ErbIrCacheTests
 		//（含嵌套子目录），fp 亦恒等（content-URI stat 降级 0，集合一致即指纹一致）。
 		// sidecar 存本地临时目录（存储与内容解耦；真机布局同构——appdata 真实 FS）。
 		const string Root = "content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FFileListReplay";
-		var accessor = new SafCompatContentUriTests.InMemoryContentDirAccessor(Root);
+		var accessor = new InMemoryContentDirAccessor(Root);
 		using var rootedScope = OpenRootedScope(Root, accessor);
 		var erbDir = SafCompat.ResolveSubPath(Root, "erb");
 		SafCompat.CreateDirectory(erbDir); // stub 走显式注册集合（M4 同款）
