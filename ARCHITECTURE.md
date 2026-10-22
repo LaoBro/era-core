@@ -48,6 +48,7 @@
        EraCore.Cli -> Core + Server
        EraCore.Tests -> Core + Server
        EraCore.Maui.Tests -> Maui
+       EraCore.PublicApi.Tests -> Core（只经公共三轴，无 InternalsVisibleTo）
 ```
 
 依赖边界：
@@ -65,7 +66,7 @@
 - 游戏路径、配置、预加载和运行时初始化。
 - `EmueraConsole`、显示状态、输入请求和按钮状态。
 - Agent 协议、CLI 终端循环和终端渲染。
-- **三轴（`Input/` / `Output/` / `Files/`）与会话组装根（`Sessions/CoreSession`）**：宿主只经 `InputPort` / `OutputPort` / `GameTree` 接触引擎，`CoreSession` 负责启动、停止与三轴装配。
+- **四模块布局（`Input/` / `Output/` / `Files/` / `Sessions/`）**：前三条是能力轴，`Sessions/CoreSession` 是汇合点。宿主只经 `InputPort` / `OutputPort` / `GameTree` 与 `CoreSession` 接触引擎；引擎内部类型不进入公共面，四模块白名单、目录归属、直连 IO 边界与无 `InternalsVisibleTo` 的接入探针由 `ArchitectureAggregateGuardTests` 聚合机检。
 - **共享层 `Server/`**（issue 05「抽共享层 + 双宿主」）：回合协议（`GameServerProtocol`）、控制状态机（`Controller`）、WS 旁路（`WsRelay`）与 `HttpListenerHost`（BCL 托管宿主）——不依赖 ASP.NET Core，供 Kestrel 与 MAUI 双宿主复用；会话装配由 `Sessions/CoreSession` 承担。
 - 从旧 WinForms 源码迁移而来的共享运行时，位于 `Shared/`。
 
@@ -234,7 +235,7 @@ agent   -> HTTP/WS -> HttpListenerHost (同一共享层会话)
 
 ## 相关文档
 
-- Core 抽象层：[`EraCore.Core/ARCHITECTURE.md`](EraCore.Core/ARCHITECTURE.md)（输入/输出/文件三条能力轴的层图与不变量）
+- Core 抽象层：[`EraCore.Core/ARCHITECTURE.md`](EraCore.Core/ARCHITECTURE.md)（四模块布局、三轴门面与不变量）
 - 前端导航：[`EraCore.Web/README.md`](EraCore.Web/README.md)
 - 测试说明：[`tests/README.md`](tests/README.md)
 - 文件迁移历史：[`docs/2026.6.30.架构健壮性重构/T-023前置-文件结构整理方案.md`](docs/2026.6.30.架构健壮性重构/T-023前置-文件结构整理方案.md)

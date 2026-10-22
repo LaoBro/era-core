@@ -23,38 +23,10 @@ namespace MinorShift.Emuera.Tests;
 /// </summary>
 public sealed class OutputPublicSurfaceTests
 {
-    private const string OutputNamespace = "MinorShift.Emuera.Output";
-
-    private static readonly string[] AllowedPublicTypes =
-    [
-        "AppendLinesOp",
-        "AwaitEnded",
-        "AwaitInfo",
-        "AwaitInput",
-        "AwaitWait",
-        "BgImageState",
-        "ButtonRef",
-        "ClearLineDiffOp",
-        "ClearScreenOp",
-        "DisplayDiff",
-        "DisplayEntry",
-        "DisplayLine",
-        "DisplaySnapshot",
-        "ErrorInfo",
-        "LineOp",
-        "OutputPort",
-        "PrintSegment",
-        "SegmentCrop",
-        "SegmentImage",
-        "SegmentShape",
-        "ShiftHeadLineOp",
-        "Turn",
-        "TurnRecord",
-    ];
+    private static readonly string[] AllowedPublicTypes = AxisSurfaceRegistry.Output.AllowedPublicTypes;
 
     private static IEnumerable<Type> WhitelistedTypes()
-        => typeof(OutputPort).Assembly.GetTypes()
-            .Where(t => t.Namespace == OutputNamespace && t.IsPublic);
+        => AxisSurfaceRegistry.Output.PublicTypes();
 
     [Fact]
     public void Output_namespace_exposes_only_whitelisted_public_types()

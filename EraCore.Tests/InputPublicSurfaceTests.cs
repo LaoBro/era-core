@@ -17,23 +17,12 @@ namespace MinorShift.Emuera.Tests;
 /// </summary>
 public sealed class InputPublicSurfaceTests
 {
-    private const string InputNamespace = "MinorShift.Emuera.Input";
-
-    private static readonly string[] AllowedPublicTypes =
-    [
-        "InputCapabilities",
-        "InputCapability",
-        "InputFrame",
-        "InputGeometry",
-        "InputKeyEvent",
-        "InputPort",
-    ];
+    private static readonly string[] AllowedPublicTypes = AxisSurfaceRegistry.Input.AllowedPublicTypes;
 
     [Fact]
     public void Input_namespace_exposes_only_whitelisted_public_types()
     {
-        var actual = typeof(InputPort).Assembly.GetTypes()
-            .Where(t => t.Namespace == InputNamespace && t.IsPublic)
+        var actual = AxisSurfaceRegistry.Input.PublicTypes()
             .Select(t => t.Name)
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToArray();
@@ -62,8 +51,7 @@ public sealed class InputPublicSurfaceTests
         var assembly = typeof(InputPort).Assembly;
         var offenders = new List<string>();
 
-        foreach (var type in assembly.GetTypes()
-                     .Where(t => t.Namespace == InputNamespace && t.IsPublic))
+        foreach (var type in AxisSurfaceRegistry.Input.PublicTypes())
         {
             const BindingFlags flags =
                 BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;

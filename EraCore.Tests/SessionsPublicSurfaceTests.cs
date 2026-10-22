@@ -21,19 +21,12 @@ namespace MinorShift.Emuera.Tests;
 /// </summary>
 public sealed class SessionsPublicSurfaceTests
 {
-    private const string SessionsNamespace = "MinorShift.Emuera.Sessions";
+    private static readonly string SessionsNamespace = AxisSurfaceRegistry.Sessions.Namespace;
 
-    private static readonly string[] AllowedPublicTypes =
-    [
-        "CoreSession",
-        "CoreSessionOptions",
-        "CoreSessionStartResult",
-        "CoreSessionState",
-    ];
+    private static readonly string[] AllowedPublicTypes = AxisSurfaceRegistry.Sessions.AllowedPublicTypes;
 
     private static IEnumerable<Type> WhitelistedTypes()
-        => typeof(CoreSession).Assembly.GetTypes()
-            .Where(t => t.Namespace == SessionsNamespace && t.IsPublic);
+        => AxisSurfaceRegistry.Sessions.PublicTypes();
 
     [Fact]
     public void Sessions_namespace_exposes_only_whitelisted_public_types()

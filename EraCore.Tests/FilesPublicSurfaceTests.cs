@@ -19,20 +19,10 @@ namespace MinorShift.Emuera.Tests;
 /// </summary>
 public sealed class FilesPublicSurfaceTests
 {
-    private const string FilesNamespace = "MinorShift.Emuera.Files";
-
-    private static readonly string[] AllowedPublicTypes =
-    [
-        "AppDataPaths",
-        "FileSystemGameDirAccessor",
-        "GameLibrary",
-        "GameTree",
-        "IGameDirAccessor",
-    ];
+    private static readonly string[] AllowedPublicTypes = AxisSurfaceRegistry.Files.AllowedPublicTypes;
 
     private static IEnumerable<Type> WhitelistedTypes()
-        => typeof(GameTree).Assembly.GetTypes()
-            .Where(t => t.Namespace == FilesNamespace && t.IsPublic);
+        => AxisSurfaceRegistry.Files.PublicTypes();
 
     [Fact]
     public void Files_namespace_exposes_only_whitelisted_public_types()

@@ -197,7 +197,10 @@ public class GameDirAccessorIoPolicyTests
         Assert.Throws<ArgumentException>(() => AppDataIo.Resolve("  "));
     }
 
-    private static IEnumerable<string> EnumerateSourceFiles(string coreDir)
+    internal static bool IsRegisteredDirectIoExemption(string relativePath)
+        => KnownDirectIo.ContainsKey(relativePath);
+
+    internal static IEnumerable<string> EnumerateSourceFiles(string coreDir)
     {
         foreach (var path in Directory.EnumerateFiles(coreDir, "*.cs", SearchOption.AllDirectories))
         {
@@ -209,7 +212,7 @@ public class GameDirAccessorIoPolicyTests
         }
     }
 
-    private static int CountDirectIo(string absolutePath)
+    internal static int CountDirectIo(string absolutePath)
     {
         var count = 0;
         foreach (var rawLine in File.ReadAllLines(absolutePath))
@@ -224,7 +227,7 @@ public class GameDirAccessorIoPolicyTests
         return count;
     }
 
-    private static string FindRepositoryRoot()
+    internal static string FindRepositoryRoot()
     {
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null; dir = dir.Parent)
         {

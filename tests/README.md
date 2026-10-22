@@ -70,7 +70,8 @@ npm test          # vitest：组件行为（706 条，happy-dom，无布局）
 npm run test:e2e  # Playwright：真实浏览器布局判据（自动起 vite dev，用系统 Edge）
 ```
 
-`run_all.py` 会顺序执行：
+`run_all.py` 会先跑两个 .NET 项目（`EraCore.Tests` 与不具 `InternalsVisibleTo` 的
+`EraCore.PublicApi.Tests` 接入探针），随后顺序执行：
 
 1. JSONL 流程 + buttons schema 测试（经 server 模式驱动）。
 2. server 单会话测试。

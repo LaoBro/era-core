@@ -36,8 +36,16 @@ Core 把「引擎与世界的全部接触面」收敛为三条轴，它们**方�
 三轴的**宿主门面**（`InputPort` / `OutputPort` / `GameTree`）与组装根 `CoreSession` 是 `public`：
 宿主只认这些类型。门面背后的接口与实现（`IInputHost` / `DisplayState` / `OutputHub` / `GameLoopComposer` /
 `SessionRegistry` 等）保持 `internal`；`EraCore.Core.csproj` 的 `InternalsVisibleTo`
-（`EraCore.Server` / `EraCore.Cli` / `EraCore.Maui` / `EraCore.Tests`）只服务于本仓宿主接入与测试。
+（`EraCore.Server` / `EraCore.Cli` / `EraCore.Maui` / `EraCore.Tests`）只服务于本仓既有宿主与测试，
+不再是外部宿主的接入手段（`EraCore.PublicApi.Tests` 不具该权限）。
 `IGameDirAccessor` 仍是唯一需要外部实现的 `public` 接口。
+
+**公共面由聚合守卫机检**：四模块白名单集中在测试侧 `AxisSurfaceRegistry`，由各模块
+`*PublicSurfaceTests` 与 `ArchitectureAggregateGuardTests` 共同引用。聚合守卫锁定四件事：
+白名单恰好覆盖各轴命名空间；公共签名不引用 `internal` 引擎类型；轴命名空间只能出现在对应模块目录；
+游戏内容直连 IO 只能落在 `Files/` 或 `GameDirAccessorIoPolicyTests` 的登记豁免。另由
+`EraCore.PublicApi.Tests`（不具 `InternalsVisibleTo`）以三轴完成「启动会话 → 读文件 → 提交输入 → 收回合」，
+证明宿主接入不需要内部访问。
 
 **会话不是第四条能力轴**，而是三轴的**汇合点**：`CoreSession` 持有 `Input` / `Output` / `Files` 三个门面，
 负责 `StartAsync`（路径校验 → 运行时初始化 → 游戏循环）与 `StopAsync`（有界拆除）。
@@ -167,6 +175,7 @@ HTTP body —— 的共同终点），再由 **`InputStateApplier`** 翻译成�
 | 文件 | `GameTree` / `IGameDirAccessor` | ADR-0019 accepted 且已落地（双实现）；`GameTree` 相对路径门面已落地，选择器移出 IO 契约；剩余豁免由守卫测试机检 |
 | 会话 | `CoreSession` / `CoreSessionOptions` | issue-006 落地：公共组装根（`StartAsync` / `StopAsync` + 三轴）；CLI/server/MAUI 复用同一实现；公共面白名单守卫 `SessionsPublicSurfaceTests` |
 | 游戏根 | `GameRootEnvironment`（internal，非宿主面） | issue-007 expand + issue-008 migrate + issue-009 contract 已落地：只剩会话作用域一种形态（`CoreSession` 建立 / 循环退出销毁）；`GamePaths.Resolve` 纯构造，`Current` / `SetCurrent` / `ResolvePreview` 与装配期视图已删除；`Program.*` 是唯一兼容转发垫片（作用域外抛异常）；源码守卫防单例复活 |
+| 公共面 | 四模块白名单 / 目录归属 / IO 边界 / 接入探针 | issue-010 落地：`AxisSurfaceRegistry` 集中四模块白名单，`ArchitectureAggregateGuardTests` 聚合机检；`EraCore.PublicApi.Tests` 无 `InternalsVisibleTo` 跑通三轴往返；引擎内部类型保持 `internal` |
 
 > 本表随里程碑推进而改，不视为稳定契约。
 

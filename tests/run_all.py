@@ -2,7 +2,8 @@
 
 This entry point keeps the existing focused test scripts intact and adds a
 single command for routine regression runs. It runs the .NET xUnit unit
-tests (Emuera.Headless.Tests) first, then the Python end-to-end suites:
+tests (EraCore.Tests) and the public-API access probe (EraCore.PublicApi.Tests)
+first, then the Python end-to-end suites:
 
     python tests/run_all.py
     python tests/run_all.py --binary EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.exe
@@ -95,20 +96,21 @@ def _run_script(name, args, env=None, timeout=None):
     return completed.returncode == 0, completed.returncode, False
 
 
-def _run_dotnet_test(timeout=None):
-    """Run the .NET xUnit unit tests via `dotnet test`.
+def _run_dotnet_test(timeout=None, project="EraCore.Tests/EraCore.Tests.csproj",
+                     label=".NET unit tests (xUnit)"):
+    """Run a .NET xUnit test project via `dotnet test`.
 
     Returns (passed, returncode, skipped). Skipped when `dotnet` is not on
     PATH so the suite still runs on machines without the .NET SDK.
     """
     dotnet = shutil.which("dotnet")
     if dotnet is None:
-        print("\n=== .NET unit tests (xUnit) ===")
+        print(f"\n=== {label} ===")
         print("SKIPPED: dotnet not found in PATH")
         return False, None, True
-    print("\n=== .NET unit tests (xUnit) ===")
+    print(f"\n=== {label} ===")
     completed = subprocess.run(
-        [dotnet, "test", "EraCore.Tests/EraCore.Tests.csproj", "--nologo"],
+        [dotnet, "test", project, "--nologo"],
         cwd=str(ROOT_DIR),
         capture_output=True,
         text=True,
@@ -148,6 +150,17 @@ def main():
         (
             ".NET unit tests (xUnit)",
             _run_dotnet_test(timeout=300),
+        )
+    )
+
+    results.append(
+        (
+            "public API access (no internals)",
+            _run_dotnet_test(
+                timeout=180,
+                project="EraCore.PublicApi.Tests/EraCore.PublicApi.Tests.csproj",
+                label="public API access (no internals)",
+            ),
         )
     )
 
