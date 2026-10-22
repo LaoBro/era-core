@@ -1,4 +1,4 @@
-using MinorShift.Emuera.Files;
+﻿using MinorShift.Emuera.Files;
 using System;
 using System.IO;
 using System.Linq;
@@ -32,7 +32,7 @@ public sealed class SafCompatLocalEnumerationTests
 	{
 		using var fx = new Fixture();
 		var accessor = new FileSystemGameDirAccessor();
-		_ = GamePaths.Resolve(fx.Root, accessor);
+		using var rootScope = new RootScope(fx.Root, accessor);
 
 		Assert.Equal(
 			accessor.GetFiles(fx.Root, pattern, option).OrderBy(p => p, StringComparer.Ordinal),
@@ -44,7 +44,7 @@ public sealed class SafCompatLocalEnumerationTests
 	public void Local_enumeration_covers_lowercase_extension_files()
 	{
 		using var fx = new Fixture();
-		_ = GamePaths.Resolve(fx.Root, new FileSystemGameDirAccessor());
+		using var rootScope = new RootScope(fx.Root, new FileSystemGameDirAccessor());
 
 		var csv = SafCompat.GetFiles(fx.Root, "*.CSV", SearchOption.AllDirectories)
 			.Select(Path.GetFileName)

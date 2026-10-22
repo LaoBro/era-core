@@ -1,4 +1,4 @@
-using MinorShift.Emuera.Files;
+﻿using MinorShift.Emuera.Files;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -6,6 +6,7 @@ using MinorShift.Emuera;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Tests;
 using MinorShift.Emuera.UI.Game;
 using MinorShift.Emuera.UI.Game.Image;
 using Xunit;
@@ -18,24 +19,25 @@ namespace Emuera.Headless.Tests;
 /// BuildPrintOpsForLine 对 ConsoleImagePart / ConsoleRectangleShapePart 输出类型化
 /// image/shape segment（01 产出的几何），不再空串丢弃。期望值来自 01 已断言的手算几何。
 /// </summary>
-[Collection("GamePathsIsolated")]
 public class ProtocolV8SegmentTests : IDisposable
 {
     private readonly string _gameDir;
+    private readonly RootScope _rootScope;
     private readonly IDisposable _scope;
 
     public ProtocolV8SegmentTests()
     {
         _gameDir = Path.Combine(Path.GetTempPath(), "emuera-v8-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(_gameDir, "img"));
-        GamePaths.Resolve(_gameDir, new FileSystemGameDirAccessor());
-        _scope = GlobalStatic.OpenScope(new ConfigData());
+        _rootScope = new RootScope(_gameDir, new FileSystemGameDirAccessor());
+        _scope = GlobalStatic.OpenScope(new ConfigData(_rootScope.Paths));
         File.WriteAllBytes(Path.Combine(_gameDir, "img", "portrait.png"), Png(200, 100));
     }
 
     public void Dispose()
     {
         _scope.Dispose();
+        _rootScope.Dispose();
         Directory.Delete(_gameDir, true);
     }
 

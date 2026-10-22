@@ -32,9 +32,8 @@ public class ErbFileListCacheTests
 		{
 			const string Root = "content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FFileListMemo";
 			var accessor = new InMemoryContentDirAccessor(Root);
-			var previousPaths = GamePaths.Current;
-			GamePaths.Resolve(Root, accessor);
-			var config = new ConfigData();
+			using var rootScope = new RootScope(Root, accessor);
+			var config = new ConfigData(rootScope.Paths);
 			try
 			{
 				// IsIrHitRound 的参与门槛（IrFirstDirList / IrFileListCache 走 ConfigData 默认 true）
@@ -81,7 +80,6 @@ public class ErbFileListCacheTests
 			finally
 			{
 				Preload.Clear();
-				GamePaths.SetCurrent(previousPaths);
 			}
 		}
 		finally

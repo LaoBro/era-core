@@ -1,5 +1,6 @@
 using System.Threading.Tasks;
 using Microsoft.Maui.Controls;
+using MinorShift.Emuera.Files;
 using MinorShift.Emuera.Output;
 
 namespace EraCore.Maui.JsBridge;
@@ -24,7 +25,7 @@ internal static class GameAssetConstants
 /// 屏蔽 Windows CoreWebView2 与 Android Webkit WebView 的平台差异，让 <c>BridgeHost</c> 不平台分叉。
 /// </summary>
 /// <remarks>
-/// 五个成员：
+/// 六个成员：
 /// <list type="bullet">
 ///   <item><see cref="PostTurn"/>：C# → JS，调 <c>window.__onTurn(turnJson)</c>。turnJson 是合法 JSON 字符串，
 ///       作为 JS 字面量传函数参数（无需再 JSON.stringify）。</item>
@@ -40,11 +41,18 @@ internal static class GameAssetConstants
 ///       issue 09 文件选择器——Vue 端 <c>pickGameFolder()</c> → C# <c>BridgeHost.HandlePickFolder</c> → 此方法。
 ///       game-library spec ID11 后仅 Windows 重写此方法；Android 改走 <c>listDirectories</c> + Vue 弹窗，
 ///       接口提供默认实现返 <c>null</c> 兜底。</item>
+///   <item><see cref="SetGameRoot"/>：游戏根（issue-009）——图片资源通道按此读相对路径，不再读进程级根。</item>
 /// </list>
 /// iOS / MacCatalyst 不在 Phase 1 范围（spec Out of Scope）。
 /// </remarks>
 internal interface IJsBridge
 {
+	/// <summary>
+	/// 绑定当前游戏根（issue-009）——<c>BridgeHost</c> 构造时以 <c>ConfigData.Root</c> 调用一次；
+	/// 无游戏（启动期占位配置）传 <c>null</c>，资源通道 404。
+	/// </summary>
+	void SetGameRoot(GameTree? gameRoot);
+
 	/// <summary>
 	/// C# → JS：向 WebView 投递一个 turn JSON。
 	/// 内部调 <c>EvaluateJavaScriptAsync($"window.__onTurn({turnJson})")</c>。

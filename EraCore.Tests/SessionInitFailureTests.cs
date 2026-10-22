@@ -16,10 +16,9 @@ namespace MinorShift.Emuera.Tests;
 /// Session 必须干净终结：派发错误回合、HasEnded=true、StateString 离开 "Loading"、
 /// LastError 记录异常——而不是 _gameTask 静默 fault 导致前端永久 Loading。
 ///
-/// 失败注入方式：Session 以 configData=null 构造。GameLoopAsync 的 buildProtocol 回调
-/// 内部 <c>_configData.GetConfigValue&lt;string&gt;(ConfigCode.FontName)</c> 解引用空配置，
-/// 在 GameLoopComposer.RunAsync 进入 runLoop 回调之前确定性抛出 NRE——不需要任何全局
-/// 状态体操，也不依赖测试执行顺序。
+/// 失败注入方式：协议工厂在 buildProtocol 回调内抛异常——发生在 GameLoopComposer.RunAsync
+/// 进入 runLoop 回调之前——不需要任何全局状态体操，也不依赖测试执行顺序。
+/// （issue-009 后根在构造期即从配置读取，原来的 null 配置注入会提前到构造函数，故改用工厂抛错。）
 /// </summary>
 public class SessionInitFailureTests
 {
@@ -28,8 +27,13 @@ public class SessionInitFailureTests
     {
         var hub = new OutputHub();
         var io = new HttpSessionIO(hub);
-        // null! —— 故意的失败注入（见类注释）；类型系统层面用 null! 显式标注。
-        var session = new Session(io, new SessionRegistryTests.NullTerminalSetup(), null!);
+        // 故意的失败注入（见类注释）：协议工厂在初始化阶段抛出。
+        var session = new Session(
+            io,
+            new SessionRegistryTests.NullTerminalSetup(),
+            new ConfigData(),
+            protocolFactory: (_, _, _, _, _, _) =>
+                throw new InvalidOperationException("init-stage failure injection"));
 
         session.Start();
 

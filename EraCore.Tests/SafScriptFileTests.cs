@@ -1,4 +1,4 @@
-using MinorShift.Emuera.Files;
+﻿using MinorShift.Emuera.Files;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -19,23 +19,11 @@ public class SafScriptFileTests
 	private const string Root =
 		"content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FTK";
 
-	private sealed class GamePathsScope : IDisposable
-	{
-		private readonly GamePaths previous = GamePaths.Current;
-
-		public GamePathsScope(IGameDirAccessor accessor)
-		{
-			_ = GamePaths.Resolve(Root, accessor);
-		}
-
-		public void Dispose() => GamePaths.SetCurrent(previous);
-	}
-
     [Fact]
 	public void Relative_script_path_in_sav_tree_resolves_and_creates_each_parent_directory()
 	{
 		var accessor = new InMemoryContentDirAccessor(Root);
-		using var gamePaths = new GamePathsScope(accessor);
+		using var gamePaths = new RootScope(Root, accessor);
 
         var resolved = SafCompat.TryResolveGameRelativePath("sav/profiles/note.txt", createParentDirectories: true, out var path);
 
@@ -53,7 +41,7 @@ public class SafScriptFileTests
 	public void Relative_script_path_allows_root_files_and_backslash_separators(string relativePath, string expectedFileName)
 	{
 		var accessor = new InMemoryContentDirAccessor(Root);
-		using var gamePaths = new GamePathsScope(accessor);
+		using var gamePaths = new RootScope(Root, accessor);
 
 		Assert.True(SafCompat.TryResolveGameRelativePath(relativePath, createParentDirectories: true, out var path));
 		Assert.Equal(expectedFileName, SafPath.GetLogicalFileName(path));
@@ -73,7 +61,7 @@ public class SafScriptFileTests
 	public void Relative_script_path_allows_any_descendant_of_game_root(string relativePath, string expectedFileName)
 	{
 		var accessor = new InMemoryContentDirAccessor(Root);
-		using var gamePaths = new GamePathsScope(accessor);
+		using var gamePaths = new RootScope(Root, accessor);
 
 		// 与参考实现 Utils.GetValidPath 对齐：不按目录名设白名单，只挡越界。
 		Assert.True(SafCompat.TryResolveGameRelativePath(relativePath, createParentDirectories: true, out var path));
@@ -89,7 +77,7 @@ public class SafScriptFileTests
 	public void LoadText_reads_animation_frames_outside_sav_tree()
 	{
 		var accessor = new InMemoryContentDirAccessor(Root);
-		using var gamePaths = new GamePathsScope(accessor);
+		using var gamePaths = new RootScope(Root, accessor);
 		using var scope = GlobalStatic.OpenScope(new ConfigData());
 
 		var badDir = SafCompat.ResolveSubPath(Root, "bad");
@@ -112,7 +100,7 @@ public class SafScriptFileTests
 	public void Relative_script_path_rejects_unsafe_or_unsupported_locations(string input)
 	{
 		var accessor = new InMemoryContentDirAccessor(Root);
-		using var gamePaths = new GamePathsScope(accessor);
+		using var gamePaths = new RootScope(Root, accessor);
 
         Assert.False(SafCompat.TryResolveGameRelativePath(input, createParentDirectories: false, out _));
     }
@@ -121,7 +109,7 @@ public class SafScriptFileTests
 	public void GetDatFiles_returns_logical_suffixes_for_content_uris()
 	{
 		var accessor = new InMemoryContentDirAccessor(Root);
-		using var gamePaths = new GamePathsScope(accessor);
+		using var gamePaths = new RootScope(Root, accessor);
         var datDir = SafCompat.ResolveSubPath(Root, "dat");
         SafCompat.CreateDirectory(datDir);
         accessor.Seed(SafCompat.CombinePath(datDir, "var_01.dat"), [0x01]);
@@ -136,7 +124,7 @@ public class SafScriptFileTests
 	public void SaveText_and_LoadText_support_content_uri_string_and_number_paths()
 	{
 		var accessor = new InMemoryContentDirAccessor(Root);
-		using var gamePaths = new GamePathsScope(accessor);
+		using var gamePaths = new RootScope(Root, accessor);
         using var scope = GlobalStatic.OpenScope(new ConfigData());
         var saveText = FunctionMethodCreator.GetMethodList()["SAVETEXT"];
         var loadText = FunctionMethodCreator.GetMethodList()["LOADTEXT"];
@@ -174,7 +162,7 @@ public class SafScriptFileTests
 	public void SaveText_and_LoadText_share_relative_extension_normalization()
 	{
 		var accessor = new InMemoryContentDirAccessor(Root);
-		using var gamePaths = new GamePathsScope(accessor);
+		using var gamePaths = new RootScope(Root, accessor);
 		using var scope = GlobalStatic.OpenScope(new ConfigData());
 		var saveText = FunctionMethodCreator.GetMethodList()["SAVETEXT"];
 		var loadText = FunctionMethodCreator.GetMethodList()["LOADTEXT"];

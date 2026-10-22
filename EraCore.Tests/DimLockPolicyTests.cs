@@ -1,4 +1,4 @@
-using MinorShift.Emuera.Files;
+﻿using MinorShift.Emuera.Files;
 using System;
 using System.IO;
 using MinorShift.Emuera.Runtime.Config;
@@ -71,11 +71,11 @@ public class DimLockPolicyTests
 		try
 		{
 			File.WriteAllText(Path.Combine(tempRoot, "emuera.config"), "; game-bundled knob attempt\nDimLockPolicy:nolock\n");
-			GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
+			var paths = GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
 
-			var config = new ConfigData();
+			var config = new ConfigData(paths);
 			using var globals = GlobalStatic.OpenScope(config);
-			Assert.True(config.LoadConfig(tempRoot));
+			Assert.True(config.LoadConfig());
 
 			// 无对应 ConfigCode，loadConfig 对该键只登记告警（UnknownConfigKeys）、不改任何项——旋钮保持 null（=Auto 恒加锁）
 			Assert.Null(config.OverrideDimLockPolicy);
@@ -93,11 +93,11 @@ public class DimLockPolicyTests
 		Directory.CreateDirectory(tempRoot);
 		try
 		{
-			GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
+			var paths = GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
 
-			var config = new ConfigData();
+			var config = new ConfigData(paths);
 			using var globals = GlobalStatic.OpenScope(config);
-			Assert.True(config.LoadConfig(tempRoot));
+			Assert.True(config.LoadConfig());
 			config.OverrideDimLockPolicy = DimLockPolicy.NoLock;
 
 			Assert.True(config.SaveConfig());

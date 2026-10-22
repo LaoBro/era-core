@@ -1,4 +1,4 @@
-using MinorShift.Emuera.Files;
+﻿using MinorShift.Emuera.Files;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -317,10 +317,9 @@ public class ErbIrCacheTests
 	{
 		var tempRoot = Path.Combine(Path.GetTempPath(), "emuera-irhit-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(tempRoot);
-		var previousPaths = GamePaths.Current;
-		GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
-		var config = new ConfigData();
-		using var scope = new RootedScope(GlobalStatic.OpenScope(config), tempRoot, previousPaths);
+		using var rootScope = new RootScope(tempRoot, new FileSystemGameDirAccessor());
+		var config = new ConfigData(rootScope.Paths);
+		using var scope = new RootedScope(GlobalStatic.OpenScope(config), rootScope, tempRoot);
 		config.GetConfigItem(ConfigCode.IrDiskCacheLoad).SetValue(true);
 		config.GetConfigItem(ConfigCode.LazyFunctionLoad).SetValue(true);
 
@@ -400,10 +399,9 @@ public class ErbIrCacheTests
 	{
 		var tempRoot = Path.Combine(Path.GetTempPath(), "emuera-listdiff-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(tempRoot);
-		var previousPaths = GamePaths.Current;
-		GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
-		var config = new ConfigData();
-		using var scope = new RootedScope(GlobalStatic.OpenScope(config), tempRoot, previousPaths);
+		using var rootScope = new RootScope(tempRoot, new FileSystemGameDirAccessor());
+		var config = new ConfigData(rootScope.Paths);
+		using var scope = new RootedScope(GlobalStatic.OpenScope(config), rootScope, tempRoot);
 		var erbDir = Path.Combine(tempRoot, "erb") + Path.DirectorySeparatorChar;
 		Directory.CreateDirectory(erbDir);
 		Directory.CreateDirectory(Path.Combine(erbDir, "SUB"));
@@ -511,12 +509,11 @@ public class ErbIrCacheTests
 	{
 		var tempRoot = Path.Combine(Path.GetTempPath(), "emuera-irfd-eq-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(tempRoot);
-		var previousPaths = GamePaths.Current;
-		GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
-		var config = new ConfigData();
+		using var rootScope = new RootScope(tempRoot, new FileSystemGameDirAccessor());
+		var config = new ConfigData(rootScope.Paths);
 		// 嵌套 *#* 目录（ev/1#INNER）只有在 SearchSubdirectory 开启时才进入 * 扫描（Config.cs:985 门控）。
 		config.GetConfigItem(ConfigCode.SearchSubdirectory).SetValue(true);
-		using var scope = new RootedScope(GlobalStatic.OpenScope(config), tempRoot, previousPaths);
+		using var scope = new RootedScope(GlobalStatic.OpenScope(config), rootScope, tempRoot);
 		var erbDir = Path.Combine(tempRoot, "erb") + Path.DirectorySeparatorChar;
 		Directory.CreateDirectory(Path.Combine(erbDir, "1#EV"));
 		Directory.CreateDirectory(Path.Combine(erbDir, "1#EV", "NEST"));
@@ -596,10 +593,9 @@ public class ErbIrCacheTests
 	{
 		var tempRoot = Path.Combine(Path.GetTempPath(), "emuera-irfd-hit-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(tempRoot);
-		var previousPaths = GamePaths.Current;
-		GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
-		var config = new ConfigData();
-		using var scope = new RootedScope(GlobalStatic.OpenScope(config), tempRoot, previousPaths);
+		using var rootScope = new RootScope(tempRoot, new FileSystemGameDirAccessor());
+		var config = new ConfigData(rootScope.Paths);
+		using var scope = new RootedScope(GlobalStatic.OpenScope(config), rootScope, tempRoot);
 		config.GetConfigItem(ConfigCode.IrDiskCacheLoad).SetValue(true);
 		config.GetConfigItem(ConfigCode.LazyFunctionLoad).SetValue(true);
 		var erbDir = Path.Combine(tempRoot, "erb") + Path.DirectorySeparatorChar;
@@ -732,7 +728,7 @@ public class ErbIrCacheTests
 	public void TryDeleteCache_removes_ir_and_sidecar_local_layout()
 	{
 		using var scope = OpenScope();
-		string exeDir = GamePaths.Current.ExeDir;
+		string exeDir = scope.Paths.ExeDir;
 		string irPath = ErbIrCache.GetIrCachePath(exeDir);
 		Directory.CreateDirectory(Path.GetDirectoryName(irPath)!);
 		File.WriteAllText(irPath, "ir");
@@ -805,7 +801,7 @@ public class ErbIrCacheTests
 		// 本地 FS（真实递归枚举）的嵌套目录等价钉子——stub 只支持平铺，真机 SAF 的递归语义由本测试代言
 		//（M4 同款分工：stub 测 override 侧，递归语义由本地 FS 覆盖）。
 		using var scope = OpenScope();
-		string exeDir = GamePaths.Current.ExeDir;
+		string exeDir = scope.Paths.ExeDir;
 		var erbDir = Path.Combine(exeDir, "erb") + Path.DirectorySeparatorChar;
 		Directory.CreateDirectory(Path.Combine(erbDir, "SYS", "EVT"));
 		File.WriteAllText(Path.Combine(erbDir, "TOP.ERB"), "@T\nRETURN\n");
@@ -862,37 +858,39 @@ public class ErbIrCacheTests
 
 	private static IDisposable OpenRootedScope(string root, IGameDirAccessor accessor)
 	{
-		var previous = GamePaths.Current;
-		GamePaths.Resolve(root, accessor);
-		var config = new ConfigData();
-		return new RootedScope(GlobalStatic.OpenScope(config), tempRoot: null!, previous);
+		var rootScope = new RootScope(root, accessor);
+		var config = new ConfigData(rootScope.Paths);
+		return new RootedScope(GlobalStatic.OpenScope(config), rootScope, tempRoot: null);
 	}
 
 	/// <summary>ComputeContentFingerprint 读 Config.Config.*（指纹的解析配置集输入）——开 GlobalStatic 域。</summary>
-	private static IDisposable OpenScope()
+	private static Scope OpenScope()
 	{
 		var tempRoot = Path.Combine(Path.GetTempPath(), "emuera-irfp-test-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(tempRoot);
-		GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
-		var config = new ConfigData();
-		return new Scope(GlobalStatic.OpenScope(config), tempRoot);
+		var rootScope = new RootScope(tempRoot, new FileSystemGameDirAccessor());
+		var config = new ConfigData(rootScope.Paths);
+		return new Scope(GlobalStatic.OpenScope(config), rootScope, tempRoot);
 	}
 
-	private sealed class Scope(IDisposable inner, string tempRoot) : IDisposable
+	private sealed class Scope(IDisposable inner, IDisposable rootScope, string tempRoot) : IDisposable
 	{
+		public GamePaths Paths { get; } = ((RootScope)rootScope).Paths;
+
 		public void Dispose()
 		{
 			inner.Dispose();
+			rootScope.Dispose();
 			try { Directory.Delete(tempRoot, recursive: true); } catch { /* 临时目录清理失败不掩盖断言 */ }
 		}
 	}
 
-	private sealed class RootedScope(IDisposable inner, string tempRoot, GamePaths previous) : IDisposable
+	private sealed class RootedScope(IDisposable inner, IDisposable rootScope, string? tempRoot) : IDisposable
 	{
 		public void Dispose()
 		{
 			inner.Dispose();
-			GamePaths.SetCurrent(previous);
+			rootScope.Dispose();
 			if (tempRoot != null)
 			{
 				try { Directory.Delete(tempRoot, recursive: true); } catch { /* 临时目录清理失败不掩盖断言 */ }

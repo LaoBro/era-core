@@ -183,11 +183,11 @@ public class ErbIrLoadPipelineTests
 		return (env, irPath, pending, firstDirs, erbFileCount);
 	}
 
-	/// <summary>临时游戏根 + 配置作用域（<see cref="GamePaths"/> 与 <c>GlobalStatic</c> 均为进程级静态，须成对还原）。</summary>
+	/// <summary>临时游戏根 + 配置作用域（根走 <see cref="RootScope"/> 的 AsyncLocal 作用域，出块即还原）。</summary>
 	private sealed class TempRoot : IDisposable
 	{
+		private readonly RootScope _rootScope;
 		private readonly IDisposable _scope;
-		private readonly GamePaths _previous;
 
 		internal string Root { get; }
 
@@ -195,16 +195,15 @@ public class ErbIrLoadPipelineTests
 		{
 			Root = Path.Combine(Path.GetTempPath(), "emuera-irpipe-" + Guid.NewGuid().ToString("N"));
 			Directory.CreateDirectory(Root);
-			_previous = GamePaths.Current;
-			GamePaths.Resolve(Root, new FileSystemGameDirAccessor());
+			_rootScope = new RootScope(Root, new FileSystemGameDirAccessor());
 			Preload.Clear();
-			_scope = GlobalStatic.OpenScope(new ConfigData());
+			_scope = GlobalStatic.OpenScope(new ConfigData(_rootScope.Paths));
 		}
 
 		public void Dispose()
 		{
 			_scope.Dispose();
-			GamePaths.SetCurrent(_previous);
+			_rootScope.Dispose();
 			Preload.Clear();
 			try { Directory.Delete(Root, recursive: true); } catch { /* 临时目录清理失败不掩盖断言 */ }
 		}

@@ -123,11 +123,11 @@ HTTP body —— 的共同终点），再由 **`InputStateApplier`** 翻译成�
 应用私有域是唯一的**豁免域**：由 `AppDataPaths` 界定、经 `AppDataIo` 这一个窄口子 IO（方法只收「相对私有根的名字」，
 越域在签名上不可表达）。
 
-**游戏根由根环境承载**（issue-007）：`GamePaths.Current` 不再是可写的进程级单例字段，而是
-`GameRootEnvironment` 的只读视图——**作用域层**（`AsyncLocal`）由组装根 `CoreSession` 在游戏循环流内建立、
-循环退出即销毁；**装配期视图**（进程级槽位）由 `GamePaths.Resolve` / `SetCurrent` 提交，只服务尚未迁移的读者
-（HTTP 流上的 `/assets`、MAUI UI 线程、既有测试脚手架）。读序：作用域层 → 装配期视图。
-issue-008 把引擎调用点迁到显式根，issue-009 删掉装配期视图。
+**游戏根只由根环境承载**（issue-007 展开，issue-009 contract 收敛）：`GameRootEnvironment` 的唯一形态是
+会话作用域（`AsyncLocal`）——由组装根 `CoreSession` 在游戏循环流内 `Establish`，循环退出即销毁。
+`GamePaths.Resolve` 是纯构造，不写任何进程级槽位；`GamePaths.Current` / `SetCurrent` / `ResolvePreview`
+与装配期视图均已删除。作用域外 `Program.*` 抛 `InvalidOperationException`，不回落到进程启动目录；
+初始化与配置加载显式携带根（`ConfigData(GamePaths)` / `IGameDirAccessor`），宿主持显式 `GameTree`。
 
 ### 4.3 不变量
 
@@ -136,7 +136,7 @@ issue-008 把引擎调用点迁到显式根，issue-009 删掉装配期视图。
 | F-1 | **游戏树**内全部文件 IO 必须经 `IGameDirAccessor`；禁止直接 `File.*` / `Directory.*` | Android SAF 下静默失败、平台差异泄漏进引擎 |
 | F-4 | 应用私有域是**唯一豁免域** —— domain 由 `AppDataPaths`（+ `AppDataIo` 窄口子）显式界定，经 `AppDataPaths.IsUnder` 机检 | 豁免边界回到「靠开发者记得」的隐式状态 |
 | F-5 | 例外清单的**唯一真值是守卫测试 `GameDirAccessorIoPolicyTests` 的 `KnownDirectIo`**（逐文件、逐 Cap 盯住，并检测陈旧登记）；新增 IO 立即判「未登记」转红。**本文不复制该清单** | 例外蔓延成事实上的第二套 IO |
-| F-6 | 游戏根**只能经 `GameRootEnvironment` 写入**：`Establish` 的生产调用点唯一（`Sessions/CoreSession.cs`，由守卫测试机检），`GamePaths.Current` 无 setter、`GamePaths` 内不得再有根单例字段 | 拆除期间的旧循环读到新根，去新目录找 ERB/CSV（issue-001 的故障站点） |
+| F-6 | 游戏根**只能经 `GameRootEnvironment.Establish` 写入会话作用域**：生产调用点唯一（`Sessions/CoreSession.cs`，由守卫测试机检）；`GamePaths` / `Program` 不得有 `GamePaths` 类型静态字段，代码库不得出现 `GamePaths.Current` / `SetCurrent` / `ResolvePreview` / `GameRootEnvironment.Commit`（源码守卫） | 拆除期间的旧循环读到新根，去新目录找 ERB/CSV（issue-001 的故障站点）；单例复活 |
 
 > GameTree 域已归零；剩余豁免均为平台 / 私有域性质（访问器底层实现、accessor 上任之前的探测、进程工作目录），逐条理由写在上述测试的登记里。收敛过程见 ADR-0019 及后续各 ADR 与 Git 历史。
 
@@ -152,9 +152,9 @@ issue-008 把引擎调用点迁到显式根，issue-009 删掉装配期视图。
 
 | 宿主 | 声明的输入能力位 | 输入 | 输出 | 文件 | 方言 profile |
 |---|---|---|---|---|---|
-| **Cli** | `Geometry \| KeyboardState` | 经 `CoreSession.Input`（`CreateForCli` 组装根；VT `AgentCliProtocol` 同步派发） | 经 `CoreSession.Output`（`AgentCliProtocol` + `TerminalRenderer`；视口 `CliViewport`） | 经 `CoreSession.Files`（`FileSystemGameDirAccessor` + `GamePaths`）；入口 `Resolve` 提交根，会话在循环流内建立作用域 | `--profile`（启动期 fail-fast；缺省 `v24pure`） |
+| **Cli** | `Geometry \| KeyboardState` | 经 `CoreSession.Input`（`CreateForCli` 组装根；VT `AgentCliProtocol` 同步派发） | 经 `CoreSession.Output`（`AgentCliProtocol` + `TerminalRenderer`；视口 `CliViewport`） | 经 `CoreSession.Files`（`FileSystemGameDirAccessor` + `GamePaths`）；入口 `Resolve` 显式构造根并注入配置，会话在循环流内建立作用域 | `--profile`（启动期 fail-fast；缺省 `v24pure`） |
 | **Server / HTTP** | `KeyboardState \| Hover \| Focus` | 经 `CoreSession.Input`（会话持有的 `DefaultInputHost`；value 由门面编码成 input JSONL 入队） | Kestrel 壳路由 + `WsConnectionHandler` → `WsRelay`；`CoreSession.Output` + `HttpSessionIO` 双写 | 请求流无会话作用域：`/assets` 经活动会话的 `CoreSession.Files`（`DirAccessor` + `Root`），`/state` 的 `gameDir` 同源（issue-008） | 同 Cli（`ServerRunner` 透传） |
-| **Maui** | 复用 Server 同一 `DefaultInputHost` | 同 Server（经 `CoreSession.Input`） | `BridgeHost.TurnPumpAsync` 订阅 `OutputHub`（会话由 `CoreSession` 持有） | `BridgeHost.ResolveDirAccessor`：`content://` → `SafGameDirAccessor.Instance`，否则 `FileSystemGameDirAccessor`；UI 线程读装配期视图（issue-009 迁移点：宿主改持显式根） | 设置项 `app.dialectProfile`（建会话前读，重载游戏生效） |
+| **Maui** | 复用 Server 同一 `DefaultInputHost` | 同 Server（经 `CoreSession.Input`） | `BridgeHost.TurnPumpAsync` 订阅 `OutputHub`（会话由 `CoreSession` 持有） | `BridgeHost.ResolveDirAccessor`：`content://` → `SafGameDirAccessor.Instance`，否则 `FileSystemGameDirAccessor`；宿主持显式 `GameTree`（来自 `ConfigData.Root`），经 `IJsBridge.SetGameRoot` 推给资源通道 | 设置项 `app.dialectProfile`（建会话前读，重载游戏生效） |
 
 ---
 
@@ -166,7 +166,7 @@ issue-008 把引擎调用点迁到显式根，issue-009 删掉装配期视图。
 | 输出 | `OutputPort` / `OutputHub` | ADR-0003 / 0013 / 0014 accepted 且已落地；帧形状由 `TurnFrames` 收口（ADR-0032），宿主经 `OutputPort` 读快照/增量 |
 | 文件 | `GameTree` / `IGameDirAccessor` | ADR-0019 accepted 且已落地（双实现）；`GameTree` 相对路径门面已落地，选择器移出 IO 契约；剩余豁免由守卫测试机检 |
 | 会话 | `CoreSession` / `CoreSessionOptions` | issue-006 落地：公共组装根（`StartAsync` / `StopAsync` + 三轴）；CLI/server/MAUI 复用同一实现；公共面白名单守卫 `SessionsPublicSurfaceTests` |
-| 游戏根 | `GameRootEnvironment`（internal，非宿主面） | issue-007 expand + issue-008 migrate 已落地：会话作用域根环境（`CoreSession` 建立 / 循环退出销毁）+ 装配期视图；引擎与服务端已无 `GamePaths.Current` 代码引用（守卫机检），`Program.*` 是唯一兼容转发垫片。装配期视图、`GamePaths.Current` 与 MAUI 宿主/测试读点由 issue-009 删除 |
+| 游戏根 | `GameRootEnvironment`（internal，非宿主面） | issue-007 expand + issue-008 migrate + issue-009 contract 已落地：只剩会话作用域一种形态（`CoreSession` 建立 / 循环退出销毁）；`GamePaths.Resolve` 纯构造，`Current` / `SetCurrent` / `ResolvePreview` 与装配期视图已删除；`Program.*` 是唯一兼容转发垫片（作用域外抛异常）；源码守卫防单例复活 |
 
 > 本表随里程碑推进而改，不视为稳定契约。
 

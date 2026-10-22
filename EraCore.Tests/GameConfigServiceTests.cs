@@ -1,8 +1,9 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using MinorShift.Emuera.Output;
+using MinorShift.Emuera.Files;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Server;
 using MinorShift.Emuera.Sessions;
@@ -85,7 +86,7 @@ public class GameConfigServiceTests
                 System.Text.Encoding.UTF8);
 
             var svc = CreateService();
-            svc.Reload(gameDir);
+            svc.Reload(GamePaths.Resolve(gameDir, new FileSystemGameDirAccessor()));
 
             Assert.Equal("#7F0000", svc.GetWindowMetrics().ForeColor);
         });
@@ -103,7 +104,7 @@ public class GameConfigServiceTests
                 System.Text.Encoding.UTF8);
 
             var svc = CreateService();
-            svc.Reload(gameDir);
+            svc.Reload(GamePaths.Resolve(gameDir, new FileSystemGameDirAccessor()));
 
             Assert.Equal(1, svc.GetWindowMetrics().VisibleRows);
         });
@@ -116,7 +117,7 @@ public class GameConfigServiceTests
         var before = svc.Current;
         var gameDir = SessionRegistryTests.FindTestGameDir();
 
-        var reloaded = svc.Reload(gameDir);
+        var reloaded = svc.Reload(GamePaths.Resolve(gameDir, new FileSystemGameDirAccessor()));
 
         Assert.NotSame(before, reloaded);
         Assert.Same(reloaded, svc.Current);
@@ -149,7 +150,7 @@ public class GameConfigServiceTests
                 System.Text.Encoding.UTF8);
 
             var svc = new GameConfigService(new ConfigData(), overrideReport);
-            var reloaded = svc.Reload(gameDir);
+            var reloaded = svc.Reload(GamePaths.Resolve(gameDir, new FileSystemGameDirAccessor()));
 
             Assert.Equal(expected, reloaded.GetConfigValue<bool>(ConfigCode.DisplayReport));
         });
@@ -170,7 +171,7 @@ public class GameConfigServiceTests
                 System.Text.Encoding.UTF8);
 
             var svc = new GameConfigService(new ConfigData(), displayReportOverride: true);
-            var reloaded = svc.Reload(gameDir);
+            var reloaded = svc.Reload(GamePaths.Resolve(gameDir, new FileSystemGameDirAccessor()));
 
             Assert.True(reloaded.GetConfigValue<bool>(ConfigCode.DisplayReport));
         });

@@ -1,4 +1,5 @@
 using System;
+using MinorShift.Emuera.Files;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime.Config;
 
@@ -63,19 +64,19 @@ internal sealed class GameConfigService
     }
 
     /// <summary>
-    /// 重建 ConfigData 并替换引用（issue 05 /load-game 步骤 5）。
-    /// 使用 LoadConfig(exeDir) 显式读取新游戏目录的 emuera.config，避免
-    /// ConfigData.configPath（实例 readonly，构造时绑定）绑定到旧目录。
+    /// 重建绑定新游戏根的 ConfigData 并替换引用（issue 05 /load-game 步骤 5）。
+    /// issue-009：根显式传入（<paramref name="paths"/>），实例的 configPath/accessor 在构造期
+    /// 绑定到新目录——不再有「先构造空配置、再按 exeDir 重载」的两段式，也不写进程级根。
     ///
     /// 注意：本方法不持锁（锁归 <see cref="SessionRegistry"/>）；
     /// ConfigData.SetCurrent（AsyncLocal）与之后的新 CoreSession 构造必须在同一 async 流内
     /// 连续执行（AsyncLocal 经 ExecutionContext 传播给 Task.Run 起的游戏循环，
     /// 供其间接读 Config.Current）——调用方禁止在两者之间插 Task.Run。
     /// </summary>
-    public ConfigData Reload(string exeDir)
+    public ConfigData Reload(GamePaths paths)
     {
-        var newConfig = new ConfigData();
-        newConfig.LoadConfig(exeDir);
+        var newConfig = new ConfigData(paths);
+        newConfig.LoadConfig();
         ConfigData.SetCurrent(newConfig);
         _configData = newConfig;
         // ADR-0030：加载后应用全局设置（perf 覆盖/诊断旋钮/displayReportOverride/agentLog）——

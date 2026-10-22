@@ -1,4 +1,4 @@
-using MinorShift.Emuera.Files;
+﻿using MinorShift.Emuera.Files;
 using System;
 using System.IO;
 using System.Text;
@@ -17,7 +17,7 @@ public class SafCompatWriteTests
     public void CombinePath_local_joins_file_under_dir()
     {
         using var tmp = new TempDir();
-        _ = GamePaths.Resolve(tmp.Root, new FileSystemGameDirAccessor());
+        using var rootScope = new RootScope(tmp.Root, new FileSystemGameDirAccessor());
 
         var sav = SafCompat.ResolveSubPath(tmp.Root, "sav");
         var global = SafCompat.CombinePath(sav, "global.sav");
@@ -30,7 +30,7 @@ public class SafCompatWriteTests
     public void OpenWrite_CreateDirectory_roundtrip_via_SafCompat()
     {
         using var tmp = new TempDir();
-        _ = GamePaths.Resolve(tmp.Root, new FileSystemGameDirAccessor());
+        using var rootScope = new RootScope(tmp.Root, new FileSystemGameDirAccessor());
 
         var sav = SafCompat.ResolveSubPath(tmp.Root, "sav");
         SafCompat.CreateDirectory(sav);
@@ -58,7 +58,7 @@ public class SafCompatWriteTests
     public void WriteAllText_roundtrip()
     {
         using var tmp = new TempDir();
-        _ = GamePaths.Resolve(tmp.Root, new FileSystemGameDirAccessor());
+        using var rootScope = new RootScope(tmp.Root, new FileSystemGameDirAccessor());
         var path = Path.Combine(tmp.Root, "note.txt");
         SafCompat.WriteAllText(path, "hello", Encoding.UTF8);
         Assert.Equal("hello", SafCompat.ReadAllText(path, Encoding.UTF8));

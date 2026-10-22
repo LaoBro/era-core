@@ -123,10 +123,10 @@ public sealed class CoreSession : IDisposable
     private readonly Func<AgentProtocolBase, Task>? _runLoop;
 
     /// <summary>
-    /// 本会话的游戏根（issue-007）。<see cref="GameRootEnvironment"/> 的唯一建立者是组装根，
+    /// 本会话的游戏根（issue-007 / issue-009）。<see cref="GameRootEnvironment"/> 的唯一建立者是组装根，
     /// 而建立点 <see cref="GameLoopAsync"/> 运行在 <c>Task.Run</c> 之后的独立流里——
     /// 所以根必须在构造/启动时就钉在本字段上，不能等到循环流里再读视图。
-    /// 公共路径在 <see cref="StartAsync"/> 内校验后赋值；宿主路径取构造时本流的根环境。
+    /// 公共路径在 <see cref="StartAsync"/> 内校验后赋值；宿主路径取装配好的 <see cref="ConfigData.Root"/>。
     /// </summary>
     private GamePaths? _root;
 
@@ -204,9 +204,9 @@ public sealed class CoreSession : IDisposable
         _teardownTimeout = teardownTimeout ?? TimeSpan.FromSeconds(5);
         _inputHost = new DefaultInputHost(capabilities);
         _dispatchValue = value => _io.EnqueueInput(GameServerProtocol.BuildInputJsonl(value));
-        // 宿主路径（Server / MAUI / CLI / 测试）在构造本会话前已完成装配期提交，
-        // 此处把「本流此刻的根」钉成会话的根——之后任何流上的提交都改写不了它。
-        _root = GameRootEnvironment.Current;
+        // 宿主路径（Server / MAUI / CLI / 测试）的根随装配好的配置显式传入；
+        // issue-009 起不再读进程级视图，也不再有装配期提交可读。
+        _root = configData.Root;
         Files = files ?? CreateDefaultFiles();
         Input = new InputPort(_inputHost, value => _dispatchValue(value));
         Controller = new Controller(agentLease);
@@ -269,7 +269,7 @@ public sealed class CoreSession : IDisposable
                 GamePaths paths;
                 try
                 {
-                    paths = GamePaths.ResolvePreview(_gameRoot, _dirAccessor!);
+                    paths = GamePaths.Resolve(_gameRoot, _dirAccessor!);
                     paths.Validate();
                 }
                 catch (GamePathValidationException ex)
@@ -283,10 +283,8 @@ public sealed class CoreSession : IDisposable
 
                 try
                 {
-                    // 会话的根先钉在字段上（建立点在游戏循环流内）；再做装配期提交，
-                    // 让尚未迁移的进程级读者（HTTP /assets、UI 线程）读到本会话的根。
+                    // 会话的根钉在字段上，由游戏循环流自己建立作用域（issue-009：无隐式提交）。
                     _root = paths;
-                    GameRootEnvironment.Commit(paths);
                     var (configData, terminalSetup) = EmueraRuntimeInitializer.Initialize(paths, _dirAccessor!);
                     _configData = configData;
                     _terminalSetup = terminalSetup;
@@ -374,9 +372,9 @@ public sealed class CoreSession : IDisposable
     {
         // 本会话的根环境：建立在游戏循环流的最外层，随循环退出销毁（issue-007）。
         // 从这里往后的所有引擎读取（Program.* 转发、ConsoleStateManager、Process、SafCompat……）
-        // 读的都是本会话的根——别的流上稍后发生的装配提交改不到它；
+        // 读的都是本会话的根——别的流上稍后建立的根改不到它；
         // 反过来，本会话停止后这个作用域也不再残留，下一次启动从它自己的根开始。
-        using var rootScope = GameRootEnvironment.Establish(_root ?? GameRootEnvironment.Current);
+        using var rootScope = GameRootEnvironment.Establish(_root);
         try
         {
             var result = await GameLoopComposer.RunAsync(

@@ -133,7 +133,7 @@
 - 设计决策（推翻旧设计纪要，详见 `spec-t025-idle-start.md` 决策树 D1–D17）：
   - `Program.Main` 中 `Validate()` 失败按模式分流：server 模式降级 warn 继续（空闲启动）；CLI 模式打印提示 + `Console.ReadLine()` 等回车再退出（D1/D2/D17）
   - **不引入** `_gameLoaded` 标志——空闲/已加载判定复用 `KestrelGameServer` 现有 `_session == null` 不变量（D4/D10）
-  - `GamePaths.Current` 保持默认目录、`/load-game` 成功时覆盖（D3/D12，推翻旧「允许 null + 读取点加守卫」）
+  - `GamePaths.Current` 保持默认目录、`/load-game` 成功时覆盖（D3/D12，推翻旧「允许 null + 读取点加守卫」）——**已被 issue-009 取代**：进程级单例删除，根改为会话作用域
   - 空闲态 `GET /state` 的 `gameDir` 显式置 `null`（D5/D15）——前端据此可靠判 idle 并展示选择器
   - 空闲态 `POST /session` → 503 `{"error":"No game loaded"}`（D4/D16），早于「已有活跃会话 409」判断
   - 前端 `App.vue` 挂载改为：先 `GET /state`，若 `gameDir == null` / `state == "Idle"` → 展示选择器 + 预填 localStorage 上次目录，**不自动 loadGame**（D9 rev，推翻旧「刷新后自动加载」）

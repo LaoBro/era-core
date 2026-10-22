@@ -1,7 +1,8 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Files;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Server;
 using MinorShift.Emuera.Sessions;
@@ -236,7 +237,7 @@ public class AppSettingsTests
         var settings = CreateSettings(new Dictionary<string, string> { [AppSettings.DisplayReportOverrideKey] = "off" });
         var svc = new GameConfigService(new ConfigData(), appSettings: settings);
 
-        var reloaded = svc.Reload(tmp.Root);
+        var reloaded = svc.Reload(GamePaths.Resolve(tmp.Root, new FileSystemGameDirAccessor()));
 
         Assert.False(reloaded.GetConfigValue<bool>(ConfigCode.DisplayReport));
     }
@@ -250,7 +251,7 @@ public class AppSettingsTests
         var settings = CreateSettings(new Dictionary<string, string> { [AppSettings.SweepGatePolicyKey] = "forceoff" });
         var svc = new GameConfigService(new ConfigData(), appSettings: settings);
 
-        var reloaded = svc.Reload(tmp.Root);
+        var reloaded = svc.Reload(GamePaths.Resolve(tmp.Root, new FileSystemGameDirAccessor()));
 
         Assert.Equal(SweepGatePolicy.ForceOff, reloaded.OverrideSweepGatePolicy);
     }

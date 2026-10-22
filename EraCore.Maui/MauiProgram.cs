@@ -21,7 +21,7 @@ namespace EraCore.Maui;
 /// <para>
 /// <b>无游戏启动（2026-08-06 移除 test_game 打包后）</b>：
 /// 启动期不 Resolve 游戏目录、不 <see cref="EmueraRuntimeInitializer.Initialize"/>——
-/// <c>GamePaths.Current</c> 保持 null（<c>BridgeHost.HandleReady</c> 据此跳过 Start），
+/// 占位 <see cref="ConfigData"/> 的 Root 为 null（<c>BridgeHost.HandleReady</c> 据此跳过 Start），
 /// DI 注册占位 <see cref="ConfigData"/> / <see cref="ITerminalSetup"/>（无游戏时不消费）。
 /// 用户经游戏列表 / 目录选择器选游戏后，<c>MainPage.OnReloadGame</c> 才
 /// <see cref="EmueraRuntimeInitializer.Initialize"/> 重建真实实例并 Start 游戏循环。
@@ -98,7 +98,7 @@ public static class MauiProgram
 			Console.WriteLine($"[maui] AgentLog configured: enabled={agentLogEnabled}");
 			// === spec ID8 启动编排（2026-08-06 改为无游戏启动） ===
             // test_game 内置打包已移除（见 csproj MauiAsset 注释）——启动期不再解压/Resolve/Initialize：
-            // - GamePaths.Current 保持 null——BridgeHost.HandleReady 据此跳过 Start（无游戏可跑），
+            // - 占位 ConfigData.Root 为 null——BridgeHost.HandleReady 据此跳过 Start（无游戏可跑），
             //   等用户经游戏列表 / 目录选择器选游戏（loadGame → MainPage.OnReloadGame 重建 host + Start）
             // - configData/terminalSetup 用占位实例注册 DI——无游戏时不消费（BridgeHost 不 Start）；
             //   用户选游戏后 MainPage.OnReloadGame 经 EmueraRuntimeInitializer.Initialize

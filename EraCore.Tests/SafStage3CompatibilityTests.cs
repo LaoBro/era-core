@@ -1,4 +1,4 @@
-using MinorShift.Emuera.Files;
+﻿using MinorShift.Emuera.Files;
 using System;
 using System.IO;
 using System.Text;
@@ -27,7 +27,7 @@ public sealed class SafStage3CompatibilityTests
 	public void Saf_language_generation_writes_through_the_game_accessor()
 	{
 		var accessor = new InMemoryContentDirAccessor(Root);
-		using var scope = new GamePathsScope(Root, accessor);
+		using var scope = new RootScope(Root, accessor);
 
 		Lang.GenerateDefaultLangFile();
 
@@ -42,7 +42,7 @@ public sealed class SafStage3CompatibilityTests
 	public async Task Saf_preload_caches_erd_and_als_files()
 	{
 		var accessor = new InMemoryContentDirAccessor(Root);
-		using var scope = new GamePathsScope(Root, accessor);
+		using var scope = new RootScope(Root, accessor);
 		var erbDir = SafCompat.ResolveSubPath(Root, "erb");
 		SafCompat.CreateDirectory(erbDir);
 		var erd = SafCompat.CombinePath(erbDir, "DVAR.erd");
@@ -67,7 +67,7 @@ public sealed class SafStage3CompatibilityTests
 	public void Saf_plugins_are_rejected_with_an_explicit_message()
 	{
 		var accessor = new InMemoryContentDirAccessor(Root);
-		using var scope = new GamePathsScope(Root, accessor);
+		using var scope = new RootScope(Root, accessor);
 		var pluginDir = SafCompat.ResolveSubPath(Root, "Plugins");
 		SafCompat.CreateDirectory(pluginDir);
 		accessor.Seed(SafCompat.CombinePath(pluginDir, "sample.dll"), [0x4D, 0x5A]);
@@ -76,13 +76,4 @@ public sealed class SafStage3CompatibilityTests
 		Assert.Contains("does not support loading game DLL plugins", error.Message, StringComparison.Ordinal);
 	}
 
-	private sealed class GamePathsScope : IDisposable
-	{
-		private readonly GamePaths previous = GamePaths.Current;
-
-		public GamePathsScope(string root, IGameDirAccessor accessor)
-			=> _ = GamePaths.Resolve(root, accessor);
-
-		public void Dispose() => GamePaths.SetCurrent(previous);
-	}
 }

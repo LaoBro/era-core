@@ -1,4 +1,4 @@
-using MinorShift.Emuera.Files;
+﻿using MinorShift.Emuera.Files;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -147,8 +147,9 @@ $CENSUS_DOLLAR
 		//   ② 默认语言编码未设 → LangManager.lang 为 null → VARIABLE.ERH 的 #DIM 常量求值 NRE。
 		// 正路：LoadConfig(exeDir)（ConfigData.cs:785，读 <exeDir>/emuera.config + csv 下 default/fixed），
 		// 再补跑 ApplyPostLoadEffects()（LangManager.setEncode 的唯一入口，:874-887；幂等）。
-		ConfigData.Current!.LoadConfig(gameDir);
-		ConfigData.Current!.ApplyPostLoadEffects(GamePaths.Current?.DirAccessor);
+		var cfg = ConfigData.Current!;
+		cfg.LoadConfig();
+		cfg.ApplyPostLoadEffects(cfg.Root?.DirAccessor);
 		await h.InitializeAsync(); // 用游戏自带配置加载（生产形态；真机 fp 实测 NR=true）
 
 		var all = h.LabelDic.GetAllLabels(true);
@@ -184,8 +185,9 @@ $CENSUS_DOLLAR
 		var cap = int.TryParse(Environment.GetEnvironmentVariable("ERACORE_CENSUS_LABELS"), out var c) && c > 0 ? c : 400;
 
 		using var h = new LoaderTestHarness(gameDir);
-		ConfigData.Current!.LoadConfig(gameDir);
-		ConfigData.Current!.ApplyPostLoadEffects(GamePaths.Current?.DirAccessor);
+		var cfg = ConfigData.Current!;
+		cfg.LoadConfig();
+		cfg.ApplyPostLoadEffects(cfg.Root?.DirAccessor);
 		await h.InitializeAsync();
 
 		ForceReduceArgumentOnLoad();

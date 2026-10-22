@@ -5,15 +5,6 @@ namespace MinorShift.Emuera.Files;
 
 internal sealed class GamePaths
 {
-    /// <summary>
-    /// 游戏根的<b>只读视图</b>（issue-007）——不再是可写的进程级单例字段。
-    /// 值来自 <see cref="GameRootEnvironment"/>：本执行作用域建立的根优先，
-    /// 其次装配期最后一次提交的根。
-    /// <para>保留它是为了给尚未迁移的读者（MAUI UI 线程、既有测试脚手架）一个不断档的读法；
-    /// 引擎与服务端调用点已在 issue-008 分批改为显式根，issue-009 删除装配期视图。</para>
-    /// </summary>
-    public static GamePaths Current => GameRootEnvironment.Current!;
-
     public string ExeDir { get; }
     public string CsvDir { get; }
     public string ErbDir { get; }
@@ -54,39 +45,18 @@ internal sealed class GamePaths
     }
 
     /// <summary>
-    /// 构造根并<b>提交到根环境</b>（<see cref="ResolvePreview"/> 与它的差异只剩这一步）。
-    /// issue-007 起提交动作写的是 <see cref="GameRootEnvironment"/>（作用域层 + 装配期视图），
-    /// 不再存在「改写一个进程级单例字段」这回事。
+    /// 构造游戏根（纯函数：不写任何进程级或作用域状态）。
+    /// issue-009 起不再隐式提交给根环境——根的生命周期由持有者负责：
+    /// 会话经 <see cref="GameRootEnvironment.Establish"/> 在自己的循环流内建立，
+    /// 初始化路径把实例显式传给 <c>ConfigData</c> / <c>Lang</c> 等消费者。
     /// </summary>
     public static GamePaths Resolve(string? exeDirArg, IGameDirAccessor dirAccessor)
-    {
-        var paths = ResolvePreview(exeDirArg, dirAccessor);
-        GameRootEnvironment.Commit(paths);
-        return paths;
-    }
-
-    /// <summary>
-    /// 只构造、可随后 <see cref="Validate"/>，**不提交**给根环境。
-    ///
-    /// issue-001：/load-game 需在「拆旧会话」之前完成路径校验（拆旧前拦路径级错误）。
-    /// issue-007 起这条顺序不再是必需的安全措施——会话作用域的根环境建立后，
-    /// 后续提交改写不了正在拆除的旧循环读到的根；但校验阶段确实还没有根要提交，
-    /// 所以本方法仍是校验的唯一入口（两者的差异只剩「是否提交」）。
-    /// </summary>
-    public static GamePaths ResolvePreview(string? exeDirArg, IGameDirAccessor dirAccessor)
     {
         var baseDirectory = exeDirArg ?? DetectDefault();
         var paths = new GamePaths(baseDirectory, dirAccessor);
         paths.DirAccessor = dirAccessor;
         return paths;
     }
-
-    /// <summary>
-    /// 旧 API：提交一个已构造好的根给根环境（等价于 <see cref="Resolve"/> 的提交那一步，
-    /// 不重新构造）。issue 05 /load-game 校验失败时用它回滚装配期视图；
-    /// 迁移完成的 issue-009 删除。
-    /// </summary>
-    internal static void SetCurrent(GamePaths paths) => GameRootEnvironment.Commit(paths);
 
     private static string DetectDefault()
     {

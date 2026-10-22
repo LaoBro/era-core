@@ -13,7 +13,6 @@ namespace MinorShift.Emuera.Tests;
 /// <summary>
 /// SessionRegistry 单元测试（重构补测）：会话创建/删除/替换/WS 订阅的原子操作
 /// 与 outcome 状态机（503/409/201、200/404、400/500、WS 订阅 null/成功）。
-/// 涉及全局静态 GamePaths.Current，与端点测试共享禁用并行的 collection。
 /// </summary>
 [Collection("ServerState")]
 public class SessionRegistryTests
@@ -91,8 +90,8 @@ public class SessionRegistryTests
         Assert.Equal(LoadGameStatus.PathError, result.Status);
         Assert.Equal("DIR_NOT_FOUND", result.Code);
         Assert.NotNull(result.Message);
-        // 静态 Current 未被污染成坏路径（并行下只断言"不是坏路径"）
-        Assert.NotEqual(badPath, GamePaths.Current.ExeDir);
+        // 路径校验失败时 server 状态零改动——不建会话（issue-009：也不再存在可被污染的进程级根）
+        Assert.Null(r.CurrentSession);
     }
 
     [Fact]
@@ -163,9 +162,9 @@ public class SessionRegistryTests
 }
 
 /// <summary>
-/// 共享禁用并行的 collection——测试加载 test_game 会改写全局静态 GamePaths.Current，
+/// 共享禁用并行的 collection——测试加载 test_game 会改写进程级引擎静态（GlobalStatic / Lang 等），
 /// 相关测试类（SessionRegistryTests / KestrelGameServerEndpointTests）加入此 collection
-/// 以串行化，避免互相污染静态状态。
+/// 以串行化，避免互相污染静态状态。游戏根自 issue-009 起是会话作用域，不再是共享状态。
 /// </summary>
 [CollectionDefinition("ServerState", DisableParallelization = true)]
 public class ServerStateCollection

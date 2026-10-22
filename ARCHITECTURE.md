@@ -130,7 +130,7 @@ SQL 方言键引入 Core 的**唯一原生依赖**：`Microsoft.Data.Sqlite` →
 服务器会话约束：
 
 - 同一时间只有一个活跃 `CoreSession`，同时最多一个 Controller（`kind: agent|user`）。
-- 游戏根是**会话作用域**的：`CoreSession` 在游戏循环流内建立根环境、循环退出即销毁；拆除期间的旧循环始终读自己那一局的根，后续装配改写不了它（`GamePaths.Current` 只是该环境的只读视图）。
+- 游戏根是**会话作用域**的：`CoreSession` 在游戏循环流内建立根环境、循环退出即销毁；拆除期间的旧循环始终读自己那一局的根，后续装配改写不了它。进程级根单例已删除（issue-009），`Program.*` 垫片在作用域外抛异常。
 - `POST /load-game` 校验目录、重建运行时并创建新会话；已有活跃会话时返回冲突。
 - `DELETE /session` 结束当前会话并回到空闲态。空闲时 `POST /session` 返回 503，不经 `load-game` 不能建局。
 - `GET /ws` 与 HTTP 长轮询共用同一会话输入通道；旁观者只读 WS。

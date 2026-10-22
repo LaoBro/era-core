@@ -1,4 +1,4 @@
-using MinorShift.Emuera.Files;
+﻿using MinorShift.Emuera.Files;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -7,6 +7,7 @@ using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Terminal.Platform;
+using MinorShift.Emuera.Tests;
 using MinorShift.Emuera.UI.Game;
 using MinorShift.Emuera.UI.Game.Image;
 using Xunit;
@@ -19,18 +20,18 @@ namespace Emuera.Headless.Tests;
 /// 期望值来自独立来源：PNG 像素尺寸（200×100）+ 参数语义（px/%-fontsize）+ 既有 WinForms 几何公式，
 /// 非实现重算。环境装配沿用 LoaderTestHarness 风格（GamePaths.Resolve + Config scope）。
 /// </summary>
-[Collection("GamePathsIsolated")]
 public class ConsoleImageGeometryTests : IDisposable
 {
     private readonly string _gameDir;
+    private readonly RootScope _rootScope;
     private readonly IDisposable _scope;
 
     public ConsoleImageGeometryTests()
     {
         _gameDir = Path.Combine(Path.GetTempPath(), "emuera-geom-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(_gameDir, "img"));
-        GamePaths.Resolve(_gameDir, new FileSystemGameDirAccessor());
-        _scope = GlobalStatic.OpenScope(new ConfigData()); // FontSize 默认 18
+        _rootScope = new RootScope(_gameDir, new FileSystemGameDirAccessor());
+        _scope = GlobalStatic.OpenScope(new ConfigData(_rootScope.Paths)); // FontSize 默认 18
         // 200×100 PNG —— 纵横比推算的独立已知来源
         File.WriteAllBytes(Path.Combine(_gameDir, "img", "portrait.png"), Png(200, 100));
         // issue 07：图集夹具——atlas.png 16×8（2×1 网格，每格 8×4）；FACE_1=左格、FACE_2=右格
@@ -43,6 +44,7 @@ public class ConsoleImageGeometryTests : IDisposable
     public void Dispose()
     {
         _scope.Dispose();
+        _rootScope.Dispose();
         Directory.Delete(_gameDir, true);
     }
 
@@ -208,9 +210,7 @@ public class ConsoleImageGeometryTests : IDisposable
     public void PrintImg_flows_through_layout_with_derived_width()
     {
         // 集成：PrintImg 指令 → 节点几何 → 布局宽度，全链路无 sprite。
-        // GamePaths.Current 是全局静态，xUnit 并行下可能被其他测试类覆盖——
-        // 使用时 Resolve 幂等覆盖（LoaderTestHarness 同款模式），紧邻 PrintImg 缩小竞态窗口。
-        GamePaths.Resolve(_gameDir, new FileSystemGameDirAccessor());
+        // 根作用域在构造器建立（AsyncLocal，测试间隔离）——无需再幂等覆盖进程级状态。
         var ui = new HeadlessConsole();
         var console = new EmueraConsole(ui, new NullTerminalSetup());
         console.PrintImg("img/portrait.png", null!, null!, Px(50), null!, null);

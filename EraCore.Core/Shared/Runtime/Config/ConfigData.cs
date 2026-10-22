@@ -28,14 +28,25 @@ internal sealed class ConfigData
 	#region eee_カレントディレクトリー
 	// Issue 12：configPath 从 static readonly 改为实例 readonly 字段——
 	// /load-game 切换游戏目录后，新 ConfigData 必须读取新目录的 emuera.config。
-	// issue-008：构造时捕获游戏根（调用方显式注入，或取根环境当前值）；
-	// 此后本实例的加载链只读捕获根，不再随进程级根视图漂移。
+	// issue-009：根由构造方显式注入（游戏启动）或取会话作用域（测试夹具）；
+	// 无根时（MAUI 启动期占位实例）配置 IO 落在进程启动目录，且不再回落到 Program.*。
 	readonly string configPath;
 	readonly GamePaths? _root;
+	readonly string _baseDir;
+	readonly IGameDirAccessor _accessor;
 	/// <summary>构造时捕获的游戏根——issue-008 根选择回归的观测点。</summary>
 	internal GamePaths? Root => _root;
 	#endregion
-	private static string ConfigDebugPath => SafCompat.CombinePath(Program.DebugDir, "debug.config");
+	private string ConfigDebugPath
+	{
+		get
+		{
+			var debugDir = _root?.DebugDir ?? Path.Combine(_baseDir, "debug");
+			return SafPath.IsContentUri(debugDir)
+				? _accessor.CombinePath(debugDir, "debug.config")
+				: Path.Combine(debugDir, "debug.config");
+		}
+	}
 
 	private static readonly AsyncLocal<ConfigData?> _current = new();
 	public static ConfigData? Current => _current.Value;
@@ -121,12 +132,13 @@ internal sealed class ConfigData
 	internal ConfigData(GamePaths? root)
 	{
 		// Issue 12：构造时绑定游戏目录的 emuera.config 路径。
-		// issue-008：root 由组装根显式传入（EmueraRuntimeInitializer）；测试/旧路径省略时
-		// 取根环境当前值，再退到进程启动目录。
+		// issue-009：root 由组装根/宿主显式传入；无根时用进程启动目录 + 本地访问器
+		// （MAUI 启动期占位实例只需要一个可读的默认配置，不代表任何游戏根）。
 		// SAF：禁止 ExeDir + "emuera.config" 字符串拼接（documentId 会粘成错误段）。
 		_root = root;
-		var exeDir = root?.ExeDir ?? Program.ExeDir;
-		configPath = CombineConfigPath(root?.DirAccessor, exeDir, "emuera.config");
+		_baseDir = root?.ExeDir ?? AppContext.BaseDirectory;
+		_accessor = root?.DirAccessor ?? new FileSystemGameDirAccessor();
+		configPath = CombineConfigPath(_accessor, _baseDir, "emuera.config");
 		setDefault();
 		BuildIndex();
 	}
@@ -446,7 +458,7 @@ internal sealed class ConfigData
 	public ConfigData Copy()
 	{
 		#region EM_私家版_Emuera多言語化改造
-		ConfigData config = new();
+		ConfigData config = new(_root);
 		// for (int i = 0; i < configArray.Length; i++)
 		for (int i = 0; i < configArray.Count; i++)
 			if ((configArray[i] != null) && (config.configArray[i] != null))
@@ -765,7 +777,7 @@ internal sealed class ConfigData
 		try
 		{
 			#region EM_私家版_Emuera多言語化改造
-			using var writer = new StreamWriter(SafCompat.OpenWrite(targetPath), Config.Encode);
+			using var writer = new StreamWriter(_accessor.OpenWrite(targetPath), Config.Encode);
 
 			// for (int i = 0; i < configArray.Length; i++)
 			for (int i = 0; i < configArray.Count; i++)
@@ -838,31 +850,9 @@ internal sealed class ConfigData
 	public bool LoadConfig()
 	{
 		// ADR-0038 决策三：accessor 在入口取一次，显式穿参到真正做 IO 的那一段。
-		// issue-008：根来自构造期捕获，不随进程级根视图变化。
-		return LoadConfigCore(
-			configPath,
-			_root?.CsvDir ?? Program.CsvDir,
-			_root?.DirAccessor ?? Program.DirAccessor);
-	}
-
-	/// <summary>
-	/// Issue 12：显式指定游戏目录加载 config——/load-game 切换目录后使用。
-	/// 避免依赖构造时根环境的时序，直接读 exeDir 下的 emuera.config
-	/// 及 exeDir/csv 下的 default/fixed config。
-	/// </summary>
-	public bool LoadConfig(string exeDir)
-	{
-		// ADR-0038 决策三：同上，accessor 在入口取一次后显式下传。
-		var accessor = _root?.DirAccessor ?? Program.DirAccessor;
-		string csvDir;
-		if (SafPath.IsContentUri(exeDir))
-		{
-			csvDir = accessor.ResolveSubPath(exeDir, "csv");
-		}
-		else
-			csvDir = Path.Combine(exeDir, "csv") + Path.DirectorySeparatorChar;
-		string configPathLocal = CombineConfigPath(accessor, exeDir, "emuera.config");
-		return LoadConfigCore(configPathLocal, csvDir, accessor);
+		// issue-009：根来自构造期捕获；无根（占位实例）用进程启动目录，不读 Program.*。
+		var csvDir = _root?.CsvDir ?? Path.Combine(_baseDir, "csv") + Path.DirectorySeparatorChar;
+		return LoadConfigCore(configPath, csvDir, _accessor);
 	}
 
 	private bool LoadConfigCore(string configPathLocal, string csvDir, IGameDirAccessor dirAccessor)
@@ -921,11 +911,11 @@ internal sealed class ConfigData
 		return Path.Combine(dir, fileName);
 	}
 
-	private static bool ConfigFileExists(string path)
+	private bool ConfigFileExists(string path)
 	{
 		if (string.IsNullOrEmpty(path))
 			return false;
-		return SafCompat.FileExists(path);
+		return _accessor.FileExists(path);
 	}
 
 	#region EM_私家版_Emuera多言語化改造
@@ -992,15 +982,19 @@ internal sealed class ConfigData
 		if (!GetConfigValue<bool>(ConfigCode.AllowFunctionOverloading))
 			GetConfigItem(ConfigCode.WarnFunctionOverloading).SetValue(true);
 
-		// SAF：跳过本地 Directory + 根目录挪档；仅确保 sav 目录可建（方案 B）
-		if (GetConfigValue<bool>(ConfigCode.UseSaveFolder))
+		// SAF：跳过本地 Directory + 根目录挪档；仅确保 sav 目录可建（方案 B）。
+		// issue-009：无游戏根（占位实例）不做存档目录逻辑；有根时经捕获的 accessor，
+		// 不读 Program.*（初始化发生在会话作用域之外）。
+		if (_root != null && GetConfigValue<bool>(ConfigCode.UseSaveFolder))
 		{
-			if (SafPath.IsContentUri(_root?.ExeDir ?? Program.ExeDir))
+			var accessor = dirAccessor ?? _accessor;
+			if (SafPath.IsContentUri(_root.ExeDir))
 			{
 				try
 				{
-					if (!SafCompat.DirectoryExists(Config.ForceSavDir))
-						SafCompat.CreateDirectory(Config.ForceSavDir);
+					var forceSavDir = accessor.ResolveSubPath(_root.ExeDir, "sav");
+					if (!accessor.DirectoryExists(forceSavDir))
+						accessor.CreateDirectory(forceSavDir);
 				}
 				catch (Exception ex)
 				{
@@ -1009,9 +1003,9 @@ internal sealed class ConfigData
 #endif
 				}
 			}
-			else if (dirAccessor != null && !dirAccessor.DirectoryExists(SavDir))
+			else if (!accessor.DirectoryExists(SavDir))
 			{
-				ensureSavDir(dirAccessor);
+				ensureSavDir(accessor);
 			}
 		}
 	}
@@ -1021,8 +1015,12 @@ internal sealed class ConfigData
 	{
 		get
 		{
-			var exeDir = _root?.ExeDir ?? Program.ExeDir;
-			string forceSavDir = SafCompat.ResolveSubPath(exeDir, "sav");
+			var exeDir = _root?.ExeDir ?? _baseDir;
+			string forceSavDir = SafPath.IsContentUri(exeDir)
+				? _accessor.ResolveSubPath(exeDir, "sav")
+				: Path.Combine(
+					exeDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+					"sav") + Path.DirectorySeparatorChar;
 			return GetConfigValue<bool>(ConfigCode.UseSaveFolder) ? forceSavDir : exeDir;
 		}
 	}
@@ -1118,7 +1116,7 @@ internal sealed class ConfigData
 		{
 			// Open 放进 try：非 UTF-8 文件在严格逐字节解码下可能直接抛（GBK 撞上非法 SJIS 序列等），
 			// 不能让它把启动打崩——按"这份 config 读不了"处理并告警。
-			if (!eReader.Open(confPath))
+			if (!eReader.Open(confPath, dirAccessor))
 			{
 				WarnEncodingSuspect();
 				return false;
@@ -1228,7 +1226,7 @@ internal sealed class ConfigData
 	public void LoadReplaceFile(string filename)
 	{
 		using var eReader = new EraStreamReader(false);
-		if (!eReader.Open(filename))
+		if (!eReader.Open(filename, _accessor))
 			return;
 		ScriptPosition? pos = null;
 		try
@@ -1275,7 +1273,7 @@ internal sealed class ConfigData
 		try
 		{
 			#region EM_私家版_Emuera多言語化改造
-			using var writer = new StreamWriter(SafCompat.OpenWrite(ConfigDebugPath), Config.Encode);
+			using var writer = new StreamWriter(_accessor.OpenWrite(ConfigDebugPath), Config.Encode);
 
 			// for (int i = 0; i < debugArray.Length; i++)
 			for (int i = 0; i < debugArray.Count; i++)
@@ -1298,9 +1296,9 @@ internal sealed class ConfigData
 	public bool LoadDebugConfig()
 	{
 		using var eReader = new EraStreamReader(false);
-		if (!SafCompat.FileExists(ConfigDebugPath))
+		if (!_accessor.FileExists(ConfigDebugPath))
 			goto err;
-		if (!eReader.Open(ConfigDebugPath))
+		if (!eReader.Open(ConfigDebugPath, _accessor))
 			goto err;
 		ScriptPosition? pos = null;
 		try

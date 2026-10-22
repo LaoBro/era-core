@@ -48,9 +48,13 @@ internal sealed class AndroidJsBridge : IJsBridge
 	private Bridge? _bridge;
 	private WebViewAssetLoader? _assetLoader;
 	private bool _attached;
+	private GameTree? _gameRoot;
 
 	/// <inheritdoc />
 	public event Action<string>? InputReceived;
+
+	/// <inheritdoc />
+	public void SetGameRoot(GameTree? gameRoot) => _gameRoot = gameRoot;
 
     /// <summary>ADR-0019 诊断：静态日志缓冲区，Vue 通过 scanGames/gamesScanned 回复可见。</summary>
     internal static string? LastDiagnostic;
@@ -97,7 +101,7 @@ internal sealed class AndroidJsBridge : IJsBridge
 		_assetLoader = new WebViewAssetLoader.Builder()
 			.SetDomain(GameAssetConstants.VirtualHostName)
 			.AddPathHandler("/wwwroot/", new WwwrootPathHandler(appContext))
-			.AddPathHandler("/", new GameAssetPathHandler())
+			.AddPathHandler("/", new GameAssetPathHandler(this))
 			.Build();
 		platformView.SetWebViewClient(new BridgeClient(this, _assetLoader));
 
@@ -327,6 +331,12 @@ internal sealed class AndroidJsBridge : IJsBridge
 	/// </remarks>
 	internal sealed class GameAssetPathHandler : Java.Lang.Object, WebViewAssetLoader.IPathHandler
 	{
+		// issue-009：根不再是进程级单例——构造时绑定 bridge owner，Handle 每次读其当前根
+		// （BridgeHost 重建/重载游戏时 SetGameRoot 已先行更新，handler 实例随 Attach 复用）。
+		private readonly AndroidJsBridge _owner;
+
+		public GameAssetPathHandler(AndroidJsBridge owner) => _owner = owner;
+
 		public new WebResourceResponse? Handle(string? path)
 		{
 			// 异常可见性：之前无 try-catch，AssetChannel 内部未捕获异常会被 WebView 静默吞，
@@ -336,9 +346,8 @@ internal sealed class AndroidJsBridge : IJsBridge
 			{
 				if (string.IsNullOrEmpty(path))
 					return null;
-				var paths = GamePaths.Current;
-				if (paths?.DirAccessor == null
-					|| !AssetChannel.TryGetImage(paths.DirAccessor, paths.ExeDir, path, out var bytes, out var mime))
+				if (_owner._gameRoot is not { } gameRoot
+					|| !AssetChannel.TryGetImage(gameRoot.DirAccessor, gameRoot.Root, path, out var bytes, out var mime))
 				{
 					Android.Util.Log.Warn("EmueraMaui", $"GameAssetPathHandler: reject {path}");
 					return null;

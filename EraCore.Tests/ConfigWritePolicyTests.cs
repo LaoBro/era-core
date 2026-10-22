@@ -218,10 +218,10 @@ public class ConfigWritePolicyTests
 
 		public bool Load()
 		{
-			GamePaths.Resolve(Root, new FileSystemGameDirAccessor());
-			var config = new ConfigData();
+			var paths = GamePaths.Resolve(Root, new FileSystemGameDirAccessor());
+			var config = new ConfigData(paths);
 			_scope = GlobalStatic.OpenScope(config);
-			return config.LoadConfig(Root);
+			return config.LoadConfig();
 		}
 
 		public void Dispose()

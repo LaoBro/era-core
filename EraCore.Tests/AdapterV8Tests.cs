@@ -1,4 +1,4 @@
-using MinorShift.Emuera.Files;
+﻿using MinorShift.Emuera.Files;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -11,6 +11,7 @@ using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Tests;
 using MinorShift.Emuera.UI.Game;
 using Xunit;
 using Utils = MinorShift.Emuera.Runtime.Utils.EvilMask.Utils;
@@ -22,18 +23,18 @@ namespace Emuera.Headless.Tests;
 /// TestAdapter 能从 v8 协议输出重建显示状态：image/shape segment、bgImages、
 /// 三个背景 op 的往返重建断言。若 TestAdapter 能做到，任何前端也能。
 /// </summary>
-[Collection("GamePathsIsolated")]
 public class AdapterV8Tests : IDisposable
 {
     private readonly string _gameDir;
+    private readonly RootScope _rootScope;
     private readonly IDisposable _scope;
 
     public AdapterV8Tests()
     {
         _gameDir = Path.Combine(Path.GetTempPath(), "emuera-v8ta-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(_gameDir, "img"));
-        GamePaths.Resolve(_gameDir, new FileSystemGameDirAccessor());
-        _scope = GlobalStatic.OpenScope(new ConfigData());
+        _rootScope = new RootScope(_gameDir, new FileSystemGameDirAccessor());
+        _scope = GlobalStatic.OpenScope(new ConfigData(_rootScope.Paths));
         File.WriteAllBytes(Path.Combine(_gameDir, "img", "portrait.png"), Png(200, 100));
         // issue 07：图集夹具——atlas.png 16×8（2×1 网格）；FACE_2=右格 (8,0,8,4)
         Directory.CreateDirectory(Path.Combine(_gameDir, "resources"));
@@ -45,6 +46,7 @@ public class AdapterV8Tests : IDisposable
     public void Dispose()
     {
         _scope.Dispose();
+        _rootScope.Dispose();
         Directory.Delete(_gameDir, true);
     }
 

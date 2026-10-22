@@ -14,8 +14,8 @@ namespace MinorShift.Emuera.Tests;
 /// - MISSING_ERB：ExeDir + csv/ 存在但 erb/ 缺失
 /// 校验通过时不抛异常。
 ///
-/// 注：GamePaths.Resolve 会重赋静态 GamePaths.Current——测试间无隔离，但每个 case
-/// 各自 Resolve 独立临时目录，互不读对方的 paths 字段。
+/// 注：GamePaths.Resolve 是纯构造（issue-009），不写任何进程级或作用域状态；
+/// 每个 case 各自 Resolve 独立临时目录，互不干扰。
 /// </summary>
 [Collection("LoaderTests")]
 public class GamePathsTests

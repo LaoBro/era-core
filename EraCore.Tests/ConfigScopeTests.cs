@@ -1,7 +1,9 @@
+using MinorShift.Emuera.Files;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.UI;
 using System;
+using System.IO;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -106,7 +108,11 @@ public class ConfigScopeTests
     [Fact]
     public void Derived_properties_computed_from_injected_ConfigData()
     {
-        var cd = new ConfigData();
+        // SavDir 读取会话根（issue-009），夹具自带临时根。
+        var root = Path.Combine(Path.GetTempPath(), "emuera-cfgscope-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        using var rootScope = new RootScope(root, new FileSystemGameDirAccessor());
+        var cd = new ConfigData(rootScope.Paths);
         cd.GetConfigItem(ConfigCode.WindowX).SetValue(760);
         cd.GetConfigItem(ConfigCode.FontSize).SetValue(18);
         cd.GetConfigItem(ConfigCode.UseSaveFolder).SetValue(false);

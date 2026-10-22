@@ -26,8 +26,8 @@ public class SafStage2StorageTests
 	public void Config_and_macro_saves_write_to_the_SAF_game_root()
     {
         var accessor = new InMemoryContentDirAccessor(Root);
-        using var gamePaths = new GamePathsScope(Root, accessor);
-        using var globals = GlobalStatic.OpenScope(new ConfigData());
+        using var gamePaths = new RootScope(Root, accessor);
+        using var globals = GlobalStatic.OpenScope(new ConfigData(gamePaths.Paths));
         using var macro = new KeyMacroScope();
 
 		Assert.True(ConfigData.Current!.SaveConfig());
@@ -52,15 +52,15 @@ public class SafStage2StorageTests
 	public void Loading_a_new_SAF_game_does_not_create_a_config()
 	{
 		var accessor = new InMemoryContentDirAccessor(Root);
-		using var gamePaths = new GamePathsScope(Root, accessor);
-		var config = new ConfigData();
+		using var gamePaths = new RootScope(Root, accessor);
+		var config = new ConfigData(gamePaths.Paths);
 		using var globals = GlobalStatic.OpenScope(config);
 		// 显式保存（唯一允许的写盘入口）在 Root 下建出一份，作为"别动我"的对照物
 		Assert.True(config.SaveConfig());
 		Assert.True(accessor.FileExists(SafCompat.CombinePath(Root, "emuera.config")));
 
-		_ = GamePaths.Resolve(OtherRoot, accessor);
-		Assert.True(config.LoadConfig(OtherRoot));
+		var otherConfig = new ConfigData(GamePaths.Resolve(OtherRoot, accessor));
+		Assert.True(otherConfig.LoadConfig());
 
 		Assert.False(accessor.FileExists(SafCompat.CombinePath(OtherRoot, "emuera.config")));
 		Assert.True(accessor.FileExists(SafCompat.CombinePath(Root, "emuera.config")));
@@ -70,7 +70,7 @@ public class SafStage2StorageTests
     public void Log_path_resolves_nested_relative_names_under_the_SAF_game_root()
     {
         var accessor = new InMemoryContentDirAccessor(Root);
-		using var gamePaths = new GamePathsScope(Root, accessor);
+		using var gamePaths = new RootScope(Root, accessor);
 
         Assert.True(SafCompat.TryResolvePathUnderGameRoot("logs/init.log", createParentDirectories: true, out var path));
         Assert.Equal("init.log", SafPath.GetLogicalFileName(path));
@@ -97,18 +97,6 @@ public class SafStage2StorageTests
         {
             JSONConfig.Data = previous;
         }
-    }
-
-    private sealed class GamePathsScope : IDisposable
-    {
-        private readonly GamePaths previous = GamePaths.Current;
-
-		public GamePathsScope(string root, IGameDirAccessor accessor)
-		{
-			_ = GamePaths.Resolve(root, accessor);
-        }
-
-        public void Dispose() => GamePaths.SetCurrent(previous);
     }
 
     private sealed class AppDataScope : IDisposable

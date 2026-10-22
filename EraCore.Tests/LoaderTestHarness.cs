@@ -49,6 +49,7 @@ internal sealed class LoaderTestHarness : IDisposable
 	public LoaderEnv Env { get; }
 
 	private IDisposable? _scope;
+	private readonly RootScope _rootScope;
 	private bool _disposed;
 	private readonly bool _ownsTempRoot;
 
@@ -80,13 +81,12 @@ internal sealed class LoaderTestHarness : IDisposable
 			Directory.CreateDirectory(ErbDir);
 		}
 
-		// GamePaths.Resolve 使 Program.CsvDir/ErbDir 指向临时目录。
-		// 注意：Program 的静态构造器（首次触达 Program.* 时运行）会 GamePaths.Resolve(null, new FileSystemGameDirAccessor()) 重置为默认，
-		// 故此处先调一次（触发 EmueraConsole 构造可能间接触发 Program 静态 ctor），再在 InitializeAsync 内重调一次确保生效。
-		GamePaths.Resolve(TempRoot, new FileSystemGameDirAccessor());
+		// issue-009：显式建立游戏根作用域（AsyncLocal，随测试 ExecutionContext 隔离）——
+		// 不再有"Resolve 提交进程级根"这一步，Program.CsvDir/ErbDir 只读当前作用域。
+		_rootScope = new RootScope(TempRoot, new FileSystemGameDirAccessor());
 
 		// Config scope 在测试方法的 async 流内开启——AsyncLocal 才能下渗到后续 await Task.Run。
-		_scope = GlobalStatic.OpenScope(new ConfigData(), dialectProfile);
+		_scope = GlobalStatic.OpenScope(new ConfigData(_rootScope.Paths), dialectProfile);
 		EnsureEnginePreInit();
 
 		var ui = new HeadlessConsole(inputHost);
@@ -94,8 +94,6 @@ internal sealed class LoaderTestHarness : IDisposable
 		if (viewport != null)
 			ui.AttachViewport(viewport);
 		Console = new EmueraConsole(ui, new NullTerminalSetup());
-		// EmueraConsole 构造可能触发 Program 静态 ctor（重置 GamePaths），故再 Resolve 一次。
-		GamePaths.Resolve(TempRoot, new FileSystemGameDirAccessor());
 		// 复刻 ConsoleStateManager.Initialize 的 Process 装配段（不走其 RunEmueraProgram）：
 		Process = new Process(Console);
 		GlobalStatic.Console = Console;
@@ -107,8 +105,6 @@ internal sealed class LoaderTestHarness : IDisposable
 	/// <summary>启动引擎（空目录 Initialize），使 Process 的引擎字段与 GlobalStatic 上下文就绪。须在构造器之后 await。</summary>
 	public async Task InitializeAsync()
 	{
-		// Program 静态 ctor 可能在此前的任意 Program.* 触达时已重置 GamePaths；进入 Initialize 前最终确认。
-		GamePaths.Resolve(TempRoot, new FileSystemGameDirAccessor());
 		// Preload.Clear 复刻 ConsoleStateManager.Initialize 的清理——避免跨测试 stale 缓存。
 		Preload.Clear();
 		ForceEagerMode();
@@ -177,11 +173,11 @@ internal sealed class LoaderTestHarness : IDisposable
 	/// IdentifierDictionary..ctor 依赖 Lang。Interlocked 守护只跑一次。
 	/// </summary>
 	private static int _preInitDone;
-	private static void EnsureEnginePreInit()
+	private void EnsureEnginePreInit()
 	{
 		if (Interlocked.CompareExchange(ref _preInitDone, 1, 0) != 0) return;
 		JSONConfig.Data ??= new JSONConfigData();
-		try { Lang.LoadLanguageFiles(GamePaths.Current); } catch { /* 嵌入资源缺失不致命 */ }
+		try { Lang.LoadLanguageFiles(_rootScope.Paths); } catch { /* 嵌入资源缺失不致命 */ }
 		try { Lang.SetLanguage(); } catch { /* 默认语言即日文，早退或失败均不阻断 */ }
 	}
 
@@ -190,6 +186,7 @@ internal sealed class LoaderTestHarness : IDisposable
 		if (_disposed) return;
 		_disposed = true;
 		_scope?.Dispose();
+		_rootScope.Dispose();
 		if (!_ownsTempRoot)
 			return; // 真实游戏目录：只读使用，绝不删除
 		try { if (Directory.Exists(TempRoot)) Directory.Delete(TempRoot, recursive: true); }

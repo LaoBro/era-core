@@ -10,48 +10,43 @@ using Xunit;
 namespace MinorShift.Emuera.Tests;
 
 /// <summary>
-/// issue-008：根选择回归 + 剩余直读点守卫。
+/// issue-009：显式根读取 + 单例不复活守卫。
 ///
 /// <para>钉住两件事：
 /// <list type="bullet">
-/// <item><b>会话作用域优先</b>——构造期捕获的 <see cref="ConfigData"/> 重载不跟随装配期视图漂移；
-/// <see cref="Program.DirAccessor"/>、语言资源列表与 <see cref="SafCompat"/> 均读会话根。</item>
-/// <item><b>直读点只减不增</b>——引擎侧剩余 <c>GamePaths.Current</c> 代码引用只允许出现在
-/// 未迁移批次与兼容垫片文件里；每批迁移后从白名单移除对应文件。</item>
+/// <item><b>显式根优先</b>——<see cref="ConfigData"/> 绑定构造时传入的根；
+/// <see cref="Program.DirAccessor"/>、语言资源列表与 <see cref="SafCompat"/> 只读会话作用域，
+/// 作用域外访问是显性错误（而不是回落到某个「最后一次提交」的目录）。</item>
+/// <item><b>单例不复活</b>——生产代码里不得再出现 <c>GamePaths.Current</c> /
+/// <c>SetCurrent</c> / <c>ResolvePreview</c> / <c>GameRootEnvironment.Commit</c> 的代码引用
+/// （注释里的历史说明不算）。</item>
 /// </list></para>
 ///
-/// <para>与 <c>ServerState</c> 同 collection：本文件提交装配期根（进程级视图），须与其他
-/// 改写根的测试串行。</para>
+/// <para>作用域是 AsyncLocal，随每个测试的 ExecutionContext 隔离——本类不需要串行集合。</para>
 /// </summary>
-[Collection("ServerState")]
 public sealed class RootReadMigrationTests : IDisposable
 {
     private readonly string _rootA;
     private readonly string _rootB;
-    private readonly GamePaths? _previousRoot;
 
     public RootReadMigrationTests()
     {
-        _previousRoot = GameRootEnvironment.Current;
         _rootA = CreateGameRoot("a", ignoreCase: "NO");
         _rootB = CreateGameRoot("b", ignoreCase: "YES");
     }
 
     [Fact]
-    public void ConfigData_reloads_from_the_root_captured_at_construction()
+    public void ConfigData_binds_the_root_passed_at_construction()
     {
         var accessor = new FileSystemGameDirAccessor();
         var rootA = GamePaths.Resolve(_rootA, accessor);
-        var configA = new ConfigData();
+        var configA = new ConfigData(rootA);
         Assert.Same(rootA, configA.Root);
-
-        // 装配期视图漂移到 B——旧实现的重载会跟着 B 的 csv 走。
-        GamePaths.Resolve(_rootB, accessor);
 
         Assert.True(configA.LoadConfig());
         Assert.False(configA.GetConfigValue<bool>(ConfigCode.IgnoreCase));
 
-        var configB = new ConfigData();
+        var configB = new ConfigData(GamePaths.Resolve(_rootB, accessor));
         Assert.True(configB.LoadConfig());
         Assert.True(configB.GetConfigValue<bool>(ConfigCode.IgnoreCase));
     }
@@ -60,21 +55,19 @@ public sealed class RootReadMigrationTests : IDisposable
     public void Compatibility_shim_accessor_prefers_the_session_scope()
     {
         var accessor = new FileSystemGameDirAccessor();
-        var rootA = GamePaths.ResolvePreview(_rootA, accessor);
-        var rootB = GamePaths.Resolve(_rootB, accessor);
+        var rootA = GamePaths.Resolve(_rootA, accessor);
 
         using (GameRootEnvironment.Establish(rootA))
             Assert.Same(rootA.DirAccessor, Program.DirAccessor);
 
-        Assert.Same(rootB.DirAccessor, Program.DirAccessor);
+        Assert.Throws<InvalidOperationException>(() => _ = Program.DirAccessor);
     }
 
     [Fact]
     public void Compatibility_shim_paths_prefer_the_session_scope()
     {
         var accessor = new FileSystemGameDirAccessor();
-        var rootA = GamePaths.ResolvePreview(_rootA, accessor);
-        var rootB = GamePaths.Resolve(_rootB, accessor);
+        var rootA = GamePaths.Resolve(_rootA, accessor);
 
         using (GameRootEnvironment.Establish(rootA))
         {
@@ -83,9 +76,7 @@ public sealed class RootReadMigrationTests : IDisposable
             Assert.Equal(rootA.FontDir, Program.FontDir);
         }
 
-        Assert.Equal(rootB.ExeDir, Program.ExeDir);
-        Assert.Equal(rootB.CsvDir, Program.CsvDir);
-        Assert.Equal(rootB.FontDir, Program.FontDir);
+        Assert.Throws<InvalidOperationException>(() => _ = Program.ExeDir);
     }
 
     [Fact]
@@ -93,13 +84,13 @@ public sealed class RootReadMigrationTests : IDisposable
     {
         var accessor = new FileSystemGameDirAccessor();
         var rootA = GamePaths.Resolve(_rootA, accessor);
-        GamePaths.Resolve(_rootB, accessor);
+        var rootB = GamePaths.Resolve(_rootB, accessor);
         WriteLangFile(_rootA, "alpha-lang", "en-GB");
         WriteLangFile(_rootB, "beta-lang", "de-DE");
 
         try
         {
-            // 装配期视图 = B，列表必须来自显式传入的 A。
+            // 列表必须来自显式传入的 A——不读任何进程级/作用域状态。
             Lang.LoadLanguageFiles(rootA);
             Assert.Contains("alpha-lang", Lang.GetLangList());
             Assert.DoesNotContain("beta-lang", Lang.GetLangList());
@@ -109,7 +100,7 @@ public sealed class RootReadMigrationTests : IDisposable
             // 语言表是静态的：删掉夹具后按原根重载，只留嵌入资源。
             File.Delete(Path.Combine(_rootA, "lang", "emuera.en-GB.xml"));
             File.Delete(Path.Combine(_rootB, "lang", "emuera.de-DE.xml"));
-            Lang.LoadLanguageFiles(_previousRoot ?? rootA);
+            Lang.LoadLanguageFiles(rootA);
         }
     }
 
@@ -117,29 +108,25 @@ public sealed class RootReadMigrationTests : IDisposable
     public void SafCompat_content_reads_follow_the_session_scope()
     {
         const string contentRootA = InMemoryContentDirAccessor.DefaultRoot + "-a";
-        const string contentRootB = InMemoryContentDirAccessor.DefaultRoot + "-b";
         var scopedAccessor = new InMemoryContentDirAccessor(contentRootA);
-        var committedAccessor = new InMemoryContentDirAccessor(contentRootB);
-        var scopedRoot = GamePaths.ResolvePreview(contentRootA, scopedAccessor);
-        GameRootEnvironment.Commit(GamePaths.ResolvePreview(contentRootB, committedAccessor));
+        var scopedRoot = GamePaths.Resolve(contentRootA, scopedAccessor);
 
         var savDir = scopedAccessor.ResolveSubPath(contentRootA, "sav");
         var scopedFile = scopedAccessor.CombinePath(savDir, "slot.sav");
         scopedAccessor.Seed(scopedFile, [1]);
 
-        // 装配期视图是 B：只有会话作用域生效时才看得到 A 的文件。
+        // 只有会话作用域生效时才看得到 A 的文件；作用域外没有根可回落。
         using (GameRootEnvironment.Establish(scopedRoot))
             Assert.True(SafCompat.FileExists(scopedFile));
 
-        Assert.False(SafCompat.FileExists(scopedFile));
+        Assert.Throws<InvalidOperationException>(() => SafCompat.FileExists(scopedFile));
     }
 
     [Fact]
     public void SafCompat_game_relative_paths_use_the_session_exe_dir()
     {
         var accessor = new FileSystemGameDirAccessor();
-        var rootA = GamePaths.ResolvePreview(_rootA, accessor);
-        GamePaths.Resolve(_rootB, accessor);
+        var rootA = GamePaths.Resolve(_rootA, accessor);
 
         using (GameRootEnvironment.Establish(rootA))
         {
@@ -147,20 +134,20 @@ public sealed class RootReadMigrationTests : IDisposable
             Assert.Equal(Path.Combine(_rootA, "sav", "slot.sav"), Path.GetFullPath(scopedPath));
         }
 
-        Assert.True(SafCompat.TryResolvePathUnderGameRoot("sav/slot.sav", false, out var committedPath));
-        Assert.Equal(Path.Combine(_rootB, "sav", "slot.sav"), Path.GetFullPath(committedPath));
+        Assert.Throws<InvalidOperationException>(
+            () => SafCompat.TryResolvePathUnderGameRoot("sav/slot.sav", false, out _));
     }
 
     /// <summary>
-    /// issue-008 的逐批验收信号：四个批次完成后，引擎与服务端不得再出现对根视图的<b>代码</b>引用
-    /// （注释/文档里的历史说明不算）。<c>GamePaths.Current</c> 属性本身留给 issue-009 删除，
-    /// MAUI 宿主与测试夹具的剩余读点也由 009 迁移；本守卫防止迁移回退。
+    /// issue-009 的验收信号：生产代码不得再引用根单例的任何入口。
+    /// 迁移完成后仍保留本守卫，防止有人把「最后一次提交」的形态加回来。
     /// </summary>
     [Fact]
-    public void Engine_and_server_sources_do_not_read_the_process_root_view()
+    public void Production_sources_have_no_process_level_root_api()
     {
         var root = FindRepositoryRoot();
-        var hits = new[] { "EraCore.Core", "EraCore.Server" }
+        var producers = new[] { "EraCore.Core", "EraCore.Server", "EraCore.Cli", "EraCore.Maui" };
+        var hits = producers
             .SelectMany(dir => Directory.EnumerateFiles(
                 Path.Combine(root, dir), "*.cs", SearchOption.AllDirectories))
             .Where(HasCodeReference)
@@ -171,6 +158,14 @@ public sealed class RootReadMigrationTests : IDisposable
         Assert.Empty(hits);
     }
 
+    private static readonly string[] ForbiddenTokens =
+    [
+        "GamePaths.Current",
+        "GamePaths.SetCurrent",
+        "GamePaths.ResolvePreview",
+        "GameRootEnvironment.Commit",
+    ];
+
     private static bool HasCodeReference(string path)
     {
         foreach (var line in File.ReadLines(path))
@@ -180,7 +175,7 @@ public sealed class RootReadMigrationTests : IDisposable
                 || trimmed.StartsWith("*", StringComparison.Ordinal)
                 || trimmed.StartsWith("/*", StringComparison.Ordinal))
                 continue;
-            if (line.Contains("GamePaths.Current", StringComparison.Ordinal))
+            if (ForbiddenTokens.Any(t => line.Contains(t, StringComparison.Ordinal)))
                 return true;
         }
         return false;
@@ -216,9 +211,6 @@ public sealed class RootReadMigrationTests : IDisposable
 
     public void Dispose()
     {
-        if (_previousRoot != null)
-            GameRootEnvironment.Commit(_previousRoot);
-
         foreach (var root in new[] { _rootA, _rootB })
         {
             try

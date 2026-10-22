@@ -1,4 +1,4 @@
-using MinorShift.Emuera.Files;
+﻿using MinorShift.Emuera.Files;
 using System;
 using System.IO;
 using MinorShift.Emuera.Runtime.Config;
@@ -59,11 +59,11 @@ public class SweepGatePolicyTests
 		try
 		{
 			File.WriteAllText(Path.Combine(tempRoot, "emuera.config"), "; game-bundled knob attempt\nSweepGatePolicy:forceon\n");
-			GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
+			var paths = GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
 
-			var config = new ConfigData();
+			var config = new ConfigData(paths);
 			using var globals = GlobalStatic.OpenScope(config);
-			Assert.True(config.LoadConfig(tempRoot));
+			Assert.True(config.LoadConfig());
 
 			// 无对应 ConfigCode，loadConfig 对未知键静默跳过——旋钮保持 null（=Auto 跟随平台门）
 			Assert.Null(config.OverrideSweepGatePolicy);
@@ -81,11 +81,11 @@ public class SweepGatePolicyTests
 		Directory.CreateDirectory(tempRoot);
 		try
 		{
-			GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
+			var paths = GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
 
-			var config = new ConfigData();
+			var config = new ConfigData(paths);
 			using var globals = GlobalStatic.OpenScope(config);
-			Assert.True(config.LoadConfig(tempRoot));
+			Assert.True(config.LoadConfig());
 			config.OverrideSweepGatePolicy = SweepGatePolicy.ForceOn;
 
 			Assert.True(config.SaveConfig());

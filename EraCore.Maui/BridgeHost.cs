@@ -212,6 +212,13 @@ internal sealed class BridgeHost : IDisposable
 
     private readonly IDispatcher _dispatcher;
     private readonly ConfigData _configData;
+
+    /// <summary>
+    /// 当前游戏根（issue-009）——由 <see cref="ConfigData.Root"/> 在构造期固化，无游戏时为 null。
+    /// 不再读进程级 <c>GamePaths.Current</c>：根的生命周期 = 本 host 的生命周期
+    /// （<c>MainPage</c> 每次重载游戏都会重建 host）。
+    /// </summary>
+    private readonly GameTree? _gameTree;
     private readonly ITerminalSetup _terminalSetup;
     private readonly IJsBridge _jsBridge;
     /// <summary>全局设置服务（ADR-0030）——Handle* 委托写 store + 即时应用，PushConfigMessage 读权威值。</summary>
@@ -315,12 +322,17 @@ internal sealed class BridgeHost : IDisposable
     {
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _configData = configData ?? throw new ArgumentNullException(nameof(configData));
+        _gameTree = _configData.Root is { } root ? new GameTree(root.ExeDir, root.DirAccessor) : null;
         _terminalSetup = terminalSetup ?? throw new ArgumentNullException(nameof(terminalSetup));
         _jsBridge = jsBridge ?? throw new ArgumentNullException(nameof(jsBridge));
         _appSettings = appSettings ?? throw new ArgumentNullException(nameof(appSettings));
         _onReloadGame = onReloadGame;
         _onGameExited = onGameExited;
         _onVueReady = onVueReady;
+
+        // issue-009：占位配置（无游戏）传 null——资源通道 404；重载游戏时 MainPage 会重建 host，
+        // 新 host 以新根再次绑定，故不需要任何进程级可变根。
+        _jsBridge.SetGameRoot(_gameTree);
 
         // game-library spec ID5：从 Preferences 读 mainGameDir——无值时按平台回退
         // Windows: Documents/emuera；Android: null（待权限引导后设置）
@@ -637,10 +649,10 @@ internal sealed class BridgeHost : IDisposable
     /// <summary>
     /// 处理 Vue ready 信号——首帧时调 <see cref="Start"/>，重复 ready 幂等忽略。
     /// <para>
-    /// <b>无游戏启动（2026-08-06 移除 test_game 打包后）</b>：启动期不再 Resolve 游戏目录，
-    /// <see cref="GamePaths.Current"/> 为 null——ready 后不 Start（无游戏可跑），
+    /// <b>无游戏启动（2026-08-06 移除 test_game 打包后）</b>：启动期配置的 <see cref="ConfigData.Root"/>
+    /// 为 null——<see cref="_gameTree"/> 随之为 null，ready 后不 Start（无游戏可跑），
     /// 等用户经游戏列表 / 目录选择器选游戏（<c>loadGame</c> → <c>MainPage.OnReloadGame</c>
-    /// 重建 host + Start）。若未来恢复「默认游戏自动启动」，把 null 守卫改为对默认目录 Resolve。
+    /// 重建 host + Start）。若未来恢复「默认游戏自动启动」，把 null 守卫改为对默认目录显式建根。
     /// </para>
     /// </summary>
     private void HandleReady()
@@ -654,7 +666,7 @@ internal sealed class BridgeHost : IDisposable
         Console.WriteLine("[bridge] Vue ready signal received");
         AgentLog.Instance.Write("[bridge] Vue ready signal received");
         System.Diagnostics.Debug.WriteLine("[bridge] Vue ready signal received");
-        if (GamePaths.Current == null)
+        if (_gameTree == null)
         {
             Console.WriteLine("[bridge] no game loaded at startup (no-game-start), waiting for loadGame");
             return;
@@ -868,9 +880,9 @@ internal sealed class BridgeHost : IDisposable
     /// 并为每个游戏填充 IR 缓存存在性提示（非有效性承诺：大小 + 构建时间取 era_ir.dat mtime）。
     /// 存在性语义——指纹有效性要等加载期才能算，库扫描期不算也不该算。
     /// </summary>
-    private static List<GameInfoDto> BuildGamePayloadWithIrInfo(IReadOnlyList<GameTree> games)
+    private List<GameInfoDto> BuildGamePayloadWithIrInfo(IReadOnlyList<GameTree> games)
     {
-        ErbIrCache.CleanupOrphans(games.Select(g => g.Root).ToList(), Program.ExeDir);
+        ErbIrCache.CleanupOrphans(games.Select(g => g.Root).ToList(), _configData.Root?.ExeDir);
         return games.Select(g =>
         {
             bool cached = ErbIrCache.TryGetCacheInfo(g.Root, out long bytes, out DateTime builtUtc);
@@ -885,8 +897,8 @@ internal sealed class BridgeHost : IDisposable
     /// <see cref="FileSystemGameDirAccessor"/>。
     /// </summary>
     /// <remarks>
-    /// issues/15：原先「非 content 路径复用 <c>GamePaths.Current?.DirAccessor</c>」是 bug——
-    /// 上一局若加载的是 SAF 游戏，<c>Current.DirAccessor</c> 留存 <see cref="SafGameDirAccessor"/>，
+    /// issues/15：原先「非 content 路径复用当时的全局 accessor」是 bug——
+    /// 上一局若加载的是 SAF 游戏，留存的访问器是 <see cref="SafGameDirAccessor"/>，
     /// 此时对 legacy 真实路径主目录重扫会把真实路径喂给 SAF accessor（其 CombinePath /
     /// ResolveDocId 全程假设 content URI）→ 必然失败。形态一致才谈复用，这里直接不复用。
     /// </remarks>
@@ -1871,7 +1883,7 @@ internal sealed class BridgeHost : IDisposable
             new LayoutMessage(
                 Type: "layout",
                 State: "Loading",
-                GameDir: GamePaths.Current?.ExeDir,
+                GameDir: _gameTree?.Root,
                 WindowWidth: ww,
                 FontSize: fs,
                 LineHeight: lh,
@@ -2015,8 +2027,8 @@ internal sealed class BridgeHost : IDisposable
             //    旧循环若在上界内没退出，第一次吞掉 TeardownTimeout、第二次再等一遍上界，
             //    用户侧表现是切换游戏卡住 10 秒后弹出一个枚举名。
             //    ReplaceMauiSessionAsync 内部完成「拆旧 → 一次有界等待 → 建新」，失败原因单一。
-            //    游戏已由 OnReloadGame 初始化（GamePaths.Current 已 Resolve + ConfigData 已加载），
-            //    故本方法刻意不碰 GamePaths。
+            //    游戏已由 OnReloadGame 初始化（ConfigData 已绑定新根并加载），本 host 的 _gameTree
+            //    就是该根；本方法刻意不碰任何全局路径状态。
             //    fullDiffOnFirstTurn=true：MAUI WebView 桥接无 GET /snapshot 入口，首帧 diff 须全量。
             //    显式传 _configData：共享 server 构造时绑的是启动期占位配置，会话必须用真实配置
             //    （含 OnReloadGame 应用的性能覆盖旋钮），否则 ErbLoader 读到的是占位值。
@@ -2050,15 +2062,14 @@ internal sealed class BridgeHost : IDisposable
 
             // 6. 更新 agent 发现记录（端口 + token + gameDir）——eracore_agent start 侦测后复用本会话。
             //    记录的所有权在 MauiControlServer（app 级）：此处只补充 gameDir，不负责创建/删除。
-            MauiControlServer.Instance?.NotifySessionStarted(GamePaths.Current?.ExeDir);
+            MauiControlServer.Instance?.NotifySessionStarted(_gameTree?.Root);
 
             Console.WriteLine($"[bridge] hosted session on port {_serverHost.Port}, session {createResult.SessionId}");
             AgentLog.Instance.Write($"[bridge] hosted session on port {_serverHost.Port}, session {createResult.SessionId}");
 #if ANDROID
             // O4：游戏加载完成 → 后台预热 sav + 游戏根目录子项缓存（原 GameLoopAsync runLoop 开头逻辑，托管后移此）
-            var prefetchExeDir = GamePaths.Current?.ExeDir;
-            if (!string.IsNullOrEmpty(prefetchExeDir))
-                _ = Task.Run(() => TryPrefetchSaveDirectories(prefetchExeDir));
+            if (_gameTree != null)
+                _ = Task.Run(TryPrefetchSaveDirectories);
 #endif
         }
         catch (Exception ex)
@@ -2192,17 +2203,17 @@ internal sealed class BridgeHost : IDisposable
     /// 预取失败不影响游戏，仅留痕。SAF 模式专属：<see cref="SafGameDirAccessor.Instance"/>
     /// 仅 Android + 已选游戏目录时非 null，天然守卫非 SAF 平台。
     /// </summary>
-    private void TryPrefetchSaveDirectories(string exeDir)
+    private void TryPrefetchSaveDirectories()
     {
         try
         {
             var acc = SafGameDirAccessor.Instance;
-            if (acc == null) return; // 非 SAF 模式（Windows / 未选目录）无操作
-            acc.WarmDirectoryCache(exeDir); // 游戏根
-            // sav 理论 document URI：Config.ForceSavDir（= SafCompat.ResolveSubPath(ExeDir, "sav")，
-            // 语义一致；BridgeHost 已 using MinorShift.Emuera.Runtime.Config，零新增 using；
-            // 不依赖 AsyncLocal——后台线程安全）。sav 尚不存在时 Query 得空/null，无害。
-            acc.WarmDirectoryCache(Config.ForceSavDir);
+            if (acc == null || _gameTree is not { } gameTree) return; // 非 SAF 模式（Windows / 未选目录）无操作
+            acc.WarmDirectoryCache(gameTree.Root); // 游戏根
+            // sav 理论 document URI：与 Config.ForceSavDir 同义（ResolveSubPath(root, "sav")），
+            // 但根取自 host 固化的 _gameTree——后台线程不依赖 AsyncLocal，也不读进程级根。
+            // sav 尚不存在时 Query 得空/null，无害。
+            acc.WarmDirectoryCache(gameTree.DirAccessor.ResolveSubPath(gameTree.Root, "sav"));
         }
         catch (Exception ex)
         {

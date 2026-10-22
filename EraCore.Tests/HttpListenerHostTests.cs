@@ -18,7 +18,7 @@ namespace MinorShift.Emuera.Tests;
 /// 验证共享层 GameServerProtocol 经 BCL HttpListener 宿主提供的端点与 Kestrel 契约一致：
 /// GET /state（Idle）→ POST /load-game → GET /snapshot（游戏就绪）→ GET /config → 控制权 → DELETE /session → 复位；
 /// 另覆盖 /turn、/input、/control/wait 及 409 门禁场景（双宿主 wire 契约一致性）。
-/// 涉及全局静态 GamePaths.Current，与 ServerState 集合共享禁用并行的约束。
+/// 共享进程级引擎静态（GlobalStatic / Lang 等），与 ServerState 集合共享禁用并行的约束。
 /// </summary>
 [Collection("ServerState")]
 public class HttpListenerHostTests

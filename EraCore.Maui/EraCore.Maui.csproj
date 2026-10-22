@@ -98,8 +98,8 @@
 	     2026-08-06：移除 ../test_game/ 内置游戏打包（MauiAsset Link=game\...）——
 	     原因：应用改为无游戏启动——用户经游戏列表/目录选择器选任意游戏目录，无需内置示例；
 	     GameResourceExtractor（解压内置 test_game 的类）随之退役删除（MauiProgram 启动编排
-	     同步改为无游戏启动：不 Resolve/Initialize，BridgeHost.HandleReady 在 GamePaths.Current
-	     为 null 时跳过 Start）。e2e 测试仍用磁盘 test_game 路径，目录本身保留。-->
+	     同步改为无游戏启动：不 Resolve/Initialize，BridgeHost.HandleReady 在配置无根
+	     （ConfigData.Root 为 null）时跳过 Start）。e2e 测试仍用磁盘 test_game 路径，目录本身保留。-->
 	<ItemGroup>
 		<!-- Vue 构建产物（VueBuild.targets 的 CopyVueFrontendToWwwroot target 复制到 wwwroot\） -->
 		<MauiAsset Include="wwwroot\**\*" />

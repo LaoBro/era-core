@@ -20,7 +20,7 @@ namespace MinorShift.Emuera.Tests;
 /// KestrelGameServer 端点行为测试（重构补测——/turn、/input、/snapshot、/config、409/201 原零覆盖）。
 /// 沿用 IdleTests 惯例：直接构造 new KestrelGameServer(port:0) 后调 internal handler
 /// 验返回 IResult 的 statusCode/body，不经 HTTP 网络栈。
-/// 涉及全局静态 GamePaths.Current，与 SessionRegistryTests 共享禁用并行的 collection。
+/// 共享进程级引擎静态（GlobalStatic / Lang 等），与 SessionRegistryTests 共享禁用并行的 collection。
 /// </summary>
 [Collection("ServerState")]
 public class KestrelGameServerEndpointTests

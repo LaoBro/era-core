@@ -133,9 +133,8 @@ public class SrcContentCacheTests
 		var previousAppData = AppDataPaths.Directory;
 		AppDataPaths.Configure(tempAppData);
 		accessor = new InMemoryContentDirAccessor(Root);
-		var previousPaths = GamePaths.Current;
-		GamePaths.Resolve(Root, accessor);
-		var config = new ConfigData();
+		var rootScope = new RootScope(Root, accessor);
+		var config = new ConfigData(rootScope.Paths);
 		if (!srcContentCache)
 			config.GetConfigItem(ConfigCode.SrcContentCache).SetValue(false);
 		var scope = GlobalStatic.OpenScope(config);
@@ -148,7 +147,7 @@ public class SrcContentCacheTests
 		csvDir = csv;
 		erbDir = erb;
 		srcPath = SrcContentCache.GetSrcCachePath(Root);
-		return new Scope(scope, tempAppData, previousAppData, previousPaths);
+		return new Scope(scope, tempAppData, previousAppData, rootScope);
 	}
 
 	private static bool ReadFirstLine(string path, out string line)
@@ -164,12 +163,12 @@ public class SrcContentCacheTests
 		return true;
 	}
 
-	private sealed class Scope(IDisposable inner, string tempAppData, string previousAppData, GamePaths previous) : IDisposable
+	private sealed class Scope(IDisposable inner, string tempAppData, string previousAppData, IDisposable rootScope) : IDisposable
 	{
 		public void Dispose()
 		{
 			Preload.Clear();
-			GamePaths.SetCurrent(previous);
+			rootScope.Dispose();
 			inner.Dispose();
 			AppDataPaths.Configure(previousAppData);
 			try { Directory.Delete(tempAppData, recursive: true); } catch { /* 临时目录清理失败不掩盖断言 */ }

@@ -51,9 +51,13 @@ internal sealed class WindowsJsBridge : IJsBridge
 
 	private CoreWebView2? _core;
 	private bool _attached;
+	private GameTree? _gameRoot;
 
 	/// <inheritdoc />
 	public event Action<string>? InputReceived;
+
+	/// <inheritdoc />
+	public void SetGameRoot(GameTree? gameRoot) => _gameRoot = gameRoot;
 
 	/// <inheritdoc />
 	public async Task Attach(WebView webView)
@@ -218,9 +222,8 @@ internal sealed class WindowsJsBridge : IJsBridge
 				return;
 			}
 
-			var paths = GamePaths.Current;
-			if (paths?.DirAccessor == null
-				|| !AssetChannel.TryGetImage(paths.DirAccessor, paths.ExeDir, path, out var bytes, out var mime))
+			if (_gameRoot is not { } gameRoot
+				|| !AssetChannel.TryGetImage(gameRoot.DirAccessor, gameRoot.Root, path, out var bytes, out var mime))
 			{
 				e.Response = CreateAssetResponse(null, null);
 				return;

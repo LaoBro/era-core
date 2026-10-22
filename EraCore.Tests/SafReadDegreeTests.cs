@@ -1,4 +1,4 @@
-using MinorShift.Emuera.Files;
+﻿using MinorShift.Emuera.Files;
 using System;
 using System.IO;
 using System.Linq;
@@ -102,11 +102,11 @@ public class SafReadDegreeTests
 		try
 		{
 			File.WriteAllText(Path.Combine(tempRoot, "emuera.config"), "; game-bundled knob attempt\nSafReadDegree:16\n");
-			GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
+			var paths = GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
 
-			var config = new ConfigData();
+			var config = new ConfigData(paths);
 			using var globals = GlobalStatic.OpenScope(config);
-			Assert.True(config.LoadConfig(tempRoot));
+			Assert.True(config.LoadConfig());
 
 			// 无对应 ConfigCode，loadConfig 对未知键静默跳过——旋钮保持 null（=auto 每树 1 并发）
 			Assert.Null(config.OverrideSafReadDegree);
@@ -124,11 +124,11 @@ public class SafReadDegreeTests
 		Directory.CreateDirectory(tempRoot);
 		try
 		{
-			GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
+			var paths = GamePaths.Resolve(tempRoot, new FileSystemGameDirAccessor());
 
-			var config = new ConfigData();
+			var config = new ConfigData(paths);
 			using var globals = GlobalStatic.OpenScope(config);
-			Assert.True(config.LoadConfig(tempRoot));
+			Assert.True(config.LoadConfig());
 			config.OverrideSafReadDegree = 16;
 
 			Assert.True(config.SaveConfig());

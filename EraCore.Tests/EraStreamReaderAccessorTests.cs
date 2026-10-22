@@ -22,20 +22,11 @@ public class EraStreamReaderAccessorTests
 	private const string Root =
 		"content://com.android.externalstorage.documents/tree/primary%3Aemuera/document/primary%3Aemuera%2FEraStreamReader";
 
-	private sealed class GamePathsScope : IDisposable
-	{
-		private readonly GamePaths previous = GamePaths.Current;
-
-		public GamePathsScope(IGameDirAccessor accessor) => _ = GamePaths.Resolve(Root, accessor);
-
-		public void Dispose() => GamePaths.SetCurrent(previous);
-	}
-
 	[Fact]
 	public void Open_reads_lines_through_the_accessor()
 	{
 		var accessor = new InMemoryContentDirAccessor(Root);
-		using var paths = new GamePathsScope(accessor);
+		using var paths = new RootScope(Root, accessor);
 		var path = accessor.CombinePath(Root, "ABL.CSV");
 		accessor.Seed(path, Encoding.UTF8.GetBytes("体力,こんにちは\n気力,さようなら\n"));
 
@@ -50,7 +41,7 @@ public class EraStreamReaderAccessorTests
 	public void Open_returns_false_when_the_accessor_cannot_read_the_file()
 	{
 		var accessor = new InMemoryContentDirAccessor(Root);
-		using var paths = new GamePathsScope(accessor);
+		using var paths = new RootScope(Root, accessor);
 		// content URI 形态：本机磁盘上绝无同名实文件——即便兜底还在也救不回来。
 		// 这里锁的是「失败显性化」：返回 false 而非抛出，也不再尝试本地 IO。
 		var missing = accessor.CombinePath(Root, "NOSUCH.CSV");
@@ -76,14 +67,9 @@ public class EraStreamReaderAccessorTests
 
 			// accessor 是纯内存桩：既不注册该文件，也不触碰磁盘 ⇒ ReadAllBytes 返回 null。
 			var accessor = new InMemoryContentDirAccessor(tempRoot);
-			var previous = GamePaths.Current;
-			_ = GamePaths.Resolve(tempRoot, accessor);
-			try
-			{
-				using var reader = new EraStreamReader(false);
-				Assert.False(reader.OpenOnCache(localFile, SafPath.GetLogicalFileName(localFile)));
-			}
-			finally { GamePaths.SetCurrent(previous); }
+			using var paths = new RootScope(tempRoot, accessor);
+			using var reader = new EraStreamReader(false);
+			Assert.False(reader.OpenOnCache(localFile, SafPath.GetLogicalFileName(localFile)));
 		}
 		finally { try { System.IO.Directory.Delete(tempRoot, recursive: true); } catch { /* 清理失败不掩盖断言 */ } }
 	}

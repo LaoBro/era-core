@@ -1,8 +1,9 @@
-using MinorShift.Emuera.Files;
+﻿using MinorShift.Emuera.Files;
 using System;
 using System.IO;
 using MinorShift.Emuera;
 using MinorShift.Emuera.Primitives;
+using MinorShift.Emuera.Tests;
 using MinorShift.Emuera.UI.Game.Image;
 using Xunit;
 
@@ -12,13 +13,12 @@ namespace Emuera.Headless.Tests;
 /// 探针 sprite 名回退（issue：era 游戏 <c>&lt;img src='Face_1'&gt;</c> 的 src 是 sprite 名，
 /// 映射在 resources/*.csv）。<c>TryGetImageSize</c> 先按根相对路径试（兼容 test_game 的
 /// <c>img/test.png</c>），失败后经 <see cref="ImageNameTable"/> 查 sprite 名 → 文件再探针。
-/// GamePaths 敏感（静态 Current）→ 放串行隔离集合。
+/// 根经 <see cref="RootScope"/> 的 AsyncLocal 作用域隔离（issue-009：不再有进程级 Current）。
 /// </summary>
-[Collection("GamePathsIsolated")]
 public class SpriteNameProbeTests : IDisposable
 {
     private readonly string _root;
-    private readonly GamePaths _paths;
+    private readonly RootScope _rootScope;
 
     public SpriteNameProbeTests()
     {
@@ -34,11 +34,12 @@ public class SpriteNameProbeTests : IDisposable
         File.WriteAllBytes(Path.Combine(_root, "resources", "full.png"), MiniPng());   // 8×4 整图
         // 直接相对路径（test_game 形态）
         File.WriteAllBytes(Path.Combine(_root, "img", "test.png"), MiniPng());
-        _paths = GamePaths.Resolve(_root, new FileSystemGameDirAccessor());
+        _rootScope = new RootScope(_root, new FileSystemGameDirAccessor());
     }
 
     public void Dispose()
     {
+        _rootScope.Dispose();
         try { Directory.Delete(_root, true); } catch { }
     }
 
@@ -199,16 +200,11 @@ public class SpriteNameProbeTests : IDisposable
             png[16] = 0; png[17] = 0; png[18] = 0; png[19] = 16;
             File.WriteAllBytes(Path.Combine(root2, "resources", "1_Face.png"), png);
             File.WriteAllText(Path.Combine(root2, "resources", "Face.csv"), "FACE_1,1_Face.png,0,0,180,180\n");
-            GamePaths.Resolve(root2, new FileSystemGameDirAccessor());
-            try
+            using (new RootScope(root2, new FileSystemGameDirAccessor()))
             {
                 var sprite = AppContents.GetSprite("Face_1");
                 Assert.NotNull(sprite);
                 Assert.Equal(16, sprite!.DestBaseSize.Width);
-            }
-            finally
-            {
-                GamePaths.Resolve(_root, new FileSystemGameDirAccessor());
             }
         }
         finally

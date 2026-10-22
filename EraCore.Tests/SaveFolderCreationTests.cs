@@ -23,16 +23,15 @@ public class SaveFolderCreationTests
 	{
 		var root = Path.Combine(Path.GetTempPath(), "emuera-sav-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(root);
-		var previous = GamePaths.Current;
-		GamePaths.Resolve(root, new FileSystemGameDirAccessor());
+		using var gameRoot = new RootScope(root, new FileSystemGameDirAccessor());
 		try
 		{
 			File.WriteAllText(Path.Combine(root, "global.sav"), "G");
 			File.WriteAllText(Path.Combine(root, "save01.sav"), "S1");
 
-			var config = new ConfigData();
+			var config = new ConfigData(gameRoot.Paths);
 			config.GetConfigItem(ConfigCode.UseSaveFolder).SetValue(true);
-			config.ApplyPostLoadEffects(GamePaths.Current?.DirAccessor);
+			config.ApplyPostLoadEffects(gameRoot.Paths.DirAccessor);
 
 			var sav = Path.Combine(root, "sav");
 			Assert.True(Directory.Exists(sav), "启用 sav 文件夹时应创建 sav 目录");
@@ -45,7 +44,6 @@ public class SaveFolderCreationTests
 		}
 		finally
 		{
-			GamePaths.SetCurrent(previous);
 			try { Directory.Delete(root, recursive: true); } catch { /* 清理失败不掩盖断言 */ }
 		}
 	}

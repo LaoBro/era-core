@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Threading.Tasks;
 using EraCore.Maui.JsBridge;
 using Microsoft.Maui.Controls;
+using MinorShift.Emuera.Files;
 using Xunit;
 
 namespace EraCore.Maui.Tests;
@@ -20,7 +21,7 @@ namespace EraCore.Maui.Tests;
 ///       （即"PostTurn 传正确 JS 字面量"的契约本质，平台 ExecuteScriptAsync 调用是 glue）。</item>
 ///   <item><see cref="JsBridgeHelper.FormatPostMessageScript"/>——issue 09 非 turn 消息的 JS 字面量构造。</item>
 ///   <item><see cref="JsBridgeFactory.Create"/>——平台分流，验证 Windows 下返回 <see cref="WindowsJsBridge"/>。</item>
-///   <item><see cref="IJsBridge"/> 反射——验证五成员（PostTurn/PostMessage/InputReceived/Attach/PickFolderAsync）契约形状。</item>
+///   <item><see cref="IJsBridge"/> 反射——验证六成员（PostTurn/PostMessage/InputReceived/Attach/PickFolderAsync/SetGameRoot）契约形状。</item>
 /// </list>
 /// <para>
 /// 平台原生类型（CoreWebView2 / Android.Webkit.WebView）紧耦合运行时环境，无法在单测中 mock；
@@ -107,10 +108,10 @@ public class JsBridgeContractTests
 	}
 
 	/// <summary>
-	/// 用例 5：IJsBridge 接口契约形状——五个成员就位（issue 09 修订）：
+	/// 用例 5：IJsBridge 接口契约形状——六个成员就位（issue 09 修订 + issue-009）：
 	/// PostTurn(string) void 方法、PostMessage(string) void 方法、
 	/// InputReceived 事件（Action&lt;string&gt;）、Attach(WebView) 返回 Task 方法、
-	/// PickFolderAsync() 返回 Task&lt;string?&gt; 方法。
+	/// PickFolderAsync() 返回 Task&lt;string?&gt; 方法、SetGameRoot(GameTree?) void 方法。
 	/// </summary>
 	/// <remarks>
 	/// 反射验证防止意外重命名/签名变更破坏 BridgeHost 调用方。
@@ -149,6 +150,13 @@ public class JsBridgeContractTests
 		Assert.NotNull(pickFolder);
 		Assert.Empty(pickFolder!.GetParameters());
 		Assert.Equal(typeof(Task<string?>), pickFolder.ReturnType);
+
+		// SetGameRoot(GameTree?) 实例方法，返回 void（issue-009：资源通道按显式根读）
+		var setGameRoot = type.GetMethod("SetGameRoot", BindingFlags.Instance | BindingFlags.Public);
+		Assert.NotNull(setGameRoot);
+		Assert.Single(setGameRoot!.GetParameters());
+		Assert.Equal(typeof(GameTree), setGameRoot.GetParameters()[0].ParameterType);
+		Assert.Equal(typeof(void), setGameRoot.ReturnType);
 
 		// InputReceived 事件 —— event Action<string>?
 		var inputReceived = type.GetEvent("InputReceived", BindingFlags.Instance | BindingFlags.Public);

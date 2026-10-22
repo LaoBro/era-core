@@ -109,7 +109,7 @@ public class KestrelGameServerIdleTests
 
     /// <summary>
     /// D5/D15：空闲态 GET /state → gameDir==null + state=="Idle"。
-    /// 即使 GamePaths.Current 指向默认目录，idle 态 gameDir 显式置 null——前端据此可靠判 idle。
+    /// 即使存在可用的游戏根，idle 态 gameDir 显式置 null——前端据此可靠判 idle。
     /// 其余窗口元信息字段（windowWidth/fontSize/...）照常由默认 ConfigData 提供。
     /// </summary>
     [Fact]
@@ -125,7 +125,7 @@ public class KestrelGameServerIdleTests
         using var doc = JsonDocument.Parse(body);
         var root = doc.RootElement;
         Assert.Equal("Idle", root.GetProperty("state").GetString());
-        // D5：gameDir 必须是 null（JSON null），不是 GamePaths.Current.ExeDir
+        // D5：gameDir 必须是 null（JSON null），不是会话根目录
         Assert.Equal(JsonValueKind.Null, root.GetProperty("gameDir").ValueKind);
         // 窗口元信息字段照常提供
         Assert.True(root.TryGetProperty("windowWidth", out _), "windowWidth present");
@@ -172,7 +172,7 @@ public class KestrelGameServerIdleTests
         Assert.Equal(200, stateStatus);
         using var stateDoc = JsonDocument.Parse(stateBody);
         var stateRoot = stateDoc.RootElement;
-        // D5：有 session 时 gameDir = GamePaths.Current.ExeDir（非 null）
+        // D5：有 session 时 gameDir = 会话根的 ExeDir（非 null）
         Assert.Equal(JsonValueKind.String, stateRoot.GetProperty("gameDir").ValueKind);
         Assert.NotEqual("Idle", stateRoot.GetProperty("state").GetString());
 

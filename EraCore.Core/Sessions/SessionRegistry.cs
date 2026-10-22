@@ -32,9 +32,8 @@ namespace MinorShift.Emuera.Sessions;
 /// 拆成两把锁后：锁内只做原子摘除（立即让其他端点恢复），等待移到锁外并加上界。</para>
 ///
 /// <para><b>新会话与旧循环仍保持串行</b>（spec 决策四）：进程内有 11 项全局静态在 scope
-/// 释放时被清（含非并发安全的普通字典），<c>GamePaths.Current</c> 亦为进程级单槽——
-/// 旧循环未退出就启动新循环会造成数据竞争。故超时后<b>不</b>建新会话，
-/// 而是把错误如实回给调用方，待旧循环自然退出后重试即可。</para>
+/// 释放时被清（含非并发安全的普通字典），引擎静态仍为进程级共享——旧循环未退出就启动新循环
+/// 会造成数据竞争。故超时后<b>不</b>建新会话，而是把错误如实回给调用方，待旧循环自然退出后重试即可。</para>
 ///
 /// <para><c>_session</c> 是 volatile，只读操作（/input、/snapshot 等）可无锁读；
 /// 方法返回 outcome record 而非 IResult，测试可直接断言状态。</para>
@@ -48,7 +47,7 @@ internal sealed class SessionRegistry
     /// <summary>
     /// <b>Retiring 相位</b>（ADR-0049 D2）：<c>_session == null</c> 且上一轮拆除的旧循环仍在跑。
     ///
-    /// 拆除超时后 <c>_session</c> 已是 null，但旧循环仍在运行且仍读 <see cref="GamePaths.Current"/>、
+    /// 拆除超时后 <c>_session</c> 已是 null，但旧循环仍在运行且仍读自己会话的根、
     /// 仍持有 scope 静态。此字段让<b>后续</b>变更操作知道"还有个循环活着"——
     /// 否则它们会看到 <c>_session == null</c> 以为无旧循环，直接建新会话，
     /// 造成 spec 决策四禁止的静态竞争（新循环初始化清掉旧循环正在用的缓存）。
@@ -169,7 +168,7 @@ internal sealed class SessionRegistry
 
     /// <summary>
     /// MAUI 托管模式建会话（issue 05）——游戏已由 MAUI <c>OnReloadGame</c> 初始化
-    /// （<c>GamePaths.Current</c> 已 Resolve + <c>ConfigData</c> 已 LoadConfig），无需再解析路径/重载配置。
+    /// （游戏根已解析 + <c>ConfigData</c> 已 LoadConfig），无需再解析路径/重载配置。
     /// 与 <see cref="CreateNewSessionAsync"/> 的区别：允许 <c>_session == null</c>（MAUI 首次起 server
     /// 时注册表为空）——HTTP 模式靠 /load-game 建首个 session，POST /session 只负责结束后重建，
     /// 因此其 NoGameLoaded 守卫不适用于 MAUI。
@@ -353,22 +352,20 @@ internal sealed class SessionRegistry
     /// <summary>
     /// POST /load-game（迁移自原 HandleLoadGameAsync）——原子重载游戏目录（issue 05）。
     ///
-    /// <para><b>issue-001 重排后的顺序</b>（关键：不让旧循环对着被改写的 <see cref="GamePaths.Current"/> 运行）：</para>
+    /// <para><b>issue-001 重排后的顺序</b>（关键：旧循环读自己那一局的根，新装配不污染它）：</para>
     /// <list type="number">
     /// <item>控制权门禁（锁内，微秒级）</item>
-    /// <item><see cref="GamePaths.ResolvePreview"/> + <c>Validate</c> —— <b>不写</b> <c>GamePaths.Current</c>，
-    /// 故校验失败时 server 状态零改动（原实现需回滚 Current，见下）</item>
+    /// <item><see cref="GamePaths.Resolve"/> + <c>Validate</c> —— 纯构造/校验，不写任何全局状态，
+    /// 故校验失败时 server 状态零改动</item>
     /// <item>锁内发拆除请求 + 摘引用（微秒级）</item>
-    /// <item><b>锁外</b>有界等待旧游戏循环退出——等待期间其他端点可响应</li>
+    /// <item><b>锁外</b>有界等待旧游戏循环退出——等待期间其他端点可响应</item>
     /// <item>超时 → 回 <see cref="LoadGameStatus.PreviousSessionStillRunning"/>，
-    /// <b>不</b>建新会话（守住静态隔离不变量）；此时才 <see cref="GamePaths.Resolve"/> 提交新路径</item>
-    /// <item><c>Preload.Clear()</c> + 重建 <c>ConfigData</c> + 建新 Session</li>
+    /// <b>不</b>建新会话（守住静态隔离不变量）</item>
+    /// <item><c>Preload.Clear()</c> + 重建 <c>ConfigData</c>（绑定新根）+ 建新 Session</item>
     /// </list>
     ///
-    /// <para>第2 步用预览式校验是必需的：若沿用 <c>Resolve</c>（会写 <c>Current</c>），
-    /// 第 4 步超时时旧循环仍在运行，而它读的正是 <c>Current</c>（<c>Program.ErbDir</c> /
-    /// <c>ConsoleStateManager</c> / <c>Process</c> / <c>SafCompat</c> 等）——
-    /// 会去新游戏目录找 ERB/CSV。原实现靠"join 永不返回所以走不到后面"侥幸躲过该形态。</para>
+    /// <para>issue-009 contract：不再有「提交新根」这一步。根随新 <c>ConfigData</c> 传给新会话，
+    /// 由它在自己的循环流内建立；旧循环即便还没退出，也读不到新根。</para>
     ///
     /// <para>错误契约：路径级错误（DIR_NOT_FOUND / MISSING_CSV / MISSING_ERB）→
     /// <see cref="LoadGameStatus.PathError"/>；加载级失败→ <see cref="LoadGameStatus.LoadFailed"/>；
@@ -398,10 +395,10 @@ internal sealed class SessionRegistry
                         return LoadGameResult.ControlDenied(gate.Reason);
                 }
 
-                // 1. 预览式路径校验——不污染 GamePaths.Current，失败无需回滚。
+                // 1. 路径构造 + 校验——纯函数，不写任何全局状态，失败无需回滚。
                 try
                 {
-                    paths = GamePaths.ResolvePreview(gameDir, new FileSystemGameDirAccessor());
+                    paths = GamePaths.Resolve(gameDir, new FileSystemGameDirAccessor());
                     paths.Validate();
                 }
                 catch (GamePathValidationException ex)
@@ -424,23 +421,20 @@ internal sealed class SessionRegistry
             await _sessionLock.WaitAsync();
             try
             {
-                // 4. 旧循环确已退出，此刻才提交新路径（原 Resolve 的副作用）。
-                GamePaths.Resolve(gameDir, new FileSystemGameDirAccessor());
-
-                // 5. 清空旧 ERB/CSV 文件缓存
+                // 4. 清空旧 ERB/CSV 文件缓存
                 Preload.Clear();
 
-                // 6. 重建 ConfigData 并 SetCurrent（HTTP 线程 AsyncLocal——主要供新 Session 异步
+                // 5. 重建 ConfigData（绑定新根并 SetCurrent；HTTP 线程 AsyncLocal——主要供新 Session 异步
                 //    Preload.Load 间接读）。注意：SetCurrent 与下方 new Session 必须同一 async 流。
-                var newConfig = _configService.Reload(paths.ExeDir);
+                var newConfig = _configService.Reload(paths);
 
-                // 7. Preload.Load 已下沉到 ConsoleStateManager.Initialize（issue 11 D2）——
+                // 6. Preload.Load 已下沉到 ConsoleStateManager.Initialize（issue 11 D2）——
                 //    新 Session.Start() 排 GameLoopAsync 到独立 Task，_loading=true 让 StateString 返 "Loading"。
 
-                // 8. 建新 Session——GameLoopAsync 内 GameLoopComposer.OpenScope(_configData) 注入新配置
+                // 7. 建新 Session——根随 newConfig 进入，GameLoopAsync 在自己的循环流内建立作用域
                 var newSession = CreateSessionCore(newConfig);
 
-                // 9. Success——state="Loading"（issue 11 D1 落地后自动生效）
+                // 8. Success——state="Loading"（issue 11 D1 落地后自动生效）
                 return LoadGameResult.Success(newSession.Id, newSession.StateString, paths.ExeDir);
             }
             finally

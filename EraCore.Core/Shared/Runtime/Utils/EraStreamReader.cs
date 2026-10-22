@@ -27,22 +27,22 @@ internal sealed partial class EraStreamReader : IDisposable
 	int curNo;
 	int nextNo = 1;
 	string[] _fileLines = null!;
-	public bool Open(string path)
+	public bool Open(string path, IGameDirAccessor? dirAccessor = null)
 	{
-		return Open(path, SafPath.GetLogicalFileName(path));
+		return Open(path, SafPath.GetLogicalFileName(path), dirAccessor);
 	}
 
-	public bool Open(string path, string name)
+	public bool Open(string path, string name, IGameDirAccessor? dirAccessor = null)
 	{
-		return OpenOnCache(path, name);
+		return OpenOnCache(path, name, dirAccessor);
 	}
-	public bool OpenOnCache(string path)
+	public bool OpenOnCache(string path, IGameDirAccessor? dirAccessor = null)
 	{
 
-		return OpenOnCache(path, SafPath.GetLogicalFileName(path));
+		return OpenOnCache(path, SafPath.GetLogicalFileName(path), dirAccessor);
 	}
 
-	public bool OpenOnCache(string path, string name)
+	public bool OpenOnCache(string path, string name, IGameDirAccessor? dirAccessor = null)
 	{
 		filepath = path.ToString();
 		filename = name.ToString();
@@ -68,7 +68,9 @@ internal sealed partial class EraStreamReader : IDisposable
 		// 触发条件本就不成立：根访问器（经 Program 垫片取当前会话根）恒非 null；
 		// 而 ReadAllBytes 返回 null 意味着 SAF/文件系统都说文件不存在，此时本地同名 File.* 要么
 		// 同样读不到，要么拿到 URI 路径直接抛。失败因此显性化，不再绕开 F-1。
-		var bytes = Program.DirAccessor.ReadAllBytes(path);
+		// issue-009：初始化路径（ConfigData）显式传 accessor；运行时仍可省略，由会话作用域垫片兜底。
+		var accessor = dirAccessor ?? Program.DirAccessor;
+		var bytes = accessor.ReadAllBytes(path);
 		if (bytes == null)
 		{
 			EmueraLog.Warn("EraStreamReader", $"read FAILED: {path}");

@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using MinorShift.Emuera;
+using MinorShift.Emuera.Files;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Output;
 using MinorShift.Emuera.Primitives;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Tests;
 using MinorShift.Emuera.UI.Game;
 using Xunit;
 using Utils = MinorShift.Emuera.Runtime.Utils.EvilMask.Utils;
@@ -20,17 +23,28 @@ namespace Emuera.Headless.Tests;
 ///    （与 ConsoleSpacePart 同公式），占位计入 textWidth 并影响对齐。
 /// 环境：ConfigData 默认（FontSize=18 → charWidth=9；WindowX=760）。宽度断言基于该默认值。
 /// </summary>
-[Collection("GamePathsIsolated")]
 public class TerminalLineFormatterTests : IDisposable
 {
+    private readonly string _root;
+    private readonly RootScope _rootScope;
     private readonly IDisposable _scope;
 
     public TerminalLineFormatterTests()
     {
-        _scope = GlobalStatic.OpenScope(new ConfigData());
+        // ConsoleImagePart 构造会经 AppContents 读会话根（issue-009：作用域外没有回退），
+        // 故夹具自带一个空的临时游戏根。
+        _root = Path.Combine(Path.GetTempPath(), "emuera-linefmt-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_root);
+        _rootScope = new RootScope(_root, new FileSystemGameDirAccessor());
+        _scope = GlobalStatic.OpenScope(new ConfigData(_rootScope.Paths));
     }
 
-    public void Dispose() => _scope.Dispose();
+    public void Dispose()
+    {
+        _scope.Dispose();
+        _rootScope.Dispose();
+        try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
+    }
 
     private static readonly EmuColor White = new(255, 255, 255);
 

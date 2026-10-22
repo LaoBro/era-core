@@ -1,4 +1,4 @@
-using MinorShift.Emuera.Files;
+﻿using MinorShift.Emuera.Files;
 using System;
 using System.IO;
 using System.Linq;
@@ -21,7 +21,7 @@ public class SafCompatContentUriTests
     public void Content_uri_write_read_delete_roundtrip_uses_accessor()
     {
         var accessor = new InMemoryContentDirAccessor(Root);
-        _ = GamePaths.Resolve(Root, accessor);
+        using var rootScope = new RootScope(Root, accessor);
 
         var savDir = SafCompat.ResolveSubPath(Root, "sav");
         SafCompat.CreateDirectory(savDir);
@@ -58,7 +58,7 @@ public class SafCompatContentUriTests
     public void Content_uri_getfiles_preserves_logical_filenames()
     {
         var accessor = new InMemoryContentDirAccessor(Root);
-        _ = GamePaths.Resolve(Root, accessor);
+        using var rootScope = new RootScope(Root, accessor);
         var datDir = SafCompat.ResolveSubPath(Root, "dat");
         SafCompat.CreateDirectory(datDir);
         accessor.Seed(SafCompat.CombinePath(datDir, "var_01.dat"), [0x01]);
@@ -76,7 +76,7 @@ public class SafCompatContentUriTests
     public void Content_uri_write_contract_handles_overwrite_empty_nested_and_missing_delete()
     {
         var accessor = new InMemoryContentDirAccessor(Root);
-        _ = GamePaths.Resolve(Root, accessor);
+        using var rootScope = new RootScope(Root, accessor);
 
         var nestedDir = SafCompat.ResolveSubPath(SafCompat.ResolveSubPath(Root, "sav"), "nested");
         SafCompat.CreateDirectory(nestedDir);
