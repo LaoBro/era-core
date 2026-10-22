@@ -21,73 +21,51 @@
 ## 项目关系
 
 ```text
-                         +----------------------+
-                         |   EraCore.Web (Vue)   |
-                         +----------+-----------+
-                                    |
-                    +---------------+----------------+
-                    |                                |
-              HTTP/WebSocket                    WebView JS 桥
-                    |                                |
-       +------------v-------------+       +----------v----------+
-       | EraCore.Server   |       |    EraCore.Maui    |
-       |  (Kestrel 宿主壳)         |       |  (BridgeHost +      |
-       +------------+-------------+       |   HttpListenerHost) |
-                    |                      +----------+----------+
-                    |   HTTP/WS (agent)  ────────────┘
-                    +---------------+----------------+
-                                    |
-                         +----------v-----------+
-                         | EraCore.Core |
-                         |  (Sessions/CoreSession |
-                         |   + 共享层 Server/:    |
-                         |   GameServerProtocol /|
-                         |   WsRelay / Controller)|
-                         +----------------------+
+                        ┌──────────────────────┐
+                        │   EraCore.Web (Vue)  │
+                        └──────────┬───────────┘
+                                   │
+                 ┌─────────────────┴──────────────────┐
+            HTTP/WebSocket                      WebView JS 桥
+                 │                                    │
+     ┌───────────v────────────┐          ┌────────────v──────────────┐
+     │ EraCore.Server         │          │ EraCore.Maui（只依赖 Core）│
+     │ Kestrel 宿主壳：        │          │ BridgeHost +              │
+     │ 路由/静态资源/WS 升级    │          │ HttpListenerHost（Core 内）│
+     └───────────┬────────────┘          └────────────┬──────────────┘
+                 │ 端点委托 GameServerProtocol         │ 托管同一会话
+                 └──────────────────┬─────────────────┘
+                                    │ HTTP/WS（agent 可连同一会话）
+                       ┌────────────v──────────────────┐
+                       │ EraCore.Core                  │
+                       │ 无 ASP.NET Core / MAUI 依赖    │
+                       │ ├ 三轴 + CoreSession           │
+                       │ └ 共享层 Server/：             │
+                       │   GameServerProtocol /        │
+                       │   WsRelay / Controller /      │
+                       │   HttpListenerHost            │
+                       └───────────────────────────────┘
 
-       EraCore.Cli -> Core + Server
-       EraCore.Tests -> Core + Server
-       EraCore.Maui.Tests -> Maui
-       EraCore.PublicApi.Tests -> Core（只经公共三轴，无 InternalsVisibleTo）
+   EraCore.Cli             → Core + Server（Android RID 下条件编译排除 Server）
+   EraCore.Tests           → Core + Server
+   EraCore.Maui.Tests      → Maui
+   EraCore.PublicApi.Tests → Core（只经公共三轴，无 InternalsVisibleTo）
 ```
 
-依赖边界：
-
-- `Core` 不依赖 ASP.NET Core 或 MAUI。
-- `Server` 依赖 `Core`，提供 Kestrel 宿主壳（路由 + 静态资源 + WS 升级），业务协议委托给 Core 共享层 `Server/`。
-- `Cli` 依赖 `Core` 和 `Server`；Android RID 下通过条件编译排除 Server。
-- `Maui` 只依赖 `Core`，经 `BridgeHost` 桥接 WebView 渲染共享层会话，并用 `HttpListenerHost`（BCL，Core 内）托管 Server 供 agent 经 HTTP/WS 连接同一会话。
-- `Web` 通过 HTTP/WS 或 MAUI JavaScript bridge 消费同一套回合/显示语义。
+Web 的两条路径共享同一套回合 / 显示语义，差异只在传输层。
 
 ## Core
 
-`EraCore.Core/` 是唯一维护中的引擎核心，负责：
+`EraCore.Core/` 是唯一维护中的无头引擎核心：游戏路径 / 配置 / 预加载与运行时初始化、`EmueraConsole` 显示与输入状态、Agent 协议与终端渲染，以及 Kestrel 与 MAUI 双宿主共用的传输无关共享层（`Server/`）。
 
-- 游戏路径、配置、预加载和运行时初始化。
-- `EmueraConsole`、显示状态、输入请求和按钮状态。
-- Agent 协议、CLI 终端循环和终端渲染。
-- **四模块布局（`Input/` / `Output/` / `Files/` / `Sessions/`）**：前三条是能力轴，`Sessions/CoreSession` 是汇合点。宿主只经 `InputPort` / `OutputPort` / `GameTree` 与 `CoreSession` 接触引擎；引擎内部类型不进入公共面，四模块白名单、目录归属、直连 IO 边界与无 `InternalsVisibleTo` 的接入探针由 `ArchitectureAggregateGuardTests` 聚合机检。
-- **共享层 `Server/`**（issue 05「抽共享层 + 双宿主」）：回合协议（`GameServerProtocol`）、控制状态机（`Controller`）、WS 旁路（`WsRelay`）与 `HttpListenerHost`（BCL 托管宿主）——不依赖 ASP.NET Core，供 Kestrel 与 MAUI 双宿主复用；会话装配由 `Sessions/CoreSession` 承担。
-- 从旧 WinForms 源码迁移而来的共享运行时，位于 `Shared/`。
+```text
+Core 的接触面（从外到内）：
+  wire 契约      HTTP/WS：GameServerProtocol / WsRelay（Core 共享层，BCL only）
+  public 面      InputPort / OutputPort / GameTree / IGameDirAccessor / CoreSession
+  内部件         InternalsVisibleTo：Server / Cli / Maui / Tests（仅本仓宿主与测试）
+```
 
-> Core 内部的三条能力轴（输入 / 输出 / 文件）抽象、实现映射与不变量清单，见 [`EraCore.Core/ARCHITECTURE.md`](EraCore.Core/ARCHITECTURE.md)。
-
-主要区域：
-
-| 路径 | 职责 |
-|---|---|
-| `Input/` | 输入轴：`InputPort` 门面、`InputFrame` 与输入状态应用 |
-| `Output/` | 输出轴：`OutputPort` 门面、`Turn` 信封与帧形状权威 |
-| `Files/` | 文件轴：`GameTree` 门面、`IGameDirAccessor`、路径代数与会话作用域根环境（`GameRootEnvironment`） |
-| `Sessions/` | 会话轴：`CoreSession` 组装根（含游戏根环境的建立与销毁）、生命周期、交付编排与 `SessionRegistry` |
-| `Agent/` | Agent 协议、回合生成和按钮逻辑 |
-| `Terminal/` | CLI/VT 输入、终端解析、渲染和滚动 |
-| `Server/` | 共享层：回合协议 + 控制状态机 + WS 旁路 + `HttpListenerHost`（MAUI 托管宿主），双宿主复用的传输无关逻辑 |
-| `UI/Game/` | `EmueraConsole` 和游戏控制台状态 |
-| `Shared/` | 从旧 WinForms 迁移的共享运行时和 UI 代码 |
-| `Headless/` | 无头替换实现，如声音、剪贴板和字符串测量 |
-
-`EmueraConsole` 是核心游戏控制台状态对象，不属于 Server 或 Web 层。Server、MAUI 和 Agent 都通过它或其桥接状态消费游戏输出。
+模块地图（三轴 + 会话 + 支撑区域）、门面背后的实现映射与不变量，见 [`EraCore.Core/ARCHITECTURE.md`](EraCore.Core/ARCHITECTURE.md)。
 
 ## 方言兼容层
 
@@ -131,7 +109,7 @@ SQL 方言键引入 Core 的**唯一原生依赖**：`Microsoft.Data.Sqlite` →
 服务器会话约束：
 
 - 同一时间只有一个活跃 `CoreSession`，同时最多一个 Controller（`kind: agent|user`）。
-- 游戏根是**会话作用域**的：`CoreSession` 在游戏循环流内建立根环境、循环退出即销毁；拆除期间的旧循环始终读自己那一局的根，后续装配改写不了它。进程级根单例已删除（issue-009），`Program.*` 垫片在作用域外抛异常。
+- 游戏根是**会话作用域**的：`CoreSession` 在游戏循环流内建立、循环退出即销毁，`/load-game` 的路径校验与重建不写任何进程级槽位；隔离规则见 Core 文件轴（F-6）。
 - `POST /load-game` 校验目录、重建运行时并创建新会话；已有活跃会话时返回冲突。
 - `DELETE /session` 结束当前会话并回到空闲态。空闲时 `POST /session` 返回 503，不经 `load-game` 不能建局。
 - `GET /ws` 与 HTTP 长轮询共用同一会话输入通道；旁观者只读 WS。
@@ -214,15 +192,18 @@ agent   -> HTTP/WS -> HttpListenerHost (同一共享层会话)
   -> DisplayState / TerminalDisplay
 ```
 
-常见状态：
+会话状态（`/state` 的 `state` 字段，无会话为 `Idle`）：
 
-- `Idle`：没有活跃游戏会话。
-- `Loading`：正在加载或重建游戏。
-- `WaitInput`：游戏等待用户输入。
-- `Quit`：游戏正常结束。
-- `Error`：游戏或协议发生致命错误。
+```text
+  无会话        加载中            运行中                 终态
+  Idle  ──▶  Loading  ──▶  Running ⇄ WaitInput  ──▶  Quit / Error
+    ▲                                                     │
+    └─────────────── DELETE /session ◀────────────────────┘
+```
 
-协议版本变更时，必须同步更新 C# `TurnRecord.CurrentProtocolVersion` 和 Python 侧 `tests/emuera_server.py:PROTOCOL_VERSION`。
+`Initializing` / `Running` 是执行过程中的中间态，宿主通常在 `WaitInput` 停稳点观察；启动失败直接落 `Error`。终态会话可被 `/load-game` 直接替换。
+
+协议版本变更不是单侧改动：两侧同步规则与后果见 Core 文档 O-6。
 
 ## 构建边界
 
@@ -235,7 +216,7 @@ agent   -> HTTP/WS -> HttpListenerHost (同一共享层会话)
 
 ## 相关文档
 
-- Core 抽象层：[`EraCore.Core/ARCHITECTURE.md`](EraCore.Core/ARCHITECTURE.md)（四模块布局、三轴门面与不变量）
+- Core 详细架构：[`EraCore.Core/ARCHITECTURE.md`](EraCore.Core/ARCHITECTURE.md)（模块地图、三轴门面与不变量）
 - 前端导航：[`EraCore.Web/README.md`](EraCore.Web/README.md)
 - 测试说明：[`tests/README.md`](tests/README.md)
 - 文件迁移历史：[`docs/2026.6.30.架构健壮性重构/T-023前置-文件结构整理方案.md`](docs/2026.6.30.架构健壮性重构/T-023前置-文件结构整理方案.md)

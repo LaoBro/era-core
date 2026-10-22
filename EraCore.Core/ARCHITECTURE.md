@@ -1,4 +1,4 @@
-# EraCore.Core 架构：抽象层与不变量
+# EraCore.Core 架构：模块地图、抽象层与不变量
 
 本文是 `EraCore.Core` 的**层图与边界**：模块对外有哪些接触面、谁在实现、谁在消费、哪些规则必须守住。
 目标是一张能五分钟看懂的地图，让接手的贡献者知道该去哪里继续读——**不代替代码，也不代替 ADR**。
@@ -6,22 +6,34 @@
 **信息分层**（防止本文重新变胖）：本文只管**结构**——「长什么样、边界在哪」（不写历史、不写行号、不抄清单）；
 **为什么**归 [`../docs/adr/`](../docs/adr/)（本文只点名主 ADR）；**怎么实现**与例外清单归类型 remarks 和守卫测试（机读真值唯一）。
 
-> 本文是根 [`../ARCHITECTURE.md`](../ARCHITECTURE.md) `## Core` 一节的深化。
-> 维护约定：改动任一轴的主接口时同步 §1 / §5。最后核对日期：**2026-10-22**。
+> 本文是 Core 的唯一详细文档：模块地图、三轴抽象与不变量都在这里，根 [`../ARCHITECTURE.md`](../ARCHITECTURE.md) 的 `## Core` 只留系统级入口。
+> 维护约定：改动任一轴的主接口时同步 §1 / §5。最后核对日期：**2026-10-23**。
 
 ---
 
-## 1. 三条能力轴总览
+## 1. 模块地图与三条能力轴
 
-Core 把「引擎与世界的全部接触面」收敛为三条轴，它们**方向不完全对称**：
+| 区域 | 职责 |
+|---|---|
+| `Input/` | 输入轴：`InputPort` 门面、`InputFrame`、输入状态应用 |
+| `Output/` | 输出轴：`OutputPort` 门面、`Turn` 信封、`TurnFrames` 帧形状权威 |
+| `Files/` | 文件轴：`GameTree` 门面、`IGameDirAccessor`、路径代数、会话作用域根环境 |
+| `Sessions/` | 汇合点：`CoreSession` 组装根、生命周期、`SessionRegistry`、`TurnDelivery` |
+| `Server/` | 共享层：`GameServerProtocol` / `Controller` / `WsRelay`（Kestrel 与 MAUI 双宿主复用的传输无关逻辑）与 `HttpListenerHost`（MAUI 用的 BCL 托管宿主） |
+| `Agent/` | Agent 协议、回合生成、按钮逻辑 |
+| `Terminal/` | CLI/VT 输入、终端解析、渲染与滚动 |
+| `UI/Game/` | `EmueraConsole` 与游戏控制台状态 |
+| `Shared/` | 从旧 WinForms 迁移的共享运行时与 UI |
+| `Headless/` | 无头替换实现（声音、剪贴板、字符串测量） |
 
-- **输入 / 文件**是**依赖倒置面**：接口定义在 Core，**宿主实现**，引擎只读。
-- **输出**是**产出面**：**引擎产出**（快照 / 广播），宿主消费。
+前四行是本文主线（三轴 + 汇合点）；其余区域是引擎、传输与宿主侧的支撑件，不属于宿主公共面（本仓宿主经 `InternalsVisibleTo` 使用）。
+
+Core 把「引擎与世界的全部接触面」收敛为三条轴，方向不对称：
 
 ```text
-     ┌──────────── 依赖倒置面（宿主实现 → 引擎消费）────────────┐
+     ┌──────────── 依赖倒置面（宿主提供状态 / 实现 → 引擎消费）────────────┐
      输入：InputPort（宿主门面）→ IInputHost / IVtHost / ITerminalInput  →  引擎只读
-     文件：GameTree（宿主门面）→ IGameDirAccessor          →  引擎的全部游戏树 IO
+     文件：GameTree（宿主门面）→ IGameDirAccessor          →  引擎的全部游戏树 IO（可读写）
      └──────────────────────────────────────────────────────────┘
 
      ┌──────────── 产出面（引擎产出 → 宿主消费）───────────────┐
@@ -33,16 +45,28 @@ Core 把「引擎与世界的全部接触面」收敛为三条轴，它们**方�
 > （profile → 可见面），不增加输入/输出/文件的新接触面；结构、闭包与不变量见
 > [`../docs/guides/dialect-porting.md`](../docs/guides/dialect-porting.md)。
 
-三轴的**宿主门面**（`InputPort` / `OutputPort` / `GameTree`）与组装根 `CoreSession` 是 `public`：
-宿主只认这些类型。门面背后的接口与实现（`IInputHost` / `DisplayState` / `OutputHub` / `GameLoopComposer` /
-`SessionRegistry` 等）保持 `internal`；`EraCore.Core.csproj` 的 `InternalsVisibleTo`
-（`EraCore.Server` / `EraCore.Cli` / `EraCore.Maui` / `EraCore.Tests`）只服务于本仓既有宿主与测试，
-不再是外部宿主的接入手段（`EraCore.PublicApi.Tests` 不具该权限）。
-`IGameDirAccessor` 仍是唯一需要外部实现的 `public` 接口。
+**公共面只有这一层，其余全部 `internal`：**
 
-**公共面由聚合守卫机检**：四模块白名单集中在测试侧 `AxisSurfaceRegistry`，由各模块
+```text
+  ┌──────────────────────────────────────────────────┐
+  │ InputPort   OutputPort   GameTree                │  三轴宿主门面
+  │ CoreSession                                      │  组装根（持有三个门面）
+  │ IGameDirAccessor                                 │  唯一由宿主实现的 public 接口
+  └───────────────────────┬──────────────────────────┘
+                          │ 门面背后
+  ┌───────────────────────v──────────────────────────┐
+  │ IInputHost / DefaultInputHost                    │
+  │ DisplayState / OutputHub / TurnDelivery          │
+  │ GameLoopComposer / SessionRegistry               │
+  └──────────────────────────────────────────────────┘
+
+  InternalsVisibleTo = Server / Cli / Maui / Tests —— 只服务本仓宿主与测试
+  EraCore.PublicApi.Tests 不在名单内：只经公共面跑通完整会话
+```
+
+**公共面由聚合守卫机检**：四模块（三轴 + 会话）白名单集中在测试侧 `AxisSurfaceRegistry`，由各模块
 `*PublicSurfaceTests` 与 `ArchitectureAggregateGuardTests` 共同引用。聚合守卫锁定四件事：
-白名单恰好覆盖各轴命名空间；公共签名不引用 `internal` 引擎类型；轴命名空间只能出现在对应模块目录；
+白名单恰好覆盖各模块命名空间；公共签名不引用 `internal` 引擎类型；轴命名空间只能出现在对应模块目录；
 游戏内容直连 IO 只能落在 `Files/` 或 `GameDirAccessorIoPolicyTests` 的登记豁免。另由
 `EraCore.PublicApi.Tests`（不具 `InternalsVisibleTo`）以三轴完成「启动会话 → 读文件 → 提交输入 → 收回合」，
 证明宿主接入不需要内部访问。
@@ -55,9 +79,11 @@ Core 把「引擎与世界的全部接触面」收敛为三条轴，它们**方�
 
 ## 2. 输入轴
 
-**`IInputHost`** 是统一输入宿主：**宿主实现，引擎只读**。引擎侧经 `IConsoleUI.Input` 拿它，读到的
-`InputSnapshot` 是**不可变快照**，宿主只能以 `Volatile` 整体换引用。宿主能做什么由静态能力位
-`InputCapabilities`（`Geometry` / `Hover` / `KeyboardState` / `Focus`）在构造期声明——运行期不变。
+**`InputPort`** 是输入轴的宿主门面（`Submit` / `Reset`），宿主只经它提交状态。引擎侧经
+`IConsoleUI.Input` 读取 **`IInputHost`**——它是 `internal`，由 Core 的 `DefaultInputHost` 实现，
+不是宿主实现点；读到的 `InputSnapshot` 是**不可变快照**，写侧只能以 `Volatile` 整体换引用。
+宿主能做什么由静态能力位 `InputCapabilities`（`Geometry` / `Hover` / `KeyboardState` / `Focus`）
+在组装期声明（公共路径为 `CoreSessionOptions.InputCapabilities`）——运行期不变。
 
 与这个 pull 面**分居两侧**的是 push 面：上行输入先落成 **`InputStateEvent`**（两个 wire 入口 —— WS 协议帧 /
 HTTP body —— 的共同终点），再由 **`InputStateApplier`** 翻译成宿主状态并统一做能力位门卫。
@@ -94,7 +120,8 @@ HTTP body —— 的共同终点），再由 **`InputStateApplier`** 翻译成�
 **`HttpSessionIO`**（写同时入 HTTP 队列与广播）→ **`TurnDelivery`**（长轮询 + 控制权抢占 + final-turn-once + 超时）
 → **`WsRelay`**（WS 传输，Core 共享、BCL only）。帧的 wire 契约与差分操作见 `Agent/TurnRecord.cs`；
 会话相位与拆除顺序由 `CoreSession` / `SessionRegistry` / `TurnDelivery` 持有（ADR-0049）；
-宿主经 `CoreSession.Output` 拿到 `OutputPort`，看不到 `DisplayState` / `OutputHub`。
+宿主经 `CoreSession.Output` 拿到 `OutputPort`，看不到 `DisplayState` / `OutputHub`；这是**外部宿主**
+的边界——本仓内部宿主（Server / MAUI）仍经 `InternalsVisibleTo` 直接使用这两个内部件。
 
 ### 3.3 不变量
 
@@ -119,7 +146,8 @@ HTTP body —— 的共同终点），再由 **`InputStateApplier`** 翻译成�
 
 ## 4. 文件轴
 
-`IGameDirAccessor` 是**唯一**的游戏目录访问抽象，也是 Core 里唯一 `public` 的能力轴接口，接口头部硬性声明：
+`IGameDirAccessor` 是**唯一**的游戏目录访问抽象，也是 Core 里唯一需要宿主实现（或直接选用
+`FileSystemGameDirAccessor`）的 `public` 接口，接口头部硬性声明：
 
 > 「所有文件 IO 必须通过此接口，禁止直接调用 `File.*` / `Directory.*`。」
 
@@ -132,7 +160,19 @@ HTTP body —— 的共同终点），再由 **`InputStateApplier`** 翻译成�
 越域在签名上不可表达）。
 
 **游戏根只由根环境承载**（issue-007 展开，issue-009 contract 收敛）：`GameRootEnvironment` 的唯一形态是
-会话作用域（`AsyncLocal`）——由组装根 `CoreSession` 在游戏循环流内 `Establish`，循环退出即销毁。
+会话作用域（`AsyncLocal`），由组装根 `CoreSession` 在游戏循环流内 `Establish`，循环退出即销毁。
+
+```text
+ 时间 ─────────────────────────────────────────────────────────▶
+
+ 会话 A：Establish(rootA) ──▶ 游戏循环 ═══退出═══▶ 作用域销毁
+                              └──────── 全程读 rootA ────────┘
+
+ 会话 B：                    Establish(rootB) ──▶ 新循环（读 rootB）
+                                    │
+                                    └─ 改不到 A 的循环：各自持一份作用域
+```
+
 `GamePaths.Resolve` 是纯构造，不写任何进程级槽位；`GamePaths.Current` / `SetCurrent` / `ResolvePreview`
 与装配期视图均已删除。作用域外 `Program.*` 抛 `InvalidOperationException`，不回落到进程启动目录；
 初始化与配置加载显式携带根（`ConfigData(GamePaths)` / `IGameDirAccessor`），宿主持显式 `GameTree`。
@@ -166,7 +206,7 @@ HTTP body —— 的共同终点），再由 **`InputStateApplier`** 翻译成�
 
 ---
 
-## 6. 落地状态快照（截至 2026-10-22）
+## 6. 落地状态快照（截至 2026-10-23）
 
 | 轴 | 主接口 | 状态 |
 |---|---|---|

@@ -102,8 +102,8 @@ namespace MinorShift.Emuera.Input;
 	}
 
 	/// <summary>
-	/// 输入状态快照（pull 面）。**不可变** —— 宿主用 <see cref="System.Threading.Volatile"/>
-	/// 整体替换引用，引擎按需读取；保证同一次 <c>WaitInput</c> 内的高频轮询读到一致的一组值
+	/// 输入状态快照（pull 面）。**不可变** —— 写侧（<see cref="DefaultInputHost"/>）用
+	/// <see cref="System.Threading.Volatile"/> 整体替换引用，引擎按需读取；保证同一次 <c>WaitInput</c> 内的高频轮询读到一致的一组值
 	/// （ADR-0031 决策 2 / spec-v3 §8 L1''）。
 	/// </summary>
 	internal sealed record InputSnapshot
@@ -128,8 +128,8 @@ namespace MinorShift.Emuera.Input;
 		}
 
 	/// <summary>
-	/// 统一输入宿主（ADR-0031 决策 1）。**宿主实现、引擎只读**，与
-	/// <c>IVtHost</c>（ADR-0010）同构的依赖倒置。
+	/// 统一输入宿主（ADR-0031 决策 1）。**由 Core 实现、引擎只读**；宿主不实现本接口，
+	/// 只经 <see cref="InputPort"/> 提交状态。
 	/// <para>
 	/// TODO 能力位对应的成员（<c>SubmitPrimitiveKey</c> / <c>SubmitPrimitiveMouse</c> /
 	/// <c>NotifyLeave</c>）随其能力位在 M8 一并加入，避免现在留下投机 API。
