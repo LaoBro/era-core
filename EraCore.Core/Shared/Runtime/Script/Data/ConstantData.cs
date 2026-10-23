@@ -1776,7 +1776,7 @@ internal sealed class ConstantData
 					continue;
 				}
 				if (!defined.Add(index))
-					ParserMediator.Warn(string.Format(trerror.VarKeyAreadyDefined.Text, index.ToString()), position, 1);
+					ParserMediator.Warn(string.Format(trerror.VarKeyAreadyDefined.Text, ros[dest[1]].ToString(), index.ToString()), position, 1);
 				target[index] = ros[dest[1]].ToString();
 				if (targetI != null && length >= 3)
 				{

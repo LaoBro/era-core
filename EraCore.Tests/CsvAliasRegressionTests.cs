@@ -47,6 +47,26 @@ public sealed class CsvAliasRegressionTests
 	}
 
 	[Fact]
+	public async Task Csv_with_duplicate_index_does_not_abort_loading()
+	{
+		using var h = new LoaderTestHarness();
+		// CSV 内同一编号重复：旧实现同样只传一个参数抛 FormatException → 外层 catch return，
+		// 重复行之后的内容不解析，且 loadDataTo 末尾的 loadAliases 也不会执行。
+		h.WriteCsv("CFLAG.CSV", "1,既成事実\n1,重複名\n12,デート中\n");
+		h.WriteCsv("CFLAG.als", "12,约会中\n");
+
+		await h.InitializeAsync();
+
+		var dic = GlobalStatic.ConstantData.GetKeywordDictionary(out _, VariableCode.CFLAG, -1, null!);
+
+		Assert.NotNull(dic);
+		// 重复编号之后的行仍被解析
+		Assert.Equal(12, dic["デート中"]);
+		// 该表的 .als 仍被加载
+		Assert.Equal(12, dic["约会中"]);
+	}
+
+	[Fact]
 	public async Task Alias_file_with_duplicate_name_does_not_abort_loading()
 	{
 		using var h = new LoaderTestHarness();
