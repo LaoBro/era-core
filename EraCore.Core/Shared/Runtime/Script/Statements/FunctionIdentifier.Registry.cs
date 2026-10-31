@@ -20,24 +20,32 @@ internal sealed partial class FunctionIdentifier
 			Name = "TINPUTNF",
 			CreateInstruction = () => new TINPUT_Instruction(false, noFocus: true),
 			Dialect = Dialect.Snake,
+			Family = "NF 输入",
+			Note = "无强制滚动步，与普通等待等价（已知差异）",
 		},
 		new InstructionDescriptor
 		{
 			Name = "TINPUTSNF",
 			CreateInstruction = () => new TINPUTS_Instruction(false, noFocus: true),
 			Dialect = Dialect.Snake,
+			Family = "NF 输入",
+			Note = "无强制滚动步，与普通等待等价（已知差异）",
 		},
 		new InstructionDescriptor
 		{
 			Name = "TONEINPUTNF",
 			CreateInstruction = () => new TINPUT_Instruction(true, noFocus: true),
 			Dialect = Dialect.Snake,
+			Family = "NF 输入",
+			Note = "无强制滚动步，与普通等待等价（已知差异）",
 		},
 		new InstructionDescriptor
 		{
 			Name = "TONEINPUTSNF",
 			CreateInstruction = () => new TINPUTS_Instruction(true, noFocus: true),
 			Dialect = Dialect.Snake,
+			Family = "NF 输入",
+			Note = "无强制滚动步，与普通等待等价（已知差异）",
 		},
 		// Skia 方言 P0：动态调用（实现票 20）。CALLS_Instruction 运行时解析字符串调用串。
 		new InstructionDescriptor
@@ -45,12 +53,14 @@ internal sealed partial class FunctionIdentifier
 			Name = "JUMPSTR",
 			CreateInstruction = () => new CALLS_Instruction(true, false, false),
 			Dialect = Dialect.Snake,
+			Family = "动态调用",
 		},
 		new InstructionDescriptor
 		{
 			Name = "CALLSTR",
 			CreateInstruction = () => new CALLS_Instruction(false, false, false),
 			Dialect = Dialect.Snake,
+			Family = "动态调用",
 		},
 		new InstructionDescriptor
 		{
@@ -58,6 +68,7 @@ internal sealed partial class FunctionIdentifier
 			CreateInstruction = () => new CALLS_Instruction(false, true, false),
 			AdditionalFlag = EXTENDED,
 			Dialect = Dialect.Snake,
+			Family = "动态调用",
 		},
 		new InstructionDescriptor
 		{
@@ -65,6 +76,7 @@ internal sealed partial class FunctionIdentifier
 			CreateInstruction = () => new CALLS_Instruction(true, true, true),
 			AdditionalFlag = EXTENDED,
 			Dialect = Dialect.Snake,
+			Family = "动态调用",
 		},
 		new InstructionDescriptor
 		{
@@ -72,6 +84,7 @@ internal sealed partial class FunctionIdentifier
 			CreateInstruction = () => new CALLS_Instruction(false, true, true),
 			AdditionalFlag = EXTENDED,
 			Dialect = Dialect.Snake,
+			Family = "动态调用",
 		},
 		// Skia 方言 P0：图像层（实现票 22）。参数完整解析 + ColorMatrix 5×5 校验；执行体走 EmueraConsole 语义接缝（no-op，实测 eraTW 引用见 Flan_UI.ERB）。
 		new InstructionDescriptor
@@ -79,24 +92,36 @@ internal sealed partial class FunctionIdentifier
 			Name = "SETIMAGELAYER",
 			CreateInstruction = () => new SETIMAGELAYER_Instruction(false),
 			Dialect = Dialect.Snake,
+			Family = "图像层",
+			Status = PortStatus.AcceptedNoOp,
+			Note = "参数解析 + ColorMatrix 5×5 校验；控制台 no-op",
 		},
 		new InstructionDescriptor
 		{
 			Name = "SETIMAGELAYERL",
 			CreateInstruction = () => new SETIMAGELAYER_Instruction(true),
 			Dialect = Dialect.Snake,
+			Family = "图像层",
+			Status = PortStatus.AcceptedNoOp,
+			Note = "参数解析 + ColorMatrix 5×5 校验；followScroll 恒 true；no-op",
 		},
 		new InstructionDescriptor
 		{
 			Name = "CLEARIMAGELAYER",
 			CreateInstruction = () => new CLEARIMAGELAYER_Instruction(),
 			Dialect = Dialect.Snake,
+			Family = "图像层",
+			Status = PortStatus.AcceptedNoOp,
+			Note = "参数解析；控制台 no-op",
 		},
 		new InstructionDescriptor
 		{
 			Name = "CLEARIMAGELAYER_ALL",
 			CreateInstruction = () => new CLEARIMAGELAYER_ALL_Instruction(),
 			Dialect = Dialect.Snake,
+			Family = "图像层",
+			Status = PortStatus.AcceptedNoOp,
+			Note = "控制台 no-op；不渲染图像层",
 		},
 		// Skia 方言 P0：HTML/文本（实现票 23）。HTML_PRINTC/LC 复用既有 HTML 管线 + 单元格对齐（IS_PRINT，与 Skia 同）；
 		// TEXT_BGC_ON/OFF 为文本背景色开关（era-core 渲染线未消费 → 已知差异，spec §5）。
@@ -106,6 +131,8 @@ internal sealed partial class FunctionIdentifier
 			CreateInstruction = () => new HTML_PRINTC_Instruction(true),
 			AdditionalFlag = IS_PRINT,
 			Dialect = Dialect.Snake,
+			Family = "HTML 文本",
+			Note = "复用 HTML 管线，单元格右对齐（已知差异）",
 		},
 		new InstructionDescriptor
 		{
@@ -113,18 +140,26 @@ internal sealed partial class FunctionIdentifier
 			CreateInstruction = () => new HTML_PRINTC_Instruction(false),
 			AdditionalFlag = IS_PRINT,
 			Dialect = Dialect.Snake,
+			Family = "HTML 文本",
+			Note = "复用 HTML 管线，单元格左对齐（已知差异）",
 		},
 		new InstructionDescriptor
 		{
 			Name = "TEXT_BGC_ON",
 			CreateInstruction = () => new TEXT_BGC_ON_Instruction(),
 			Dialect = Dialect.Snake,
+			Family = "HTML 文本",
+			Status = PortStatus.StateOnly,
+			Note = "仅保存 TextBackgroundColor，渲染线未消费",
 		},
 		new InstructionDescriptor
 		{
 			Name = "TEXT_BGC_OFF",
 			CreateInstruction = () => new TEXT_BGC_OFF_Instruction(),
 			Dialect = Dialect.Snake,
+			Family = "HTML 文本",
+			Status = PortStatus.StateOnly,
+			Note = "仅清空 TextBackgroundColor，渲染线未消费",
 		},
 	];
 }
