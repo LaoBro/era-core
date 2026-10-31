@@ -8,6 +8,5 @@
     "argBuilders": null
   },
   "additions": [],
-  "exclusions": [],
   "ownerNotes": "所有 fork 的共享 base。冻结产物 tools/dialect-inventory/base.era-core-baseline.txt，仅经 extract.py --update-base 重写；fork 的 delta 一律对它求。"
 }

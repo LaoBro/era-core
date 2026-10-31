@@ -94,6 +94,22 @@ class ExtractToolTests(unittest.TestCase):
     def _read_descriptor(self, fork_id: str) -> dict:
         return json.loads(self.layout.descriptor(fork_id).read_text(encoding="utf-8"))
 
+    def _write_surface(self, profile: str, keys: set[tuple[str, str]]) -> None:
+        path = self.layout.surface(profile)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [f"{name}\t{kind}" for name, kind in sorted(keys, key=lambda nk: (nk[1], nk[0]))]
+        path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+    def _write_surfaces(self, keys: set[tuple[str, str]]) -> None:
+        self._write_surface("snake", keys)
+        self._write_surface("eratw", set())
+
+    def _capture_status(self) -> tuple[int, str]:
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = extract.status_report(self.layout, "fork")
+        return code, buffer.getvalue()
+
     # ---------- 正例 ----------
 
     def test_check_passes_after_update(self) -> None:
@@ -138,6 +154,124 @@ class ExtractToolTests(unittest.TestCase):
         })
         self.assertEqual(extract.update_fork(self.layout, "envfork", {"TEST_FORK_REF": str(self.fork_src)}), 0)
         self.assertEqual(extract.check_fork(self.layout, "envfork", {"TEST_FORK_REF": str(self.fork_src)}), 0)
+
+    # ---------- status 报告（repo-local） ----------
+
+    def test_status_reports_progress_without_source_root(self) -> None:
+        descriptor = self._read_descriptor("fork")
+        descriptor["sourceRoot"] = "$MISSING_SKIA_REF"
+        self._descriptor("fork", descriptor)
+        self._write_surfaces({("FORK_ONLY", "directive")})
+
+        code, output = self._capture_status()
+
+        self.assertEqual(code, 0)
+        self.assertIn("fork: 1/2 ported (50%)", output)
+        self.assertIn("pending (1):", output)
+        self.assertIn("FORK_FN", output)
+        self.assertIn("out-of-scope (0):", output)
+        self.assertIn("contradictions (0):", output)
+
+    def test_status_groups_excluded_and_out_of_scope(self) -> None:
+        descriptor = self._read_descriptor("fork")
+        for item in descriptor["additions"]:
+            if item["name"] == "FORK_ONLY":
+                item["status"] = "excluded"
+                item["note"] = "明确不移植"
+            elif item["name"] == "FORK_FN":
+                item["status"] = "out-of-scope"
+                item["note"] = "渲染层"
+        self._descriptor("fork", descriptor)
+        self._write_surfaces(set())
+
+        code, output = self._capture_status()
+
+        self.assertEqual(code, 0)
+        self.assertIn("fork: 0/2 ported (0%)", output)
+        self.assertIn("excluded (1):", output)
+        self.assertIn("明确不移植", output)
+        self.assertIn("out-of-scope (1):", output)
+        self.assertIn("渲染层", output)
+        self.assertIn("pending (0):", output)
+
+    def test_status_flags_ported_key_still_marked_pending(self) -> None:
+        descriptor = self._read_descriptor("fork")
+        for item in descriptor["additions"]:
+            if item["name"] == "FORK_ONLY":
+                item["status"] = "pending"
+        self._descriptor("fork", descriptor)
+        self._write_surfaces({("FORK_ONLY", "directive"), ("FORK_FN", "function")})
+
+        code, output = self._capture_status()
+
+        self.assertEqual(code, 1)
+        self.assertIn("contradictions (1):", output)
+        self.assertIn("FORK_ONLY", output)
+        # 未声明 status 的 ported 键是常态，不算矛盾。
+        self.assertNotIn("FORK_FN", output)
+
+    def test_status_warns_when_ported_key_declares_out_of_scope(self) -> None:
+        descriptor = self._read_descriptor("fork")
+        for item in descriptor["additions"]:
+            if item["name"] == "FORK_ONLY":
+                item["status"] = "out-of-scope"
+        self._descriptor("fork", descriptor)
+        self._write_surfaces({("FORK_ONLY", "directive")})
+
+        code, output = self._capture_status()
+
+        self.assertEqual(code, 0)
+        self.assertIn("warnings (1):", output)
+        self.assertIn("已 ported；建议删除 status", output)
+        self.assertIn("contradictions (0):", output)
+
+    def test_status_rejects_explicit_ported_value(self) -> None:
+        descriptor = self._read_descriptor("fork")
+        descriptor["additions"][0]["status"] = "ported"
+        self._descriptor("fork", descriptor)
+        self._write_surfaces(set())
+
+        with self.assertRaises(ToolError):
+            extract.status_report(self.layout, "fork")
+
+    def test_status_rejects_excluded_without_note(self) -> None:
+        descriptor = self._read_descriptor("fork")
+        for item in descriptor["additions"]:
+            if item["name"] == "FORK_ONLY":
+                item["status"] = "excluded"
+        self._descriptor("fork", descriptor)
+        self._write_surfaces(set())
+
+        with self.assertRaises(ToolError):
+            extract.status_report(self.layout, "fork")
+
+    def test_status_rejects_null_status(self) -> None:
+        descriptor = self._read_descriptor("fork")
+        descriptor["additions"][0]["status"] = None
+        self._descriptor("fork", descriptor)
+        self._write_surfaces(set())
+
+        with self.assertRaises(ToolError):
+            extract.status_report(self.layout, "fork")
+
+    def test_status_missing_surface_fails_fast(self) -> None:
+        with self.assertRaises(ToolError):
+            extract.status_report(self.layout, "fork")
+
+    def test_update_preserves_status_and_note(self) -> None:
+        descriptor = self._read_descriptor("fork")
+        for item in descriptor["additions"]:
+            if item["name"] == "FORK_FN":
+                item["status"] = "out-of-scope"
+                item["note"] = "渲染层"
+        self._descriptor("fork", descriptor)
+
+        self.assertEqual(extract.update_fork(self.layout, "fork", {}), 0)
+
+        preserved = {a["name"]: a for a in self._read_descriptor("fork")["additions"]}["FORK_FN"]
+        self.assertEqual("out-of-scope", preserved["status"])
+        self.assertEqual("渲染层", preserved["note"])
+        self.assertEqual("fork", preserved["owner"])
 
     # ---------- fail-fast ----------
 

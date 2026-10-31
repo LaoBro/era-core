@@ -23,18 +23,18 @@
     "argBuilders": null
   },
   "additions": [],
-  "exclusions": [],
   "ownerNotes": "..."
 }
 ```
 
 | 字段 | 说明 |
 |---|---|
-| `sourceRoot` | 上游 checkout 路径；支持 `$ENV` 展开，缺失即 fail-fast |
+| `sourceRoot` | 上游 checkout 路径；支持 `$ENV` 展开，缺失即 fail-fast（`--status` 不需要） |
 | `base` | 统一为 `era-core-baseline`（共享祖先） |
 | `registryFiles` | 上游指令/函数的登记文件，工具按此抽取键 |
-| `additions` | fork-only 键及 `owner`；由 `--update` 维护 |
-| `exclusions` | 明确排除的键，需在 `ownerNotes` 说明理由 |
+| `additions` | fork-only 键及 `owner` / `status` / `note`；由 `--update` 维护（保留自定义字段） |
+| `additions[].status` | `pending`（缺省）/ `excluded` / `out-of-scope`；已 ported 的键**不写**（ported 由面快照推导，不得书写 `ported`） |
+| `additions[].note` | 决策理由（Float 依赖、渲染/性能层范围外等）；`excluded` 必填 |
 | `ownerNotes` | 归属判据与范围外说明 |
 
 `owner` 是**库存元数据**，用于跨 fork 冲突评审；运行期 `DialectModule.Owner` 默认取模块名（`Snake`/`Eratw`），两者不是同一字段。
@@ -49,10 +49,11 @@ python tools/dialect-inventory/extract.py --list-forks
 python tools/dialect-inventory/extract.py --fork skia --check      # 漂移检查
 python tools/dialect-inventory/extract.py --fork skia --update     # 确认后重写 additions/hash
 python tools/dialect-inventory/extract.py --fork skia --print-delta
+python tools/dialect-inventory/extract.py --fork skia --status     # 进度报告（repo-local）
 python tools/dialect-inventory/extract.py --update-base            # 重写 base 快照
 ```
 
-退出码：`0` 一致；`1` 漂移；`2` 前置条件缺失（描述符 / sourceRoot / base）。
+退出码：`0` 一致/正常；`1` 漂移或 fork 决策与面快照矛盾；`2` 前置条件缺失（描述符 / sourceRoot / base / 面快照）。
 
 ## 新增 fork
 

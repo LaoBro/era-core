@@ -9,8 +9,9 @@
 设计（决策票 12/13）
 -------------------
 - 每个 fork 一份 ``dialects/<forkId>.json`` 描述符：``{id, displayName, sourceRoot,
-  base, registryFiles{instructions, methods, argBuilders}, additions[], exclusions[],
-  ownerNotes}``。``sourceRoot`` 支持 ``$ENV`` 展开（如 ``$EMUERA_SKIA_REF``）。
+  base, registryFiles{instructions, methods, argBuilders}, additions[],
+  ownerNotes}``。``additions[]`` 项可带 ``status`` / ``note``；``sourceRoot`` 支持
+  ``$ENV`` 展开（如 ``$EMUERA_SKIA_REF``）。
 - ``base`` 统一为仓库内 **era-core-baseline 快照**（``dialects/era-core-baseline.json``
   描述布局，冻结产物 ``tools/dialect-inventory/base.era-core-baseline.txt``）。
   因共享祖先，所有 fork 复用同一 base。
@@ -25,7 +26,10 @@
 2. 读 base 快照 → 求 delta（上游独有键）+ 确定清单（四组已排序 ``name<TAB>kind`` 行，
    UTF-8 / LF，末尾换行）＋ SHA-256。
 3. ``--check`` 逐位比对冻结产物与描述符 ``additions``：漂移即出 diff 并以非零码退出，
-   **禁止静默合并**。``--update`` 重写清单 / hash / 描述符 ``additions``。
+   **禁止静默合并**。``--update`` 重写清单 / hash / 描述符 ``additions``（保留既有
+   ``status`` / ``note`` 等自定义字段）。
+4. ``--status`` 只用 fork JSON + 已提交的面快照推导移植进度：ported 不写入任何 JSON，
+   由 ``additions`` 是否出现在面快照中决定。
 
 口径来源：01 asset 的 ``_extract.py`` 原型。清单 = fork 指令 → base 指令 → fork 函数 →
 base 函数；hash 不含时间与绝对路径，重复运行逐位相等。
@@ -37,10 +41,15 @@ base 函数；hash 不含时间与绝对路径，重复运行逐位相等。
     python tools/dialect-inventory/extract.py --fork skia --check      # 校验漂移
     python tools/dialect-inventory/extract.py --fork skia --update     # 重写冻结产物
     python tools/dialect-inventory/extract.py --fork skia --print-delta
+    python tools/dialect-inventory/extract.py --fork skia --status     # 进度报告（repo-local）
     python tools/dialect-inventory/extract.py --update-base            # 重写 base 快照
     python tools/dialect-inventory/extract.py --list-forks
 
-退出码：0 = 一致/成功；1 = 上游或基线漂移；2 = 前置条件缺失（描述符 / sourceRoot / base 缺）。
+``--status`` 不需要上游 checkout（不解析 ``sourceRoot``）：ported = additions ∩ 面快照，
+pending 缺省；输出分组清单与矛盾区（``ported ∩ (pending|excluded)``）。
+
+退出码：0 = 一致/成功；1 = 上游或基线漂移，或 fork 决策与面快照矛盾；2 = 前置条件缺失
+（描述符 / sourceRoot / base / 面快照缺）。
 """
 
 from __future__ import annotations
@@ -60,6 +69,13 @@ DIRECTIVE = "directive"
 FUNCTION = "function"
 
 BASE_ID = "era-core-baseline"
+
+STATUS_PENDING = "pending"
+STATUS_EXCLUDED = "excluded"
+STATUS_OUT_OF_SCOPE = "out-of-scope"
+STATUSES = (STATUS_PENDING, STATUS_EXCLUDED, STATUS_OUT_OF_SCOPE)
+CONTRADICTION_STATUSES = (STATUS_PENDING, STATUS_EXCLUDED)
+STATUS_PROFILES = ("snake", "eratw")
 
 _ENV_TOKEN = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
 _enum_head = re.compile(r"^enum\s+FunctionCode")
@@ -95,9 +111,31 @@ class Layout:
     def digest(self, fork_id: str) -> Path:
         return self.inventory_dir / f"{fork_id}-delta.sha256"
 
+    def surface(self, profile_id: str) -> Path:
+        return self.inventory_dir / f"surface.{profile_id}.txt"
+
 
 class ToolError(Exception):
-    """前置条件缺失（→ 退出码 2），与漂移（→ 1）区分。"""
+    """前置条件缺失（→ 退出码 2），与漂移/矛盾（→ 1）区分。"""
+
+
+@dataclasses.dataclass(frozen=True)
+class StatusRecord:
+    """一个 fork 增量的移植决策与推导出的 ported 态。
+
+    ``declared_status`` 保留「显式声明」与「什么都不写」的区别：后者对已 ported 的键是常态
+    （ported 由面快照推导，不写字）；``status`` 为有效决策（未声明 = pending）。
+    """
+
+    name: str
+    kind: str
+    declared_status: str | None
+    note: str | None
+    ported: bool
+
+    @property
+    def status(self) -> str:
+        return self.declared_status or STATUS_PENDING
 
 
 # --------------------------------------------------------------------------- #
@@ -243,6 +281,22 @@ def write_base(path: Path, directives: set[str], functions: set[str]) -> None:
     _write(path, text)
 
 
+def read_surface_keys(paths: list[Path]) -> set[tuple[str, str]]:
+    """读取面快照并返回 ``(name, kind)`` 集合；格式错误 fail-fast。"""
+    keys: set[tuple[str, str]] = set()
+    for path in paths:
+        if not path.is_file():
+            raise ToolError(f"缺少面快照 {path}；先跑 DialectSurfaceSnapshotTests 生成。")
+        for line in _read(path).splitlines():
+            if not line.strip():
+                continue
+            name, tab, kind = line.partition("\t")
+            if not tab or kind not in (DIRECTIVE, FUNCTION):
+                raise ToolError(f"面快照 {path} 行格式非法：{line!r}")
+            keys.add((name, kind))
+    return keys
+
+
 # --------------------------------------------------------------------------- #
 # 描述符 additions
 # --------------------------------------------------------------------------- #
@@ -364,6 +418,91 @@ def check_fork(layout: Layout, fork_id: str, env: dict) -> int:
     return 0
 
 
+def status_records(descriptor: dict, surface: set[tuple[str, str]]) -> list[StatusRecord]:
+    """additions → StatusRecord（ported 由面快照推导，不读 sourceRoot）。"""
+    records: list[StatusRecord] = []
+    seen: set[tuple[str, str]] = set()
+    for item in descriptor.get("additions") or []:
+        try:
+            name, kind = item["name"], item["kind"]
+        except KeyError as exc:
+            raise ToolError(f"additions 项缺 {exc.args[0]}：{item!r}") from exc
+        key = (name, kind)
+        if key in seen:
+            raise ToolError(f"additions 重复键：{name}\t{kind}")
+        seen.add(key)
+        declared_status: str | None = None
+        if "status" in item:
+            declared_status = item["status"]
+            if not isinstance(declared_status, str) or declared_status not in STATUSES:
+                raise ToolError(
+                    f"additions「{name}」的 status {declared_status!r} 非法；允许：{', '.join(STATUSES)}"
+                    "（ported 是推导值，不得书写）。"
+                )
+        note = item.get("note")
+        if declared_status == STATUS_EXCLUDED and not note:
+            raise ToolError(f"additions「{name}」标 excluded 时必须在 note 写明理由。")
+        records.append(StatusRecord(name, kind, declared_status, note, key in surface))
+    return records
+
+
+def status_report(layout: Layout, fork_id: str) -> int:
+    """repo-local 进度报告：fork JSON + 面快照，不解析 sourceRoot。
+
+    退出码：0 = 正常；1 = 存在「已进面快照却仍标 pending/excluded」的矛盾（错误，不是噪声）。
+    """
+    descriptor = load_descriptor(layout, fork_id)
+    surface = read_surface_keys([layout.surface(profile) for profile in STATUS_PROFILES])
+    records = status_records(descriptor, surface)
+
+    def order(record: StatusRecord) -> tuple[str, str]:
+        return (record.kind, record.name)
+
+    ported = [record for record in records if record.ported]
+    total = len(records)
+    percent = (len(ported) * 100 // total) if total else 0
+    print(f"{fork_id}: {len(ported)}/{total} ported ({percent}%)")
+
+    for status in STATUSES:
+        group = sorted(
+            (record for record in records if not record.ported and record.status == status),
+            key=order,
+        )
+        print(f"\n{status} ({len(group)}):")
+        if not group:
+            print("  (none)")
+        for record in group:
+            note = f"\t{record.note}" if record.note else ""
+            print(f"  {record.name}\t{record.kind}{note}")
+
+    stale = sorted(
+        (record for record in ported if record.declared_status not in (None, *CONTRADICTION_STATUSES)),
+        key=order,
+    )
+    print(f"\nwarnings ({len(stale)}):")
+    if not stale:
+        print("  (none)")
+    for record in stale:
+        print(f"  {record.name}\t{record.kind}\tstatus={record.declared_status}（已 ported；建议删除 status）")
+
+    contradictions = sorted(
+        (record for record in ported if record.declared_status in CONTRADICTION_STATUSES),
+        key=order,
+    )
+    print(f"\ncontradictions ({len(contradictions)}):")
+    if not contradictions:
+        print("  (none)")
+        return 0
+    for record in contradictions:
+        print(f"  {record.name}\t{record.kind}\tstatus={record.status}")
+    print(
+        "error: 已进面快照的键不能再标 pending/excluded——删除 status 字段"
+        "（ported 由面快照推导）或修正面快照。",
+        file=sys.stderr,
+    )
+    return 1
+
+
 def list_forks(layout: Layout) -> int:
     ids = sorted(p.stem for p in layout.dialects_dir.glob("*.json"))
     for fork_id in ids:
@@ -378,6 +517,11 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--check", action="store_true", help="与冻结产物及描述符 additions 比对，漂移则非零退出（默认）。")
     mode.add_argument("--update", action="store_true", help="重写冻结清单 / hash / 描述符 additions。")
     mode.add_argument("--print-delta", action="store_true", help="只打印 fork-only delta。")
+    mode.add_argument(
+        "--status",
+        action="store_true",
+        help="repo-local 进度报告：fork JSON + 面快照（不解析 sourceRoot）；矛盾时非零退出。",
+    )
     mode.add_argument("--update-base", action="store_true", help="重写 era-core-baseline 快照。")
     mode.add_argument("--list-forks", action="store_true", help="列出已知 fork id。")
     args = parser.parse_args(argv)
@@ -390,7 +534,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.update_base:
             return update_base(layout, os.environ)
         if not args.fork:
-            parser.error("--check/--update/--print-delta 需要 --fork <id>（或使用 --update-base / --list-forks）。")
+            parser.error("--check/--update/--print-delta/--status 需要 --fork <id>（或使用 --update-base / --list-forks）。")
+        if args.status:
+            return status_report(layout, args.fork)
         if args.update:
             return update_fork(layout, args.fork, os.environ)
         if args.print_delta:

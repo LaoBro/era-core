@@ -95,7 +95,7 @@ descriptor（Dialect = Baseline | Snake | Eratw）
 
 SQL 方言键引入 Core 的**唯一原生依赖**：`Microsoft.Data.Sqlite` → `SQLitePCLRaw.bundle_e_sqlite3` → `e_sqlite3.dll`。所有 SQLite 类型收口在 `SqlManager.cs` 单文件；CLI 分发时需保留 `runtimes/win-x64/native/e_sqlite3.dll`（或平铺到 exe 同目录），MAUI Windows 已内置。
 
-详见 [方言移植指南](docs/guides/dialect-porting.md)、[eraTW 运行手册](docs/guides/running-eratw.md) 与 [66 键清单](docs/reference/dialect-surface.md)。
+详见 [方言移植指南](docs/guides/dialect-porting.md)、[eraTW 运行手册](docs/guides/running-eratw.md)、[方言键索引（生成物）](docs/reference/dialect-keys.md) 与 [口径/已知差异](docs/reference/dialect-surface.md)。
 
 ## Server
 

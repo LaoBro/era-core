@@ -12,7 +12,9 @@
     {
       "name": "BITMAP_CACHE_ENABLE",
       "kind": "directive",
-      "owner": "skia"
+      "owner": "skia",
+      "status": "out-of-scope",
+      "note": "性能机制（位图缓存）；eraTW 未引用"
     },
     {
       "name": "CALLSTR",
@@ -62,17 +64,23 @@
     {
       "name": "SET_SKIA_QUALITY",
       "kind": "directive",
-      "owner": "skia"
+      "owner": "skia",
+      "status": "out-of-scope",
+      "note": "渲染层（画质开关）；eraTW 未引用"
     },
     {
       "name": "SET_TEXT_DRAWING_MODE",
       "kind": "directive",
-      "owner": "skia"
+      "owner": "skia",
+      "status": "out-of-scope",
+      "note": "渲染层（文本绘制模式）；eraTW 未引用"
     },
     {
       "name": "STRICT_FONT_FALLBACK",
       "kind": "directive",
-      "owner": "skia"
+      "owner": "skia",
+      "status": "out-of-scope",
+      "note": "渲染层（字体回退）；eraTW 未引用"
     },
     {
       "name": "TEXT_BGC_OFF",
@@ -282,12 +290,16 @@
     {
       "name": "GET_SKIA_QUALITY",
       "kind": "function",
-      "owner": "skia"
+      "owner": "skia",
+      "status": "out-of-scope",
+      "note": "渲染层（画质查询）；eraTW 未引用"
     },
     {
       "name": "GET_TEXT_DRAWING_MODE",
       "kind": "function",
-      "owner": "skia"
+      "owner": "skia",
+      "status": "out-of-scope",
+      "note": "渲染层（文本绘制模式查询）；eraTW 未引用"
     },
     {
       "name": "G_POLYGON_DRAW",
@@ -417,7 +429,9 @@
     {
       "name": "SQL_EXECUTE_SCALAR_FLOAT",
       "kind": "function",
-      "owner": "skia"
+      "owner": "skia",
+      "status": "pending",
+      "note": "依赖浮点返回/浮点变量支持"
     },
     {
       "name": "SQL_EXECUTE_SCALAR_LONG",
@@ -467,7 +481,9 @@
     {
       "name": "SQL_P_EXECUTE_SCALAR_FLOAT",
       "kind": "function",
-      "owner": "skia"
+      "owner": "skia",
+      "status": "pending",
+      "note": "依赖浮点返回/浮点变量支持"
     },
     {
       "name": "SQL_P_EXECUTE_SCALAR_LONG",
@@ -487,7 +503,9 @@
     {
       "name": "SQL_READER_GET_FLOAT",
       "kind": "function",
-      "owner": "skia"
+      "owner": "skia",
+      "status": "pending",
+      "note": "依赖浮点返回/浮点变量支持"
     },
     {
       "name": "SQL_READER_GET_LONG",
@@ -550,6 +568,5 @@
       "owner": "skia"
     }
   ],
-  "exclusions": [],
-  "ownerNotes": "Skia fork 的公开键面。C# 侧对应方言模块 / profile「snake」（P0 语义键，见 spec §4.2）。渲染层 / 性能层键不属本 fork 的移植范围，见 spec §2.2；其仍会出现在 delta 里，由 additions / exclusions 评审口径区分。"
+  "ownerNotes": "Skia fork 的公开键面。C# 侧对应方言模块 / profile「snake」（P0 语义键，见 spec §4.2）。渲染层 / 性能层键不属本 fork 的移植范围，见 spec §2.2；其仍会出现在 delta 里，由 additions 的 status=\"out-of-scope\" 登记。"
 }
