@@ -35,6 +35,8 @@
 | `MAP_REMOVEIF` | function | snake | MAP | Semantic | — |
 | `MAP_TOSTRING` | function | snake | MAP | Semantic | — |
 | `MAP_VALUES` | function | snake | MAP | Semantic | — |
+| `MATCHALL` | function | snake | 数组搜索 | Semantic | — |
+| `MATCHALLEX` | function | snake | 数组搜索 | Semantic | — |
 | `ROUND` | function | snake | 数学 | Semantic | — |
 | `SETIMAGELAYER` | directive | snake | 图像层 | AcceptedNoOp | 参数解析 + ColorMatrix 5×5 校验；控制台 no-op |
 | `SETIMAGELAYERL` | directive | snake | 图像层 | AcceptedNoOp | 参数解析 + ColorMatrix 5×5 校验；followScroll 恒 true；no-op |
@@ -61,6 +63,7 @@
 | `SQL_READER_GET_STRING` | function | snake | SQL | Semantic | — |
 | `SQL_READER_ISNULL` | function | snake | SQL | Semantic | — |
 | `SQL_READER_READ` | function | snake | SQL | Semantic | — |
+| `STRFORMCHECK` | function | snake | 字符串求值 | Semantic | — |
 | `TAN` | function | snake | 数学 | Semantic | — |
 | `TEXT_BGC_OFF` | directive | snake | HTML 文本 | StateOnly | 仅清空 TextBackgroundColor，渲染线未消费 |
 | `TEXT_BGC_ON` | directive | snake | HTML 文本 | StateOnly | 仅保存 TextBackgroundColor，渲染线未消费 |
@@ -71,6 +74,7 @@
 | `TRYCALLSTR` | directive | snake | 动态调用 | Semantic | — |
 | `TRYCCALLSTR` | directive | snake | 动态调用 | Semantic | — |
 | `TRYCJUMPSTR` | directive | snake | 动态调用 | Semantic | — |
+| `TRYJUMPSTR` | directive | snake | 动态调用 | Semantic | — |
 | `UNCHECKED_ADD` | function | snake | 数学 | Semantic | — |
 | `UNCHECKED_MUL` | function | snake | 数学 | Semantic | — |
 | `UNCHECKED_NEG` | function | snake | 数学 | Semantic | — |

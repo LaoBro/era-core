@@ -39,6 +39,7 @@ public sealed class DialectDescriptorMetadataTests
 		"位运算",
 		"字符串求值",
 		"MAP",
+		"数组搜索",
 		"平台定时器",
 		"SQL",
 	};

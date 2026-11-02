@@ -303,6 +303,51 @@ python tests/test_conformance_kit.py --game-dir <游戏目录> --build
 }
 ```
 
+### 6.4 键分档器（classify.py）
+
+移植前先判断“这个键能不能机械搬”，避免把时间花在注定要人工重写的键上。
+
+位置：`tools/dialect-inventory/classify.py`（纯标准库，无 LLM 依赖）。前置与 `extract.py` 相同——需要 `EMUERA_SKIA_REF` 指向上游 checkout：脚本要读**实现体**，不是只读键名。
+
+```bash
+export EMUERA_SKIA_REF=/path/to/skia-checkout
+python tools/dialect-inventory/classify.py --fork skia          # 全量分档 + 证据
+python tools/dialect-inventory/classify.py --fork skia --quiet  # 只看计数
+python tools/dialect-inventory/classify.py --fork skia --key ARGLEN
+python tools/dialect-inventory/classify.py --fork skia --json
+```
+
+输出三档：
+
+| 档 | 含义 | 处理 |
+|---|---|---|
+| **A** | 结构同构，可机械搬 + 编译修复 | 按 §3 / §4 写 descriptor 或方法类 |
+| **B** | 结构可搬，但语义/执行需人工映射 | 骨架可复制，执行体必须对照上游逐行核对 |
+| **C** | 宿主能力 / 语言运行时缺失 | 不要动手；先补能力或标 `out-of-scope` |
+
+判定信号优先级（命中即停，顺序不可换）：
+
+1. **Float 专用签名**（`ReturnType = EraType.Float` / `ArgType.Float`）→ C；仅内部有 Float 分支、返回仍是 Integer/String → B（可裁剪）；
+2. **语言运行时上下文**（`ExecutionContext` / `CurrentVariadicArgCount` / `exm.Process.State`）→ C；
+3. **渲染/字体后端**（`Config.TextDrawingMode`、`bitmapCache`、`setRedrawTimer`、`GetLinePointY`、SkiaSharp 等）→ C；
+4. **音频后端**（`GlobalStatic.Bgm` / `Sound`）→ C；
+5. **输入宏 / 序列输入**（`inputMacroEnabled` / `sequenceInputValue`）→ C；
+6. **图像层管线**（`ImageLayer`）→ 指令 B（参数骨架可搬、执行降级）/ 函数 C；
+7. **仅状态**（`TextBackgroundColor` 等有同名字段可承接）→ B；
+8. **变量反射 / 自定义参数校验**（`GetVariableToken` / `VariableTerm` / `CheckArgumentType`）→ B；
+9. 其余 → A。
+
+**KNOWN_OVERRIDES**：脚本内的人工边界表。静态扫描看不出的语义映射（如 `TINPUTNF` 族的 noFocus 在 era-core 无焦点概念）、以及跨仓 API 改名但语义等价（如 `EXIST_IN_CSV` ↔ era-core `ConstantData.isDefined`）都在此落脚。新增条目必须写明理由并定期复核——它是“已知盲区清单”，不是补丁抽屉。
+
+与 `extract.py` 的配合：
+
+1. `extract.py --fork <id> --print-delta` 给出 fork-only 键清单；
+2. `classify.py --fork <id>` 对同一清单分档；
+3. 按 A → B → C 排期；C 类直接写进 `dialects/<id>.json` 的 `additions[].status`（`out-of-scope` + note）；
+4. 每落地一个键，跑 §6.1 的面快照重写与 §6.2 的 `--status`，确认 `ported` 推导正确且无矛盾。
+
+**分类结果不等于实现结论**：分类器只读上游实现体，既不查 era-core 是否已有等价能力，也不判断参数边界与副作用。A 类仍要写行为 fixture（解析能过 ≠ 行为正确）；B 类必须逐行对照上游；C 类若经人工确认“其实可做”，应挪进 A/B 并在 `KNOWN_OVERRIDES` 记录理由。反例：`GETANIMETIMER` 因命中 `AnimeTimer` 被判 C，但 era-core 已有 `getRedrawTimer` 且该键已移植——这类“误杀”只能靠边界表纠正。
+
 ---
 
 ## 7. 语义状态必须显式登记
@@ -384,6 +429,7 @@ python tests/test_conformance_kit.py --game-dir <游戏目录> --build
 | `dialect-keys.md` 门禁红 | 改了 descriptor 元数据但未重生成 | 用 `ERACORE_DIALECT_SURFACE_UPDATE=1` 重写并评审 diff |
 | `Status != Semantic` 但反漂移测试红 | 已知差异区未点名或 `Note` 缺失 | 在 `dialect-surface.md` §5 逐键点名并补 `Note` |
 | 测试里 surface 构建抛异常 | 在 `OpenScope` 之前 `DialectRegistry.Resolve` | 先开 scope，再解析 |
+| 分类器判 C 但人工认为可做 | 静态扫描命中了宿主信号或跨仓 API 改名 | 加 `KNOWN_OVERRIDES` 条目并写明理由（见 §6.4） |
 | SQLite `DllNotFoundException` | 发布目录缺原生库 | 见 [`running-eratw.md`](running-eratw.md) |
 
 更多踩坑记录见 [`../LESSONS/dialect-and-sqlite.md`](../LESSONS/dialect-and-sqlite.md)。
@@ -392,6 +438,7 @@ python tests/test_conformance_kit.py --game-dir <游戏目录> --build
 
 ## 10. 提交前 checklist
 
+- [ ] 已跑 `classify.py --fork <id>` 判定 A/B/C，C 类未混入实现
 - [ ] descriptor 只加在 `FunctionIdentifier.Registry.cs` / `Creator.Registry.cs` 之一
 - [ ] 新指令保持 `FunctionCode.__NULL__`
 - [ ] descriptor 带 `Family`；非真语义键写 `Status` + `Note`

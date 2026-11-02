@@ -307,6 +307,8 @@ MAP_TOSTRING	function
 MAP_TOXML	function
 MAP_VALUES	function
 MATCH	function
+MATCHALL	function
+MATCHALLEX	function
 MAX	function
 MAXARRAY	function
 MAXCARRAY	function
@@ -536,6 +538,7 @@ STRDATA	directive
 STRFIND	function
 STRFINDU	function
 STRFORM	function
+STRFORMCHECK	function
 STRJOIN	function
 STRLEN	directive
 STRLENFORM	directive
@@ -596,6 +599,7 @@ TRYGOTOLIST	directive
 TRYJUMP	directive
 TRYJUMPFORM	directive
 TRYJUMPLIST	directive
+TRYJUMPSTR	directive
 TWAIT	directive
 UNCHECKED_ADD	function
 UNCHECKED_MUL	function

@@ -18,9 +18,9 @@
 | 项 | 值 |
 |---|---|
 | `v24pure` 面 | 567 行（baseline） |
-| `snake` / `eratw` 面 | 各 633 行 |
-| 方言增量 | **66 键**（17 指令 + 49 函数） |
-| `snake` 模块声明键 | 66 |
+| `snake` / `eratw` 面 | 各 637 行 |
+| 方言增量 | **70 键**（18 指令 + 52 函数） |
+| `snake` 模块声明键 | 70 |
 | `eratw` 模块声明键 | 0（当前为空） |
 
 `surface.*.txt` 每行 `name<TAB>kind`，按行序号排序，UTF-8 / LF。`kind` 只有 `directive` 与 `function` 两种。
@@ -29,28 +29,29 @@
 
 ---
 
-## 2. 指令（17）
+## 2. 指令（18）
 
-17 条指令的逐键元数据见 [`dialect-keys.md`](dialect-keys.md)。
+18 条指令的逐键元数据见 [`dialect-keys.md`](dialect-keys.md)。
 
 - 声明点：`EraCore.Core/Shared/Runtime/Script/Statements/FunctionIdentifier.Registry.cs`
 - 处理体：`EraCore.Core/Shared/Runtime/Script/Statements/Instraction.Child.cs`
-- 家族测试：`P0TinputNfInstructionTests`、`P0DynamicCallInstructionTests`、`P0ImageLayerInstructionTests`、`P0HtmlTextInstructionTests`
+- 家族测试：`P0TinputNfInstructionTests`、`P0DynamicCallInstructionTests`、`P0ImageLayerInstructionTests`、`P0HtmlTextInstructionTests`、`P0TryJumpStrFlagTests`
 
 ---
 
-## 3. 函数（49）
+## 3. 函数（52）
 
-49 条函数的逐键元数据见 [`dialect-keys.md`](dialect-keys.md)。分组与实现：
+52 条函数的逐键元数据见 [`dialect-keys.md`](dialect-keys.md)。分组与实现：
 
 - 数学 / 取整 / 无检查算术（13）：`Creator.Method.Math.cs`
 - 位运算（4）：`Creator.Method.Array.cs` / `BitArrayManager.cs`
-- 字符串动态求值（2）：`Creator.Method.General.cs`
+- 字符串动态求值（3，含 `STRFORMCHECK`）：`Creator.Method.General.cs`
+- 数组搜索（2，`MATCHALL` / `MATCHALLEX`）：`Creator.Method.General.cs`
 - 集合 `MAP_*`（6）：`Creator.Method.Map.cs`
 - 平台 / 动画定时器（2）：`Creator.Method.System.cs`
 - SQL（22，桌面闭环）：`Creator.Method.Sql.cs` + `EraCore.Core/Shared/Runtime/Utils/Sql/SqlManager.cs`
 
-测试：`P0MathBitEvalFunctionTests`、`P0EvalFunctionTests`、`P0MapCollectionFunctionTests`、`P0SqlFunctionTests`（含平台定时器两键）。
+测试：`P0MathBitEvalFunctionTests`、`P0EvalFunctionTests`、`P0MapCollectionFunctionTests`、`P0SqlFunctionTests`（含平台定时器两键）、`P0PilotAutomationTests`（含 `STRFORMCHECK` / `MATCHALL` / `MATCHALLEX`）。
 
 ---
 

@@ -41,7 +41,7 @@ public sealed class DialectKeyIndexTests
 		Assert.Equal(surface.Count, rows.Count);
 		int dialectRows = rows.Count(row => row.Module != BaselineModule);
 		int baselineRows = rows.Count(row => row.Module == BaselineModule);
-		Assert.True(dialectRows == 66, $"方言键应为 66 行，实际 {dialectRows}；新增/删除键时同步更新本断言与 dialect-surface.md §1。");
+		Assert.True(dialectRows == 70, $"方言键应为 70 行，实际 {dialectRows}；新增/删除键时同步更新本断言与 dialect-surface.md §1。");
 		Assert.True(baselineRows == 567, $"baseline 应为 567 行，实际 {baselineRows}；注册面变化时同步更新本断言与 dialect-surface.md §1。");
 		Assert.DoesNotContain(rows.Where(row => row.Module != BaselineModule), row => row.Family == Placeholder);
 	}

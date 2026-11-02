@@ -720,4 +720,163 @@ internal static partial class FunctionMethodCreator
 			}
 		}
 	}
+
+/// <summary>
+/// 试点（自动分档 A 类）：STRFORMCHECK。判断格式化字符串能否展开——
+	/// 复用 era-core 既有 LexicalAnalyzer.AnalyseFormattedString + StrForm，
+	/// 与上游实现逐行等价（异常吞掉返回 0）。
+	/// </summary>
+	private sealed class StrFormCheckMethod : FunctionMethod
+	{
+		public StrFormCheckMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.String } }];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			string str = arguments[0].GetStrValue(exm);
+			try
+			{
+				StrFormWord wt = LexicalAnalyzer.AnalyseFormattedString(new CharStream(str), FormStrEndWith.EoL, false);
+				StrForm strForm = StrForm.FromWordToken(wt);
+				strForm.GetString(exm);
+				return 1;
+			}
+			catch
+			{
+				return 0;
+			}
+		}
+	}
+
+	/// <summary>
+	/// 试点（自动分档 B 类）：MATCHALL / MATCHALLEX。在变量（或按变量名）的
+	/// [beg, end) 区间内统计等于第 2 参的值；第 5 参可选输出数组按命中序号写入索引。
+	/// 参数规则无法用 argumentTypeArrayEx 表达（1 参可为变量或字符串、5 参必须变量），
+	/// 故按上游原文重写 CheckArgumentType；era-core 的 VariableToken/VariableTerm 已具备所需 API。
+	/// </summary>
+	private sealed class MatchAllMethod : FunctionMethod
+	{
+		public MatchAllMethod(bool useStringName)
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = null!; // 走自定义 CheckArgumentType，与上游一致
+			CanRestructure = false;
+			_useStringName = useStringName;
+		}
+
+		private readonly bool _useStringName;
+
+		public override string CheckArgumentType(string name, List<AExpression> arguments)
+		{
+			if (arguments.Count < 2)
+				return $"{name} 関数には少なくとも2つの引数が必要です";
+			if (arguments.Count > 5)
+				return $"{name} 関数の引数が多すぎます";
+
+			if (_useStringName)
+			{
+				if (arguments[0] is not SingleStrTerm)
+					return $"{name} 関数の1番目の引数は文字列である必要があります";
+			}
+			else
+			{
+				if (arguments[0] is not VariableTerm)
+					return $"{name} 関数の1番目の引数は変数参照である必要があります";
+			}
+
+			if (arguments.Count >= 5 && arguments[4] is not VariableTerm)
+				return $"{name} 関数の5番目の引数は変数参照である必要があります";
+
+			return null!;
+		}
+
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			VariableToken token;
+			if (_useStringName)
+			{
+				string varName = ((SingleStrTerm)arguments[0]).Str;
+				token = GlobalStatic.IdentifierDictionary.GetVariableToken(varName, null, true);
+				if (token == null)
+					throw new CodeEE($"変数 {varName} が見つかりません");
+			}
+			else
+			{
+				token = ((VariableTerm)arguments[0]).Identifier;
+			}
+
+			AExpression valExpr = arguments[1];
+			Type type = valExpr.GetOperandType();
+
+			long beg = 0;
+			if (arguments.Count >= 3 && arguments[2] != null)
+				beg = arguments[2].GetIntValue(exm);
+
+			long len = token.IsCharacterData
+				? exm.VEvaluator.CHARANUM
+				: token.IsArray1D ? token.GetLength(0) : 1;
+
+			long end = len;
+			if (arguments.Count >= 4 && arguments[3] != null)
+				end = arguments[3].GetIntValue(exm);
+
+			if (beg < 0 || end < 0)
+				throw new CodeEE("検索範囲に負の値が渡されました");
+			if (beg > end)
+				throw new CodeEE("検索範囲の指定が不正です");
+			if (end > len)
+				end = len;
+
+			VariableTerm? outArr = null;
+			if (arguments.Count >= 5 && arguments[4] is VariableTerm vt)
+				outArr = vt;
+
+			long[] idxs = new long[2];
+			long count = 0;
+
+			if (type == typeof(long))
+			{
+				long val = valExpr.GetIntValue(exm);
+				for (long i = beg; i < end; i++)
+				{
+					idxs[0] = i;
+					if (val != token.GetIntValue(exm, idxs))
+						continue;
+					if (outArr != null)
+					{
+						int outLen = outArr.Identifier.GetLength(0);
+						if (count < outLen)
+							outArr.Identifier.SetValue(i, [count]);
+					}
+					count++;
+				}
+			}
+			else if (type == typeof(string))
+			{
+				string val = valExpr.GetStrValue(exm);
+				for (long i = beg; i < end; i++)
+				{
+					idxs[0] = i;
+					if (val != token.GetStrValue(exm, idxs))
+						continue;
+					if (outArr != null)
+					{
+						int outLen = outArr.Identifier.GetLength(0);
+						if (count < outLen)
+							outArr.Identifier.SetValue(i, [count]);
+					}
+					count++;
+				}
+			}
+			else
+			{
+				throw new ExeEE("MATCHALL: サポートされていない型です");
+			}
+
+			return count;
+		}
+	}
 }

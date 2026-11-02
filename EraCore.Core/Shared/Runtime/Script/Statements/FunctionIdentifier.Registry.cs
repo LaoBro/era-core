@@ -86,6 +86,16 @@ internal sealed partial class FunctionIdentifier
 			Dialect = Dialect.Snake,
 			Family = "动态调用",
 		},
+		// 试点（自动分档 A 类）：TRYJUMPSTR 与同族五个键结构完全同构，
+		// 上游仅多一条 addFunction 注册；era-core 复用既有 CALLS_Instruction。
+		new InstructionDescriptor
+		{
+			Name = "TRYJUMPSTR",
+			CreateInstruction = () => new CALLS_Instruction(true, true, false),
+			AdditionalFlag = EXTENDED,
+			Dialect = Dialect.Snake,
+			Family = "动态调用",
+		},
 		// Skia 方言 P0：图像层（实现票 22）。参数完整解析 + ColorMatrix 5×5 校验；执行体走 EmueraConsole 语义接缝（no-op，实测 eraTW 引用见 Flan_UI.ERB）。
 		new InstructionDescriptor
 		{

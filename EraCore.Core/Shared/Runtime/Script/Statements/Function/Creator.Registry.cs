@@ -35,6 +35,11 @@ internal static partial class FunctionMethodCreator
 		// Skia 方言 P0：字符串动态求值（实现票 18）。
 		new() { Name = "EVAL", CreateMethod = () => new EvalMethod(), Dialect = Dialect.Snake, Family = "字符串求值" },
 		new() { Name = "EVALS", CreateMethod = () => new EvalSMethod(), Dialect = Dialect.Snake, Family = "字符串求值" },
+		// 试点（自动分档 A 类）：STRFORMCHECK 复用 era-core 既有格式化字符串解析 API。
+		new() { Name = "STRFORMCHECK", CreateMethod = () => new StrFormCheckMethod(), Dialect = Dialect.Snake, Family = "字符串求值" },
+		// 试点（自动分档 B 类）：MATCHALL/MATCHALLEX 在变量区间内统计匹配值，参数规则需自定义校验。
+		new() { Name = "MATCHALL", CreateMethod = () => new MatchAllMethod(false), Dialect = Dialect.Snake, Family = "数组搜索" },
+		new() { Name = "MATCHALLEX", CreateMethod = () => new MatchAllMethod(true), Dialect = Dialect.Snake, Family = "数组搜索" },
 		// Skia 方言 P0：集合 MAP_*（实现票 19）。复用既有 DataStringMaps 数据模型。
 		new() { Name = "MAP_VALUES", CreateMethod = () => new MapValuesMethod(), Dialect = Dialect.Snake, Family = "MAP" },
 		new() { Name = "MAP_MERGE", CreateMethod = () => new MapMergeMethod(), Dialect = Dialect.Snake, Family = "MAP" },
