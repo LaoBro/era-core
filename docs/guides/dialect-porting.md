@@ -307,7 +307,7 @@ python tests/test_conformance_kit.py --game-dir <游戏目录> --build
 
 移植前先判断“这个键能不能机械搬”，避免把时间花在注定要人工重写的键上。
 
-位置：`tools/dialect-inventory/classify.py`（纯标准库，无 LLM 依赖）。前置与 `extract.py` 相同——需要 `EMUERA_SKIA_REF` 指向上游 checkout：脚本要读**实现体**，不是只读键名。
+位置：`tools/dialect-inventory/classify.py`（纯标准库，无 LLM 依赖）。前置与 `extract.py` 相同——需要 `EMUERA_SKIA_REF` 指向上游 checkout：脚本要读**实现体**，不是只读键名。era-core 侧无需额外输入：脚本自行扫描 `EraCore.Core` 建立符号索引。
 
 ```bash
 export EMUERA_SKIA_REF=/path/to/skia-checkout
@@ -315,6 +315,7 @@ python tools/dialect-inventory/classify.py --fork skia          # 全量分档 +
 python tools/dialect-inventory/classify.py --fork skia --quiet  # 只看计数
 python tools/dialect-inventory/classify.py --fork skia --key ARGLEN
 python tools/dialect-inventory/classify.py --fork skia --json
+python tools/dialect-inventory/classify.py --fork skia --verify # 内置断言自检
 ```
 
 输出三档：
@@ -339,6 +340,35 @@ python tools/dialect-inventory/classify.py --fork skia --json
 
 **KNOWN_OVERRIDES**：脚本内的人工边界表。静态扫描看不出的语义映射（如 `TINPUTNF` 族的 noFocus 在 era-core 无焦点概念）、以及跨仓 API 改名但语义等价（如 `EXIST_IN_CSV` ↔ era-core `ConstantData.isDefined`）都在此落脚。新增条目必须写明理由并定期复核——它是“已知盲区清单”，不是补丁抽屉。
 
+### era-core 符号探测（C → B 的唯一降级路径）
+
+分类器不只读上游：它同时扫描 `EraCore.Core` 的类/方法/属性/字段（记录可见性与文件行号），把上游实现体里的成员符号与 era-core 声明做匹配。
+
+- 命中且可信 → 由 C 降为 **B**；**不降到 A**——等价性必须人工确认；
+- 证据随结果输出：上游信号符号、era-core 候选（`Owner.Name @ 文件:行`）、可见性、置信度。
+
+| 置信度 | 触发条件 | 含义 |
+|---|---|---|
+| `exact` | 同名且可见 | 很可能是同一能力，仍需核对参数与副作用 |
+| `probable` | 仅去 `Get`/`Set`/`Is`/`Has`/`Try` 前缀或 `Method`/`Instruction`/`Manager`/`Info` 后缀，或仅大小写差异 | 需人工确认是否同一概念 |
+| `weak` | 命中人工同义词表 `SYNONYM_HINTS` | 已知跨仓改名，必须人工验证语义等价 |
+
+误配防护（防止 SkiaSharp / 音频被错误降级）：
+
+- **硬墙不参与探测**：Float、`ExecutionContext`/`CurrentVariadicArgCount`、渲染绘制原语与配置字段、音频后端；
+- 通用词黑名单（`Console` / `Argument` / `GetIntValue` / `NAME` 等）绝不作为证据；
+- 候选必须可见、**实现非空**、且不属于纯语法容器类（`LogicalLine` / `InstructionLine` / `GlobalStatic` 等）；
+- 近似匹配只允许白名单词形变换，不做任意模糊；
+- 同义词表只收人工确认条目，命中恒为 `weak`。
+
+**冗余检测**：普通运行与 `--verify` 都会检查 `KNOWN_OVERRIDES`——若某条 override 已被探测在**当前流程中真正取代**（候选在 `KNOWN_PROBE_SYMBOLS` 内，且该键不是靠 override 兜底），输出「可核对清理」。反向不成立：走 A 分支的键（如 CSV 反查）虽能探测到候选，但删除 override 会退化，**不会**被提示清理。
+
+当前保留 10 条 override，保留理由写在代码注释：NF 族 4 条（实现体无可探测符号、era-core 无焦点概念）、CSV/ERD 反查 6 条（上游无 C 类信号，探测不参与 A 分支）。`GETANIMETIMER` 的旧 override 已删除——它由探测稳定给出 B（`weak`：上游属性 `AnimeTimer` ↔ era-core `getRedrawTimer`）。
+
+**自检**：`classify.py --fork skia --verify`
+
+内置 9 条断言：六条硬墙保持 C（`G_POLYGON_DRAW` / `SET_SKIA_QUALITY` / `BGMCONTROL` / `EVALF` / `SQL_EXECUTE_SCALAR_FLOAT` / `ARGLEN`），三条已有等价能力降为 B（`GETANIMETIMER` / `EXIST_IN_CSV` / `GETCSVNOBYNAME`）。失败打印差异并返回非零退出码。
+
 与 `extract.py` 的配合：
 
 1. `extract.py --fork <id> --print-delta` 给出 fork-only 键清单；
@@ -346,7 +376,7 @@ python tools/dialect-inventory/classify.py --fork skia --json
 3. 按 A → B → C 排期；C 类直接写进 `dialects/<id>.json` 的 `additions[].status`（`out-of-scope` + note）；
 4. 每落地一个键，跑 §6.1 的面快照重写与 §6.2 的 `--status`，确认 `ported` 推导正确且无矛盾。
 
-**分类结果不等于实现结论**：分类器只读上游实现体，既不查 era-core 是否已有等价能力，也不判断参数边界与副作用。A 类仍要写行为 fixture（解析能过 ≠ 行为正确）；B 类必须逐行对照上游；C 类若经人工确认“其实可做”，应挪进 A/B 并在 `KNOWN_OVERRIDES` 记录理由。反例：`GETANIMETIMER` 因命中 `AnimeTimer` 被判 C，但 era-core 已有 `getRedrawTimer` 且该键已移植——这类“误杀”只能靠边界表纠正。
+**分类结果不等于实现结论**：分类器读上游实现体并探测 era-core 符号，但仍不判断参数边界与副作用。A 类仍要写行为 fixture（解析能过 ≠ 行为正确）；B 类必须逐行对照上游；探测给出的 B（尤其 `probable` / `weak`）只是“era-core 可能有等价能力”的线索，必须人工确认后才能落地。C 类若经人工确认“其实可做”，应挪进 A/B 并在 `SYNONYM_HINTS` 或 `KNOWN_OVERRIDES` 记录理由。反例：`GETANIMETIMER` 命中 `AnimeTimer` 会被静态扫描判 C，探测凭 `getRedrawTimer` 降为 B（`weak`）——跨仓改名只能靠同义词表与人工核对。
 
 ---
 
@@ -429,7 +459,7 @@ python tools/dialect-inventory/classify.py --fork skia --json
 | `dialect-keys.md` 门禁红 | 改了 descriptor 元数据但未重生成 | 用 `ERACORE_DIALECT_SURFACE_UPDATE=1` 重写并评审 diff |
 | `Status != Semantic` 但反漂移测试红 | 已知差异区未点名或 `Note` 缺失 | 在 `dialect-surface.md` §5 逐键点名并补 `Note` |
 | 测试里 surface 构建抛异常 | 在 `OpenScope` 之前 `DialectRegistry.Resolve` | 先开 scope，再解析 |
-| 分类器判 C 但人工认为可做 | 静态扫描命中了宿主信号或跨仓 API 改名 | 加 `KNOWN_OVERRIDES` 条目并写明理由（见 §6.4） |
+| 分类器判 C 但人工认为可做 | 命中硬墙信号，或探测未覆盖跨仓改名 | 先看探测证据；确认等价后加 `SYNONYM_HINTS` 或 `KNOWN_OVERRIDES`（见 §6.4） |
 | SQLite `DllNotFoundException` | 发布目录缺原生库 | 见 [`running-eratw.md`](running-eratw.md) |
 
 更多踩坑记录见 [`../LESSONS/dialect-and-sqlite.md`](../LESSONS/dialect-and-sqlite.md)。
