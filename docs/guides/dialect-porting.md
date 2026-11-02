@@ -369,6 +369,48 @@ python tools/dialect-inventory/classify.py --fork skia --verify # 内置断言�
 
 内置 9 条断言：六条硬墙保持 C（`G_POLYGON_DRAW` / `SET_SKIA_QUALITY` / `BGMCONTROL` / `EVALF` / `SQL_EXECUTE_SCALAR_FLOAT` / `ARGLEN`），三条已有等价能力降为 B（`GETANIMETIMER` / `EXIST_IN_CSV` / `GETCSVNOBYNAME`）。失败打印差异并返回非零退出码。
 
+### `--scaffold`：为 A 类键生成骨架
+
+```bash
+# 默认 dry-run：只打印目标路径与产物预览
+python tools/dialect-inventory/classify.py --fork skia --scaffold --key NEW_KEY
+
+# 写到临时目录（评审 + 编译验证，不污染仓库）
+python tools/dialect-inventory/classify.py --fork skia --scaffold --key NEW_KEY --out /tmp/scaffold
+
+# 写入仓库
+python tools/dialect-inventory/classify.py --fork skia --scaffold --key NEW_KEY --apply
+
+# 家族无法自动判定时人工指定
+python tools/dialect-inventory/classify.py --fork skia --scaffold --key NEW_KEY --family 数学
+```
+
+**只对 A 类生效**，其余一律拒绝并说明：
+
+| 拒绝条件 | 输出 |
+|---|---|
+| 非 A 类 | `判定 B/C，scaffold 仅支持 A 类（<理由>）` |
+| era-core 已登记 | `已在 era-core 登记（<注册文件>）——拒绝重复生成` |
+| 上游无实现类 | `上游注册表未登记，无法定位实现类` |
+| 指令处理体不在 era-core | `上游处理体 <Class> 在 era-core 不存在；scaffold 不复制解析代码` |
+| 家族无法判定 | `无法判定家族，请用 --family 指定` |
+| 目标文件已有同键条目 | `幂等跳过` |
+
+产物：
+
+- **函数**：在 `Creator.Method.<Family>.cs` 追加 `private sealed class <Name>Method`，含 `ReturnType`、`argumentTypeArrayEx`（`ArgType.Any` 占位）、以及**抛带键名异常**的未实现主体（不静默返回 0/""）；
+- **指令**：在 `FunctionIdentifier.Registry.cs` 追加 descriptor，`CreateInstruction` 复用既有处理体并**沿用上游注册行的构造参数**，不复制解析代码；
+- **测试**：新建 `P0Scaffold<Name>Tests.cs`，两条 `Assert.True(false, "TODO...")`——**必然失败**，直到人工补齐。
+
+脚本不写 `surface.*.txt` / `dialects/*.json` / `docs/reference/*.md`；结束时打印人工后续步骤：
+
+1. 补全方法体/参数规则，替换测试 TODO 断言；
+2. `dotnet build EraCore.Cli/EraCore.Cli.csproj -c Debug -m:1`；
+3. `ERACORE_DIALECT_SURFACE_UPDATE=1 dotnet test --filter "DialectSurfaceSnapshotTests|DialectKeyIndexTests"`；
+4. `extract.py --fork <id> --status`。
+
+> 骨架只保证**编译通过**，不保证语义；参数规则与副作用必须逐行对照上游补齐后才能标 `Semantic`。
+
 与 `extract.py` 的配合：
 
 1. `extract.py --fork <id> --print-delta` 给出 fork-only 键清单；

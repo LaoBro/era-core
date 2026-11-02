@@ -276,18 +276,22 @@ class KeyImpl:
 
 
 _reg_func = re.compile(r'\["([A-Za-z0-9_]+)"\]\s*=\s*new\s+([A-Za-z0-9_]+)')
-_reg_instr = re.compile(r'addFunction\s*\(\s*FunctionCode\.([A-Za-z0-9_]+)\s*,\s*new\s+([A-Za-z0-9_]+)')
+_reg_instr = re.compile(
+    r'addFunction\s*\(\s*FunctionCode\.([A-Za-z0-9_]+)\s*,\s*new\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)'
+)
 
 
-def load_registrations(files: list[Path]) -> dict[tuple[str, str], str]:
-    """(kind, key) -> 实现类名。"""
-    out: dict[tuple[str, str], str] = {}
+def load_registrations(files: list[Path]) -> dict[tuple[str, str], tuple[str, str, Path, int]]:
+    """(kind, key) -> (实现类名, 构造参数文本, 注册文件, 行号)。"""
+    out: dict[tuple[str, str], tuple[str, str, Path, int]] = {}
     for path in files:
         text = path.read_text(encoding="utf-8-sig", errors="replace")
         for m in _reg_func.finditer(text):
-            out[(FUNCTION, m.group(1))] = m.group(2)
+            line = text.count("\n", 0, m.start()) + 1
+            out[(FUNCTION, m.group(1))] = (m.group(2), "", path, line)
         for m in _reg_instr.finditer(text):
-            out[(DIRECTIVE, m.group(1))] = m.group(2)
+            line = text.count("\n", 0, m.start()) + 1
+            out[(DIRECTIVE, m.group(1))] = (m.group(2), m.group(3).strip(), path, line)
     return out
 
 
@@ -405,6 +409,7 @@ class EraCoreIndex:
         self.root = root
         self.by_name: dict[str, list[EraSymbol]] = {}
         self.by_lower: dict[str, list[EraSymbol]] = {}
+        self.class_names: set[str] = set()
         self._built = False
 
     def build(self):
@@ -425,6 +430,7 @@ class EraCoreIndex:
             cm = _CLASS_DECL_ERACORE.search(line)
             if cm and "(" not in line.split(cm.group(1))[0][-1:]:
                 owner = cm.group(1)
+                self.class_names.add(owner)
             m = _MEMBER_DECL.match(line)
             if not m:
                 continue
@@ -634,6 +640,265 @@ def classify(key: str, kind: str, impl: KeyImpl, eracore: EraCoreIndex | None = 
     return base
 
 
+# --------------------------------------------------------------------------- #
+# --scaffold：为 A 类键生成骨架（不实现语义，不复制上游解析代码）
+# --------------------------------------------------------------------------- #
+FAMILY_RULES = [
+    (re.compile(r"^SQL_"), "SQL"),
+    (re.compile(r"^MAP_"), "MAP"),
+    (re.compile(r"^BIT"), "位运算"),
+    (re.compile(r"^(SIN|COS|TAN|ASIN|ACOS|ATAN|FLOOR|CEIL|ROUND|UNCHECKED_)"), "数学"),
+    (re.compile(r"^(EVAL|STRFORM)"), "字符串求值"),
+    (re.compile(r"^MATCHALL"), "数组搜索"),
+    (re.compile(r"^(TINPUT|TONEINPUT)"), "NF 输入"),
+    (re.compile(r"^(CALLSTR|JUMPSTR|TRYCALLSTR|TRYCJUMPSTR|TRYCCALLSTR|TRYJUMPSTR)"), "动态调用"),
+    (re.compile(r"IMAGELAYER"), "图像层"),
+    (re.compile(r"^(HTML_PRINT|TEXT_BGC)"), "HTML 文本"),
+    (re.compile(r"^(GETPLATFORM|GETANIMETIMER|SETANIMETIMER)"), "平台定时器"),
+]
+
+FAMILY_METHOD_FILE = {
+    "数学": "Creator.Method.Math.cs",
+    "位运算": "Creator.Method.Array.cs",
+    "字符串求值": "Creator.Method.General.cs",
+    "数组搜索": "Creator.Method.General.cs",
+    "MAP": "Creator.Method.Map.cs",
+    "SQL": "Creator.Method.Sql.cs",
+    "平台定时器": "Creator.Method.System.cs",
+}
+
+STATEMENTS_DIR = "EraCore.Core/Shared/Runtime/Script/Statements"
+FUNCTION_DIR = f"{STATEMENTS_DIR}/Function"
+INSTRUCTION_REGISTRY = f"{STATEMENTS_DIR}/FunctionIdentifier.Registry.cs"
+METHOD_REGISTRY = f"{FUNCTION_DIR}/Creator.Registry.cs"
+TEST_DIR = "EraCore.Tests"
+
+
+def pascal_case(key: str) -> str:
+    return "".join(part[:1].upper() + part[1:].lower() for part in key.split("_") if part)
+
+
+def infer_family(key: str) -> str | None:
+    for pattern, family in FAMILY_RULES:
+        if pattern.search(key):
+            return family
+    return None
+
+
+def _read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8-sig", errors="replace")
+
+
+def _insert_before_last(text: str, block: str) -> str:
+    """把 block 插到最后一个 '}' 之前（类体末尾）。"""
+    idx = text.rfind("}")
+    if idx < 0:
+        raise ValueError("目标文件缺少类结束大括号")
+    return text[:idx] + block + text[idx:]
+
+
+def _insert_before_registry_end(text: str, block: str) -> str:
+    """把 block 插到 descriptors 列表的 `];` 之前。"""
+    idx = text.rfind("];")
+    if idx < 0:
+        raise ValueError("注册表缺少 `];` 结束标记")
+    return text[:idx] + block + text[idx:]
+
+
+def render_function_skeleton(key: str, family: str, upstream_body: str) -> str:
+    cls = f"{pascal_case(key)}Method"
+    return_type = "typeof(string)" if "ReturnType = EraType.String" in upstream_body else "typeof(long)"
+    getter = "GetStrValue" if return_type == "typeof(string)" else "GetIntValue"
+    sig_type = "string" if return_type == "typeof(string)" else "long"
+    return f"""
+
+\t/// <summary>
+\t/// TODO(scaffold): {key} 骨架，尚未实现语义。
+\t/// 上游实现已定位；移植时请对照参数边界、副作用与返回类型。
+\t/// </summary>
+\tprivate sealed class {cls} : FunctionMethod
+\t{{
+\t\tpublic {cls}()
+\t\t{{
+\t\t\tReturnType = {return_type}; // TODO(scaffold): 按上游确认
+\t\t\targumentTypeArrayEx = [new ArgTypeList {{ ArgTypes = {{ ArgType.Any }} }}]; // TODO(scaffold): 按上游参数表收窄
+\t\t\tCanRestructure = false;
+\t\t}}
+
+\t\tpublic override {sig_type} {getter}(ExpressionMediator exm, List<AExpression> arguments)
+\t\t\t=> throw new ExeEE("{key}: scaffold 骨架未实现");
+\t}}
+"""
+
+
+def render_instruction_descriptor(key: str, family: str, upstream_class: str, ctor_args: str) -> str:
+    return f"""
+\t\t// TODO(scaffold): {key} —— 复用既有处理体 {upstream_class}（构造参数取自上游注册行），不复制上游解析代码。
+\t\tnew InstructionDescriptor
+\t\t{{
+\t\t\tName = "{key}",
+\t\t\tCreateInstruction = () => new {upstream_class}({ctor_args}),
+\t\t\tAdditionalFlag = EXTENDED,
+\t\t\tDialect = Dialect.Snake,
+\t\t\tFamily = "{family}",
+\t\t}},
+"""
+
+
+def render_test_stub(key: str) -> str:
+    cls = f"P0Scaffold{pascal_case(key)}Tests"
+    return f"""using Xunit;
+
+namespace MinorShift.Emuera.Tests;
+
+/// <summary>
+/// TODO(scaffold): {key} 的解析/行为 fixture 骨架。断言当前必然失败，补齐后删除 TODO。
+/// </summary>
+public sealed class {cls}
+{{
+\t[Fact]
+\tpublic void {key}_parses()
+\t{{
+\t\tAssert.True(false, "TODO(scaffold): {key} 解析 fixture 未实现");
+\t}}
+
+\t[Fact]
+\tpublic void {key}_behaviour()
+\t{{
+\t\tAssert.True(false, "TODO(scaffold): {key} 行为 fixture 未实现");
+\t}}
+}}
+"""
+
+
+def eracore_registered_key(layout, key: str) -> str | None:
+    """era-core 是否已登记该键；返回相对路径或 None。"""
+    for rel in (INSTRUCTION_REGISTRY, METHOD_REGISTRY):
+        path = layout.repo_root / rel
+        if path.is_file() and f'Name = "{key}"' in _read_text(path):
+            return rel
+    return None
+
+
+def run_scaffold(layout, descriptor, regs, index, eracore, args) -> int:
+    repo = layout.repo_root
+    eracore.build()  # class_names 供指令处理体存在性检查
+    items = descriptor.get("additions") or []
+    if args.key:
+        items = [i for i in items if i["name"] == args.key]
+        if not items:
+            print(f"error: 键 {args.key} 不在 {args.fork} 的 additions 中", file=sys.stderr)
+            return 2
+
+    out_dir = Path(args.out).resolve() if args.out else None
+    written: list[tuple[str, str]] = []
+    rejected: list[str] = []
+
+    for item in items:
+        key, kind = item["name"], item["kind"]
+
+        already = eracore_registered_key(layout, key)
+        if already:
+            rejected.append(f"{key}: 已在 era-core 登记（{already}）——拒绝重复生成")
+            continue
+
+        upstream = regs.get((kind, key))
+        if not upstream:
+            rejected.append(f"{key}: 上游注册表未登记，无法定位实现类")
+            continue
+        upstream_class, ctor_args, up_path, up_line = upstream
+
+        impl = KeyImpl(key=key, kind=kind, class_name=upstream_class)
+        found = index.body(upstream_class)
+        if found:
+            impl.file, impl.line, impl.body = found
+
+        grade, why, _ = classify(key, kind, impl, eracore)
+        if grade != "A":
+            rejected.append(f"{key}: 判定 {grade}，scaffold 仅支持 A 类（{why}）")
+            continue
+
+        family = args.family or infer_family(key)
+        if not family:
+            rejected.append(f"{key}: 无法判定家族，请用 --family 指定（可选：数学/位运算/字符串求值/MAP/SQL/平台定时器/动态调用）")
+            continue
+
+        if kind == DIRECTIVE:
+            if family not in FAMILY_METHOD_FILE and family not in {"动态调用", "NF 输入", "图像层", "HTML 文本", "平台定时器"}:
+                rejected.append(f"{key}: 家族「{family}」不是已登记指令家族")
+                continue
+            if upstream_class not in eracore.class_names:
+                rejected.append(
+                    f"{key}: 上游处理体 {upstream_class} 在 era-core 不存在；"
+                    "scaffold 不复制解析代码，请先人工落地处理体"
+                )
+                continue
+            target_rel = INSTRUCTION_REGISTRY
+            block = render_instruction_descriptor(key, family, upstream_class, ctor_args)
+            inserter = _insert_before_registry_end
+        else:
+            if family not in FAMILY_METHOD_FILE:
+                rejected.append(f"{key}: 家族「{family}」没有对应的 Creator.Method 文件（请用 --family 指定函数家族）")
+                continue
+            target_rel = f"{FUNCTION_DIR}/{FAMILY_METHOD_FILE[family]}"
+            block = render_function_skeleton(key, family, impl.body)
+            inserter = _insert_before_last
+
+        target = repo / target_rel
+        if not target.is_file():
+            rejected.append(f"{key}: 目标文件不存在 {target_rel}")
+            continue
+        original = _read_text(target)
+        marker = f'Name = "{key}"' if kind == DIRECTIVE else f"class {pascal_case(key)}Method"
+        if marker in original:
+            rejected.append(f"{key}: 目标文件中已有同键条目（{target_rel}）——幂等跳过")
+            continue
+
+        updated = inserter(original, block)
+        test_rel = f"{TEST_DIR}/P0Scaffold{pascal_case(key)}Tests.cs"
+        test_body = render_test_stub(key)
+
+        written.append((target_rel, updated))
+        written.append((test_rel, test_body))
+
+        print(f"\n[scaffold] {key}  ({kind}, grade=A, family={family})")
+        print(f"  target : {target_rel}  (+{len(block.splitlines())} lines)")
+        print(f"  test   : {test_rel}  (new)")
+        if not args.apply and out_dir is None:
+            print("  --- preview ---")
+            for line in block.strip("\n").splitlines():
+                print(f"  | {line}")
+
+    if rejected:
+        print("\n[scaffold] 拒绝：", file=sys.stderr)
+        for line in rejected:
+            print(f"  - {line}", file=sys.stderr)
+
+    if out_dir is not None:
+        for rel, content in written:
+            dest = out_dir / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(content, encoding="utf-8")
+        print(f"\n[scaffold] 已写入 {out_dir}（{len(written)} 个文件），仓库未改动。")
+    elif args.apply:
+        for rel, content in written:
+            dest = repo / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(content, encoding="utf-8")
+        print(f"\n[scaffold] 已写入仓库（{len(written)} 个文件）。")
+    else:
+        print(f"\n[scaffold] dry-run：{len(written)} 个文件待生成；加 --apply 写仓库，或 --out <dir> 写到临时目录。")
+
+    if written:
+        print("\n后续人工步骤（scaffold 不改生成物）：")
+        print("  1. 补全方法体/参数规则，并把测试 stub 的 TODO 断言替换为真实断言")
+        print("  2. dotnet build EraCore.Cli/EraCore.Cli.csproj -c Debug -m:1")
+        print("  3. ERACORE_DIALECT_SURFACE_UPDATE=1 dotnet test --filter \"DialectSurfaceSnapshotTests|DialectKeyIndexTests\"")
+        print("  4. python tools/dialect-inventory/extract.py --fork <id> --status")
+
+    return 1 if rejected else 0
+
+
 # --verify 的自检期望：硬墙必须保持 C，已有等价能力的必须降为 B。
 VERIFY_EXPECTATIONS = {
     "G_POLYGON_DRAW": "C",
@@ -656,11 +921,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quiet", action="store_true", help="只输出分类计数")
     parser.add_argument("--verify", action="store_true",
                         help="内置断言自检（硬墙保持 C / 等价能力降 B），失败返回非零")
+    parser.add_argument("--scaffold", action="store_true",
+                        help="为 A 类键生成骨架（默认 dry-run）")
+    parser.add_argument("--apply", action="store_true", help="配合 --scaffold：写入仓库")
+    parser.add_argument("--out", help="配合 --scaffold：写到指定目录（不污染仓库）")
+    parser.add_argument("--family", help="配合 --scaffold：人工指定家族，覆盖自动判定")
+    parser.add_argument("--descriptor", help="描述符路径覆盖（测试夹具用）")
     args = parser.parse_args(argv)
 
     layout = Layout.default()
     try:
-        descriptor = load_descriptor(layout, args.fork)
+        if args.descriptor:
+            dpath = Path(args.descriptor)
+            if not dpath.is_file():
+                raise ToolError(f"描述符不存在：{dpath}")
+            descriptor = json.loads(dpath.read_text(encoding="utf-8-sig", errors="replace"))
+        else:
+            descriptor = load_descriptor(layout, args.fork)
         source_root = resolve_source_root(layout, descriptor, os.environ)
     except ToolError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -688,6 +965,9 @@ def main(argv: list[str] | None = None) -> int:
     # era-core 符号索引：用于把「上游有信号但 era-core 已有等价能力」从 C 降为 B
     eracore = EraCoreIndex(layout.repo_root / "EraCore.Core")
 
+    if args.scaffold:
+        return run_scaffold(layout, descriptor, regs, index, eracore, args)
+
     items = descriptor.get("additions") or []
     if args.key and not args.verify:
         items = [i for i in items if i["name"] == args.key]
@@ -698,7 +978,8 @@ def main(argv: list[str] | None = None) -> int:
     results = []
     for item in items:
         name, kind = item["name"], item["kind"]
-        class_name = regs.get((kind, name))
+        reg = regs.get((kind, name))
+        class_name = reg[0] if reg else None
         impl = KeyImpl(key=name, kind=kind, class_name=class_name)
         if class_name:
             found = index.body(class_name)
