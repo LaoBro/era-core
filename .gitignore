@@ -38,6 +38,12 @@ EraCore.Tests/obj/*
 EraCore.PublicApi.Tests/bin/*
 EraCore.PublicApi.Tests/obj/*
 
+# 原生自绘前端（EraCore.Native / EraCore.Native.Android）——构建产物不入库
+EraCore.Native/bin/*
+EraCore.Native/obj/*
+EraCore.Native.Android/bin/*
+EraCore.Native.Android/obj/*
+
 # 宿主 SDK（EraCore.Hosting）——构建产物不入库
 EraCore.Hosting/bin/*
 EraCore.Hosting/obj/*

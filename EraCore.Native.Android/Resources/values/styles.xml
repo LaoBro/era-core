@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Avalonia Android 依赖 AppCompat 主题（缺失会在启动时抛
+       "You need to use a Theme.AppCompat theme"）。黑色窗口背景避免首帧白闪。 -->
+  <style name="NativeTheme.NoActionBar" parent="Theme.AppCompat.NoActionBar">
+    <item name="android:windowActionBar">false</item>
+    <item name="android:windowNoTitle">true</item>
+    <item name="android:windowBackground">@android:color/black</item>
+  </style>
+</resources>

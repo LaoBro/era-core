@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- 平台无关的原生前端核心：只依赖 Hosting 的公共门面；渲染库只允许出现在平台项目。 -->
+  <ItemGroup>
+    <ProjectReference Include="..\EraCore.Hosting\EraCore.Hosting.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>23.0</SupportedOSPlatformVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <ApplicationId>com.eracore.nativeapp</ApplicationId>
+    <ApplicationTitle>era-core Native</ApplicationTitle>
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- 与 EraCore.Maui 一致：绕过 .NET 10 Android SDK 36.1.69 的 native marshal 生成 bug。 -->
+    <AndroidEnableMarshalMethods>false</AndroidEnableMarshalMethods>
+    <!-- Debug 默认 Fast Deployment 依赖 adb 同步程序集目录；模拟器/真机常出现
+         "No assemblies found ... Assuming this is part of Fast Deployment"。直接把程序集嵌入 APK。 -->
+    <EmbedAssembliesIntoApk Condition="'$(Configuration)' == 'Debug'">true</EmbedAssembliesIntoApk>
+    <!-- Release 全 AOT：与产品发布形态一致；Debug 保持 JIT，避免拖慢迭代。 -->
+    <RunAOTCompilation Condition="'$(Configuration)' == 'Release'">true</RunAOTCompilation>
+  </PropertyGroup>
+
+  <!-- 渲染/宿主依赖只允许出现在本平台项目；EraCore.Native 与 Core 不引用 Avalonia/SkiaSharp。 -->
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Android" Version="12.1.5" />
+    <PackageReference Include="Avalonia.Skia" Version="12.1.5" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.5" />
+    <PackageReference Include="SkiaSharp" Version="3.119.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EraCore.Native\EraCore.Native.csproj" />
+  </ItemGroup>
+
+  <!-- M1 使用仓库现有测试游戏：直接以 Link 映射进 Assets，不复制文件，避免与 test_game 漂移。 -->
+  <ItemGroup>
+    <AndroidAsset Include="..\test_game\**\*" Link="Assets\test_game\%(RecursiveDir)%(FileName)%(Extension)" />
+  </ItemGroup>
+
+</Project>

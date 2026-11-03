@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- Avalonia 12 的 AppBuilder 由 Application 子类承载（见 NativeAndroidApplication），
+       这里必须用 [Register] 固定过的 Java 名，否则生成 crc… 名与 manifest 不一致会闪退。 -->
+  <application android:label="era-core Native"
+               android:name="com.eracore.nativeapp.NativeAndroidApplication"
+               android:theme="@style/NativeTheme.NoActionBar"
+               android:supportsRtl="true" />
+</manifest>
