@@ -15,11 +15,11 @@ using AvaloniaButton = Avalonia.Controls.Button;
 namespace EraCore.Native.Android;
 
 /// <summary>
-/// 游戏库页：列出私有目录 <c>games/*</c>（名称 / 路径 / 最后游玩时间），点击进入；
-/// 支持 Avalonia <see cref="IStorageProvider"/> 导入目录或 zip，以及「内置示例」入口。
+/// 游戏库页：列出私有目录 <c>games/*</c>（已复制）与登记的原目录（零拷贝），显示来源/最后游玩时间，点击进入；
+/// 支持系统目录选择器导入、zip 导入、内置示例入口。
 ///
-/// <para>SAF/系统文件选择器在模拟器上可能不可用：此时按钮禁用并提示，仍可用内置示例。
-/// 导入采用「复制到私有目录」，保证引擎有可写存档路径。</para>
+/// <para>导入优先走「真实路径登记」：已授予全盘文件访问时零拷贝登记原目录；
+/// 未授权时引导到系统开关页，并保留「先用复制模式导入」「稍后再说」两个出口，不卡死流程。</para>
 /// </summary>
 internal sealed class GameLibraryView : Border
 {
@@ -28,11 +28,13 @@ internal sealed class GameLibraryView : Border
     private static readonly IBrush HighlightBrush = new SolidColorBrush(Color.FromRgb(38, 52, 82));
     private static readonly IBrush MutedBrush = new SolidColorBrush(Color.FromRgb(150, 158, 180));
     private static readonly IBrush AccentBrush = new SolidColorBrush(Color.FromRgb(110, 170, 255));
+    private static readonly IBrush WarnBrush = new SolidColorBrush(Color.FromRgb(255, 138, 128));
 
     private readonly StackPanel _listPanel;
     private readonly TextBlock _statusText;
     private readonly List<AvaloniaButton> _actionButtons = new();
     private readonly AvaloniaButton _cancelImportButton;
+    private readonly StackPanel _permissionPanel;
     private readonly DispatcherTimer _readyTimer;
 
     private bool _busy;
@@ -114,7 +116,10 @@ internal sealed class GameLibraryView : Border
         };
         buttons.Children.Add(_cancelImportButton);
 
+        _permissionPanel = BuildPermissionPanel();
+
         var footer = new StackPanel { Spacing = 8 };
+        footer.Children.Add(_permissionPanel);
         footer.Children.Add(buttons);
         footer.Children.Add(_statusText);
         Grid.SetRow(footer, 2);
@@ -181,6 +186,9 @@ internal sealed class GameLibraryView : Border
             return;
         }
 
+        if (ExternalStorageAccess.IsGranted())
+            _permissionPanel.IsVisible = false; // 返回系统开关页后自动收起引导
+
         var entries = GameLibrary.Scan(context);
         if (entries.Count == 0)
         {
@@ -200,9 +208,16 @@ internal sealed class GameLibraryView : Border
         }
 
         foreach (var entry in entries)
-            _listPanel.Children.Add(BuildEntryButton(entry, entry.Name == highlight));
+            _listPanel.Children.Add(BuildEntry(entry, entry.Name == highlight));
 
-        _statusText.Text = $"共 {entries.Count} 个游戏 · 私有目录 games/";
+        var pathCount = entries.Count(e => e.Source == GameSourceKind.Path);
+        var unavailable = entries.Count(e => !e.IsAvailable);
+        var summary = pathCount == 0
+            ? $"共 {entries.Count} 个游戏 · 私有目录 games/"
+            : $"共 {entries.Count} 个游戏 · 原目录 {pathCount} 个";
+        if (unavailable > 0)
+            summary += $" · {unavailable} 个路径不可用";
+        _statusText.Text = summary;
     }
 
     public void SetBusy(bool busy, string? message = null)
@@ -214,15 +229,34 @@ internal sealed class GameLibraryView : Border
             _statusText.Text = message;
     }
 
-    private AvaloniaButton BuildEntryButton(GameLibraryEntry entry, bool highlighted = false)
+    /// <summary>
+    /// 单个游戏卡片：名称 + 来源标签（原目录/已复制）+ 路径 + 最后游玩时间；
+    /// 原目录条目额外提供「移除记录」（只删登记，绝不动原目录）。路径不可用时点卡片只提示原因。
+    /// </summary>
+    private Control BuildEntry(GameLibraryEntry entry, bool highlighted = false)
     {
+        var nameRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
         var name = new TextBlock
         {
             Text = entry.Name,
             FontSize = 16,
             FontWeight = FontWeight.SemiBold,
             Foreground = Brushes.White,
+            TextTrimming = TextTrimming.CharacterEllipsis,
         };
+        var badge = new TextBlock
+        {
+            Text = entry.SourceText,
+            FontSize = 11,
+            Foreground = entry.Source == GameSourceKind.Path ? AccentBrush : MutedBrush,
+            Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(name, 0);
+        Grid.SetColumn(badge, 1);
+        nameRow.Children.Add(name);
+        nameRow.Children.Add(badge);
+
         var path = new TextBlock
         {
             Text = entry.RootPath,
@@ -240,9 +274,20 @@ internal sealed class GameLibraryView : Border
         };
 
         var content = new StackPanel { Spacing = 0 };
-        content.Children.Add(name);
+        content.Children.Add(nameRow);
         content.Children.Add(path);
         content.Children.Add(played);
+        if (!entry.IsAvailable && entry.UnavailableReason is { } reason)
+        {
+            content.Children.Add(new TextBlock
+            {
+                Text = "路径不可用：" + reason,
+                FontSize = 12,
+                Foreground = WarnBrush,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 4, 0, 0),
+            });
+        }
 
         var button = new AvaloniaButton
         {
@@ -253,14 +298,141 @@ internal sealed class GameLibraryView : Border
             HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Left,
             Padding = new Thickness(14, 10),
+            Opacity = entry.IsAvailable ? 1.0 : 0.75,
         };
         button.Click += (_, _) =>
         {
             if (_busy)
                 return;
+            if (!entry.IsAvailable)
+            {
+                _statusText.Text = $"{entry.Name} 不可用：{entry.UnavailableReason ?? "目录不可用"}";
+                return;
+            }
             GameSelected?.Invoke(entry);
         };
-        return button;
+
+        if (entry.Source != GameSourceKind.Path)
+            return button;
+
+        // 原目录条目：右侧独立「移除记录」按钮（不嵌套在卡片按钮里，避免点移除时同时进游戏）。
+        var remove = new AvaloniaButton
+        {
+            Content = "移除记录",
+            FontSize = 12,
+            MinHeight = 40,
+            Padding = new Thickness(10, 2),
+            Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Stretch,
+        };
+        remove.Click += (_, _) =>
+        {
+            if (_busy)
+                return;
+            var removed = GameLibrary.RemovePathSource(entry.RootPath);
+            Refresh();
+            _statusText.Text = removed
+                ? $"已移除记录：{entry.Name}（原目录未删除）"
+                : "移除失败：记录不存在。";
+        };
+
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        Grid.SetColumn(button, 0);
+        Grid.SetColumn(remove, 1);
+        row.Children.Add(button);
+        row.Children.Add(remove);
+        return row;
+    }
+
+    /// <summary>
+    /// 未授权时的引导面板：去系统开关页、先用复制模式、稍后再说。
+    /// 面板常驻但在未点击「导入目录」前不主动弹出，避免每次刷新都打断。
+    /// </summary>
+    private StackPanel BuildPermissionPanel()
+    {
+        var panel = new StackPanel { Spacing = 8, IsVisible = false };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "直接登记原目录（零拷贝）需要「所有文件访问」权限。未授权时仍可用复制模式导入。",
+            FontSize = 12,
+            Foreground = MutedBrush,
+            TextWrapping = TextWrapping.Wrap,
+        });
+
+        var row = new WrapPanel { Orientation = Avalonia.Layout.Orientation.Horizontal };
+        var grant = new AvaloniaButton
+        {
+            Content = "去系统设置授权",
+            FontSize = 13,
+            MinHeight = 40,
+            Padding = new Thickness(14, 2),
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+        grant.Click += async (_, _) =>
+        {
+            if (_busy)
+                return;
+            await RunBusyAsync(async () =>
+            {
+                await ExternalStorageAccess.RequestAsync().ConfigureAwait(true);
+                Refresh();
+                _statusText.Text = ExternalStorageAccess.IsGranted()
+                    ? "已授权：再次点「导入目录」即可零拷贝登记原目录。"
+                    : "尚未授权：请开启「所有文件访问」后返回，或先用复制模式导入。";
+            }).ConfigureAwait(true);
+        };
+
+        var copy = new AvaloniaButton
+        {
+            Content = "先用复制模式导入",
+            FontSize = 13,
+            MinHeight = 40,
+            Padding = new Thickness(14, 2),
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+        copy.Click += async (_, _) =>
+        {
+            if (_busy)
+                return;
+            _permissionPanel.IsVisible = false;
+            await RunBusyAsync(() => CopyFolderImportAsync()).ConfigureAwait(true);
+        };
+
+        var later = new AvaloniaButton
+        {
+            Content = "稍后再说",
+            FontSize = 13,
+            MinHeight = 40,
+            Padding = new Thickness(14, 2),
+        };
+        later.Click += (_, _) =>
+        {
+            _permissionPanel.IsVisible = false;
+            _statusText.Text = "已跳过授权：可随时再点「导入目录」或使用复制模式。";
+        };
+
+        row.Children.Add(grant);
+        row.Children.Add(copy);
+        row.Children.Add(later);
+        panel.Children.Add(row);
+        return panel;
+    }
+
+    private async Task RunBusyAsync(Func<Task> action)
+    {
+        SetBusy(true, "处理中…");
+        try
+        {
+            await action().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            _statusText.Text = "操作失败：" + ex.Message;
+        }
+        finally
+        {
+            SetBusy(false);
+        }
     }
 
     private void AddAction(WrapPanel panel, string text, Func<Task> action)
@@ -296,11 +468,19 @@ internal sealed class GameLibraryView : Border
     }
 
     /// <summary>
-    /// 原生 SAF 导入：ActivityResult 回调 + DocumentsContract 递归复制。
-    /// 不用 Avalonia 的 IStorageProvider：其 Android 目录枚举会在部分设备的权限确认框后丢失回调。
+    /// 「导入目录」入口：已授权全盘访问 → 系统选择器 + tree URI 映射为真实路径做零拷贝登记；
+    /// 未授权 → 显示授权引导（去授权 / 先用复制模式 / 稍后再说），不阻塞流程。
     /// </summary>
     private async Task ImportFolderAsync()
     {
+        if (!ExternalStorageAccess.IsGranted())
+        {
+            _permissionPanel.IsVisible = true;
+            _statusText.Text = "未授予「所有文件访问」：可直接用复制模式导入，或先授权后登记原目录。";
+            return;
+        }
+
+        _permissionPanel.IsVisible = false;
         var context = NativeRuntime.AppContext;
         if (context is null)
         {
@@ -314,6 +494,60 @@ internal sealed class GameLibraryView : Border
         {
             _statusText.Text = "已取消导入。";
             return;
+        }
+
+        if (!ExternalStorageAccess.IsGranted())
+        {
+            _permissionPanel.IsVisible = true;
+            _statusText.Text = "授权状态已变化：请重新授权后再试，或使用复制模式。";
+            return;
+        }
+
+        if (RealPathResolver.TryResolve(treeUri, out var realPath, out var reason))
+        {
+            _statusText.Text = "正在登记原目录…";
+            var result = GameLibrary.RegisterPathSource(context, realPath);
+            if (result.Entry is not null)
+            {
+                Refresh(result.Entry.Name);
+                _statusText.Text = $"已登记原目录（零拷贝）：{realPath}";
+                return;
+            }
+
+            Refresh();
+            _statusText.Text = (result.Error ?? "登记失败。") + " 可改用复制模式导入。";
+            return;
+        }
+
+        global::Android.Util.Log.Info("EraCoreNative",
+            $"real path unavailable ({reason}), fallback to SAF copy");
+        _statusText.Text = $"无法映射为真实路径（{reason}），改用复制模式导入…";
+        await CopyFolderImportAsync(treeUri).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// SAF 复制模式：ActivityResult 回调 + DocumentsContract 递归复制到私有目录。
+    /// 不用 Avalonia 的 IStorageProvider：其 Android 目录枚举会在部分设备的权限确认框后丢失回调。
+    /// </summary>
+    private async Task CopyFolderImportAsync(global::Android.Net.Uri? picked = null)
+    {
+        var context = NativeRuntime.AppContext;
+        if (context is null)
+        {
+            _statusText.Text = "应用上下文尚未就绪。";
+            return;
+        }
+
+        var treeUri = picked;
+        if (treeUri is null)
+        {
+            _statusText.Text = "正在打开系统目录选择器…";
+            treeUri = await SafFolderPicker.PickAsync().ConfigureAwait(true);
+            if (treeUri is null)
+            {
+                _statusText.Text = "已取消导入。";
+                return;
+            }
         }
 
         var cancellation = new CancellationTokenSource();
@@ -341,7 +575,7 @@ internal sealed class GameLibraryView : Border
 
         Refresh(result.Entry?.Name);
         _statusText.Text = result.Entry is not null
-            ? $"已导入 {result.Entry.Name}（{result.Entry.RootPath}）"
+            ? $"已复制导入 {result.Entry.Name}（{result.Entry.RootPath}）"
             : result.Error ?? "导入失败。";
     }
 
