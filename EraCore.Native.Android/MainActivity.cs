@@ -1,16 +1,17 @@
 using Android.App;
 using Android.Content.PM;
 using Android.OS;
-using Android.Views;
-using Avalonia.Android;
 using Android.Util;
+using Android.Views;
+using AndroidX.Activity.Result;
+using Avalonia.Android;
 
 namespace EraCore.Native.Android;
 
 /// <summary>
 /// 原生前端宿主 Activity：
-/// - 只负责平台生命周期（启动会话 / 停止会话 / 转屏配置变更）。
-/// - 画面完全由 <see cref="NativeRoot"/> + <see cref="NativeGameView"/> 自绘，不加载 WebView。
+/// - 负责平台生命周期（初始化设置/字体/会话、退出时停会话、转屏配置变更、返回键导航）。
+/// - 画面完全由 <see cref="NativeShell"/> + <see cref="NativeGameView"/> 自绘，不加载 WebView。
 /// </summary>
 [Activity(
     Label = "era-core Native",
@@ -28,17 +29,36 @@ public class MainActivity : AvaloniaMainActivity
 {
     private const string LogTag = "EraCoreNative";
 
+    public static MainActivity? Instance { get; private set; }
+
+    private ActivityResultLauncher? _safFolderLauncher;
+
     protected override void OnCreate(Bundle? savedInstanceState)
     {
+        Instance = this;
+        // 平台初始化（设置 / 内置字体 / 内置示例解压）已在 NativeAndroidApplication.OnCreate 完成，
+        // 那里早于 Avalonia 构造 NativeShell，能保证持久化的主题/方向在首帧前生效。
         base.OnCreate(savedInstanceState);
-        try
+
+        // 原生 SAF 目录选择注册在 STARTED 之前（AndroidX 要求）。
+        _safFolderLauncher = RegisterForActivityResult(
+            new SafOpenTreeContract(), new SafFolderCallback(this));
+
+        // NativeShell 在 Application 阶段创建时 Activity 还不存在，无法直接落地屏幕方向；
+        // Activity 就绪后补一次，保证重启后仍按已保存的方向显示。
+        ApplyOrientation(NativeSettings.Current.Orientation);
+    }
+
+    /// <summary>由 <see cref="SafFolderPicker"/> 调用：拉起 ACTION_OPEN_DOCUMENT_TREE。</summary>
+    internal void LaunchSafFolderPicker()
+    {
+        var launcher = _safFolderLauncher;
+        if (launcher is null)
         {
-            NativeRuntime.EnsureStarted(ApplicationContext ?? this);
+            Log.Warn(LogTag, "saf picker: launcher not registered");
+            return;
         }
-        catch (Exception ex)
-        {
-            Log.Error(LogTag, "EnsureStarted failed: " + ex);
-        }
+        launcher.Launch(null);
     }
 
     protected override void OnDestroy()
@@ -49,13 +69,42 @@ public class MainActivity : AvaloniaMainActivity
         {
             try
             {
-                NativeRuntime.Stop();
+                NativeRuntime.StopOnExit();
             }
             catch (Exception ex)
             {
-                Log.Warn(LogTag, "Stop failed: " + ex.Message);
+                Log.Warn(LogTag, "StopOnExit failed: " + ex.Message);
             }
+            Instance = null;
         }
         base.OnDestroy();
+    }
+
+    /// <summary>返回键先交给 UI 导航；只有游戏库页才退出应用。</summary>
+    public override bool OnKeyDown(Keycode keyCode, KeyEvent? e)
+    {
+        if (keyCode == Keycode.Back && NativeApp.Shell?.HandleBack() == true)
+            return true;
+        return base.OnKeyDown(keyCode, e);
+    }
+
+    /// <summary>设置页「屏幕方向」落地：跟随系统 / 竖屏 / 横屏。</summary>
+    internal static void ApplyOrientation(AppOrientation orientation)
+    {
+        var activity = Instance;
+        if (activity is null)
+            return;
+
+        var target = orientation switch
+        {
+            AppOrientation.Portrait => ScreenOrientation.Portrait,
+            AppOrientation.Landscape => ScreenOrientation.Landscape,
+            _ => ScreenOrientation.Unspecified,
+        };
+        if (activity.RequestedOrientation != target)
+        {
+            Log.Info(LogTag, $"orientation -> {target}");
+            activity.RequestedOrientation = target;
+        }
     }
 }
