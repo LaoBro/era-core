@@ -1,0 +1,104 @@
+@SYSTEM_TITLE
+PRINTL Second Game B
+PRINTL GAME_B_MARKER_42
+PRINTL 日本語の表示テスト：セカンドゲーム（內置フォント）
+PRINTL 中文显示测试：第二个游戏
+PRINT_IMG "img/test.png"
+HTML_PRINT "<img src='Face_1'>"
+HTML_PRINT "<img src='Face_2'>"
+PRINTL [0] Hello
+PRINTL [1] Quit
+PRINTL [2] Long loop
+; 注：[3] 空缺。该编号原为「不可中断窗口」构造（issue-002 的 AWAITBLOCK.ERB），
+; issue-003 让 AWAIT 变为可中断后它失效。票面给的两个替代候选也已实测否掉
+; （单指令重计算受引擎数组尺寸硬上限约束；初始化期会被拆除本身竞态打断），
+; 引擎里已无脚本层可达的不可中断窗口 —— 拆除的有界失败分支改由窄接缝单测
+; BoundedLoopWaitTests 覆盖，不再需要脚本构造。故本编号已删除。
+; 其余编号保持不变，避免动到既有测试投的输入值。
+PRINTL [4] Flow check
+PRINTL [5] Await frames
+PRINTL [6] Await idle
+PRINTL [7] Await skip
+PRINTL [8] Redraw probe V0 (baseline)
+PRINTL [9] Redraw probe V1 (net-zero)
+PRINTL [10] Redraw probe V2 (REDRAW 0)
+PRINTL [11] Redraw probe V3 (non-cancelling)
+PRINTL [12] Redraw probe V4 (real length)
+PRINTL [13] Yield frames (bare AWAIT)
+PRINTL [14] Yield frames (AWAIT 0)
+PRINTL [15] Yield idle (no redraw)
+PRINTL [16] Yield drain wait (termination)
+PRINTL [17] Anim paragraph (multi-row)
+PRINTL [18] Anim long (teardown window)
+INPUT
+IF RESULT == 2
+	; issue-001/002：长回合入口（测试专用分支，既有测试只发 0/1，不受影响）。
+	; 8 秒：须显著长于测试注入的拆除超时 + 断言窗口，否则测不出挂起。
+	; 同时足够短，使测试能在有界时间内等旧循环自然退出完成清理。
+	; 注意：issue-002 之后它<b>可被中断</b>，故不再用于拆除超时路径
+	; （那条路径改由「初始化期」窗口覆盖），此处只服务于「拆除信号到达后
+	; 脚本在下一个指令边界停下」的验收（ScriptInterruptionTests）。
+	CALL TEST_LONGLOOP(8000)
+ELSEIF RESULT == 4
+	; issue-002：正常流程回归（见 erb/FLOWCHECK.ERB 文件头）。
+	; 用于证明「每条指令前的检查点」不会让正常流程少执行语句。
+	CALL TEST_FLOW
+ELSEIF RESULT == 5
+	; issue-003：AWAIT 推帧（见 erb/AWAITFRAMES.ERB 文件头）。
+	CALL TEST_AWAITFRAMES
+ELSEIF RESULT == 6
+	; issue-004：零输出等待循环（见 erb/AWAITIDLE.ERB 文件头）。
+	CALL TEST_AWAITIDLE
+ELSEIF RESULT == 7
+	; issue-003：可打断性（见 erb/AWAITFRAMES.ERB 的 @TEST_AWAITSKIP）。
+	CALL TEST_AWAITSKIP
+ELSEIF RESULT == 8
+	; spec v3 §10-A：REDRAW / 动画中间帧交付探针 V0 基线
+	CALL TEST_REDRAW_V0
+ELSEIF RESULT == 9
+	; spec v3 §10-A：V1 净值（KEYTYPING 形状）
+	CALL TEST_REDRAW_V1
+ELSEIF RESULT == 10
+	; spec v3 §10-A：V2 REDRAW 0 隔离
+	CALL TEST_REDRAW_V2
+ELSEIF RESULT == 11
+	; spec v3 §10-A：V3 不抵消（区分产出丢帧 vs 抑制丢帧）
+	CALL TEST_REDRAW_V3
+ELSEIF RESULT == 12
+	; spec v3 §4.5：V4 真实长度 —— 测 O(n²) 的实际字节量
+	CALL TEST_REDRAW_V4
+ELSEIF RESULT == 13
+	; spec v5 §7.2：无参 AWAIT 逐步产帧（见 erb/YIELDDRAIN.ERB 文件头）。
+	CALL TEST_YIELDFRAMES
+ELSEIF RESULT == 14
+	; spec v5 §7.2：AWAIT 0 同上。
+	CALL TEST_YIELDFRAMES0
+ELSEIF RESULT == 15
+	; spec v5 §7.2：画面无变化时不发帧。
+	CALL TEST_YIELDIDLE
+ELSEIF RESULT == 16
+	; spec v5 §7.2：drain 终止性 + 真 WAIT 输入能力。
+	CALL TEST_YIELDWAIT
+ELSEIF RESULT == 17
+	; issue 13：多行段落动画（`erb/ANIMPARA.ERB` 文件头）—— 逻辑行 ≠ 显示行。
+	CALL TEST_ANIMPARA
+ELSEIF RESULT == 18
+	; 候选 3 / ADR-0049：回合内动画长窗口（`erb/ANIMLONG.ERB` 文件头）——
+	; 拆除/重载发生在动画进行中的回归锁。60 帧 × 100ms ≈ 6 秒。
+	CALL TEST_ANIMLONG(60)
+ELSEIF RESULT == 0
+	PRINTFORML You entered: {RESULT}
+	PRINTL Select again:
+	PRINTL [0] World
+	PRINTL [1] Exit
+	INPUT
+	IF RESULT == 0
+		PRINTL You entered: 0
+	ELSE
+		PRINTL You entered: 1
+	ENDIF
+ELSE
+	PRINTFORML You entered: {RESULT}
+ENDIF
+PRINTL Agent Test End
+QUIT

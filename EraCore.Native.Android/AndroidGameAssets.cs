@@ -5,26 +5,25 @@ using Android.Util;
 namespace EraCore.Native.Android;
 
 /// <summary>
-/// 把 APK 内置的 <c>Assets/test_game</c> 解压到应用私有目录，供 <see cref="MinorShift.Emuera.Files.FileSystemGameDirAccessor"/>
-/// 以真实路径访问（引擎需要可写目录放存档 / 日志）。带标记文件避免每次启动覆盖玩家存档。
+/// 把 APK 内置的 <c>Assets/&lt;assetRoot&gt;</c> 解压到应用私有目录 <c>games/&lt;dir&gt;</c>，
+/// 供 <see cref="MinorShift.Emuera.Files.FileSystemGameDirAccessor"/> 以真实路径访问
+/// （引擎需要可写目录放存档 / 日志）。带标记文件避免每次启动覆盖玩家存档。
 /// </summary>
 internal static class AndroidGameAssets
 {
     private const string LogTag = "EraCoreNative";
-    private const string AssetRoot = "test_game";
-    private const string GameDirName = "test_game";
     private const string MarkerName = ".extracted-v1";
 
-    public static string EnsureGame(Context context)
+    public static string EnsureGame(Context context, string assetRoot, string gameDirName)
     {
         var filesDir = context.FilesDir?.AbsolutePath
             ?? throw new InvalidOperationException("Android FilesDir 不可用。");
-        var root = Path.Combine(filesDir, "games", GameDirName);
+        var root = Path.Combine(filesDir, "games", gameDirName);
         var marker = Path.Combine(root, MarkerName);
 
         if (File.Exists(marker))
         {
-            Log.Info(LogTag, "game assets already extracted: " + root);
+            Log.Info(LogTag, $"game assets already extracted: {assetRoot} -> {root}");
             return root;
         }
 
@@ -33,10 +32,11 @@ internal static class AndroidGameAssets
         Directory.CreateDirectory(root);
 
         var started = DateTime.UtcNow;
-        CopyDirectory(context.Assets!, AssetRoot, root);
+        CopyDirectory(context.Assets!, assetRoot, root);
         File.WriteAllText(marker, DateTime.UtcNow.ToString("O"));
 
-        Log.Info(LogTag, $"extracted assets to {root} in {(DateTime.UtcNow - started).TotalMilliseconds:F0} ms");
+        Log.Info(LogTag,
+            $"extracted assets {assetRoot} -> {root} in {(DateTime.UtcNow - started).TotalMilliseconds:F0} ms");
         return root;
     }
 

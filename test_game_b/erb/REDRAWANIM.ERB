@@ -1,0 +1,123 @@
+; ============================================================
+; REDRAW / 动画中间帧交付探针（spec v3 §10-A）
+; ============================================================
+;
+; 目的：回答「eraTW 的回合内动画（KEYTYPING 形状）在 era-core 里究竟产出几帧」。
+;
+; 背景：spec v3 §1 判断「REDRAW 0 会吞掉中间帧」大概率是误判 ——
+;   ConsolePrintManager 里 redraw 只 gate 同步重绘（RefreshStrings / WaitFrameSync），
+;   pendingOps 与状态在此之前已写好；而 DisplayState.ComputeDiff 直接读
+;   DisplayLineList 做行对象引用比对，不看 redraw。
+;   故本探针把 REDRAW 降级为「隔离变量」（V1 vs V2），真正要测的是另一件事。
+;
+; 真正的未知：SubmitTimeout() 一调用脚本就继续往下跑，可能已经执行完 CLEARLINE
+;   和下一条 PRINT 才回到 WaitInput —— 于是 BuildTurn 取到的是「净值」而非中间态。
+;   即中间态究竟是 逐帧可见 / 被意外合并 / 被彻底丢掉。
+;   这直接决定 spec v3 §4 的帧合并窗口该定在哪，以及「没变更不发送」还能剩多少帧。
+;
+; 四个变体逐层剥离（每步 TWAIT 1,1 —— 与 eraTW KEYTYPING 的写法一致）：
+;   V0  基线   —— TWAIT 但无 CLEARLINE，画面单调增长 → 测 TWAIT 本身是否推帧
+;   V1  净值   —— KEYTYPING 形状（PRINT → TWAIT → CLEARLINE）→ 测抵消是否丢帧
+;   V2  REDRAW —— 同 V1 包在 REDRAW 0 / REDRAW 1 内 → 隔离 REDRAW 的真实影响
+;   V3  不抵消 —— 同 V1 但每步额外留一行永久递增计数 → 判别「丢帧」是产出问题还是抑制问题
+;
+; 判读表：
+;   V1 = 10 帧           → 中间态完整可见
+;   V1 = 3~5 帧          → 已被时序意外合并（对 v12 是好消息：合并有天然形态）
+;   V1 = 1 帧（仅最终态）→ 中间态彻底丢失，须先修产出时序
+;   V1 = 0 而 V3 = 10    → 丢帧来自空转帧抑制（画面净值回到原状被判为无变化）
+;   V1 = V3 = 0          → 丢帧来自产出路径
+;   V1 = V2              → REDRAW 对交付无影响（预期）
+; ============================================================
+
+; ------------------------------------------------------------
+; V0 基线：TWAIT 推帧，无 CLEARLINE，画面单调增长
+; ------------------------------------------------------------
+@TEST_REDRAW_V0
+	#DIM IDX
+	IDX = 0
+	WHILE IDX < 10
+		PRINTFORML BASE-{IDX}
+		TWAIT 1, 1
+		IDX = IDX + 1
+	WEND
+	PRINTL V0_DONE
+	QUIT
+
+; ------------------------------------------------------------
+; V1 净值：KEYTYPING 形状 —— 打印增量 → 等待 → 擦掉，画面回到原状
+; ------------------------------------------------------------
+@TEST_REDRAW_V1
+	#DIM IDX
+	IDX = 0
+	WHILE IDX < 10
+		PRINTFORML STEP-{IDX}
+		TWAIT 1, 1
+		CLEARLINE 1
+		IDX = IDX + 1
+	WEND
+	PRINTL V1_DONE
+	QUIT
+
+; ------------------------------------------------------------
+; V2 REDRAW：与 V1 完全相同的循环，外层包 REDRAW 0 / REDRAW 1
+; ------------------------------------------------------------
+@TEST_REDRAW_V2
+	#DIM IDX
+	#DIM OLDREDRAW
+	OLDREDRAW = CURRENTREDRAW()
+	REDRAW 0
+	IDX = 0
+	WHILE IDX < 10
+		PRINTFORML STEP-{IDX}
+		TWAIT 1, 1
+		CLEARLINE 1
+		IDX = IDX + 1
+	WEND
+	REDRAW OLDREDRAW
+	PRINTL V2_DONE
+	QUIT
+
+; ------------------------------------------------------------
+; V4 真实长度：模拟 eraTW KEYTYPING 的<b>真实规模</b> —— 每步 +2 字，累计 200 字，
+;   共 100 步。用于测量 O(n²) 的实际字节量，给 spec v3 §4.5 一个实测基线。
+;
+;   写法照抄 eraTW KEYTYPING（魔改内容/PRINT系/Visual_Effects_&_Animations.ERB）：
+;     PRINTFORML %SUBSTRING(SRC, 0, LEN)%   ; 打印增量
+;     TWAIT 1, 1                            ; Void，不可打断
+;     CLEARLINE 1                           ; 擦掉刚印的
+;   唯一差别是 delay 固定为 1ms、chunk 固定为 2 字（取其默认值），
+;   以便把变量收敛为「文本长度」这一个维度。
+; ------------------------------------------------------------
+@TEST_REDRAW_V4
+	#DIMS SRC
+	#DIM IDX
+	#DIM LEN
+	SRC = "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
+	IDX = 0
+	WHILE IDX < 100
+		LEN = IDX * 2 + 2
+		PRINTFORML %SUBSTRING(SRC, 0, LEN)%
+		TWAIT 1, 1
+		CLEARLINE 1
+		IDX = IDX + 1
+	WEND
+	PRINTL V4_DONE
+	QUIT
+
+; ------------------------------------------------------------
+; V3 不抵消：与 V1 同形，但每步额外留下一行永久递增的 TICK 计数
+;   → 画面净值不可能为空，用于区分「产出丢帧」与「抑制丢帧」
+; ------------------------------------------------------------
+@TEST_REDRAW_V3
+	#DIM IDX
+	IDX = 0
+	WHILE IDX < 10
+		PRINTFORML TICK-{IDX}
+		PRINTFORML STEP-{IDX}
+		TWAIT 1, 1
+		CLEARLINE 1
+		IDX = IDX + 1
+	WEND
+	PRINTL V3_DONE
+	QUIT

@@ -32,9 +32,16 @@
     <ProjectReference Include="..\EraCore.Native\EraCore.Native.csproj" />
   </ItemGroup>
 
-  <!-- M1 使用仓库现有测试游戏：直接以 Link 映射进 Assets，不复制文件，避免与 test_game 漂移。 -->
+  <!-- 内置示例游戏直接以 Link 映射进 Assets，不复制文件，避免与仓库 fixture 漂移。
+       test_game_b 是 M3 的第二游戏（窗口尺寸/字号/前景色不同），用于验证游戏库切换会话。
+       运行期产物（日志 / profile / IR 缓存）不打包，避免把本地运行态带进 APK。 -->
   <ItemGroup>
-    <AndroidAsset Include="..\test_game\**\*" Link="Assets\test_game\%(RecursiveDir)%(FileName)%(Extension)" />
+    <AndroidAsset Include="..\test_game\**\*"
+                  Exclude="..\test_game\emuera.log;..\test_game\time.log;..\test_game\profile;..\test_game\_IRCache\**\*"
+                  Link="Assets\test_game\%(RecursiveDir)%(FileName)%(Extension)" />
+    <AndroidAsset Include="..\test_game_b\**\*"
+                  Exclude="..\test_game_b\emuera.log;..\test_game_b\time.log;..\test_game_b\profile;..\test_game_b\_IRCache\**\*"
+                  Link="Assets\test_game_b\%(RecursiveDir)%(FileName)%(Extension)" />
   </ItemGroup>
 
 </Project>

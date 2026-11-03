@@ -1,0 +1,48 @@
+; ============================================================
+; 多行段落动画探针（issue 13 回归防护）
+; ============================================================
+;
+; 目的：复刻 eraTW `@BADAPPLE` 的帧形状，让「逻辑行数 ≠ 显示行数」这件事
+; 在**真实脚本 + 真实引擎**的路径上被持续验证。
+;
+; 背景：既有的 REDRAWANIM 系列（V0–V4）全部是 1:1 行 —— 一个 PRINTL 就是一个
+; 逻辑行也是一个显示行。在那里 `CLEARLINE n` 的两个口径永远相等，所以它们
+; 全绿也发现不了 issue 13（每帧只搬运 11 行，字符画前 44 行永远停在首帧）。
+; 本探针刻意造出「1 个逻辑行 / 20 个显示行」的段落，让两个口径分开。
+;
+; 每帧形状（7 逻辑行 / 26 显示行）：
+;   PRINTFORML FRAME-{IDX}        1 逻辑 / 1 显示   —— 帧序号，证明内容在推进
+;   HTML_PRINT "P-0<br>…<br>P-19" 1 逻辑 / 20 显示  —— 多行段落，造出 1:N
+;   PRINTL UI-0 … UI-4            5 逻辑 / 5 显示
+;   AWAIT 28                                        —— 产帧
+;   CLEARLINE LINECOUNT - BASELINE 参数 7 / 实删 26  —— 两个口径在此分开
+;
+; 判据（AnimParagraphFrameTests）：
+;   - 每帧 lineOps = clear_line_diff -26 + append x26
+;   - append 首行 == `FRAME-{IDX}`（内容在推进）
+;   - append 次行 == `P-0`（整段被换掉）
+;     —— 修复前只有尾部 7 行被替换，首行会变成 `P-18`，
+;        即「画面只有下边一小截在动」的直接编码。
+;
+; ⚠️ HTML_PRINT 走 `popWords` 原始串解析（`ArgumentBuilder.cs:418`），
+;    不吃 `%"…"%` 形式串 —— 段落必须是字面量，帧序号靠 PRINTFORML 给出。
+; ============================================================
+
+@TEST_ANIMPARA
+	#DIM IDX
+	#DIM BASELINE
+	PRINTL PARA_HEAD
+	BASELINE = LINECOUNT
+	FOR IDX, 0, 9
+		PRINTFORML FRAME-{IDX}
+		HTML_PRINT "P-0<br>P-1<br>P-2<br>P-3<br>P-4<br>P-5<br>P-6<br>P-7<br>P-8<br>P-9<br>P-10<br>P-11<br>P-12<br>P-13<br>P-14<br>P-15<br>P-16<br>P-17<br>P-18<br>P-19"
+		PRINTL UI-0
+		PRINTL UI-1
+		PRINTL UI-2
+		PRINTL UI-3
+		PRINTL UI-4
+		AWAIT 28
+		CLEARLINE LINECOUNT - BASELINE
+	NEXT
+	PRINTL ANIM_DONE
+	QUIT

@@ -1,0 +1,75 @@
+; ============================================================
+; 让路 drain 专用构造（issue W1-5 / spec v5 §3.2 ④）
+; ============================================================
+;
+; 目的：无参 AWAIT（零时长让路点）在 server / WS 宿主下应<b>逐步产帧</b> ——
+; 每一步一帧，帧出现在脚本真正走完该步之后；画面没变的那一轮不落 wire。
+;
+; 结构照 eraTW TITLE.ERB 的 @BADAPPLE（打印 → AWAIT → 擦除）：
+;   每轮打印一行 YFRAME-n → AWAIT（停稳点）→ 擦除该行。
+; 帧内容递增（YFRAME-0 … YFRAME-4），故可区分「每步一帧」与「只有最后一帧」。
+;
+; ⚠️ 这些脚本一律<b>不以 QUIT 收尾</b>，而是停在一个真 WAIT 上：
+; 让路 drain 会在极短时间内连续写入多帧，而立即 QUIT 会触发既有 TurnDelivery 的
+; final-turn 一次性交付竞态 —— 帧洪峰里在途的那一帧可能被记为「final 已交付」，
+; 其余帧随后被丢弃。这不是本次改动引入的问题，但会让断言随机丢帧，故规避。
+; 同理，被断言的 marker 落在**普通帧**里（应答帧 / drain 帧），不落在终态帧里。
+;
+; 依赖：本构造只有在 issue-01（零时长挂起）落地后才有意义 —— 改动前无参 AWAIT
+; 不挂起，脚本一口气跑完，全部 YFRAME 挤在同一回合里（假绿）。
+; ============================================================
+
+@TEST_YIELDFRAMES
+	#DIM YIDX
+	FOR YIDX, 0, 5
+		PRINTFORML YFRAME-{YIDX}
+		AWAIT
+		CLEARLINE 1
+	NEXT
+	PRINTL YFRAMES_DONE
+	AWAIT
+	INPUT
+	QUIT
+
+; AWAIT 0 变体：与无参 AWAIT 同为零时长让路点（ConsoleStateManager.Await 的 time <= 0 分支）。
+@TEST_YIELDFRAMES0
+	#DIM ZIDX
+	FOR ZIDX, 0, 5
+		PRINTFORML ZFRAME-{ZIDX}
+		AWAIT 0
+		CLEARLINE 1
+	NEXT
+	PRINTL ZFRAMES_DONE
+	AWAIT 0
+	INPUT
+	QUIT
+
+; 画面无变化的让路循环：循环体内<b>一个打印指令都没有</b> ⇒ 期间不应产出任何回合。
+; 循环后打印标记并进入一个真 WAIT 循环（永不 QUIT）：
+;   1. 「循环期间零帧」由采样窗口断言；
+;   2. 「脚本确实被 drain 推到了终点」由随后投输入能推进来证明 ——
+;      排除「卡在第一个让路点」造成的平凡零帧（假绿）。
+@TEST_YIELDIDLE
+	#DIM IIDX
+	FOR IIDX, 0, 200
+		AWAIT
+	NEXT
+	PRINTL YIELDIDLE_DONE
+	WHILE 1
+		INPUT
+		PRINTFORML YIELDIDLE_INPUT={RESULT}
+	WEND
+
+; drain 终止性：让路循环之后到达一个<b>真 WAIT</b>（INPUT）。
+; drain 必须在真 WAIT 处退出，且不吞本次 WAIT 的输入能力 —— 后续投输入应正常推进。
+@TEST_YIELDWAIT
+	#DIM WIDX
+	FOR WIDX, 0, 5
+		PRINTFORML WAITFRAME-{WIDX}
+		AWAIT
+		CLEARLINE 1
+	NEXT
+	PRINTL YIELDWAIT_READY
+	INPUT
+	PRINTFORML YIELDWAIT_INPUT={RESULT}
+	QUIT

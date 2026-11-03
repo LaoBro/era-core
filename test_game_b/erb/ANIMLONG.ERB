@@ -1,0 +1,34 @@
+; ============================================================
+; 回合内动画长窗口（候选 3 / ADR-0049 行为锁 1、2 专用构造）
+;
+; 目的：构造「动画进行中」的稳定窗口，用于证明
+;   ① DELETE /session 发生在动画中时仍能在下一个让路点收敛；
+;   ② POST /load-game 发生在动画中时仍能成功替换会话。
+;
+; 与 LONGLOOP.ERB 恰好相反 —— 本文件**必须**含 AWAIT：
+; 它就是被验证的那个让路点。LONGLOOP 证明的是「无让路点也能在
+; 指令边界被打断」，本文件证明的是「有让路点时不会被动画剩余
+; 时长拖住」，两条互补。
+;
+; 时长：默认 60 帧 × 100ms ≈ 6 秒。必须远长于测试注入的拆除上界
+; （2s），否则「拆除发生在动画中」就变成运气而非断言。
+;
+; 帧内容递增（ANIMLONG-0 → ANIMLONG-59），测试据此判定「已进入
+; 动画」而不是「动画已跑完」。
+; ============================================================
+
+@TEST_ANIMLONG(FRAMES)
+	#DIM FRAMES
+	#DIM FRAMEIDX
+
+	SIF FRAMES == 0
+		FRAMES = 60
+	FRAMEIDX = 0
+	WHILE FRAMEIDX < FRAMES
+		PRINTFORML ANIMLONG-{FRAMEIDX}
+		AWAIT 100
+		CLEARLINE 1
+		FRAMEIDX = FRAMEIDX + 1
+	WEND
+	PRINTL ANIMLONG_DONE
+	QUIT
