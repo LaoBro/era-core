@@ -1,5 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
+  <!-- 真实路径模式（与 MAUI 版本对齐）：已授予「所有文件访问」时直接读写用户目录，零拷贝登记游戏。
+       Play 上架需申报该权限用途；自签名/侧载分发不受限。未授予或申请被拒时回退 SAF 复制模式。 -->
+  <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+                   tools:ignore="ScopedStorage" />
+  <!-- API 29 及以下没有全盘访问开关，退回旧存储权限（API 33 起 READ 已由媒体权限取代，故限 maxSdk）。 -->
+  <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+                   android:maxSdkVersion="32" />
+  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+                   android:maxSdkVersion="28" />
+
   <!-- Avalonia 12 的 AppBuilder 由 Application 子类承载（见 NativeAndroidApplication），
        这里必须用 [Register] 固定过的 Java 名，否则生成 crc… 名与 manifest 不一致会闪退。 -->
   <application android:label="era-core Native"

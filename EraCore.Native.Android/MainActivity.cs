@@ -4,6 +4,7 @@ using Android.OS;
 using Android.Util;
 using Android.Views;
 using AndroidX.Activity.Result;
+using AndroidX.Activity.Result.Contract;
 using Avalonia.Android;
 
 namespace EraCore.Native.Android;
@@ -43,6 +44,23 @@ public class MainActivity : AvaloniaMainActivity
         // 原生 SAF 目录选择注册在 STARTED 之前（AndroidX 要求）。
         _safFolderLauncher = RegisterForActivityResult(
             new SafOpenTreeContract(), new SafFolderCallback(this));
+
+        // API 29 及以下：READ/WRITE_EXTERNAL_STORAGE 运行时权限（API 30+ 走全盘访问开关页，不走这条）。
+        if (!OperatingSystem.IsAndroidVersionAtLeast(30))
+        {
+            try
+            {
+                var storageLauncher = RegisterForActivityResult(
+                    new ActivityResultContracts.RequestMultiplePermissions(),
+                    new StoragePermissionCallback());
+                ExternalStorageAccess.AttachRuntimeLauncher(storageLauncher);
+                Log.Info(LogTag, "storage permission: runtime launcher registered");
+            }
+            catch (Exception ex)
+            {
+                Log.Error(LogTag, "storage permission: launcher registration failed: " + ex);
+            }
+        }
 
         // NativeShell 在 Application 阶段创建时 Activity 还不存在，无法直接落地屏幕方向；
         // Activity 就绪后补一次，保证重启后仍按已保存的方向显示。
