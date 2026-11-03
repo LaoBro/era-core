@@ -224,6 +224,17 @@ internal sealed class NativeRoot : Border
         Poll();
     }
 
+    /// <summary>
+    /// 即将打开新游戏会话：清空上一会话的提交状态。
+    /// 新会话的 revision 从 1 重新计数，若沿用旧值会误判「本帧已提交」而让发送按钮一直禁用。
+    /// </summary>
+    public void PrepareNewSession()
+    {
+        _snapshot = null;
+        _submittedRevision = long.MinValue;
+        _inputBox.Text = string.Empty;
+    }
+
     /// <summary>离开游戏画面时停止轮询，避免后台定时器继续跑。</summary>
     public void Suspend() => _timer.Stop();
 

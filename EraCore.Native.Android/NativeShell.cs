@@ -111,6 +111,7 @@ internal sealed class NativeShell : Panel
 
         _library.IsVisible = false;
         _game.IsVisible = true;
+        _game.PrepareNewSession();
         _game.Resume();
 
         var opened = await NativeRuntime.OpenGameAsync(entry).ConfigureAwait(true);
