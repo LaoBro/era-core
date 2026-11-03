@@ -7,9 +7,12 @@
 当前维护范围：
 
 - `EraCore.Core`：无头运行器核心。
+- `EraCore.Hosting`：宿主 SDK 薄门面（平台无关几何/状态机）。
 - `EraCore.Server`：HTTP/WebSocket 服务器组件。
 - `EraCore.Cli`：CLI 和 Server 模式入口。
 - `EraCore.Maui`：Windows/Android MAUI 应用壳和 C# 桥接。
+- `EraCore.Native`：原生前端平台无关层（Hosting 复用 + 帧投影）。
+- `EraCore.Native.Android`：Avalonia + SkiaSharp 的 Android 原生前端。
 - `EraCore.Web`：Vue 3 前端。
 
 不在当前维护范围：
@@ -40,14 +43,35 @@
                        │ EraCore.Core                  │
                        │ 无 ASP.NET Core / MAUI 依赖    │
                        │ ├ 三轴 + CoreSession           │
+                       │ ├ HostMetrics（宿主元信息）     │
                        │ └ 共享层 Server/：             │
                        │   GameServerProtocol /        │
                        │   WsRelay / Controller /      │
                        │   HttpListenerHost            │
+                       └────────────┬──────────────────┘
+                                    │ 公共类型
+                       ┌────────────v──────────────────┐
+                       │ EraCore.Hosting               │
+                       │ IGameHost / HostMetrics 转发   │
+                       │ VirtualWindow / ColumnHit      │
+                       │ AwaitingView / StyleResolver   │
+                       │ ❌ 字体度量/像素落位/DOM/ANSI   │
+                       └────────────┬──────────────────┘
+                                    │
+                       ┌────────────v──────────────────┐
+                       │ EraCore.Native                │
+                       │ NativeRenderModel（帧投影）    │
+                       └────────────┬──────────────────┘
+                                    │
+                       ┌────────────v──────────────────┐
+                       │ EraCore.Native.Android        │
+                       │ Avalonia + SkiaSharp          │
+                       │ NativeRoot / NativeGameView   │
                        └───────────────────────────────┘
 
    EraCore.Cli             → Core + Server（Android RID 下条件编译排除 Server）
-   EraCore.Tests           → Core + Server
+   EraCore.Tests           → Core + Server + Hosting
+   EraCore.Hosting.Tests   → Hosting（无 InternalsVisibleTo）
    EraCore.Maui.Tests      → Maui
    EraCore.PublicApi.Tests → Core（只经公共三轴，无 InternalsVisibleTo）
 ```
@@ -62,10 +86,22 @@ Web 的两条路径共享同一套回合 / 显示语义，差异只在传输层�
 Core 的接触面（从外到内）：
   wire 契约      HTTP/WS：GameServerProtocol / WsRelay（Core 共享层，BCL only）
   public 面      InputPort / OutputPort / GameTree / IGameDirAccessor / CoreSession
+                 HostMetrics（宿主渲染元信息）
   内部件         InternalsVisibleTo：Server / Cli / Maui / Tests（仅本仓宿主与测试）
 ```
 
 模块地图（三轴 + 会话 + 支撑区域）、门面背后的实现映射与不变量，见 [`EraCore.Core/ARCHITECTURE.md`](EraCore.Core/ARCHITECTURE.md)。
+
+## Hosting 与 Native 前端
+
+`EraCore.Hosting/` 是宿主 SDK 薄门面，只引用 Core、**不加入 `InternalsVisibleTo`**：
+
+- `IGameHost` / `GameHost`：会话生命周期、`HostMetrics`、快照、`OpenStream()`、`Submit(InputFrame)`。
+- `HostStream`：先订阅、后取初始快照；宿主按 `revision` 去重（v13）。
+- 平台无关算法：`VirtualWindow`（可见区间/overscan/贴底/shift_head/滚动条）、`ColumnHitGeometry`、`AlignGeometry`、`AwaitingView`、`StyleResolver`。
+- **不承载**字体度量、最终像素落位、换行、DOM/CSS、VT/ANSI、SKCanvas、图片解码。
+
+`EraCore.Native/` 只做 `DisplaySnapshot → NativeFrame` 投影；`EraCore.Native.Android/` 才引入 Avalonia/SkiaSharp，负责 SKCanvas 绘制、触控、IME、Android inset。三前端分层决策见 [ADR-0054](docs/adr/0054-native-frontend-layering-hosting.md)。
 
 ## 方言兼容层
 

@@ -1,0 +1,59 @@
+# Android 原生前端（Avalonia + SkiaSharp）教训
+
+> **TL;DR**：Avalonia 12 的 AppBuilder 必须在 `AvaloniaAndroidApplication` 子类；Java 类名要 `[Register]` 固定；`ApplicationId` 不能含 Java 关键字（`native`）；Release 必须嵌入程序集；Activity 要声明完整 `ConfigurationChanges`；Avalonia 边到边绘制，状态栏/IME 都要自己做 inset；虚拟滚动与按钮命中用 Hosting 的几何，不要用 `col×FontSize/2`。
+
+## 教训清单
+
+| # | 标题 | 一句话 | 日期 |
+|---|---|---|---|
+| 1 | Avalonia 12 AppBuilder 在 Application 子类 | 不是 Activity；`AvaloniaAndroidApplication<TApp>` + manifest `android:name` | 2026-11-03 |
+| 2 | Java 类名必须 `[Register]` 固定 | 否则生成 `crc…` 名，manifest 对不上 → `ClassNotFoundException` 闪退 | 2026-11-03 |
+| 3 | `ApplicationId` 不能含 Java 关键字 | `com.eracore.native` 的 `native` 是 Java 关键字，javac 报“需要标识符”；改为 `nativeapp` | 2026-11-03 |
+| 4 | AppCompat 主题必需 | 缺 `Theme.AppCompat` 会在启动抛异常；`styles.xml` + `android:theme` | 2026-11-03 |
+| 5 | Debug 嵌入程序集 | Fast Deployment 常报 `No assemblies found`；`EmbedAssembliesIntoApk=true` | 2026-11-03 |
+| 6 | `ConfigurationChanges` 要全 | 缺 `ScreenLayout/SmallestScreenSize/Density` 会让旋转/wm size 重建 Activity；勿在 `OnDestroy` 无条件停会话 | 2026-11-03 |
+| 7 | 状态栏 inset | Avalonia 在 Android 上边到边绘制；用 `status_bar_height` 加根 Padding，否则首行被时钟压住 | 2026-11-03 |
+| 8 | IME 用 `IInputPane` + `AdjustResize` | 键盘遮挡高度加到根 Padding；模拟器 IME 可能只露出工具栏，`inset` 仍可作为证据 | 2026-11-03 |
+| 9 | AndroidAsset 用 Link 映射 test_game | 不复制仓库 fixture；`AndroidAsset Include="..\test_game\**\*" Link=...`；解压到 filesDir 带 marker | 2026-11-03 |
+| 10 | 虚拟滚动用 Hosting `VirtualWindow` | 不要自己算 first/last/贴底/滚动条；revision 变化才重绘 | 2026-11-03 |
+| 11 | 按钮命中用实测 run 位置 | `ButtonRef.col/width` 是字符列（按 FontSize/2），比例字体下会偏；命中区在绘制阶段由 Skia 度量产出 | 2026-11-03 |
+| 12 | 终态要按会话状态隐藏输入栏 | `QUIT` 后快照 `awaiting` 可能仍是旧输入等待；再用 `CoreSessionState.Completed/Stopped/Failed` 兜底 | 2026-11-03 |
+
+---
+
+## 1. Avalonia 12 AppBuilder 位置
+
+**场景**：按 Avalonia 11 经验把 `AppBuilder.Configure` 放在 Activity，启动即崩。
+**原因**：Avalonia 12 Android 的配置入口移到 `AvaloniaAndroidApplication<TApp>`。
+**解决**：`[Register("com.eracore.nativeapp.NativeAndroidApplication")]` 子类 + manifest `android:name`；Activity 用非泛型 `AvaloniaMainActivity`。
+
+## 2. Java 关键字 ApplicationId
+
+**场景**：`com.eracore.native` 构建时 javac 报 `package com.eracore.native;` “需要标识符”。
+**原因**：`native` 是 Java 关键字，不能作为包名段。
+**解决**：`ApplicationId=com.eracore.nativeapp`，同步 `[Register]` 与 manifest。
+
+## 3. Debug Fast Deployment
+
+**场景**：Debug APK 安装后 `No assemblies found ... Assuming this is part of Fast Deployment` → SIGABRT。
+**解决**：Debug 也设 `EmbedAssembliesIntoApk=true`；Release 用 AOT。
+
+## 4. Activity 重建
+
+**场景**：转屏/`wm size` 后 Activity 重建，旧实现 `OnDestroy` 停会话，新 Activity 空白。
+**解决**：声明 `Orientation | ScreenSize | ScreenLayout | SmallestScreenSize | Density | FontScale | LayoutDirection`；只在 `IsFinishing` 时停会话。
+
+## 5. 状态栏与 IME
+
+**场景**：首行文本被状态栏时钟压住；键盘遮挡输入栏。
+**解决**：根 Padding 加 `StatusBarHeightDp`；订阅 `IInputPane.StateChanged` 把 `EndRect.Height` 加到根 Padding。模拟器可能只显示 IME 工具栏（`inset≈41`），真机键盘需真机复验。
+
+## 6. 按钮命中
+
+**场景**：若用 `ButtonRef.col × FontSize/2` 换算像素，Noto Sans CJK 的 ASCII advance 不是精确 0.5em，按钮会点偏。
+**解决**：Skia 绘制时同时产出实测 run 的命中区；`ColumnHitGeometry` 只作语义/回退。
+
+## 7. 终态输入栏
+
+**场景**：`QUIT` 后最后一帧快照的 `awaiting` 可能仍是上一个输入等待，输入栏不消失。
+**解决**：`UpdateInputBar` 同时检查 `CoreSessionState.Completed/Stopped/Failed`，终态隐藏输入栏。
