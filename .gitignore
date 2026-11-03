@@ -38,6 +38,12 @@ EraCore.Tests/obj/*
 EraCore.PublicApi.Tests/bin/*
 EraCore.PublicApi.Tests/obj/*
 
+# 宿主 SDK（EraCore.Hosting）——构建产物不入库
+EraCore.Hosting/bin/*
+EraCore.Hosting/obj/*
+EraCore.Hosting.Tests/bin/*
+EraCore.Hosting.Tests/obj/*
+
 # legacy-plugin-compat：facade 项目 + 测试夹具（参照插件/依赖/桩）的 bin/obj 不入库
 EraCore.Compat.Emuera/bin/*
 EraCore.Compat.Emuera/obj/*

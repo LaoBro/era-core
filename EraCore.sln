@@ -18,6 +18,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EraCore.Maui.Tests", "EraCo
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EraCore.PublicApi.Tests", "EraCore.PublicApi.Tests\EraCore.PublicApi.Tests.csproj", "{56900C3C-E682-46F2-9A33-A4D01C76BE48}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EraCore.Hosting", "EraCore.Hosting\EraCore.Hosting.csproj", "{6BD59D63-F621-42CF-998E-8077C8A67406}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EraCore.Hosting.Tests", "EraCore.Hosting.Tests\EraCore.Hosting.Tests.csproj", "{2C3CC755-AA06-4D28-BBF7-FAA7C9BF0D4A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -52,6 +56,14 @@ Global
 		{56900C3C-E682-46F2-9A33-A4D01C76BE48}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{56900C3C-E682-46F2-9A33-A4D01C76BE48}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{56900C3C-E682-46F2-9A33-A4D01C76BE48}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6BD59D63-F621-42CF-998E-8077C8A67406}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6BD59D63-F621-42CF-998E-8077C8A67406}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6BD59D63-F621-42CF-998E-8077C8A67406}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6BD59D63-F621-42CF-998E-8077C8A67406}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2C3CC755-AA06-4D28-BBF7-FAA7C9BF0D4A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2C3CC755-AA06-4D28-BBF7-FAA7C9BF0D4A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2C3CC755-AA06-4D28-BBF7-FAA7C9BF0D4A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2C3CC755-AA06-4D28-BBF7-FAA7C9BF0D4A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
