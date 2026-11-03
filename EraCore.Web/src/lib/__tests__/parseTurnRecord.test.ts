@@ -20,6 +20,13 @@ describe('parseTurnRecord', () => {
     expect(turn.error).toBeNull();
     expect(turn.errorInfo).toBeNull();
     expect(turn.protocolVersion).toBeNull();
+    expect(turn.revision).toBe(0); // v13 缺省兼容
+  });
+
+  it('v13 revision 可选读取：存在时按数字解析', () => {
+    const json = JSON.stringify({ generation: 3, revision: 7, awaiting: { input: { type: 'IntValue' } } });
+    const turn = parseTurnRecord(json);
+    expect(turn.revision).toBe(7);
   });
 
   it('解析完整 TurnRecord（含 input+wait 两维 / diff / protocolVersion）', () => {

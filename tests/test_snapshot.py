@@ -5,7 +5,7 @@ Verifies:
 2. Active session → 200 with DisplaySnapshot JSON structure:
    - lines[] (each with entries[], align, isLineEnd)
    - bgColor (string|null), awaiting (object: input/wait/ended, v12 起取代 state/inputType/needValue)
-   - protocolVersion == 12
+   - protocolVersion == 13（v13 起另带 revision）
 3. Snapshot content matches turn diff content (after applying diff, awaiting matches snapshot).
 4. Button geometry (col/width) present in snapshot entries.
 5. Session ended (Quit) → 200 with awaiting.ended.terminal=="Quit" (not 404).

@@ -220,6 +220,10 @@ export const useConnectionStore = defineStore('connection', () => {
           if (typeof obj.generation !== 'number') {
             throw new Error('snapshot.generation 缺失或非 number');
           }
+          // v13：revision 可选读取（旧服务端缺省按 0），校验只在出现时要求 number。
+          if (obj.revision !== undefined && obj.revision !== null && typeof obj.revision !== 'number') {
+            throw new Error('snapshot.revision 非 number');
+          }
           // v12：awaiting 是唯一契约字段（必填）——收缩后不再有「按协议版本决定是否必填」的双轨。
           if (obj.awaiting === undefined || obj.awaiting === null || typeof obj.awaiting !== 'object') {
             throw new Error('snapshot.awaiting 缺失（v12 唯一契约字段）');

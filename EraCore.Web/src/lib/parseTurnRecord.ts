@@ -8,9 +8,9 @@ import type { TurnRecord, DisplayDiff, LineOp, DisplayLine, DisplayEntry, Button
  *
  * 设计选择：
  * - **必填字段（缺失即抛）**：`generation`（v7 起每帧必带）+ `awaiting`（v12 唯一契约字段）
- * - v12 起 wire 上**只有** `diff` / `awaiting` / `error` / `errorInfo` / `protocolVersion` /
- *   `generation` 六个键；七个旧顶层字段已退场，解析器不再读取它们，也不再需要
- *   「按协议版本决定 `awaiting` 是否必填」的双轨（收缩阶段删除了 sticky 版本判据）
+ * - v13 起 wire 多一个 `revision`（显示修订号）；为兼容旧服务端，本题按 optional 读取，
+ *   缺失时按 0 处理，不改变既有行为。wire 上只有 `diff` / `awaiting` / `error` /
+ *   `errorInfo` / `protocolVersion` / `generation` / `revision` 七个键。
  * - 抛 `ParseTurnRecordError` 而非 `Error`——便于上层 catch 时区分协议错误与其他异常
  * - 未知 `LineOp.type` 抛错——与 C# `TestAdapter.ApplyDiff` 抛 `InvalidOperationException` 对称
  *
@@ -36,6 +36,8 @@ export function parseTurnRecord(rawJson: string): TurnRecord {
 
   // 必填字段校验（v7 起每帧必带 generation；缺失即抛，不接受降级）
   const generation = readIntRequired(root.generation, 'generation');
+  // v13：显示修订号。Web 只做兼容读取——旧服务端缺省按 0，不改变既有行为。
+  const revision = readIntOrNull(root.revision, 'revision') ?? 0;
 
   // optional 字段（协议元数据 + 诊断）
   const error = readStringOrNull(root.error, 'error');
@@ -58,6 +60,7 @@ export function parseTurnRecord(rawJson: string): TurnRecord {
     errorInfo,
     protocolVersion,
     generation,
+    revision,
   };
 }
 

@@ -12,7 +12,7 @@ import json
 # displayTime / timeUpMessage / timedOut）退场，wire 上只剩唯一契约字段 `awaiting`
 # （input / wait / ended 三键，见 AwaitInfo.cs）。本文件的断言侧桥接 helper 见下方
 # turn_state / awaiting_input_type / awaiting_wait。
-PROTOCOL_VERSION = 12
+PROTOCOL_VERSION = 13
 
 import os
 import shutil

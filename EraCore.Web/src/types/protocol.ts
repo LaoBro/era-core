@@ -13,8 +13,8 @@
  * `WhenWritingNull` —— nullable 字段在为 null 时不写入 JSON，故 TS 类型中所有 optional
  * 字段（`?`）对应 C# 端 nullable reference type，反序列化时缺失即为 undefined。
  *
- * 当前协议版本：**12**（wire 上只剩 `diff` / `awaiting` / `error` / `errorInfo` /
- * `protocolVersion` / `generation` 六个键——七个旧顶层字段已在收缩阶段全部退场）。
+ * 当前协议版本：**13**（wire 上 `diff` / `awaiting` / `error` / `errorInfo` /
+ * `protocolVersion` / `generation` / `revision` 七个键；七个旧顶层字段已在收缩阶段全部退场）。
  *
  * 手动维护：spec.md 决策——「协议已稳定，自动生成工具脆」。如 C# 端新增字段，此处同步。
  */
@@ -260,8 +260,9 @@ export interface DisplayLine {
  *   ⚠️ 快照可能落在「脚本还在跑」的瞬态（`GET /snapshot` 随时可调），那时两个维度都
  *   无值、序列化成 `{}`——这不是契约违规：`awaiting` 的不变式只约束**停稳点上产出的流帧**。
  *   客户端把 `{}` 当作「没有可推进的等待」处理，下一次 WS 帧会给出真实停稳点。
- * - `protocolVersion`：协议版本号（与 `TurnRecord.protocolVersion` 一致，当前 **12**）
+ * - `protocolVersion`：协议版本号（与 `TurnRecord.protocolVersion` 一致，当前 **13**）
  * - `generation`：快照时的 generation 号（v7），前端用于按钮过期检测
+ * - `revision`：v13 显示修订号（单调递增，与 `TurnRecord.revision` 同源；旧服务端缺省时按 0 处理）
  *
  * `timedOut` **不在 DisplaySnapshot**——snapshot 表示"当前状态"而非"如何到达此状态"，
  * 晚加入者只关心"现在还有多久超时"，不关心上一帧是否刚超时。
@@ -275,6 +276,8 @@ export interface DisplaySnapshot {
   awaiting: AwaitInfo;
   protocolVersion: number;
   generation: number;
+  /** v13：显示修订号；与 generation（按钮代号）不同。 */
+  revision?: number | null;
 }
 
 // ---------- DisplayDiff：行级差异（增量） ----------
@@ -359,11 +362,13 @@ export type TurnOp =
  * - `diff`：行级差异（null 表示本回合显示未变——例如纯状态切换）
  * - `error`：语义收窄为一句话：**非空 ⇒ 客户端上一次输入未被接受，画面与等待状态均未推进**
  * - `errorInfo`：结构化异常诊断（脚本运行期异常帧携带；非异常帧不出现）
- * - `protocolVersion`：协议版本（当前 **12**；仅首帧必带，后续帧省略）
+ * - `protocolVersion`：协议版本（当前 **13**；仅首帧必带，后续帧省略）
  * - `generation`：本回合 generation 号（v7），前端用于按钮过期检测；v7 起每帧必带
+ * - `revision`：v13 显示修订号（与快照同源；旧服务端缺省时按 0 处理）
  *
- * 🔒 **v12 起 wire 上只有这六个键**。旧顶层字段（`state` / `inputType` / `needValue` /
- * `timeLimit` / `displayTime` / `timeUpMessage` / `timedOut`）已全部退场：
+ * 🔒 **v13 起 wire 上多一个 `revision`**：`diff` / `awaiting` / `error` / `errorInfo` /
+ * `protocolVersion` / `generation` / `revision`。旧顶层字段（`state` / `inputType` /
+ * `needValue` / `timeLimit` / `displayTime` / `timeUpMessage` / `timedOut`）已全部退场。
  * 输入状态由 `awaiting.input` 表达、`needValue` 由客户端按 `input.type` 推出
  * （见 `lib/awaiting.ts` 的 `isValueInputType`）、TINPUT 计时元数据挂在 `awaiting.wait`。
  *
@@ -380,6 +385,8 @@ export interface TurnRecord {
   protocolVersion?: number | null;
   /** v7：本回合 generation 号，前端按钮过期检测。v7 每帧必带（缺失即抛）。 */
   generation: number;
+  /** v13：显示修订号（与快照同源；旧服务端缺省时按 0 处理）。 */
+  revision?: number | null;
 }
 
 /**

@@ -4,7 +4,7 @@
 > `EraCore.Core/Agent/DisplayState.cs` 是它的实现，前端 `EraCore.Web/src/types/protocol.ts`
 > 是它的镜像。三者不一致时以本文为准，并订正另两处。
 >
-> 当前协议版本：**`protocolVersion = 12`**（定义在 `TurnRecord.CurrentProtocolVersion`）。
+> 当前协议版本：**`protocolVersion = 13`**（定义在 `TurnRecord.CurrentProtocolVersion`）。
 >
 > 本文回答"**线上长什么样**"。为什么这么设计见
 > [`docs/adr/`](../adr/)；怎么调用见 [agent-integration.md](agent-integration.md)。
@@ -47,8 +47,11 @@
 | `errorInfo` | object | 否 | 结构化异常（`type`/`message`/`inner?`，`inner` 最深 4 层）。见 §7 |
 | `protocolVersion` | number | **仅首帧** | 协议版本。仅 initial turn 携带，后续帧省略（见 §6） |
 | `generation` | number | **是** | 按钮代号，用于按钮过期检测（见 §5）。非 nullable，每帧都出现 |
+| `revision` | number | **是**（v13） | 显示修订号，与 `DisplaySnapshot.revision` 同源；每次画面重建 +1，覆盖等长行替换与同一按钮代内中间帧 |
 
-> `generation` 是唯一"非 nullable 且每帧必现"的字段——客户端无需处理 `undefined`。
+> `generation` 与 v13 的 `revision` 都是"非 nullable 且每帧必现"的字段——客户端无需处理 `undefined`。
+> `revision` 是**显示修订号**，与 `generation`（按钮代号）不同；
+> 宿主用它对「初始快照 + 增量流」去重（丢弃 `revision <= snapshot.revision` 的帧）。
 
 🔒 **v12 起不存在** `state` / `inputType` / `needValue` / `timeLimit` / `displayTime` /
 `timeUpMessage` / `timedOut` 这些顶层字段：它们承载的信息全部并入 `awaiting`。
@@ -293,6 +296,9 @@ Emuera 的显示模型是**追加式**的，故只需四类操作覆盖全部情
 
 - 服务端每次按钮集合结构性变更，`generation` 递增。
 - 客户端提交按钮时带上点击时看到的 `generation`。
+
+`generation` **不是**画面帧序号：同一按钮代内可以有多帧（`AWAIT` 中间帧、等长行替换）。
+v13 的 `revision` 才是单调递增的显示修订号；两者的区别写入字段表（§2）。
 - 服务端比对当前代；不符则该输入无效——**避免用户点击陈旧画面导致的误操作**。
 
 客户端必须做到：**渲染时记住 `generation`，点击时回传同一个值**。`generation` 每帧携带，
@@ -321,6 +327,7 @@ Emuera 的显示模型是**追加式**的，故只需四类操作覆盖全部情
 | v10 | `PrintSegment.underline` |
 | v11 | `PrintSegment.strikeout`——按 ERB `FONTSTYLE` 位契约对称补齐（位4=删除线、位8=下划线） |
 | v12 | `awaiting` 容器（`input` / `wait` 两个正交维度 + `ended` 互斥终态）成为**唯一契约字段**，"用 `state`+`inputType`+`timeLimit` 反向推断"退场；七个旧顶层字段（`state`/`inputType`/`needValue`/`timeLimit`/`displayTime`/`timeUpMessage`/`timedOut`）**全部删除**；`wait.interruptible` 曾让 `Skippable` 首次上 wire，**试设后撤回**（issue 10） |
+| v13 | 显示修订号 `revision`（与按钮代号 `generation` 分离；覆盖等长行替换与同一按钮代内中间帧） |
 
 > v2/v3 属重构期过渡态，未在生产协议中留存。
 
@@ -334,8 +341,9 @@ Emuera 的显示模型是**追加式**的，故只需四类操作覆盖全部情
   "bgColor": "#101010",
   "bgImages": [ BgImageState ],
   "awaiting": { "input": { "type": "AnyKey" } },
-  "protocolVersion": 12,
-  "generation": 3
+  "protocolVersion": 13,
+  "generation": 3,
+  "revision": 7
 }
 ```
 
@@ -343,6 +351,8 @@ Emuera 的显示模型是**追加式**的，故只需四类操作覆盖全部情
 状态"而非"如何到达此状态"，晚加入者不关心上一帧是否刚超时——这条不对称同样适用于
 `awaiting.wait.timedOut`：快照里它恒不出现）。`awaiting` 与流上帧**同形**
 （同一个工厂、同一个 `req`/`state`），故晚加入者拿到的第一张画面不是另一套契约形状。
+`revision` 与流上帧同源；宿主在「先订阅、再取快照」后应丢弃 `revision <= snapshot.revision`
+的帧，再按 `revision` 顺序应用增量。
 
 **晚加入流程**：`GET /snapshot` 建初始画面 → 订阅 `/ws` → 逐帧应用 `diff`。
 
