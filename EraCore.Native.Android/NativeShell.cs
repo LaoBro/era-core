@@ -35,6 +35,7 @@ internal sealed class NativeShell : Panel
         _settings.CloseRequested += HideSettings;
 
         NativeSettings.Changed += OnSettingsChanged;
+        NativeSettings.SourcesChanged += OnSourcesChanged;
         ApplyTheme(NativeSettings.Current.Theme);
         MainActivity.ApplyOrientation(NativeSettings.Current.Orientation);
 
@@ -80,6 +81,24 @@ internal sealed class NativeShell : Panel
 
         // 回库即释放会话；即使玩家立刻点另一个游戏，OpenGameAsync 还会先关闭当前会话。
         _ = NativeRuntime.CloseGameAsync();
+    }
+
+    /// <summary>
+    /// 从系统设置页/目录选择器返回：权限可能刚被授予或收回，刷新库页让原目录条目即时变为可用/不可用。
+    /// </summary>
+    public void OnResume()
+    {
+        _library.RefreshInsets();
+        if (_library.IsVisible)
+            _library.Refresh();
+        if (_settings.IsVisible)
+            _settings.RefreshInsets();
+    }
+
+    private void OnSourcesChanged()
+    {
+        if (_library.IsVisible)
+            _library.Refresh();
     }
 
     private async void OnGameSelected(GameLibraryEntry entry)

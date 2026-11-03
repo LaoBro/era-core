@@ -96,11 +96,22 @@ internal static class NativeRuntime
         await SessionGate.WaitAsync().ConfigureAwait(false);
         try
         {
+            if (entry.Source == GameSourceKind.Path && !entry.IsAvailable)
+            {
+                var reason = entry.UnavailableReason ?? "目录不可用";
+                Log.Warn(LogTag, $"session refused: {entry.Name} reason={reason}");
+                SetStatus($"无法打开 {entry.Name}：{reason}（可在库中移除该记录）");
+                return false;
+            }
+
             await CloseCoreAsync("switch").ConfigureAwait(false);
 
             SetStatus($"正在启动 {entry.Name}…");
-            Log.Info(LogTag, $"session start requested: {entry.Name} root={entry.RootPath}");
+            Log.Info(LogTag,
+                $"session start requested: {entry.Name} source={entry.Source} root={entry.RootPath}");
 
+            // Path 来源与 Internal 来源都是真实目录：FileSystemGameDirAccessor 零拷贝直读，
+            // 存档/日志直接写回该目录；Path 不做任何复制、不写 marker。
             var host = new GameHost(
                 new CoreSessionOptions(entry.RootPath, new FileSystemGameDirAccessor())
                 {
@@ -119,7 +130,7 @@ internal static class NativeRuntime
 
             _host = host;
             _currentRoot = entry.RootPath;
-            GameLibrary.RecordPlayed(context, entry.RootPath);
+            GameLibrary.RecordPlayed(context, entry);
 
             var metrics = host.Metrics;
             SetStatus("运行中");

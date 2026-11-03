@@ -79,6 +79,23 @@ public class MainActivity : AvaloniaMainActivity
         launcher.Launch(null);
     }
 
+    /// <summary>
+    /// 从系统「所有文件访问」开关页或目录选择器返回：通知壳刷新库页，
+    /// 让刚授予/收回的权限立即反映到原目录条目的可用状态。
+    /// </summary>
+    protected override void OnResume()
+    {
+        base.OnResume();
+        try
+        {
+            NativeApp.Shell?.OnResume();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(LogTag, "shell onResume failed: " + ex.Message);
+        }
+    }
+
     protected override void OnDestroy()
     {
         // 仅真正退出（返回键 / 划掉任务）时停会话；配置变更（转屏/尺寸/字体）触发的
