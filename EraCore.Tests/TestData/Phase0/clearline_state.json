@@ -40,6 +40,7 @@
       "type": "EnterKey"
     }
   },
-  "protocolVersion": 12,
-  "generation": 0
+  "protocolVersion": 13,
+  "generation": 0,
+  "revision": 0
 }

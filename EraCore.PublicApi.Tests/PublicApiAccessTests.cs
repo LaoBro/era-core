@@ -35,6 +35,13 @@ public sealed class PublicApiAccessTests
             var start = await session.StartAsync();
             Assert.True(start.Succeeded, $"{start.ErrorCode}: {start.ErrorMessage}");
 
+            var metrics = session.Metrics;
+            Assert.True(metrics.FontSize > 0);
+            Assert.True(metrics.LineHeight > 0);
+            Assert.True(metrics.WindowWidth > 0);
+            Assert.True(metrics.MaxLog > 0);
+            Assert.StartsWith("#", metrics.ForeColor);
+
             var csv = session.Files.ListFiles("csv");
             Assert.Contains("csv/GameBase.csv", csv);
             Assert.NotEmpty(session.Files.ReadText("csv/GameBase.csv"));

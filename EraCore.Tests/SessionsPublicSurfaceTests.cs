@@ -48,7 +48,7 @@ public sealed class SessionsPublicSurfaceTests
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToArray();
         Assert.Equal(
-            new[] { "CreatedAt", "Files", "Id", "Input", "LastError", "Output", "State" },
+            new[] { "CreatedAt", "Files", "Id", "Input", "LastError", "Metrics", "Output", "State" },
             properties);
 
         var methods = typeof(CoreSession)

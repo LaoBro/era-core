@@ -25,7 +25,10 @@ public sealed record TurnRecord
         long generation = 0,
         // 诊断：暂停运行期异常的结构化信息（type/message/inner），供 agent 一次性定位。
         // 纯增量 nullable 字段 + WhenWritingNull → 非异常 turn 不出现，不升协议版本。
-        ErrorInfo? errorInfo = null)
+        ErrorInfo? errorInfo = null,
+        // v13：显示修订号，与 DisplaySnapshot.revision 同源。
+        // generation 仍是按钮代号；revision 覆盖等长行替换与同一按钮代内中间帧。
+        long revision = 0)
     {
         this.diff = diff;
         this.awaiting = awaiting;
@@ -33,6 +36,7 @@ public sealed record TurnRecord
         this.protocolVersion = protocolVersion;
         this.generation = generation;
         this.errorInfo = errorInfo;
+        this.revision = revision;
     }
 
     public DisplayDiff? diff { get; }
@@ -44,6 +48,12 @@ public sealed record TurnRecord
     public int? protocolVersion { get; }
 
     public long generation { get; }
+
+    /// <summary>
+    /// v13 显示修订号——与 <c>DisplaySnapshot.revision</c> 同源。
+    /// 与 <see cref="generation"/> 不同：后者是按钮代号，前者是画面版本。
+    /// </summary>
+    public long revision { get; }
 
     public ErrorInfo? errorInfo { get; }
 
@@ -69,8 +79,10 @@ public sealed record TurnRecord
     /// 描述「服务端此刻在等什么」；**删除**七个旧顶层字段（state / inputType / needValue / timeLimit /
     /// displayTime / timeUpMessage / timedOut）——`needValue` 改由客户端按 `input.type` 推出，
     /// TINPUT 计时元数据移入 `awaiting.wait`。
+    /// v13：新增 `revision`（显示修订号，与 DisplaySnapshot.revision 同源）——覆盖等长行替换
+    /// 与同一按钮代内中间帧；`generation` 继续表示按钮代号。
     /// </summary>
-    public const int CurrentProtocolVersion = 12;
+    public const int CurrentProtocolVersion = 13;
 }
 
 /// <summary>

@@ -40,8 +40,23 @@ public sealed class OutputPort
 
     /// <summary>
     /// 完整路径：增量回合流。每次读取注册一个新观察者；<c>null</c> = 本宿主只消费快照。
+    /// <para>⚠️ 与 <see cref="SubscribeTurns"/> 相同语义，但返回值没有退订能力——
+    /// 需要显式释放观察者时用 <see cref="SubscribeTurns"/>。</para>
     /// </summary>
     public ChannelReader<Turn>? Turns => _hub?.Subscribe();
+
+    /// <summary>
+    /// 可退订的回合订阅（P1）。订阅后<b>不回放历史</b>；正确晚加入流程是：
+    /// 先订阅、再读 <see cref="Snapshot"/>，丢弃 <c>revision &lt;= snapshot.revision</c> 的帧。
+    /// </summary>
+    public TurnSubscription SubscribeTurns()
+    {
+        if (_hub is null)
+            return new TurnSubscription(hub: null, reader: null);
+
+        var reader = _hub.Subscribe();
+        return new TurnSubscription(_hub, reader);
+    }
 
     /// <summary>
     /// 帧级刷新：画面有变化时返回 true。CLI 渲染器据此跳过 no-op 帧；

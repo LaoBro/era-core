@@ -75,7 +75,8 @@ public class AgentJsonlProtocolTests : IDisposable
         using var doc = JsonDocument.Parse(json!.Wire);
         var root = doc.RootElement;
 
-        Assert.Equal(12, root.GetProperty("protocolVersion").GetInt32()); // v12：awaiting 容器
+        Assert.Equal(13, root.GetProperty("protocolVersion").GetInt32()); // v13：revision
+        Assert.Equal(_displayState.Current.revision, root.GetProperty("revision").GetInt64());
 
         // v12：七个旧顶层字段全部退场——顶层不得再出现它们。
         Assert.False(root.TryGetProperty("state", out _), "v12 起顶层 state 不得再出现");
@@ -207,7 +208,7 @@ public class AgentJsonlProtocolTests : IDisposable
 
         Assert.NotNull(json);
         using var doc = JsonDocument.Parse(json!.Wire);
-        Assert.Equal(12, doc.RootElement.GetProperty("protocolVersion").GetInt32()); // v12：awaiting 容器
+        Assert.Equal(13, doc.RootElement.GetProperty("protocolVersion").GetInt32()); // v13：revision
     }
 
     [Fact]

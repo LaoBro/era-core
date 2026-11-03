@@ -328,7 +328,7 @@ public class KestrelGameServerEndpointTests
         Assert.True(doc.RootElement.TryGetProperty("awaiting", out var awaiting),
             "v12 快照必须携带 awaiting（唯一契约字段）—— 未同步即为变异式 E");
         Assert.Equal(JsonValueKind.Object, awaiting.ValueKind);
-        Assert.Equal(12, doc.RootElement.GetProperty("protocolVersion").GetInt32());
+        Assert.Equal(13, doc.RootElement.GetProperty("protocolVersion").GetInt32());
         // 注：本断言只钉「同形」（键在场且是对象）。§1.2 规则 1 的「至少一维必现」约束的是
         // **停稳点**上的帧；本端点在「脚本还在跑」的瞬态可以取到 awaiting:{}（无维可报，
         // 展开阶段由 state 字段区分）。停稳点的深比对在 TurnAwaitingV12Tests.Snapshot_awaiting_matches_stream_shape。

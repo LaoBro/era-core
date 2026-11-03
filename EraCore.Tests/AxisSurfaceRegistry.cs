@@ -75,6 +75,7 @@ internal static class AxisSurfaceRegistry
             "ShiftHeadLineOp",
             "Turn",
             "TurnRecord",
+            "TurnSubscription",
         ]);
 
     public static readonly AxisSurface Files = new(
@@ -100,6 +101,7 @@ internal static class AxisSurfaceRegistry
             "CoreSessionOptions",
             "CoreSessionStartResult",
             "CoreSessionState",
+            "HostMetrics",
         ]);
 
     public static readonly IReadOnlyList<AxisSurface> All = [Input, Output, Files, Sessions];

@@ -31,7 +31,10 @@ public sealed record DisplaySnapshot
         AwaitInfo awaiting,
         int protocolVersion,
         long generation,
-        List<BgImageState>? bgImages = null)
+        List<BgImageState>? bgImages = null,
+        // v13：单调递增的显示修订号——每次画面重建 +1（覆盖等长行替换与同一按钮代内中间帧）。
+        // 与 generation 分离：generation 仍是按钮代号，revision 才是「帧/快照版本」。
+        long revision = 0)
     {
         this.lines = lines;
         this.bgColor = bgColor;
@@ -39,6 +42,7 @@ public sealed record DisplaySnapshot
         this.protocolVersion = protocolVersion;
         this.generation = generation;
         this.bgImages = bgImages;
+        this.revision = revision;
     }
 
     public List<DisplayLine> lines { get; }
@@ -50,6 +54,13 @@ public sealed record DisplaySnapshot
     public int protocolVersion { get; }
 
     public long generation { get; }
+
+    /// <summary>
+    /// v13 显示修订号：每次 <c>TryRefreshSnapshot</c> 重建画面 +1。
+    /// 与 <see cref="generation"/> 不同——后者是按钮代号，前者覆盖等长行替换与同一按钮代内的中间帧。
+    /// 快照与 <c>TurnRecord.revision</c> 必须同源；宿主用它对「初始快照 + 增量流」去重。
+    /// </summary>
+    public long revision { get; }
 
     public List<BgImageState>? bgImages { get; }
 }
@@ -159,6 +170,9 @@ internal sealed class DisplayState
     private readonly object _gate = new();
     private DisplaySnapshot? _current;
     private DisplaySnapshot? _previous;
+
+    /// <summary>v13 显示修订号——仅在 <see cref="TryRefreshSnapshot"/> 判定画面变化时 +1。</summary>
+    private long _revision;
 
     /// <summary>
     /// issue-004（画面判据对齐）：上次构建 <c>_current</c> 时所用的引擎行列表（浅拷贝）与背景。
@@ -281,6 +295,12 @@ internal sealed class DisplayState
         get { lock (_gate) { TryUpdate(); return _current!; } }
     }
 
+    /// <summary>当前显示修订号（v13）。供回合产帧读取，保证 <c>TurnRecord.revision</c> 与快照同源。</summary>
+    internal long Revision
+    {
+        get { lock (_gate) { return _current?.revision ?? 0; } }
+    }
+
     /// <summary>
     /// 帧级变更检测 + 刷新：画面变了则重建 <c>_current</c> 并返回 true。
     ///
@@ -331,9 +351,10 @@ internal sealed class DisplayState
         _builtLines = linesCopy;
         _builtBgHex = _console.bgColor.ToHex();
         _builtBgImages = NormalizeBgImages(_console.BgImages) is { } bg ? new List<BgImageState>(bg) : null;
+        unchecked { _revision++; }
         _current = BuildSnapshotIncremental(_lineCache, linesCopy, _console.bgColor,
             _console.State, _console.CurrentRequest, _defaultFontName, _console.LastButtonGeneration,
-            _console.BgImages);
+            _console.BgImages, _revision);
         return true;
     }
 
@@ -451,7 +472,7 @@ internal sealed class DisplayState
                         lines: effectivePrevLines, bgColor: prev.bgColor,
                         awaiting: prev.awaiting,
                         protocolVersion: prev.protocolVersion, generation: prev.generation,
-                        bgImages: prev.bgImages);
+                        bgImages: prev.bgImages, revision: prev.revision);
                     tailOps = StructuralDiff(effectivePrev, current);
                 }
 
@@ -615,9 +636,10 @@ internal sealed class DisplayState
         InputRequest? currentRequest,
         string defaultFontName,
         long generation = 0,
-        List<BgImageState>? bgImages = null)
+        List<BgImageState>? bgImages = null,
+        long revision = 0)
         => BuildSnapshotIncremental(new Dictionary<ConsoleDisplayLine, DisplayLine>(),
-            displayLineList, bgColor, state, currentRequest, defaultFontName, generation, bgImages);
+            displayLineList, bgColor, state, currentRequest, defaultFontName, generation, bgImages, revision);
 
     /// <summary>
     /// 3.3 增量快照构建（S0 优化）——BuildSnapshot 的缓存版本。
@@ -635,7 +657,8 @@ internal sealed class DisplayState
         InputRequest? currentRequest,
         string defaultFontName,
         long generation = 0,
-        List<BgImageState>? bgImages = null)
+        List<BgImageState>? bgImages = null,
+        long revision = 0)
     {
         var lines = new List<DisplayLine>(displayLineList.Count);
         foreach (var line in displayLineList)
@@ -663,6 +686,7 @@ internal sealed class DisplayState
             awaiting: AwaitInfo.Of(currentRequest, state, timedOut: false),
             protocolVersion: TurnRecord.CurrentProtocolVersion,
             generation: generation,
+            revision: revision,
             // issue 02：背景图（浅拷贝防并发/同引用误判——_console.BgImages 是活引用，
             // 快照必须持有独立副本，否则连续非空变更时 SequenceEqual 同引用恒真、diff 丢失；
             // 紧凑归一：空列表不进 JSON，diff 层用 [] 表达清空）

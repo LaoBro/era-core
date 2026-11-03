@@ -33,8 +33,8 @@ public sealed class TurnAwaitingV12Tests
 {
     private const string ErbFileName = "AWAITING.ERB";
 
-    /// <summary>v12 的协议版本号（spec §1.4）。</summary>
-    private const int V12 = 12;
+    /// <summary>v13 的协议版本号（v12 的 awaiting 契约 + v13 revision）。</summary>
+    private const int V12 = 13;
 
     // ------------------------------------------------------------------
     // 装配

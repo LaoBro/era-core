@@ -66,13 +66,15 @@ internal static class TurnFrames
         AwaitInfo awaiting,
         string? error,
         long generation,
-        bool isInitial)
+        bool isInitial,
+        long revision = 0)
         => SerializeTurn(new TurnRecord(
             diff: diff,
             awaiting: awaiting,
             error: error,
             protocolVersion: isInitial ? TurnRecord.CurrentProtocolVersion : null,
-            generation: generation));
+            generation: generation,
+            revision: revision));
 
     /// <summary>
     /// QUIT/EXIT 终态帧：只剩 <c>awaiting.ended{terminal:"Quit"}</c>。

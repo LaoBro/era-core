@@ -81,6 +81,20 @@ public sealed class CoreSession : IDisposable
     /// <summary>最近一次未料异常（初始化失败 / 游戏循环崩溃）。null = 无错误。</summary>
     public string? LastError => _lastError;
 
+    /// <summary>
+    /// 宿主渲染元信息（字号 / 行高 / 窗口尺寸 / 默认文字色 / 履历容量）。
+    /// 仅 <see cref="StartAsync"/> 成功后可用；启动前访问抛 <see cref="InvalidOperationException"/>。
+    /// </summary>
+    public HostMetrics Metrics
+    {
+        get
+        {
+            var config = _configData
+                ?? throw new InvalidOperationException("Metrics 在 StartAsync 成功后可用。");
+            return HostMetrics.From(config);
+        }
+    }
+
     internal bool IsRunning => _gameTask != null && !_gameTask.IsCompleted;
     /// <summary>游戏循环是否已结束（runLoop 回调 finally 置位）。</summary>
     internal bool HasEnded => _hasEnded;

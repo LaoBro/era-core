@@ -84,7 +84,7 @@ public sealed class OutputPortTests
         Assert.Equal(42L, button.value);
         Assert.Equal(5, button.col);
 
-        Assert.Equal(12, snapshot.protocolVersion);
+        Assert.Equal(13, snapshot.protocolVersion);
         Assert.Equal(TurnRecord.CurrentProtocolVersion, snapshot.protocolVersion);
         Assert.Equal("EnterKey", snapshot.awaiting.input!.type);
     }
@@ -145,6 +145,37 @@ public sealed class OutputPortTests
             }
         }
         return lines;
+    }
+
+    [Fact]
+    public async Task SubscribeTurns_returns_disposable_subscription_and_unsubscribes_on_dispose()
+    {
+        using var h = new Harness();
+        using var subscription = h.Port.SubscribeTurns();
+        Assert.NotNull(subscription.Turns);
+
+        h.Print("hello");
+        Assert.Null(h.ComputeDiff()); // 首帧只设基线
+        h.Print("world");
+        var diff = h.ComputeDiff();
+        Assert.NotNull(diff);
+        h.PublishTurn(diff!);
+
+        var turn = await subscription.Turns!.ReadAsync();
+        Assert.Contains("world", turn.Wire, StringComparison.Ordinal);
+
+        subscription.Dispose();
+        Assert.False(await subscription.Turns!.WaitToReadAsync(),
+            "Dispose 后订阅应完成，不再有可读 turn");
+    }
+
+    [Fact]
+    public void SubscribeTurns_without_hub_returns_null_reader()
+    {
+        using var h = new Harness(withHub: false);
+        using var subscription = h.Port.SubscribeTurns();
+        Assert.Null(subscription.Turns);
+        Assert.NotNull(h.Port.Snapshot);
     }
 
     private sealed class Harness : IDisposable

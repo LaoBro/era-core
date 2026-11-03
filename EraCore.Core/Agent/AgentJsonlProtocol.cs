@@ -362,7 +362,8 @@ namespace MinorShift.Emuera.GameView
             // ADR-0016：TINPUT 计时元数据（timeLimit / displayTime / timeUpMessage）自 v12 起
             // 只挂在 `awaiting.wait` 上（由 AwaitInfo.Of 从同一个 req 填充），顶层不再重复。
             // 帧形状（含「首帧才盖协议版本」）委托给形状权威 TurnFrames.Ok；本类只管产不产帧与状态。
-            return TurnFrames.Ok(diff, awaiting, error, console.LastButtonGeneration, isInitial);
+            return TurnFrames.Ok(diff, awaiting, error, console.LastButtonGeneration, isInitial,
+                _displayState.Revision);
         }
 
         /// <summary>
