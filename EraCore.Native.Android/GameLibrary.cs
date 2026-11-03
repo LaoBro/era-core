@@ -14,9 +14,21 @@ using Avalonia.Platform.Storage;
 
 namespace EraCore.Native.Android;
 
-/// <summary>应用私有目录中的一个已安装游戏。</summary>
+/// <summary>游戏库中的一个游戏：私有目录（复制/解压）或登记的原目录（零拷贝）。</summary>
 internal sealed record GameLibraryEntry(string Name, string RootPath, DateTimeOffset? LastPlayed)
 {
+    public GameSourceKind Source { get; init; } = GameSourceKind.Internal;
+
+    /// <summary>目录是否存在且可访问；原目录在权限被收回或目录被移走后为 false。</summary>
+    public bool IsAvailable { get; init; } = true;
+
+    public string? UnavailableReason { get; init; }
+
+    public string SourceText => Source == GameSourceKind.Path ? "原目录" : "已复制";
+
+    /// <summary>library.json 的键：私有目录按名字（与历史数据兼容），原目录按绝对路径。</summary>
+    public string PlayedKey => Source == GameSourceKind.Path ? "path:" + RootPath : "dir:" + Name;
+
     public string LastPlayedText => LastPlayed is { } played
         ? played.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
         : "从未游玩";
@@ -58,11 +70,16 @@ internal static class GameLibrary
         return dir;
     }
 
+    /// <summary>
+    /// 扫描游戏库：私有目录 <c>games/*</c> + settings.json 中登记的原目录。
+    /// 原目录条目会就地检查可用性（权限被收回 / 目录被移走 / 不再是游戏），不可用时保留记录供 UI 提示与移除。
+    /// </summary>
     public static IReadOnlyList<GameLibraryEntry> Scan(Context context)
     {
         var root = GamesDirectory(context);
         var played = LoadPlayed(context);
         var entries = new List<GameLibraryEntry>();
+        var seenPaths = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var dir in Directory.GetDirectories(root))
         {
@@ -72,7 +89,47 @@ internal static class GameLibrary
                 continue;
 
             var name = Path.GetFileName(dir);
-            entries.Add(new GameLibraryEntry(name, dir, played.TryGetValue(name, out var at) ? at : null));
+            seenPaths.Add(dir);
+            entries.Add(new GameLibraryEntry(name, dir, played.TryGetValue("dir:" + name, out var at) ? at : null));
+        }
+
+        foreach (var source in NativeSettings.GameSources)
+        {
+            var path = source.RootPath;
+            if (!seenPaths.Add(path))
+                continue;
+
+            var name = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (string.IsNullOrEmpty(name))
+                name = path;
+
+            var available = true;
+            string? reason = null;
+            if (!ExternalStorageAccess.IsGranted())
+            {
+                available = false;
+                reason = "缺少「所有文件访问」权限，请重新授权";
+            }
+            else if (!Directory.Exists(path))
+            {
+                available = false;
+                reason = "目录不存在或已被移动";
+            }
+            else if (!IsGameDirectory(path))
+            {
+                available = false;
+                reason = "目录已不是 emuera 游戏（缺少 emuera.config 或 erb/）";
+            }
+
+            entries.Add(new GameLibraryEntry(
+                name,
+                path,
+                played.TryGetValue("path:" + path, out var at) ? at : null)
+            {
+                Source = GameSourceKind.Path,
+                IsAvailable = available,
+                UnavailableReason = reason,
+            });
         }
 
         entries.Sort((a, b) =>
@@ -85,12 +142,84 @@ internal static class GameLibrary
         return entries;
     }
 
-    public static void RecordPlayed(Context context, string rootPath)
+    public static void RecordPlayed(Context context, GameLibraryEntry entry)
     {
-        var name = Path.GetFileName(rootPath);
         var played = LoadPlayed(context);
-        played[name] = DateTimeOffset.UtcNow;
+        played[entry.PlayedKey] = DateTimeOffset.UtcNow;
         SavePlayed(context, played);
+    }
+
+    /// <summary>
+    /// 登记原目录（零拷贝）：只校验并把路径写入 settings.json，不复制、不写 marker、不触碰游戏文件。
+    /// 校验顺序与提示一致：权限 → 目录存在 → 是 emuera 游戏 → 至少有一个 .erb。
+    /// </summary>
+    public static GameImportResult RegisterPathSource(Context context, string realPath)
+    {
+        var watch = Stopwatch.StartNew();
+        string normalized;
+        try
+        {
+            normalized = Path.GetFullPath(realPath)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return GameImportResult.Failure("目录路径无效：" + ex.Message);
+        }
+
+        if (!ExternalStorageAccess.IsGranted())
+            return GameImportResult.Failure("缺少「所有文件访问」权限，无法直接读取原目录。");
+
+        // Directory.Exists 对中文/空格路径与真实文件系统一致；Android 外部存储通常不允许软链接，
+        // 这里按目标路径直接探测，不额外解析链接。
+        if (!Directory.Exists(normalized))
+            return GameImportResult.Failure("目录不存在或无权访问：" + normalized);
+
+        if (!IsGameDirectory(normalized))
+            return GameImportResult.Failure("所选目录不是 emuera 游戏（缺少 emuera.config 或 erb/）。");
+
+        if (!ContainsErbFile(normalized))
+        {
+            return GameImportResult.Failure(
+                "未找到 .erb 文件：请选择 emuera 游戏根目录（包含 erb/）。");
+        }
+
+        var added = NativeSettings.AddPathSource(normalized);
+        watch.Stop();
+        Log.Info(LogTag, string.Format(
+            "path source registered: path={0} added={1} ms={2}",
+            normalized, added, watch.ElapsedMilliseconds));
+
+        var name = Path.GetFileName(normalized);
+        if (string.IsNullOrEmpty(name))
+            name = normalized;
+        return GameImportResult.Success(new GameLibraryEntry(name, normalized, null)
+        {
+            Source = GameSourceKind.Path,
+        });
+    }
+
+    /// <summary>只移除登记记录，<b>绝不删除用户原目录</b>。</summary>
+    public static bool RemovePathSource(string rootPath) => NativeSettings.RemovePathSource(rootPath);
+
+    private static bool ContainsErbFile(string root)
+    {
+        try
+        {
+            // 不用 searchPattern "*.erb"：Android 真实文件系统区分大小写，会漏掉 .ERB。
+            // 统一枚举后按扩展名做 OrdinalIgnoreCase 匹配（与 IGameDirAccessor 的通配语义一致）。
+            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+            {
+                if (Path.GetExtension(file).Equals(".erb", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Warn(LogTag, "check erb failed: " + ex.Message);
+            return false;
+        }
     }
 
     /// <summary>确保内置示例已解压（M3 的离线可玩入口；SAF/选择器不可用时仍可进游戏）。</summary>
