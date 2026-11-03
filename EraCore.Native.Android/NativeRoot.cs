@@ -1,3 +1,4 @@
+using System;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Platform;
@@ -17,18 +18,20 @@ using AvaloniaButton = Avalonia.Controls.Button;
 namespace EraCore.Native.Android;
 
 /// <summary>
-/// Native M2 根视图：全屏自绘画布 + 输入栏/倒计时 + 加载状态覆盖层。
+/// 游戏画面根视图：顶部工具条（游戏名 / 设置 / 游戏库）+ 全屏自绘画布 + 输入栏/倒计时。
 ///
 /// <para>输入栏只由 <c>awaiting</c> 驱动（Hosting <see cref="AwaitingView"/>）：
 /// Text 输入框 / AnyKey、EnterKey 继续按钮 / 终态隐藏。IME 经 <see cref="IInputPane"/>
-/// 把键盘遮挡高度加到根 Padding，配合 Android <c>AdjustResize</c>。</para>
+/// 把键盘遮挡高度加入根 Padding；底部安全区与 IME 取 <c>max</c>，避免手势条 + 键盘重复叠加。</para>
 /// </summary>
-public sealed class NativeRoot : Border
+internal sealed class NativeRoot : Border
 {
     private const string LogTag = "EraCoreNative";
+    private const double ToolbarHeight = 36;
 
     private readonly Grid _grid;
     private readonly NativeGameView _view;
+    private readonly TextBlock _gameLabel;
     private readonly TextBlock _status;
     private readonly Border _inputPanel;
     private readonly TextBox _inputBox;
@@ -36,9 +39,12 @@ public sealed class NativeRoot : Border
     private readonly TextBlock _countdownText;
     private readonly DispatcherTimer _timer;
 
-    private readonly double _topInset;
+    private SystemBarInsets _systemInsets;
+    private double _imeInset;
+    private Avalonia.Size _lastInsetSize;
     private IInputPane? _inputPane;
 
+    private NativeRenderStyle _lastStyle = NativeRenderStyle.From(NativeDefaults.Metrics, AppSettings.Default);
     private HostMetrics _lastMetrics = NativeDefaults.Metrics;
     private long _lastRevision = long.MinValue;
     private int _lastLineCount = -1;
@@ -53,14 +59,59 @@ public sealed class NativeRoot : Border
     public NativeRoot()
     {
         Background = new SolidColorBrush(Color.FromRgb(0, 0, 0));
-        _topInset = StatusBarHeightDp();
-        Padding = new Thickness(0, _topInset, 0, 0);
 
-        _grid = new Grid { RowDefinitions = new RowDefinitions("*,Auto") };
+        _grid = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto") };
+
+        _gameLabel = new TextBlock
+        {
+            VerticalAlignment = VerticalAlignment.Center,
+            FontSize = 12,
+            Foreground = new SolidColorBrush(Color.FromRgb(150, 160, 185)),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(12, 0, 8, 0),
+        };
+
+        var settingsButton = new AvaloniaButton
+        {
+            Content = "设置",
+            FontSize = 12,
+            MinHeight = 28,
+            Padding = new Thickness(10, 2),
+            Margin = new Thickness(0, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        settingsButton.Click += (_, _) => SettingsRequested?.Invoke();
+
+        var libraryButton = new AvaloniaButton
+        {
+            Content = "游戏库",
+            FontSize = 12,
+            MinHeight = 28,
+            Padding = new Thickness(10, 2),
+            Margin = new Thickness(0, 0, 10, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        libraryButton.Click += (_, _) => LibraryRequested?.Invoke();
+
+        var toolbarRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto") };
+        Grid.SetColumn(_gameLabel, 0);
+        Grid.SetColumn(settingsButton, 1);
+        Grid.SetColumn(libraryButton, 2);
+        toolbarRow.Children.Add(_gameLabel);
+        toolbarRow.Children.Add(settingsButton);
+        toolbarRow.Children.Add(libraryButton);
+
+        var toolbar = new Border
+        {
+            Height = ToolbarHeight,
+            Background = new SolidColorBrush(Color.FromRgb(16, 16, 24)),
+            Child = toolbarRow,
+        };
+        Grid.SetRow(toolbar, 0);
 
         _view = new NativeGameView();
         _view.ButtonActivated += OnButtonActivated;
-        Grid.SetRow(_view, 0);
+        Grid.SetRow(_view, 1);
 
         _countdownText = new TextBlock
         {
@@ -103,7 +154,7 @@ public sealed class NativeRoot : Border
             IsVisible = false,
             Child = inputStack,
         };
-        Grid.SetRow(_inputPanel, 1);
+        Grid.SetRow(_inputPanel, 2);
 
         _status = new TextBlock
         {
@@ -115,10 +166,11 @@ public sealed class NativeRoot : Border
             Margin = new Thickness(24),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
+            IsVisible = true,
         };
-        Grid.SetRow(_status, 0);
-        Grid.SetRowSpan(_status, 2);
+        Grid.SetRow(_status, 1);
 
+        _grid.Children.Add(toolbar);
         _grid.Children.Add(_view);
         _grid.Children.Add(_inputPanel);
         _grid.Children.Add(_status);
@@ -126,7 +178,13 @@ public sealed class NativeRoot : Border
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
         _timer.Tick += (_, _) => Poll();
+
+        ApplyInsets(force: true);
     }
+
+    public event Action? LibraryRequested;
+
+    public event Action? SettingsRequested;
 
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
@@ -139,6 +197,7 @@ public sealed class NativeRoot : Border
             ApplyImeInset(_inputPane.OccludedRect.Height);
         }
 
+        ApplyInsets(force: true);
         _timer.Start();
         Poll();
     }
@@ -152,50 +211,105 @@ public sealed class NativeRoot : Border
         base.OnDetachedFromVisualTree(e);
     }
 
+    /// <summary>游戏库/设置页返回后重新开始轮询（不创建新会话）。</summary>
+    public void Resume()
+    {
+        _lastStyle = NativeRenderStyle.From(NativeDefaults.Metrics, AppSettings.Default);
+        _lastRevision = long.MinValue;
+        _lastLineCount = -1;
+        _firstFrameLogged = false;
+        ApplyInsets(force: true);
+        if (!_timer.IsEnabled)
+            _timer.Start();
+        Poll();
+    }
+
+    /// <summary>离开游戏画面时停止轮询，避免后台定时器继续跑。</summary>
+    public void Suspend() => _timer.Stop();
+
     private void OnInputPaneStateChanged(object? sender, InputPaneStateEventArgs e)
         => ApplyImeInset(e.EndRect.Height);
 
     private void ApplyImeInset(double occludedHeight)
     {
-        var bottom = Math.Max(0, occludedHeight);
-        Padding = new Thickness(0, _topInset, 0, bottom);
-        Log.Info(LogTag, $"ime inset={bottom}");
+        var inset = Math.Max(0, occludedHeight);
+        if (Math.Abs(inset - _imeInset) < 0.5)
+            return;
+        _imeInset = inset;
+        ApplyInsets(force: true);
+        Log.Info(LogTag, $"ime inset={inset:F1}");
+    }
+
+    /// <summary>系统栏与 IME 取 max：键盘弹出时手势条区域通常已被键盘覆盖，相加会重复留白。</summary>
+    private void ApplyInsets(bool force)
+    {
+        var size = Bounds.Size;
+        if (force || size != _lastInsetSize)
+        {
+            _lastInsetSize = size;
+            _systemInsets = AndroidInsets.SystemBars();
+        }
+
+        var bottom = Math.Max(_systemInsets.Bottom, _imeInset);
+        var padding = new Thickness(
+            _systemInsets.Left,
+            _systemInsets.Top,
+            _systemInsets.Right,
+            bottom);
+        if (padding == Padding)
+            return;
+        Padding = padding;
+        Log.Info(LogTag,
+            $"insets: left={_systemInsets.Left:F1} top={_systemInsets.Top:F1} " +
+            $"right={_systemInsets.Right:F1} bottom={_systemInsets.Bottom:F1} ime={_imeInset:F1} -> {bottom:F1}");
     }
 
     private void Poll()
     {
+        ApplyInsets(force: false);
+
         var snapshot = NativeRuntime.Snapshot;
+        _gameLabel.Text = NativeRuntime.CurrentGameName;
+
         if (snapshot is null)
         {
             _status.IsVisible = true;
             _status.Text = NativeRuntime.Status;
+            _view.IsVisible = false;
+            _inputPanel.IsVisible = false;
             return;
         }
 
         _status.IsVisible = false;
+        _view.IsVisible = true;
         _snapshot = snapshot;
         _awaitingView = ComputeAwaitingView(snapshot);
 
         var metrics = NativeRuntime.Metrics;
+        var style = NativeRuntime.Style;
         var lineCount = snapshot.lines.Count;
         var changed = snapshot.revision != _lastRevision
                       || lineCount != _lastLineCount
+                      || style != _lastStyle
                       || metrics != _lastMetrics;
         if (changed)
         {
             _lastRevision = snapshot.revision;
             _lastLineCount = lineCount;
+            _lastStyle = style;
             _lastMetrics = metrics;
 
             var frame = NativeRenderModel.FromSnapshot(snapshot);
-            _view.SetFrame(frame, metrics);
+            _view.SetFrame(frame, style);
 
             if (!_firstFrameLogged)
             {
                 _firstFrameLogged = true;
                 Log.Info(LogTag,
                     $"first frame: lines={frame.Lines.Count} generation={frame.Generation} " +
-                    $"revision={frame.Revision} protocol={frame.ProtocolVersion} bg={frame.BackgroundColor}");
+                    $"revision={frame.Revision} protocol={frame.ProtocolVersion} " +
+                    $"bg={frame.BackgroundColor} font={style.FontName}/{style.FontSize:F0} " +
+                    $"line={style.LineHeight:F1}");
             }
         }
 
@@ -315,29 +429,5 @@ public sealed class NativeRoot : Border
         Log.Info(LogTag,
             $"button: value='{value}' isInteger={button.IsInteger} generation={button.Generation} " +
             $"revision={snapshot.revision}");
-    }
-
-    /// <summary>
-    /// Android 状态栏高度（Avalonia 逻辑像素）。Avalonia 在 Android 上边到边绘制，
-    /// 不留安全区会让首行文本被状态栏时钟/图标压住。
-    /// </summary>
-    private static double StatusBarHeightDp()
-    {
-        try
-        {
-            var resources = global::Android.App.Application.Context.Resources;
-            if (resources is null)
-                return 0;
-            var id = resources.GetIdentifier("status_bar_height", "dimen", "android");
-            if (id <= 0)
-                return 0;
-            var px = resources.GetDimensionPixelSize(id);
-            var density = resources.DisplayMetrics?.Density ?? 1f;
-            return density > 0 ? px / density : px;
-        }
-        catch (Exception)
-        {
-            return 0;
-        }
     }
 }

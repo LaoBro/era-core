@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -6,29 +8,28 @@ using Avalonia.Rendering.SceneGraph;
 using Avalonia.Skia;
 using EraCore.Hosting;
 using EraCore.Native;
-using MinorShift.Emuera.Sessions;
 using SkiaSharp;
 
 namespace EraCore.Native.Android;
 
 /// <summary>
-/// 原生文本终端画布（M2）：
+/// 原生文本终端画布：
 /// - 用 Hosting <see cref="VirtualWindow"/> 计算可见区间/贴底/滚动条；
 /// - 绘制时由 <see cref="NativeSkiaRenderer"/> 产出基于实际字体度量的按钮命中区；
 /// - 轻点（非拖拽）命中按钮时触发 <see cref="ButtonActivated"/>；
-/// - 拖拽同时支持纵向滚动与横向平移。
+/// - 拖拽同时支持纵向滚动与横向平移；
+/// - 字号/行距变化时用「首可见行锚定」保持滚动位置不错行（贴底时继续贴底）。
 /// </summary>
-public sealed class NativeGameView : Control
+internal sealed class NativeGameView : Control
 {
     private NativeFrame _frame = NativeFrame.Empty;
-    private HostMetrics _metrics = NativeDefaults.Metrics;
+    private NativeRenderStyle _style = NativeRenderStyle.From(NativeDefaults.Metrics, AppSettings.Default);
 
     private double _scrollY;
     private double _scrollX;
     private bool _followBottom = true;
     private bool _dragging;
     private Point _lastPoint;
-    private Point _pressPoint;
     private double _dragDistance;
     private IReadOnlyList<NativeHitRegion> _hitRegions = Array.Empty<NativeHitRegion>();
     private long _version;
@@ -41,23 +42,51 @@ public sealed class NativeGameView : Control
         Focusable = true;
     }
 
-    /// <summary>由 UI 轮询线程调用：替换当前帧（不可变对象），并按贴底状态重算滚动位置。</summary>
-    public void SetFrame(NativeFrame frame, HostMetrics metrics)
+    /// <summary>由 UI 轮询线程调用：替换当前帧与渲染参数（不可变对象），并按贴底/锚定规则重算滚动位置。</summary>
+    public void SetFrame(NativeFrame frame, NativeRenderStyle style)
     {
-        var hasLayout = Bounds.Height > 0;
-        var oldMaxY = hasLayout ? MaxScrollY(Bounds.Height) : 0;
+        var viewportHeight = Bounds.Height;
+        var viewportWidth = Bounds.Width;
+        var hasLayout = viewportHeight > 0;
+        var oldMaxY = hasLayout ? MaxScrollY(viewportHeight) : 0;
         var wasAtBottom = !hasLayout || _followBottom || oldMaxY <= 0 || _scrollY >= oldMaxY - 2;
+        var lineHeightChanged = Math.Abs(style.LineHeight - _style.LineHeight) > 0.01;
+
+        // 改字号前记录首可见行；改完后按新行高还原该行，避免跳到别的行或直接贴底。
+        var anchorIndex = -1;
+        if (hasLayout && !wasAtBottom && lineHeightChanged && _frame.Lines.Count > 0)
+        {
+            anchorIndex = VirtualWindow.Compute(
+                _frame.Lines.Count,
+                _scrollY,
+                viewportHeight,
+                new VirtualWindowOptions(_style.LineHeight, Overscan: 0)).StartIndex;
+        }
 
         _frame = frame;
-        _metrics = metrics;
+        _style = style;
 
         if (hasLayout)
         {
             if (wasAtBottom)
-                _scrollY = MaxScrollY(Bounds.Height);
+            {
+                _scrollY = MaxScrollY(viewportHeight);
+            }
+            else if (anchorIndex >= 0)
+            {
+                _scrollY = Math.Clamp(
+                    VirtualWindow.OffsetOf(
+                        Math.Min(anchorIndex, frame.Lines.Count),
+                        frame.Lines.Count,
+                        new VirtualWindowOptions(style.LineHeight)),
+                    0,
+                    MaxScrollY(viewportHeight));
+            }
             else
-                _scrollY = Math.Clamp(_scrollY, 0, MaxScrollY(Bounds.Height));
-            _scrollX = Math.Clamp(_scrollX, 0, MaxScrollX(Bounds.Width));
+            {
+                _scrollY = Math.Clamp(_scrollY, 0, MaxScrollY(viewportHeight));
+            }
+            _scrollX = Math.Clamp(_scrollX, 0, MaxScrollX(viewportWidth));
         }
 
         _followBottom = wasAtBottom;
@@ -71,7 +100,7 @@ public sealed class NativeGameView : Control
         if (size.Width <= 0 || size.Height <= 0)
             return;
         context.Custom(new GameDrawOp(
-            new Rect(size), _frame, _metrics, _scrollX, _scrollY, _version,
+            new Rect(size), _frame, _style, _scrollX, _scrollY, _version,
             regions => _hitRegions = regions));
     }
 
@@ -94,7 +123,6 @@ public sealed class NativeGameView : Control
 
         _dragging = true;
         _lastPoint = point.Position;
-        _pressPoint = point.Position;
         _dragDistance = 0;
         e.Pointer.Capture(this);
         e.Handled = true;
@@ -148,7 +176,7 @@ public sealed class NativeGameView : Control
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);
-        var step = Math.Max(1, _metrics.LineHeight) * 3;
+        var step = Math.Max(1, _style.LineHeight) * 3;
         _scrollY = Math.Clamp(_scrollY - (e.Delta.Y * step), 0, MaxScrollY(Bounds.Height));
         _followBottom = IsAtBottom();
         _version++;
@@ -165,17 +193,17 @@ public sealed class NativeGameView : Control
     private double MaxScrollY(double viewportHeight)
         => VirtualWindow.Compute(
             _frame.Lines.Count,
-            _scrollY,
+            0,
             viewportHeight,
-            new VirtualWindowOptions(_metrics.LineHeight)).MaxScrollY;
+            new VirtualWindowOptions(_style.LineHeight)).MaxScrollY;
 
     private double MaxScrollX(double viewportWidth)
-        => Math.Max(0, _metrics.WindowWidth - viewportWidth);
+        => Math.Max(0, _style.ContentWidth - viewportWidth);
 
     private sealed class GameDrawOp : ICustomDrawOperation
     {
         private readonly NativeFrame _frame;
-        private readonly HostMetrics _metrics;
+        private readonly NativeRenderStyle _style;
         private readonly double _scrollX;
         private readonly double _scrollY;
         private readonly long _version;
@@ -184,7 +212,7 @@ public sealed class NativeGameView : Control
         public GameDrawOp(
             Rect bounds,
             NativeFrame frame,
-            HostMetrics metrics,
+            NativeRenderStyle style,
             double scrollX,
             double scrollY,
             long version,
@@ -192,7 +220,7 @@ public sealed class NativeGameView : Control
         {
             Bounds = bounds;
             _frame = frame;
-            _metrics = metrics;
+            _style = style;
             _scrollX = scrollX;
             _scrollY = scrollY;
             _version = version;
@@ -226,7 +254,7 @@ public sealed class NativeGameView : Control
                 Bounds.Width,
                 Bounds.Height,
                 _frame,
-                _metrics,
+                _style,
                 _scrollX,
                 _scrollY);
             _onHitRegions(regions);
