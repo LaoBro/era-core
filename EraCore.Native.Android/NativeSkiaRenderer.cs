@@ -1,26 +1,42 @@
-using System.Collections.Concurrent;
+using System;
+using System.Collections.Generic;
 using EraCore.Hosting;
 using EraCore.Native;
-using MinorShift.Emuera.Sessions;
 using SkiaSharp;
 
 namespace EraCore.Native.Android;
 
 /// <summary>
-/// SKCanvas 文本终端绘制器（M2）。
+/// SKCanvas 文本终端绘制器。
 ///
 /// <para>只做「文本 + 样式 + 颜色 + 对齐 + 可见行 + 按钮命中区」；图像/精灵/动画不在范围。
-/// 行高/字号/窗宽/前景色来自 <see cref="HostMetrics"/>；可见区间与滚动条比例来自
-/// <see cref="VirtualWindow"/>。返回值是本次绘制的按钮命中区（基于实际 SKFont 度量的 run 位置，
-/// 不使用 col×FontSize/2）。</para>
+/// 字号/行高/前景色来自 <see cref="NativeRenderStyle"/>（设置页可覆盖游戏配置）；
+/// 可见区间与滚动条比例来自 <see cref="VirtualWindow"/>。返回值是本次绘制的按钮命中区
+/// （基于实际 SKFont 度量的 run 位置，不使用 col×FontSize/2）。</para>
+///
+/// <para>字体：Android 没有 <c>ＭＳ ゴシック</c>，一律使用内置子集字体
+/// （<see cref="NativeFontManager"/>）；<c>emuera.config</c> 的字体名只保留展示。
+/// 缺字按码点回退到系统字体，避免方框。</para>
 /// </summary>
 internal static class NativeSkiaRenderer
 {
-    private static readonly ConcurrentDictionary<string, SKTypeface> BaseTypefaces = new(StringComparer.Ordinal);
-    private static readonly ConcurrentDictionary<StyleKey, SKTypeface> StyledTypefaces = new();
+    /// <summary>segment 的字体变体（常规 / 粗体 / 斜体 / 粗斜体）。</summary>
+    private enum Variant
+    {
+        Regular,
+        Bold,
+        Italic,
+        BoldItalic,
+    }
 
-    private readonly record struct StyleKey(string Family, bool Bold, bool Italic);
-    private readonly record struct Run(NativeSegment Segment, SKFont Font, float Width);
+    private readonly record struct Run(
+        string Text,
+        SKFont Font,
+        float Width,
+        string? Color,
+        bool Underline,
+        bool Strikeout);
+
     private readonly record struct EntryLayout(float StartX, float Width, NativeButton? Button);
 
     public static IReadOnlyList<NativeHitRegion> Draw(
@@ -28,39 +44,35 @@ internal static class NativeSkiaRenderer
         double viewportWidth,
         double viewportHeight,
         NativeFrame frame,
-        HostMetrics metrics,
+        NativeRenderStyle style,
         double scrollX,
         double scrollY)
     {
-        canvas.Clear(ParseColor(frame.BackgroundColor, new SKColor(0, 0, 0)));
+        canvas.Clear(ParseColor(style.BackgroundOverride ?? frame.BackgroundColor, new SKColor(0, 0, 0)));
         if (viewportWidth <= 0 || viewportHeight <= 0)
             return Array.Empty<NativeHitRegion>();
 
-        var lineHeight = Math.Max(1f, (float)metrics.LineHeight);
-        var fontSize = Math.Max(1f, (float)metrics.FontSize);
-        var maxScrollX = Math.Max(0f, metrics.WindowWidth - (float)viewportWidth);
+        var lineHeight = (float)Math.Max(1, style.LineHeight);
+        var fontSize = (float)Math.Max(1, style.FontSize);
+        var maxScrollX = Math.Max(0f, (float)style.ContentWidth - (float)viewportWidth);
         var sx = Math.Clamp((float)scrollX, 0f, maxScrollX);
 
         var window = VirtualWindow.Compute(
             frame.Lines.Count,
             scrollY,
             viewportHeight,
-            new VirtualWindowOptions(metrics.LineHeight));
+            new VirtualWindowOptions(style.LineHeight));
         var sy = (float)window.ScrollY;
 
-        var baseTypeface = ResolveBaseTypeface(metrics.FontName);
-        using var regular = new SKFont(Styled(baseTypeface, metrics.FontName, bold: false, italic: false), fontSize);
-        using var bold = new SKFont(Styled(baseTypeface, metrics.FontName, bold: true, italic: false), fontSize);
-        using var italic = new SKFont(Styled(baseTypeface, metrics.FontName, bold: false, italic: true), fontSize);
-        using var boldItalic = new SKFont(Styled(baseTypeface, metrics.FontName, bold: true, italic: true), fontSize);
-
+        var fonts = new FontCache(fontSize);
         using var defaultPaint = new SKPaint
         {
-            Color = ParseColor(metrics.ForeColor, new SKColor(0xC0, 0xC0, 0xC0)),
+            Color = ParseColor(style.ForeColor, new SKColor(0xC0, 0xC0, 0xC0)),
             IsAntialias = true,
         };
 
-        var fontMetrics = regular.Metrics;
+        using var measureFont = new SKFont(NativeFontManager.Embedded, fontSize);
+        var fontMetrics = measureFont.Metrics;
         var textHeight = fontMetrics.Descent - fontMetrics.Ascent;
         var baselineOffset = (lineHeight - textHeight) / 2f - fontMetrics.Ascent;
 
@@ -83,10 +95,12 @@ internal static class NativeSkiaRenderer
                 {
                     if (segment.Text.Length == 0)
                         continue;
-                    var font = PickFont(segment, regular, bold, italic, boldItalic);
-                    var width = font.MeasureText(segment.Text);
-                    runs.Add(new Run(segment, font, width));
-                    total += width;
+                    var variant = PickVariant(segment);
+                    foreach (var run in SplitByTypeface(segment, variant, fonts))
+                    {
+                        runs.Add(run);
+                        total += run.Width;
+                    }
                 }
                 entries.Add(new EntryLayout(entryStart, total - entryStart, entry.Button));
             }
@@ -94,20 +108,20 @@ internal static class NativeSkiaRenderer
             if (runs.Count == 0)
                 continue;
 
-            var startX = -sx + (float)AlignGeometry.OffsetPixels(line.Align, total, metrics.WindowWidth);
+            var startX = -sx + (float)AlignGeometry.OffsetPixels(line.Align, total, style.ContentWidth);
             var lineTop = index * lineHeight - sy;
             var baseline = lineTop + baselineOffset;
             var x = startX;
 
             foreach (var run in runs)
             {
-                var color = run.Segment.Color is null
+                var color = run.Color is null
                     ? defaultPaint.Color
-                    : ParseColor(run.Segment.Color, defaultPaint.Color);
+                    : ParseColor(run.Color, defaultPaint.Color);
 
                 SKPaint paint;
                 var ownsPaint = false;
-                if (run.Segment.Color is null)
+                if (run.Color is null)
                 {
                     paint = defaultPaint;
                 }
@@ -117,9 +131,9 @@ internal static class NativeSkiaRenderer
                     ownsPaint = true;
                 }
 
-                canvas.DrawText(run.Segment.Text, x, baseline, run.Font, paint);
+                canvas.DrawText(run.Text, x, baseline, run.Font, paint);
 
-                if (run.Segment.Underline || run.Segment.Strikeout)
+                if (run.Underline || run.Strikeout)
                 {
                     using var decor = new SKPaint
                     {
@@ -128,12 +142,12 @@ internal static class NativeSkiaRenderer
                         Style = SKPaintStyle.Stroke,
                         StrokeWidth = Math.Max(1f, fontSize / 16f),
                     };
-                    if (run.Segment.Underline)
+                    if (run.Underline)
                     {
                         var y = baseline + fontSize * 0.12f;
                         canvas.DrawLine(x, y, x + run.Width, y, decor);
                     }
-                    if (run.Segment.Strikeout)
+                    if (run.Strikeout)
                     {
                         var y = baseline - fontSize * 0.28f;
                         canvas.DrawLine(x, y, x + run.Width, y, decor);
@@ -177,48 +191,86 @@ internal static class NativeSkiaRenderer
         return hits;
     }
 
-    private static SKFont PickFont(NativeSegment segment, SKFont regular, SKFont bold, SKFont italic, SKFont boldItalic)
+    private static Variant PickVariant(NativeSegment segment)
     {
         if (segment.Bold)
-            return segment.Italic ? boldItalic : bold;
-        return segment.Italic ? italic : regular;
+            return segment.Italic ? Variant.BoldItalic : Variant.Bold;
+        return segment.Italic ? Variant.Italic : Variant.Regular;
     }
 
-    private static SKTypeface ResolveBaseTypeface(string family)
+    /// <summary>
+    /// 按码点选择「内置字体 → 系统回退字体」的 typeface，把文本切成同字体的连续 run。
+    /// 每个 run 用同一种字体度量与绘制，宽度总和与命中区保持一致。
+    /// </summary>
+    private static List<Run> SplitByTypeface(NativeSegment segment, Variant variant, FontCache fonts)
     {
-        if (!string.IsNullOrWhiteSpace(family) && BaseTypefaces.TryGetValue(family, out var cached))
-            return cached;
-
-        SKTypeface? typeface = null;
-        if (!string.IsNullOrWhiteSpace(family))
-            typeface = SKFontManager.Default.MatchFamily(family);
-
-        // Android 没有 'ＭＳ ゴシック'：退到系统中文字体（通常是 Noto Sans CJK）。
-        typeface ??= SKFontManager.Default.MatchCharacter('漢');
-        typeface ??= SKFontManager.Default.MatchCharacter('あ');
-        typeface ??= SKTypeface.Default;
-
-        if (!string.IsNullOrWhiteSpace(family))
-            BaseTypefaces[family] = typeface;
-        return typeface;
-    }
-
-    private static SKTypeface Styled(SKTypeface baseTypeface, string requestedFamily, bool bold, bool italic)
-    {
-        if (!bold && !italic)
-            return baseTypeface;
-
-        var family = baseTypeface.FamilyName ?? requestedFamily;
-        var key = new StyleKey(family, bold, italic);
-        return StyledTypefaces.GetOrAdd(key, _ =>
+        var text = segment.Text;
+        var runs = new List<Run>();
+        var start = 0;
+        var current = NativeFontManager.Resolve(text[0]);
+        for (var i = 1; i < text.Length; i++)
         {
-            var style = bold && italic
-                ? SKFontStyle.BoldItalic
-                : bold
-                    ? SKFontStyle.Bold
-                    : SKFontStyle.Italic;
-            return SKFontManager.Default.MatchFamily(family, style) ?? baseTypeface;
-        });
+            var typeface = NativeFontManager.Resolve(text[i]);
+            if (typeface == current)
+                continue;
+            runs.Add(MakeRun(segment, text.Substring(start, i - start), current, variant, fonts));
+            start = i;
+            current = typeface;
+        }
+        runs.Add(MakeRun(segment, text.Substring(start), current, variant, fonts));
+        return runs;
+    }
+
+    private static Run MakeRun(
+        NativeSegment segment,
+        string text,
+        SKTypeface typeface,
+        Variant variant,
+        FontCache fonts)
+    {
+        var font = fonts.Get(typeface, variant);
+        var width = font.MeasureText(text);
+        return new Run(text, font, width, segment.Color, segment.Underline, segment.Strikeout);
+    }
+
+    /// <summary>按 (typeface, 变体) 缓存本次绘制的 <see cref="SKFont"/>；绘制结束统一释放。</summary>
+    private sealed class FontCache : IDisposable
+    {
+        private readonly float _size;
+        private readonly Dictionary<(SKTypeface, Variant), SKFont> _fonts = new();
+
+        public FontCache(float size) => _size = size;
+
+        public SKFont Get(SKTypeface typeface, Variant variant)
+        {
+            var key = (typeface, variant);
+            if (_fonts.TryGetValue(key, out var cached))
+                return cached;
+
+            var font = new SKFont(typeface, _size);
+            switch (variant)
+            {
+                case Variant.Bold:
+                    font.Embolden = true;
+                    break;
+                case Variant.Italic:
+                    font.SkewX = -0.25f;
+                    break;
+                case Variant.BoldItalic:
+                    font.Embolden = true;
+                    font.SkewX = -0.25f;
+                    break;
+            }
+            _fonts[key] = font;
+            return font;
+        }
+
+        public void Dispose()
+        {
+            foreach (var font in _fonts.Values)
+                font.Dispose();
+            _fonts.Clear();
+        }
     }
 
     /// <summary>"#RRGGBB" → SKColor；非法值回退。</summary>
