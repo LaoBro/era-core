@@ -88,3 +88,4 @@
 - `GameLibrary.DeleteInternalGame` 在后台线程递归删除 `filesDir/games/<dir>`（`.extracted-v1` 在目录内，随目录一起清掉），成功后清 `library.json` 的 `dir:<name>` 游玩记录；删除期间状态栏显示 `"正在删除…"` 并禁用导入类按钮。
 - 安全边界：目标只由 `GamesDirectory()` + 经 `SanitizeName` 校验的目录名拼出；删前用 `Path.GetFullPath` 规范化，要求目标以 `games/` 前缀开头、且父目录恰为 `games/`。越界或来源不是 `Internal` 一律拒绝。
 - 内置示例 `test_game` / `test_game_b` **允许删除**：`NativeRuntime` 启动时 `EnsureBuiltInGamesAsync` 会因 marker 缺失重新解压，成功文案会提示「下次启动时重新解压」。
+- 判定与真删的公共逻辑放在平台无关的 `EraCore.Native.GameLibraryDeletePolicy`（`EraCore.Native`），Android 侧只负责取 `Context`、拼路径与写日志；因此这些边界（越界、非直接子目录、符号链接逃逸、Path 拒绝、记录清理）能被 `EraCore.Tests` 在 Windows 上直接覆盖。

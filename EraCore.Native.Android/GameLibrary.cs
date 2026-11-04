@@ -11,6 +11,7 @@ using Android.Content;
 using Android.Provider;
 using Android.Util;
 using Avalonia.Platform.Storage;
+using EraCore.Native;
 
 namespace EraCore.Native.Android;
 
@@ -61,12 +62,9 @@ internal static class GameLibrary
     private const string MetadataFile = "library.json";
     private const string ConfigFile = "emuera.config";
 
-    /// <summary>内置示例（asset 根名, 私有目录名）。</summary>
+    /// <summary>内置示例（asset 根名, 私有目录名）；名字清单由平台无关策略提供，避免两处漂移。</summary>
     private static readonly (string Asset, string Dir)[] BuiltInGames =
-    {
-        ("test_game", "test_game"),
-        ("test_game_b", "test_game_b"),
-    };
+        GameLibraryDeletePolicy.BuiltInGameNames.Select(name => (name, name)).ToArray();
 
     public static string GamesDirectory(Context context)
     {
@@ -157,14 +155,8 @@ internal static class GameLibrary
     }
 
     /// <summary>清除 <c>library.json</c> 中的一个「最后游玩」记录键（删除游戏时调用）。</summary>
-    public static bool RemovePlayed(Context context, string key)
-    {
-        var played = LoadPlayed(context);
-        if (!played.Remove(key))
-            return false;
-        SavePlayed(context, played);
-        return true;
-    }
+    public static bool RemovePlayed(Context context, string key) =>
+        GameLibraryDeletePolicy.RemovePlayed(MetadataPath(context), key);
 
     /// <summary>
     /// 登记原目录（零拷贝）：只校验并把路径写入 settings.json，不复制、不写 marker、不触碰游戏文件。
@@ -220,8 +212,7 @@ internal static class GameLibrary
     public static bool RemovePathSource(string rootPath) => NativeSettings.RemovePathSource(rootPath);
 
     /// <summary>是否内置示例（<c>test_game</c> / <c>test_game_b</c>）：删除后下次启动会自动重新解压。</summary>
-    public static bool IsBuiltInGame(string name) =>
-        BuiltInGames.Any(g => string.Equals(g.Dir, name, StringComparison.Ordinal));
+    public static bool IsBuiltInGame(string name) => GameLibraryDeletePolicy.IsBuiltInGame(name);
 
     /// <summary>
     /// 删除「已复制」游戏的私有目录，并清理 <c>library.json</c> 的 <c>dir:&lt;name&gt;</c> 记录。
@@ -233,51 +224,28 @@ internal static class GameLibrary
     /// </summary>
     public static GameDeleteResult DeleteInternalGame(Context context, GameLibraryEntry entry)
     {
-        if (entry.Source != GameSourceKind.Internal)
-            return GameDeleteResult.Failure("只有「已复制」游戏可以删除；原目录请用「移除记录」。");
-
-        var name = entry.Name;
-        if (string.IsNullOrWhiteSpace(name) || !string.Equals(SanitizeName(name), name, StringComparison.Ordinal))
-            return GameDeleteResult.Failure("目录名不合法，已拒绝删除。");
-
-        string root;
-        string target;
-        try
+        var decision = GameLibraryDeletePolicy.Evaluate(
+            GamesDirectory(context),
+            entry.Source == GameSourceKind.Path ? GameDeleteSource.Path : GameDeleteSource.Internal,
+            entry.Name);
+        if (!decision.Allowed)
         {
-            root = Path.GetFullPath(GamesDirectory(context));
-            target = Path.GetFullPath(Path.Combine(root, name));
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return GameDeleteResult.Failure("路径解析失败：" + ex.Message);
+            if (decision.Reason is GameDeleteRejectReason.OutsideRoot or GameDeleteRejectReason.NotDirectChild)
+                Log.Warn(LogTag, $"delete rejected: name={entry.Name} reason={decision.Reason}");
+            return GameDeleteResult.Failure(decision.Message ?? "删除被拒绝。");
         }
 
-        var rootPrefix = root.EndsWith(Path.DirectorySeparatorChar)
-            ? root
-            : root + Path.DirectorySeparatorChar;
-        var parent = Path.GetDirectoryName(target);
-        if (!target.StartsWith(rootPrefix, StringComparison.Ordinal)
-            || !string.Equals(parent is null ? null : Path.GetFullPath(parent), root, StringComparison.Ordinal))
+        var outcome = GameLibraryDeletePolicy.Delete(decision, MetadataPath(context));
+        if (!outcome.Success)
         {
-            Log.Warn(LogTag, $"delete rejected outside games/: target={target}");
-            return GameDeleteResult.Failure("目标路径越界，已拒绝删除。");
+            Log.Warn(LogTag, $"delete internal game failed: name={entry.Name} error={outcome.Error}");
+            return GameDeleteResult.Failure(outcome.Error ?? "删除失败。");
         }
 
-        if (!Directory.Exists(target))
-            return GameDeleteResult.Failure("目录不存在：" + name);
-
-        try
-        {
-            Directory.Delete(target, recursive: true);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            Log.Warn(LogTag, $"delete internal game failed: name={name} error={ex.Message}");
-            return GameDeleteResult.Failure("删除目录失败：" + ex.Message);
-        }
-
-        var recordRemoved = RemovePlayed(context, entry.PlayedKey);
-        Log.Info(LogTag, $"internal game deleted: name={name} target={target} playedRecordRemoved={recordRemoved}");
+        Log.Info(
+            LogTag,
+            $"internal game deleted: name={entry.Name} target={decision.TargetFullPath} " +
+            $"playedRecordRemoved={outcome.PlayedRecordRemoved}");
         return GameDeleteResult.Ok();
     }
 
@@ -919,15 +887,7 @@ internal static class GameLibrary
         return path;
     }
 
-    private static string SanitizeName(string? name)
-    {
-        if (string.IsNullOrWhiteSpace(name))
-            return "game";
-        var invalid = Path.GetInvalidFileNameChars();
-        var chars = name.Trim().Select(c => invalid.Contains(c) || c is '/' or '\\' ? '_' : c).ToArray();
-        var sanitized = new string(chars).Trim();
-        return sanitized.Length == 0 ? "game" : sanitized;
-    }
+    private static string SanitizeName(string? name) => GameLibraryDeletePolicy.SanitizeName(name);
 
     private static Dictionary<string, DateTimeOffset> LoadPlayed(Context context)
     {
