@@ -123,9 +123,10 @@ internal sealed class NativeShell : Panel
 
     private void ShowSettings()
     {
-        var gameName = NativeRuntime.CurrentRoot is null ? null : NativeRuntime.CurrentGameName;
-        var fontName = NativeRuntime.CurrentRoot is null ? null : NativeRuntime.Metrics.FontName;
-        _settings.Show(gameName, fontName);
+        var hasGame = NativeRuntime.CurrentRoot is not null;
+        var gameName = hasGame ? NativeRuntime.CurrentGameName : null;
+        var fontName = hasGame ? NativeRuntime.Metrics.FontName : null;
+        _settings.Show(gameName, fontName, hasGame ? NativeRuntime.Metrics : null);
     }
 
     private void HideSettings() => _settings.Hide();

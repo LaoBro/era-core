@@ -31,32 +31,39 @@ internal enum AppOrientation
     Landscape,
 }
 
-/// <summary>原生前端的全局显示设置（与游戏 <c>emuera.config</c> 解耦，跨游戏共用）。</summary>
+/// <summary>
+/// 原生前端的全局显示设置（与游戏 <c>emuera.config</c> 解耦，跨游戏共用）。
+///
+/// <para><see cref="FollowGameFontSize"/> 为真时实际字号取游戏配置，<see cref="FontSize"/>
+/// 只是关闭跟随后使用的绝对值。WinForms 没有「行距倍率」，旧字段 <c>lineSpacing</c>
+/// 仅保留在 <see cref="SettingsDto"/> 中兼容读取，不参与任何几何计算。</para>
+/// </summary>
 internal sealed record AppSettings(
+    bool FollowGameFontSize,
     int FontSize,
-    double LineSpacing,
     AppTheme Theme,
     AppOrientation Orientation)
 {
     public const int MinFontSize = 10;
     public const int MaxFontSize = 36;
-    public const double MinLineSpacing = 0.8;
-    public const double MaxLineSpacing = 2.0;
 
-    public static AppSettings Default { get; } = new(18, 1.0, AppTheme.Dark, AppOrientation.Follow);
+    /// <summary>
+    /// 默认跟随游戏 <c>emuera.config</c> 的字号；<see cref="FontSize"/> 只是「关闭跟随后」的绝对值。
+    /// </summary>
+    public static AppSettings Default { get; } = new(true, 18, AppTheme.Dark, AppOrientation.Follow);
 
     public AppSettings Normalize() => new(
+        FollowGameFontSize,
         Math.Clamp(FontSize, MinFontSize, MaxFontSize),
-        Math.Clamp(LineSpacing, MinLineSpacing, MaxLineSpacing),
         Theme,
         Orientation);
-
 }
 
 /// <summary>settings.json 的持久化形状（字段名小写，缺失字段回退默认值）。</summary>
 internal sealed record SettingsDto(
     int? fontSize,
     double? lineSpacing,
+    bool? followGameFontSize,
     string? theme,
     string? orientation,
     List<GameSourceDto>? gameSources);
@@ -108,7 +115,7 @@ internal static class NativeSettings
         _path = Path.Combine(filesDir, FileName);
         _current = Load();
         Log.Info(LogTag,
-            $"settings loaded: font={_current.FontSize} spacing={_current.LineSpacing:F2} " +
+            $"settings loaded: follow={_current.FollowGameFontSize} font={_current.FontSize} " +
             $"theme={_current.Theme} orientation={_current.Orientation}");
     }
 
@@ -120,7 +127,7 @@ internal static class NativeSettings
         _current = normalized;
         Save();
         Log.Info(LogTag,
-            $"settings changed: font={normalized.FontSize} spacing={normalized.LineSpacing:F2} " +
+            $"settings changed: follow={normalized.FollowGameFontSize} font={normalized.FontSize} " +
             $"theme={normalized.Theme} orientation={normalized.Orientation}");
         Changed?.Invoke(normalized);
     }
@@ -186,9 +193,16 @@ internal static class NativeSettings
                 Log.Info(LogTag, $"game sources loaded: path={Sources.Count}");
             }
 
+            if (dto.lineSpacing is not null)
+                Log.Info(LogTag,
+                    $"settings: legacy lineSpacing={dto.lineSpacing:F2} ignored " +
+                    "(line height strictly follows the game config)");
+
+            // 迁移策略：旧 settings 没有 followGameFontSize 字段，一律视为「未主动调整字号」→ 跟随游戏。
+            // 只有新版本里用户拖动字号滑块（明确写入绝对值）才把 follow 置为 false。
             return new AppSettings(
+                dto.followGameFontSize ?? true,
                 dto.fontSize ?? AppSettings.Default.FontSize,
-                dto.lineSpacing ?? AppSettings.Default.LineSpacing,
                 theme,
                 orientation).Normalize();
         }
@@ -211,7 +225,8 @@ internal static class NativeSettings
 
             var dto = new SettingsDto(
                 _current.FontSize,
-                _current.LineSpacing,
+                null, // 行距倍率已废弃：不再写回，读取时直接忽略
+                _current.FollowGameFontSize,
                 _current.Theme.ToString(),
                 _current.Orientation.ToString(),
                 sources);
