@@ -18,6 +18,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\EraCore.Hosting\EraCore.Hosting.csproj" />
+    <ProjectReference Include="..\EraCore.Hosting.Conformance\EraCore.Hosting.Conformance.csproj" />
+    <ProjectReference Include="..\EraCore.Native\EraCore.Native.csproj" />
   </ItemGroup>
 
 </Project>
