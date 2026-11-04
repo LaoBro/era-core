@@ -9,76 +9,152 @@ namespace MinorShift.Emuera.Files;
 /// <see cref="IGameDirAccessor"/> 的文件系统实现——封装 <see cref="File"/> / <see cref="Directory"/> / <see cref="Path"/>。
 /// issues/20：精确名读取在大小写敏感挂载上容错——引擎对固定名资源用硬编码大写（
 /// <c>GAMEBASE.CSV</c>/<c>ABL.CSV</c>…），磁盘真实名任意（<c>Abl.csv</c>），Windows/FUSE 挂载
-/// 不区分大小写掩盖了这一点；对齐 SAF accessor 的大小写不敏感解析语义（契约两端一致，LESSONS #24）。
+/// 不区分大小写掩盖了这一点；本实现**逐段**回退（不止末段），对齐 SAF accessor 的大小写不敏感解析语义
+/// （契约两端一致，LESSONS #24）。
+/// <para>
+/// 语义边界：只做「条目名映射」，不做通配；每段先精确名，其次忽略大小写唯一匹配，
+/// 多候选（同目录存在仅大小写不同的多个条目）时<b>放弃容错</b>；<c>.</c>/<c>..</c> 段拒绝。
+/// 回退仅在精确 miss 时触发，精确命中保持零额外枚举。
+/// </para>
 /// </summary>
 public sealed class FileSystemGameDirAccessor : IGameDirAccessor
 {
-    // ===== issues/20：精确名读取的大小写容错 =====
+    // ===== issues/20：精确名读取的大小写容错（逐段） =====
 
     /// <summary>
-    /// 精确路径 miss 时按父目录名映射重试（<see cref="FileExists"/> / <see cref="DirectoryExists"/> /
-    /// <see cref="OpenRead"/> / <see cref="ReadAllText"/> / <see cref="ReadAllBytes"/> 共用）。
-    /// 精确命中返回 null（调用方沿用原路径）——Windows/FUSE 等大小写不敏感挂载恒走这条零开销路径，
-    /// 容错分支只在大小写敏感挂载（app 私有 /data、部分 SD/OTG、桌面 Linux）的 miss 上触发。
+    /// 精确路径 miss 时从「最近的可信前缀」逐段向下解析（<see cref="FileExists"/> /
+    /// <see cref="DirectoryExists"/> / <see cref="OpenRead"/> / <see cref="ReadAllText"/> /
+    /// <see cref="ReadAllBytes"/> 与目录枚举共用）。精确命中返回 null（调用方沿用原路径）——
+    /// Windows/FUSE 等大小写不敏感挂载恒走这条零开销路径，容错只在大小写敏感挂载
+    /// （app 私有 /data、部分 SD/OTG、桌面 Linux）的 miss 上触发。
+    /// <para>
+    /// <b>尾分隔符</b>：<c>.../csv/</c> 先裁尾再逐段解析，结果重新拼回分隔符——不是把原字符串
+    /// trim 掉糊过去；中间各级都被替换为真实名，后续 <c>.../csv/xxx.csv</c> 的读取同样受益。
+    /// </para>
+    /// <para>
+    /// <b>歧义</b>：每段先精确名；否则忽略大小写唯一匹配；同一目录存在多个仅大小写不同的条目时
+    /// 放弃容错（见 <see cref="CaseInsensitivePathResolver.MatchSegment"/>）。每段真实名都取自其
+    /// 父目录的枚举结果，解析结果恒在原父级之下，不越界、不扩张符号链接。
+    /// </para>
     /// </summary>
     private static string? ResolveExactMiss(string path)
     {
-        if (File.Exists(path) || Directory.Exists(path))
+        var hadTrailingSeparator = HasTrailingSeparator(path);
+        var normalized = TrimTrailingSeparators(path);
+        if (string.IsNullOrEmpty(normalized) || Exists(normalized))
+            return null; // 精确命中（含仅裁尾分隔符后的命中）→ 调用方沿用原路径
+
+        // 1) 从末段向上收集缺失段，直到找到已存在的可信前缀（最多到卷根）。
+        var missing = new List<string>();
+        var probe = normalized;
+        while (!Exists(probe))
+        {
+            var parent = Path.GetDirectoryName(probe);
+            var name = Path.GetFileName(probe);
+            if (string.IsNullOrEmpty(parent) || string.IsNullOrEmpty(name))
+                return null;
+            missing.Add(name);
+            probe = parent;
+        }
+        if (missing.Count == 0)
             return null;
-        var dir = Path.GetDirectoryName(path);
-        var name = Path.GetFileName(path);
-        if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(name))
-            return null;
-        if (!GetNameMap(dir).TryGetValue(name, out var real))
-            return null;
-        if (real.Equals(name, StringComparison.Ordinal))
-            return null; // 映射与请求同形——OS 精确 miss 另有原因（竞态/删除），重试无意义
-        return Path.Combine(dir, real);
+
+        // 2) 从可信前缀逐段解析（missing 是自下而上收集的，故逆序）。
+        var resolved = probe;
+        for (var i = missing.Count - 1; i >= 0; i--)
+        {
+            var entries = EnumerateEntryNames(resolved);
+            var real = entries == null ? null : CaseInsensitivePathResolver.MatchSegment(entries, missing[i]);
+            if (real == null)
+                return null; // 任一段无唯一匹配 → 放弃容错，如实 miss
+            resolved = Path.Combine(resolved, real);
+        }
+        return hadTrailingSeparator ? resolved + Path.DirectorySeparatorChar : resolved;
+    }
+
+    private static bool Exists(string path) => File.Exists(path) || Directory.Exists(path);
+
+    private static bool HasTrailingSeparator(string path)
+        => path.Length > 0
+           && (path[^1] == Path.DirectorySeparatorChar || path[^1] == Path.AltDirectorySeparatorChar);
+
+    /// <summary>去掉尾部分隔符但保留卷根（<c>/</c>、<c>C:\</c>）——否则 <c>Path.GetFileName</c> 恒为空。</summary>
+    private static string TrimTrailingSeparators(string path)
+    {
+        var root = Path.GetPathRoot(path) ?? string.Empty;
+        var end = path.Length;
+        while (end > root.Length
+               && (path[end - 1] == Path.DirectorySeparatorChar || path[end - 1] == Path.AltDirectorySeparatorChar))
+            end--;
+        return path[..end];
     }
 
     /// <summary>
-    /// 父目录「逻辑名（忽略大小写）→ 磁盘真实名」映射，惰性构建、进程内缓存。
-    /// 只在精确 miss 后访问：加载期 ~20 个固定名 CSV 共享一次目录枚举，其余全是字典命中。
-    /// 同目录存在仅大小写不同的条目时按 Ordinal 序取一（确定性；精确命中永远优先，不受影响）。
-    /// 写路径（<see cref="CreateDirectory"/> / <see cref="OpenWrite"/> / <see cref="Delete"/>）失效父目录映射，
-    /// 保证运行期新建/删除的文件对大小写失配的读取可见（镜像 SAF 缓存失效语义，LESSONS #17/#18）。
+    /// 目录条目名缓存：键为目录路径，值带短 TTL 且有容量上限。
+    /// 逐段解析一次 miss 可能枚举多级目录；加载期大量固定名 CSV 读取靠它把枚举摊薄到
+    /// 「每目录每 TTL 一次」，其余全是内存命中。
+    /// <para>
+    /// 失效策略：<b>短 TTL（1s）+ 经 accessor 的写操作后清父目录</b>。不设永久全局缓存——
+    /// 导入/解压等 <b>绕过 accessor</b> 的外部写入无法主动失效，TTL 是这类 stale 的上界；
+    /// 同一物理目录经不同大小写路径访问时缓存键不同，也由 TTL 兜底。
+    /// </para>
     /// </summary>
-    private static readonly ConcurrentDictionary<string, Dictionary<string, string>> NameMaps = new(StringComparer.Ordinal);
+    private const int DirectoryCacheTtlMs = 1000;
+    private const int DirectoryCacheLimit = 512;
 
-    private static Dictionary<string, string> GetNameMap(string dir)
-        => NameMaps.GetOrAdd(dir, static d =>
+    private sealed class DirectoryEntryNames
+    {
+        public required string[] Names { get; init; }
+        public required long ExpiresAtTicks { get; init; }
+    }
+
+    private static readonly ConcurrentDictionary<string, DirectoryEntryNames> DirectoryCaches = new(StringComparer.Ordinal);
+
+    private static string[]? EnumerateEntryNames(string dir)
+    {
+        var now = Environment.TickCount64;
+        if (DirectoryCaches.TryGetValue(dir, out var cached) && cached.ExpiresAtTicks > now)
+            return cached.Names;
+
+        string[] entries;
+        try
         {
-            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            try
-            {
-                foreach (var entry in Directory.GetFileSystemEntries(d))
-                {
-                    var name = Path.GetFileName(entry);
-                    if (string.IsNullOrEmpty(name))
-                        continue;
-                    if (map.TryGetValue(name, out var existing))
-                    {
-                        if (string.CompareOrdinal(name, existing) < 0)
-                            map[name] = name;
-                    }
-                    else
-                    {
-                        map.Add(name, name);
-                    }
-                }
-            }
-            catch (Exception ex) when (ex is DirectoryNotFoundException or IOException or UnauthorizedAccessException)
-            {
-                // 目录不可达/不可枚举：留空映射，精确名读取按原语义失败
-            }
-            return map;
-        });
+            entries = Directory.GetFileSystemEntries(dir);
+        }
+        catch (Exception ex) when (ex is DirectoryNotFoundException or IOException or UnauthorizedAccessException
+                                   or System.Security.SecurityException)
+        {
+            // 不可达/不可枚举：不缓存失败结果，下次仍如实失败（避免把瞬时状态固化 1s）
+            return null;
+        }
 
-    private static void InvalidateNameMapOf(string? path)
+        var names = new string[entries.Length];
+        for (var i = 0; i < entries.Length; i++)
+            names[i] = Path.GetFileName(entries[i]);
+
+        DirectoryCaches[dir] = new DirectoryEntryNames { Names = names, ExpiresAtTicks = now + DirectoryCacheTtlMs };
+        TrimDirectoryCaches(now);
+        return names;
+    }
+
+    private static void TrimDirectoryCaches(long now)
+    {
+        if (DirectoryCaches.Count < DirectoryCacheLimit)
+            return;
+        foreach (var entry in DirectoryCaches)
+        {
+            if (entry.Value.ExpiresAtTicks <= now)
+                DirectoryCaches.TryRemove(entry.Key, out _);
+        }
+        if (DirectoryCaches.Count >= DirectoryCacheLimit)
+            DirectoryCaches.Clear();
+    }
+
+    private static void InvalidateDirectoryCacheOf(string? path)
     {
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir))
-            NameMaps.TryRemove(dir, out _);
+            DirectoryCaches.TryRemove(dir, out _);
     }
 
     public bool DirectoryExists(string path)
@@ -86,7 +162,7 @@ public sealed class FileSystemGameDirAccessor : IGameDirAccessor
     public bool FileExists(string path)
         => File.Exists(path) || ResolveExactMiss(path) is { } file && File.Exists(file);
 
-    public string[] GetDirectories(string path) => Directory.GetDirectories(path);
+    public string[] GetDirectories(string path) => Directory.GetDirectories(ResolveDirectoryArgument(path));
 
     /// <summary>
     /// 镜像 SAF 语义（<c>SafGameDirAccessor.EnumerateUri</c> 用 <see cref="Wildcard.Matches"/>）——
@@ -96,13 +172,22 @@ public sealed class FileSystemGameDirAccessor : IGameDirAccessor
     /// <c>CHARA*.CSV</c>）挡在磁盘真实名（如 <c>Chara1 霊夢.csv</c>）之外，与 Windows/SAF 分叉。
     /// </summary>
     public string[] GetDirectories(string path, string searchPattern, SearchOption searchOption)
-        => FilterByPattern(Directory.GetDirectories(path, "*", searchOption), searchPattern);
+        => FilterByPattern(Directory.GetDirectories(ResolveDirectoryArgument(path), "*", searchOption), searchPattern);
 
-    public string[] GetFiles(string path) => Directory.GetFiles(path);
+    public string[] GetFiles(string path) => Directory.GetFiles(ResolveDirectoryArgument(path));
 
     /// <inheritdoc cref="GetDirectories(string, string, SearchOption)"/>
     public string[] GetFiles(string path, string searchPattern, SearchOption searchOption)
-        => FilterByPattern(Directory.GetFiles(path, "*", searchOption), searchPattern);
+        => FilterByPattern(Directory.GetFiles(ResolveDirectoryArgument(path), "*", searchOption), searchPattern);
+
+    /// <summary>
+    /// 枚举入参也走 miss 回退解析：引擎用 <c>.../csv/</c> 这类理论小写路径枚举，若磁盘只有
+    /// <c>CSV</c>，不解析会在枚举入口直接抛 <see cref="DirectoryNotFoundException"/>（<see cref="DirectoryExists"/>
+    /// 已能容忍、但枚举仍会炸）。精确命中时首个 <see cref="Directory.Exists(string)"/> 即短路，
+    /// 不进入逐段解析。
+    /// </summary>
+    private static string ResolveDirectoryArgument(string path)
+        => Directory.Exists(path) ? path : ResolveExactMiss(path) ?? path;
 
     /// <summary>
     /// OS 层用 catch-all 枚举（递归交给 <c>Directory.*</c>，保持 <c>FromSearchOption</c> 语义：
@@ -135,7 +220,7 @@ public sealed class FileSystemGameDirAccessor : IGameDirAccessor
     public void CreateDirectory(string path)
     {
         Directory.CreateDirectory(path);
-        InvalidateNameMapOf(path);
+        InvalidateDirectoryCacheOf(path);
     }
 
     public Stream OpenWrite(string path)
@@ -143,7 +228,7 @@ public sealed class FileSystemGameDirAccessor : IGameDirAccessor
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir))
             Directory.CreateDirectory(dir);
-        InvalidateNameMapOf(path);
+        InvalidateDirectoryCacheOf(path);
         return new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
     }
 
@@ -152,7 +237,7 @@ public sealed class FileSystemGameDirAccessor : IGameDirAccessor
         if (File.Exists(path))
         {
             File.Delete(path);
-            InvalidateNameMapOf(path);
+            InvalidateDirectoryCacheOf(path);
         }
     }
 
