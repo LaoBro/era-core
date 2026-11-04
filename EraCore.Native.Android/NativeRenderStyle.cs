@@ -17,7 +17,8 @@ internal sealed record NativeRenderStyle(
     string ForeColor,
     string? BackgroundOverride,
     string FontName,
-    double ContentWidth)
+    double ContentWidth,
+    double Scale)
 {
     public static NativeRenderStyle From(HostMetrics metrics, AppSettings settings)
     {
@@ -34,6 +35,7 @@ internal sealed record NativeRenderStyle(
             light ? "#1B1B1B" : metrics.ForeColor,
             light ? "#FFFFFF" : null,
             metrics.FontName,
-            Math.Max(1, metrics.WindowWidth * scale));
+            Math.Max(1, metrics.WindowWidth * scale),
+            scale);
     }
 }

@@ -41,6 +41,9 @@ internal static class NativeRuntime
 
     public static HostMetrics Metrics => _host?.Metrics ?? NativeDefaults.Metrics;
 
+    /// <summary>当前会话的游戏文件门面（图片字节读取/sprite 名解析）；无会话时为 null。</summary>
+    public static GameTree? Files => _host?.Files;
+
     public static DisplaySnapshot? Snapshot => _host?.Snapshot;
 
     public static CoreSessionState State => _host?.State ?? CoreSessionState.Created;
@@ -117,7 +120,8 @@ internal static class NativeRuntime
                 {
                     TeardownTimeout = TimeSpan.FromSeconds(15),
                 },
-                RenderCapability.Text);
+                RenderCapability.Text | RenderCapability.Images |
+                RenderCapability.Shapes | RenderCapability.BackgroundImages);
 
             var outcome = await host.StartAsync().ConfigureAwait(false);
             if (!outcome.Succeeded)

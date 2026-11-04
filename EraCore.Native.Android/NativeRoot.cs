@@ -433,7 +433,15 @@ internal sealed class NativeRoot : Border
         if (_submittedRevision == snapshot.revision)
             return;
 
-        var value = button.Value?.ToString() ?? string.Empty;
+        if (button.Value is null)
+        {
+            // srcm 取色按钮的值来自点击处像素；当前 Native 尚未实现像素取色，
+            // 显式拒绝并留下日志，避免把空字符串当成 AnyKey 推进。
+            Log.Warn(LogTag, "button: srcm pixel value unsupported; click ignored");
+            return;
+        }
+
+        var value = button.Value.ToString() ?? string.Empty;
         _submittedRevision = snapshot.revision;
         NativeRuntime.Submit(new InputFrame(Value: value));
         _sendButton.IsEnabled = false;

@@ -6,6 +6,7 @@ using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Rendering.SceneGraph;
 using Avalonia.Skia;
+using Avalonia.Threading;
 using EraCore.Hosting;
 using EraCore.Native;
 using SkiaSharp;
@@ -24,6 +25,7 @@ internal sealed class NativeGameView : Control
 {
     private NativeFrame _frame = NativeFrame.Empty;
     private NativeRenderStyle _style = NativeRenderStyle.From(NativeDefaults.Metrics, AppSettings.Default);
+    private readonly NativeImageCache _images;
 
     private double _scrollY;
     private double _scrollX;
@@ -40,6 +42,16 @@ internal sealed class NativeGameView : Control
     {
         ClipToBounds = true;
         Focusable = true;
+        _images = new NativeImageCache(OnImagesChanged);
+    }
+
+    private void OnImagesChanged()
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            _version++;
+            InvalidateVisual();
+        });
     }
 
     /// <summary>由 UI 轮询线程调用：替换当前帧与渲染参数（不可变对象），并按贴底/锚定规则重算滚动位置。</summary>
@@ -63,6 +75,7 @@ internal sealed class NativeGameView : Control
                 new VirtualWindowOptions(_style.LineHeight, Overscan: 0)).StartIndex;
         }
 
+        _images.UpdateSource(NativeRuntime.Files);
         _frame = frame;
         _style = style;
 
@@ -99,8 +112,9 @@ internal sealed class NativeGameView : Control
         var size = Bounds.Size;
         if (size.Width <= 0 || size.Height <= 0)
             return;
+        _images.PrefetchWindow(_frame, _scrollY, size.Height, _style.LineHeight);
         context.Custom(new GameDrawOp(
-            new Rect(size), _frame, _style, _scrollX, _scrollY, _version,
+            new Rect(size), _frame, _style, _images, _scrollX, _scrollY, _version,
             regions => _hitRegions = regions));
     }
 
@@ -204,6 +218,7 @@ internal sealed class NativeGameView : Control
     {
         private readonly NativeFrame _frame;
         private readonly NativeRenderStyle _style;
+        private readonly NativeImageCache _images;
         private readonly double _scrollX;
         private readonly double _scrollY;
         private readonly long _version;
@@ -213,6 +228,7 @@ internal sealed class NativeGameView : Control
             Rect bounds,
             NativeFrame frame,
             NativeRenderStyle style,
+            NativeImageCache images,
             double scrollX,
             double scrollY,
             long version,
@@ -221,6 +237,7 @@ internal sealed class NativeGameView : Control
             Bounds = bounds;
             _frame = frame;
             _style = style;
+            _images = images;
             _scrollX = scrollX;
             _scrollY = scrollY;
             _version = version;
@@ -255,6 +272,7 @@ internal sealed class NativeGameView : Control
                 Bounds.Height,
                 _frame,
                 _style,
+                _images,
                 _scrollX,
                 _scrollY);
             _onHitRegions(regions);
