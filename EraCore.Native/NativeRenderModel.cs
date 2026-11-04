@@ -2,7 +2,32 @@ using MinorShift.Emuera.Output;
 
 namespace EraCore.Native;
 
-/// <summary>渲染用的只读片段（由 <see cref="PrintSegment"/> 投影，去掉图像/形状的绘制细节）。</summary>
+/// <summary>图像片段（由 <see cref="SegmentImage"/> 投影）；宽度/高度已是显示像素。</summary>
+public sealed record NativeImage(
+    string Src,
+    string? Srcb,
+    string? Srcm,
+    int Width,
+    int Height,
+    int YPos,
+    NativeCrop? Crop);
+
+/// <summary><see cref="SegmentCrop"/>：从源图裁出 (X,Y,ImgWidth,ImgHeight)，贴到目标 (Width,Height)。</summary>
+public sealed record NativeCrop(int X, int Y, int ImgWidth, int ImgHeight);
+
+/// <summary>矩形填充（由 <see cref="SegmentShape"/> 投影）；X/Y 相对行内容起点。</summary>
+public sealed record NativeShape(
+    string Type,
+    int X,
+    int Y,
+    int Width,
+    int Height,
+    string Color);
+
+/// <summary>背景图层；Depth 升序绘制（小的在底层），Opacity 0.0-1.0。</summary>
+public sealed record NativeBgImage(string Src, long Depth, float Opacity);
+
+/// <summary>渲染用的只读片段；图像/形状保留完整几何，不再只给布尔标记。</summary>
 public sealed record NativeSegment(
     string Text,
     string? Color,
@@ -11,8 +36,10 @@ public sealed record NativeSegment(
     string? FontName,
     bool Underline,
     bool Strikeout,
-    bool IsImage,
-    bool IsShape);
+    bool IsImage = false,
+    bool IsShape = false,
+    NativeImage? Image = null,
+    NativeShape? Shape = null);
 
 /// <summary>按钮引用（M1 仅保留，M2 用它做命中与提交）。</summary>
 public sealed record NativeButton(
@@ -28,10 +55,7 @@ public sealed record NativeLine(IReadOnlyList<NativeEntry> Entries, string? Alig
 
 /// <summary>
 /// 一帧可绘制数据：平台无关、不可变，供任意原生渲染后端消费。
-///
-/// <para>M1 不含图像层/精灵/动画——<c>SegmentImage</c>/<c>SegmentShape</c> 只降级为
-/// <see cref="NativeSegment.IsImage"/>/<see cref="NativeSegment.IsShape"/> 标记（暂不绘制），
-/// 文本仍按原顺序保留。</para>
+/// 图像/形状保留几何，纯文本后端按宽度占位；背景层按 Depth 升序绘制。
 /// </summary>
 public sealed record NativeFrame(
     IReadOnlyList<NativeLine> Lines,
@@ -39,8 +63,11 @@ public sealed record NativeFrame(
     long Generation,
     int ProtocolVersion,
     long Revision,
-    string? EndedTerminal)
+    string? EndedTerminal,
+    IReadOnlyList<NativeBgImage>? Backgrounds = null)
 {
+    public IReadOnlyList<NativeBgImage> BackgroundLayers => Backgrounds ?? Array.Empty<NativeBgImage>();
+
     public static NativeFrame Empty { get; } =
         new(Array.Empty<NativeLine>(), "#000000", 0, 0, 0, null);
 }
@@ -63,7 +90,8 @@ public static class NativeRenderModel
             snapshot.generation,
             snapshot.protocolVersion,
             snapshot.revision,
-            snapshot.awaiting?.ended?.terminal);
+            snapshot.awaiting?.ended?.terminal,
+            ProjectBackgrounds(snapshot.bgImages));
     }
 
     public static NativeLine ProjectLine(DisplayLine line)
@@ -83,7 +111,9 @@ public static class NativeRenderModel
                     segment.underline == true,
                     segment.strikeout == true,
                     segment.image is not null,
-                    segment.shape is not null));
+                    segment.shape is not null,
+                    ProjectImage(segment.image),
+                    ProjectShape(segment.shape)));
             }
 
             var button = entry.button is { } b
@@ -95,4 +125,39 @@ public static class NativeRenderModel
 
         return new NativeLine(entries, line.align);
     }
+
+    public static IReadOnlyList<NativeBgImage> ProjectBackgrounds(List<BgImageState>? images)
+    {
+        if (images is not { Count: > 0 })
+            return Array.Empty<NativeBgImage>();
+
+        var result = new List<NativeBgImage>(images.Count);
+        foreach (var image in images)
+            result.Add(new NativeBgImage(image.src, image.depth, image.opacity));
+        return result;
+    }
+
+    private static NativeImage? ProjectImage(SegmentImage? image)
+    {
+        if (image is null)
+            return null;
+
+        var crop = image.crop is { } c
+            ? new NativeCrop(c.x, c.y, c.imgWidth, c.imgHeight)
+            : null;
+
+        return new NativeImage(
+            image.src,
+            image.srcb,
+            image.srcm,
+            Math.Max(0, image.width),
+            Math.Max(0, image.height),
+            image.ypos,
+            crop);
+    }
+
+    private static NativeShape? ProjectShape(SegmentShape? shape)
+        => shape is null
+            ? null
+            : new NativeShape(shape.type, shape.x, shape.y, shape.width, shape.height, shape.color);
 }

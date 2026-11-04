@@ -15,7 +15,9 @@ namespace MinorShift.Emuera.Tests;
 /// <c>DirectoryChildCache</c> / <c>AppDataIo</c> 必须保持 internal。新增 public 文件类型会在此处转红——
 /// 有意公开时显式更新 <see cref="AllowedPublicTypes"/>，不要顺手公开内部件。</para>
 ///
-/// <para>同时钉住两件事：门面本身只暴露相对路径读写面（不含选择器）；公开面不泄漏 internal 类型。</para>
+/// <para>同时钉住两件事：门面只暴露相对路径读写面（不含选择器），外加一个供原生前端解码用的
+/// 图片资源入口 <see cref="GameTree.TryReadImage"/>（复用 <c>/assets</c> 的消毒与 sprite 名回退）；
+/// 公开面不泄漏 internal 类型。</para>
 /// </summary>
 public sealed class FilesPublicSurfaceTests
 {
@@ -52,7 +54,11 @@ public sealed class FilesPublicSurfaceTests
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToArray();
         Assert.Equal(
-            new[] { "Create", "Delete", "Exists", "ListDirectories", "ListFiles", "OpenRead", "ReadBytes", "ReadText" },
+            new[]
+            {
+                "Create", "Delete", "Exists", "ListDirectories", "ListFiles", "OpenRead",
+                "ReadBytes", "ReadText", "TryReadImage",
+            },
             methods);
 
         var ctor = Assert.Single(typeof(GameTree).GetConstructors());

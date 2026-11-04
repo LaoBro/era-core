@@ -46,6 +46,17 @@ public sealed class PublicApiAccessTests
             Assert.Contains("csv/GameBase.csv", csv);
             Assert.NotEmpty(session.Files.ReadText("csv/GameBase.csv"));
 
+            // 原生前端解码所需的图片读取：直接相对路径 + sprite 名（resources/*.csv）回退。
+            Assert.True(session.Files.TryReadImage("img/test.png", out var png, out var pngMime),
+                "inline image path should be readable");
+            Assert.NotNull(png);
+            Assert.Equal("image/png", pngMime);
+
+            Assert.True(session.Files.TryReadImage("FACE_1", out var sprite, out var spriteMime),
+                "sprite name should resolve through resources/*.csv");
+            Assert.NotNull(sprite);
+            Assert.Equal("image/png", spriteMime);
+
             await WaitForStateAsync(session, CoreSessionState.WaitingForInput);
 
             var turns = session.Output.Turns;

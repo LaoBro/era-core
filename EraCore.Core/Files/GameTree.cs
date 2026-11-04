@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using MinorShift.Emuera.Assets;
 
 namespace MinorShift.Emuera.Files;
 
@@ -56,6 +57,34 @@ public sealed class GameTree
     public string ReadText(string relativePath) => _accessor.ReadAllText(Resolve(relativePath));
 
     public byte[]? ReadBytes(string relativePath) => _accessor.ReadAllBytes(Resolve(relativePath));
+
+    /// <summary>
+    /// 读取游戏内图片资源（供原生前端直接解码）：先按根相对路径读，失败再按 sprite 名表回退；
+    /// 复用 <c>/assets</c> 通道的消毒、扩展名白名单与 MIME 判定。
+    /// 失败（路径非法 / 非图片 / 不存在）返回 false 且两个 out 参数为 null。
+    /// </summary>
+    public bool TryReadImage(string resourceName, out byte[]? bytes, out string? mimeType)
+    {
+        if (string.IsNullOrEmpty(resourceName))
+        {
+            bytes = null;
+            mimeType = null;
+            return false;
+        }
+
+        byte[] read;
+        string mime;
+        if (!AssetChannel.TryGetImage(_accessor, Root, resourceName, out read, out mime))
+        {
+            bytes = null;
+            mimeType = null;
+            return false;
+        }
+
+        bytes = read;
+        mimeType = mime;
+        return true;
+    }
 
     public Stream? OpenRead(string relativePath) => _accessor.OpenRead(Resolve(relativePath));
 

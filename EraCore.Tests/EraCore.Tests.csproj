@@ -21,6 +21,8 @@
   <ItemGroup>
     <ProjectReference Include="..\EraCore.Core\EraCore.Core.csproj" />
     <ProjectReference Include="..\EraCore.Server\EraCore.Server.csproj" />
+    <!-- 图片/形状/背景投影（NativeRenderModel）在 Core 侧契约上做断言，无需 Android 宿主。 -->
+    <ProjectReference Include="..\EraCore.Native\EraCore.Native.csproj" />
   </ItemGroup>
 
   <ItemGroup>
