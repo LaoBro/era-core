@@ -1,0 +1,53 @@
+{
+  "id": "diff_shift_head",
+  "description": "shift_head 从头部删除 count 行，可与 append 共存。",
+  "optional": false,
+  "features": ["DiffShiftHead"],
+  "steps": [
+    {
+      "kind": "snapshot",
+      "snapshot": {
+        "lines": [
+          { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "a" }] }] },
+          { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "b" }] }] },
+          { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "c" }] }] }
+        ],
+        "awaiting": { "input": { "type": "EnterKey" } },
+        "protocolVersion": 13,
+        "generation": 0,
+        "revision": 3
+      }
+    },
+    {
+      "kind": "turn",
+      "turn": {
+        "awaiting": { "input": { "type": "EnterKey" } },
+        "diff": {
+          "lineOps": [
+            { "type": "shift_head", "count": 1 },
+            {
+              "type": "append",
+              "newLines": [
+                { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "d" }] }] }
+              ]
+            }
+          ]
+        },
+        "generation": 0,
+        "revision": 4
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "revision": 4,
+        "lineCount": 3,
+        "lines": [
+          { "index": 0, "exactText": "b" },
+          { "index": 1, "exactText": "c" },
+          { "index": 2, "exactText": "d" }
+        ]
+      }
+    }
+  ]
+}

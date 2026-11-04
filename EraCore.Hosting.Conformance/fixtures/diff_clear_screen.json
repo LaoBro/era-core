@@ -1,0 +1,53 @@
+{
+  "id": "diff_clear_screen",
+  "description": "clear_screen 全清后由 append 重印。",
+  "optional": false,
+  "features": ["DiffClearScreen"],
+  "steps": [
+    {
+      "kind": "snapshot",
+      "snapshot": {
+        "lines": [
+          { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "x" }] }] },
+          { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "y" }] }] },
+          { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "z" }] }] }
+        ],
+        "awaiting": { "input": { "type": "EnterKey" } },
+        "protocolVersion": 13,
+        "generation": 0,
+        "revision": 4
+      }
+    },
+    {
+      "kind": "turn",
+      "turn": {
+        "awaiting": { "input": { "type": "EnterKey" } },
+        "diff": {
+          "lineOps": [
+            { "type": "clear_screen" },
+            {
+              "type": "append",
+              "newLines": [
+                { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "n1" }] }] },
+                { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "n2" }] }] }
+              ]
+            }
+          ]
+        },
+        "generation": 0,
+        "revision": 5
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "revision": 5,
+        "lineCount": 2,
+        "lines": [
+          { "index": 0, "exactText": "n1" },
+          { "index": 1, "exactText": "n2" }
+        ]
+      }
+    }
+  ]
+}

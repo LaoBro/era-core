@@ -1,0 +1,51 @@
+{
+  "id": "awaiting_tinput_timedOut",
+  "description": "B3 超时续跑：wait.timedOut 与 timeUpMessage 上帧。",
+  "optional": false,
+  "features": ["AwaitingTimeout"],
+  "steps": [
+    {
+      "kind": "snapshot",
+      "snapshot": {
+        "lines": [],
+        "awaiting": {
+          "input": { "type": "AnyValue" },
+          "wait": { "durationMs": 5000, "displayTime": true }
+        },
+        "protocolVersion": 13,
+        "generation": 0,
+        "revision": 21
+      }
+    },
+    {
+      "kind": "turn",
+      "turn": {
+        "awaiting": {
+          "input": { "type": "AnyValue" },
+          "wait": {
+            "durationMs": 5000,
+            "displayTime": true,
+            "timedOut": true,
+            "timeUpMessage": "Time up"
+          }
+        },
+        "generation": 0,
+        "revision": 22
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "revision": 22,
+        "awaiting": {
+          "mode": "Text",
+          "inputType": "AnyValue",
+          "timedOut": true,
+          "timeUpMessage": "Time up",
+          "displayCountdown": true,
+          "waitDurationMs": 5000
+        }
+      }
+    }
+  ]
+}

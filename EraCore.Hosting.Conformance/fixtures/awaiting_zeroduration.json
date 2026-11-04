@@ -1,0 +1,31 @@
+{
+  "id": "awaiting_zeroduration",
+  "description": "wait.durationMs==0 的零时长让路点：无倒计时、不等输入。",
+  "optional": false,
+  "features": ["AwaitingZeroDurationWait"],
+  "steps": [
+    {
+      "kind": "snapshot",
+      "snapshot": {
+        "lines": [],
+        "awaiting": { "wait": { "durationMs": 0 } },
+        "protocolVersion": 13,
+        "generation": 0,
+        "revision": 30
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "revision": 30,
+        "awaiting": {
+          "mode": "None",
+          "isWaitingForInput": false,
+          "waitDurationMs": 0,
+          "displayCountdown": false,
+          "timedOut": false
+        }
+      }
+    }
+  ]
+}

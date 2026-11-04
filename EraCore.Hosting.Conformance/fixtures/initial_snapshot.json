@@ -1,0 +1,69 @@
+{
+  "id": "initial_snapshot",
+  "description": "全量快照投影：文本样式、对齐几何、按钮命中与 quota 等待。",
+  "optional": false,
+  "features": ["Snapshot", "TextStyles", "AlignGeometry", "ButtonHitTest", "Generation"],
+  "steps": [
+    {
+      "kind": "snapshot",
+      "snapshot": {
+        "lines": [
+          {
+            "align": "left",
+            "isLineEnd": true,
+            "entries": [
+              {
+                "segments": [
+                  { "text": "Hello", "color": "#FF0000", "bold": true, "italic": true, "underline": true, "strikeout": true, "fontname": "MyFont" },
+                  { "text": " world" }
+                ]
+              },
+              {
+                "segments": [{ "text": "[Start]" }],
+                "button": { "value": "1", "isInteger": true, "generation": 3, "col": 11, "width": 7 }
+              }
+            ]
+          },
+          {
+            "align": "center",
+            "isLineEnd": true,
+            "entries": [
+              {
+                "segments": [{ "text": "Centered" }],
+                "button": { "value": "c", "isInteger": false, "generation": 3, "col": 0, "width": 8 }
+              }
+            ]
+          }
+        ],
+        "bgColor": "#101010",
+        "awaiting": { "input": { "type": "IntValue" } },
+        "protocolVersion": 13,
+        "generation": 3,
+        "revision": 7
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "revision": 7,
+        "lineCount": 2,
+        "lines": [
+          { "index": 0, "exactText": "Hello world[Start]", "align": "left" },
+          { "index": 1, "exactText": "Centered", "align": "center" }
+        ],
+        "awaiting": {
+          "mode": "Text",
+          "inputType": "IntValue",
+          "isWaitingForInput": true,
+          "requiresValue": true,
+          "allowsEmpty": false,
+          "isTerminal": false
+        },
+        "hits": [
+          { "column": 13, "row": 0, "value": "1", "generation": 3, "isLive": true },
+          { "column": 40, "row": 1, "value": "c", "generation": 3, "isLive": true }
+        ]
+      }
+    }
+  ]
+}

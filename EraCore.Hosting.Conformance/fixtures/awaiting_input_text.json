@@ -1,0 +1,72 @@
+{
+  "id": "awaiting_input_text",
+  "description": "input.type 的 Text / AnyKey / EnterKey 三个变体。",
+  "optional": false,
+  "features": ["AwaitingInput"],
+  "steps": [
+    {
+      "kind": "snapshot",
+      "snapshot": {
+        "lines": [],
+        "awaiting": { "input": { "type": "IntValue" } },
+        "protocolVersion": 13,
+        "generation": 0,
+        "revision": 10
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "awaiting": {
+          "mode": "Text",
+          "inputType": "IntValue",
+          "isWaitingForInput": true,
+          "requiresValue": true,
+          "allowsEmpty": false
+        }
+      }
+    },
+    {
+      "kind": "turn",
+      "turn": {
+        "awaiting": { "input": { "type": "AnyKey" } },
+        "generation": 0,
+        "revision": 11
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "revision": 11,
+        "awaiting": {
+          "mode": "AnyKey",
+          "inputType": "AnyKey",
+          "isWaitingForInput": true,
+          "requiresValue": false,
+          "allowsEmpty": true
+        }
+      }
+    },
+    {
+      "kind": "turn",
+      "turn": {
+        "awaiting": { "input": { "type": "EnterKey" } },
+        "generation": 0,
+        "revision": 12
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "revision": 12,
+        "awaiting": {
+          "mode": "EnterKey",
+          "inputType": "EnterKey",
+          "isWaitingForInput": true,
+          "requiresValue": false,
+          "allowsEmpty": true
+        }
+      }
+    }
+  ]
+}

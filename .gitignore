@@ -49,6 +49,8 @@ EraCore.Hosting/bin/*
 EraCore.Hosting/obj/*
 EraCore.Hosting.Tests/bin/*
 EraCore.Hosting.Tests/obj/*
+EraCore.Hosting.Conformance/bin/*
+EraCore.Hosting.Conformance/obj/*
 
 # legacy-plugin-compat：facade 项目 + 测试夹具（参照插件/依赖/桩）的 bin/obj 不入库
 EraCore.Compat.Emuera/bin/*

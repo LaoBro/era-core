@@ -1,0 +1,42 @@
+{
+  "id": "error_frame_fatal",
+  "description": "致命错误帧 revision 落后于快照，仍必须作为终态应用，不得被去重丢弃。",
+  "optional": false,
+  "features": ["ErrorFrame", "TerminalFrames"],
+  "steps": [
+    {
+      "kind": "snapshot",
+      "snapshot": {
+        "lines": [
+          { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "waiting" }] }] }
+        ],
+        "awaiting": { "input": { "type": "EnterKey" } },
+        "protocolVersion": 13,
+        "generation": 5,
+        "revision": 5
+      }
+    },
+    {
+      "kind": "turn",
+      "turn": {
+        "awaiting": { "ended": { "terminal": "Error" } },
+        "error": "fatal: render failed",
+        "errorInfo": { "type": "System.InvalidOperationException", "message": "render failed" },
+        "generation": 5,
+        "revision": 4
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "terminalMustSurvive": true,
+        "awaiting": {
+          "mode": "Ended",
+          "isTerminal": true,
+          "terminal": "Error",
+          "isWaitingForInput": false
+        }
+      }
+    }
+  ]
+}

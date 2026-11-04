@@ -1,0 +1,53 @@
+{
+  "id": "diff_replace_equal_length",
+  "description": "clear_line_diff + append 表达等长行替换（末行重印）。",
+  "optional": false,
+  "features": ["DiffReplaceEqualLength"],
+  "steps": [
+    {
+      "kind": "snapshot",
+      "snapshot": {
+        "lines": [
+          { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "alpha" }] }] },
+          { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "beta" }] }] },
+          { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "gamma" }] }] }
+        ],
+        "awaiting": { "input": { "type": "EnterKey" } },
+        "protocolVersion": 13,
+        "generation": 0,
+        "revision": 2
+      }
+    },
+    {
+      "kind": "turn",
+      "turn": {
+        "awaiting": { "input": { "type": "EnterKey" } },
+        "diff": {
+          "lineOps": [
+            { "type": "clear_line_diff", "clearCount": 1 },
+            {
+              "type": "append",
+              "newLines": [
+                { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "gamma2" }] }] }
+              ]
+            }
+          ]
+        },
+        "generation": 0,
+        "revision": 3
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "revision": 3,
+        "lineCount": 3,
+        "lines": [
+          { "index": 0, "exactText": "alpha" },
+          { "index": 1, "exactText": "beta" },
+          { "index": 2, "exactText": "gamma2" }
+        ]
+      }
+    }
+  ]
+}

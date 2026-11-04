@@ -1,0 +1,35 @@
+{
+  "id": "awaiting_tinput_wait",
+  "description": "input + wait 两维同现，durationMs>0 且显示倒计时。",
+  "optional": false,
+  "features": ["AwaitingTimeout"],
+  "steps": [
+    {
+      "kind": "snapshot",
+      "snapshot": {
+        "lines": [],
+        "awaiting": {
+          "input": { "type": "StrValue" },
+          "wait": { "durationMs": 3000, "displayTime": true }
+        },
+        "protocolVersion": 13,
+        "generation": 0,
+        "revision": 20
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "revision": 20,
+        "awaiting": {
+          "mode": "Text",
+          "inputType": "StrValue",
+          "isWaitingForInput": true,
+          "waitDurationMs": 3000,
+          "displayCountdown": true,
+          "timedOut": false
+        }
+      }
+    }
+  ]
+}

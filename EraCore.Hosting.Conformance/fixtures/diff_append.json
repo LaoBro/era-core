@@ -1,0 +1,51 @@
+{
+  "id": "diff_append",
+  "description": "append 把新行追加到末尾。",
+  "optional": false,
+  "features": ["DiffAppend"],
+  "steps": [
+    {
+      "kind": "snapshot",
+      "snapshot": {
+        "lines": [
+          { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "Header" }] }] }
+        ],
+        "awaiting": { "input": { "type": "EnterKey" } },
+        "protocolVersion": 13,
+        "generation": 0,
+        "revision": 1
+      }
+    },
+    {
+      "kind": "turn",
+      "turn": {
+        "awaiting": { "input": { "type": "EnterKey" } },
+        "diff": {
+          "lineOps": [
+            {
+              "type": "append",
+              "newLines": [
+                { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "one" }] }] },
+                { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "two" }] }] }
+              ]
+            }
+          ]
+        },
+        "generation": 0,
+        "revision": 2
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "revision": 2,
+        "lineCount": 3,
+        "lines": [
+          { "index": 0, "exactText": "Header" },
+          { "index": 1, "exactText": "one" },
+          { "index": 2, "exactText": "two" }
+        ]
+      }
+    }
+  ]
+}

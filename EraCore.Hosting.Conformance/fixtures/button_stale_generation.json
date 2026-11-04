@@ -1,0 +1,75 @@
+{
+  "id": "button_stale_generation",
+  "description": "generation 变化后旧按钮仍可命中几何，但不得作为有效输入（isLive=false）。",
+  "optional": false,
+  "features": ["ButtonHitTest", "Generation"],
+  "steps": [
+    {
+      "kind": "snapshot",
+      "snapshot": {
+        "lines": [
+          {
+            "align": "left",
+            "isLineEnd": true,
+            "entries": [
+              {
+                "segments": [{ "text": "[Go!]" }],
+                "button": { "value": "2", "isInteger": true, "generation": 3, "col": 0, "width": 5 }
+              }
+            ]
+          }
+        ],
+        "awaiting": { "input": { "type": "IntValue" } },
+        "protocolVersion": 13,
+        "generation": 3,
+        "revision": 4
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "revision": 4,
+        "hits": [
+          { "column": 2, "row": 0, "value": "2", "generation": 3, "isLive": true }
+        ]
+      }
+    },
+    {
+      "kind": "turn",
+      "turn": {
+        "awaiting": { "input": { "type": "IntValue" } },
+        "diff": {
+          "lineOps": [
+            { "type": "clear_screen" },
+            {
+              "type": "append",
+              "newLines": [
+                {
+                  "align": "left",
+                  "isLineEnd": true,
+                  "entries": [
+                    {
+                      "segments": [{ "text": "[Go!]" }],
+                      "button": { "value": "2", "isInteger": true, "generation": 3, "col": 0, "width": 5 }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "generation": 4,
+        "revision": 5
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "revision": 5,
+        "hits": [
+          { "column": 2, "row": 0, "value": "2", "generation": 3, "isLive": false }
+        ]
+      }
+    }
+  ]
+}

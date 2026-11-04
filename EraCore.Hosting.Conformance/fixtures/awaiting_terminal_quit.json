@@ -1,0 +1,30 @@
+{
+  "id": "awaiting_terminal_quit",
+  "description": "ended.terminal=Quit 是终态，input/wait 不出现。",
+  "optional": false,
+  "features": ["TerminalFrames"],
+  "steps": [
+    {
+      "kind": "snapshot",
+      "snapshot": {
+        "lines": [],
+        "awaiting": { "ended": { "terminal": "Quit" } },
+        "protocolVersion": 13,
+        "generation": 4,
+        "revision": 40
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "revision": 40,
+        "awaiting": {
+          "mode": "Ended",
+          "isTerminal": true,
+          "terminal": "Quit",
+          "isWaitingForInput": false
+        }
+      }
+    }
+  ]
+}

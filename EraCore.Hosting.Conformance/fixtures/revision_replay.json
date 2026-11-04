@@ -1,0 +1,83 @@
+{
+  "id": "revision_replay",
+  "description": "revision <= 快照基线的帧被丢弃；更新帧仍按序应用。",
+  "optional": false,
+  "features": ["TurnStream", "RevisionDedup"],
+  "steps": [
+    {
+      "kind": "snapshot",
+      "snapshot": {
+        "lines": [
+          { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "A" }] }] },
+          { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "B" }] }] },
+          { "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "C" }] }] }
+        ],
+        "awaiting": { "input": { "type": "EnterKey" } },
+        "protocolVersion": 13,
+        "generation": 0,
+        "revision": 7
+      }
+    },
+    {
+      "kind": "turn",
+      "turn": {
+        "awaiting": { "input": { "type": "EnterKey" } },
+        "diff": {
+          "lineOps": [
+            { "type": "append", "newLines": [{ "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "STALE7" }] }] }] }
+          ]
+        },
+        "generation": 0,
+        "revision": 7
+      }
+    },
+    {
+      "kind": "turn",
+      "turn": {
+        "awaiting": { "input": { "type": "EnterKey" } },
+        "diff": {
+          "lineOps": [
+            { "type": "append", "newLines": [{ "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "STALE6" }] }] }] }
+          ]
+        },
+        "generation": 0,
+        "revision": 6
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "revision": 7,
+        "lineCount": 3,
+        "lines": [
+          { "index": 0, "exactText": "A" },
+          { "index": 1, "exactText": "B" },
+          { "index": 2, "exactText": "C" }
+        ]
+      }
+    },
+    {
+      "kind": "turn",
+      "turn": {
+        "awaiting": { "input": { "type": "EnterKey" } },
+        "diff": {
+          "lineOps": [
+            { "type": "append", "newLines": [{ "align": "left", "isLineEnd": true, "entries": [{ "segments": [{ "text": "FRESH" }] }] }] }
+          ]
+        },
+        "generation": 0,
+        "revision": 8
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "revision": 8,
+        "lineCount": 4,
+        "lines": [
+          { "index": 3, "exactText": "FRESH" }
+        ]
+      }
+    }
+  ]
+}

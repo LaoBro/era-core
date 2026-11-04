@@ -1,0 +1,33 @@
+{
+  "id": "awaiting_unknown_key",
+  "description": "awaiting 出现未知维度键：必须留 warning 并保守降级，不得静默忽略。",
+  "optional": false,
+  "features": ["AwaitingUnknownKey"],
+  "steps": [
+    {
+      "kind": "snapshot",
+      "snapshot": {
+        "lines": [],
+        "awaiting": {
+          "input": { "type": "IntValue" },
+          "mystery": { "x": 1 }
+        },
+        "protocolVersion": 13,
+        "generation": 0,
+        "revision": 60
+      }
+    },
+    {
+      "kind": "expect",
+      "expect": {
+        "revision": 60,
+        "awaiting": {
+          "mode": "Unknown",
+          "hasUnknownKeys": true,
+          "isWaitingForInput": false
+        },
+        "warningCodes": ["unknown-awaiting-key"]
+      }
+    }
+  ]
+}
