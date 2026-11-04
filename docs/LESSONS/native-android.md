@@ -20,6 +20,8 @@
 | 12 | 终态要按会话状态隐藏输入栏 | `QUIT` 后快照 `awaiting` 可能仍是旧输入等待；再用 `CoreSessionState.Completed/Stopped/Failed` 兜底 | 2026-11-03 |
 | 13 | 图片解码要缓存且不得阻塞绘制 | 后台解码 + 绘制线程只取就绪图；淘汰跳过正在返回的条目，否则释放正在绘制的 `SKImage` | 2026-11-04 |
 | 14 | 图片占位宽度 = 绘制宽度 | 统一走 `NativeGeometry.ImageWidth`；形状占 `x + width`。当 0 宽会让加图后行宽跳动 | 2026-11-04 |
+| 15 | 共享卷真实路径按 fsUuid 匹配 | MuMu 根路径 `/mnt/shared/MuMuShared` 不含 UUID，只按路径后缀会误判 `volume-unmapped` | 2026-11-05 |
+| 16 | SAF 导入要小写化根目录 | provider 只返回 `CSV`/`ERB`，复制到大小写敏感的私有 ext4 后引擎报 `MISSING_CSV` | 2026-11-05 |
 
 ---
 
@@ -89,3 +91,24 @@
 - 安全边界：目标只由 `GamesDirectory()` + 经 `SanitizeName` 校验的目录名拼出；删前用 `Path.GetFullPath` 规范化，要求目标以 `games/` 前缀开头、且父目录恰为 `games/`。越界或来源不是 `Internal` 一律拒绝。
 - 内置示例 `test_game` / `test_game_b` **允许删除**：`NativeRuntime` 启动时 `EnsureBuiltInGamesAsync` 会因 marker 缺失重新解压，成功文案会提示「下次启动时重新解压」。
 - 判定与真删的公共逻辑放在平台无关的 `EraCore.Native.GameLibraryDeletePolicy`（`EraCore.Native`），Android 侧只负责取 `Context`、拼路径与写日志；因此这些边界（越界、非直接子目录、符号链接逃逸、Path 拒绝、记录清理）能被 `EraCore.Tests` 在 Windows 上直接覆盖。
+
+## 10. MuMu 共享文件夹：卷映射与根目录大小写
+
+**场景**：同一游戏放在 `MuMu共享文件\emuera\TK1.29.3纯净版` 时降级为复制，复制后启动报
+`MISSING_CSV 缺少csv 目录:.../csv/`；同一个游戏放在 `PJJ110`（primary）则真实路径正常。
+
+**取证**（`adb`）：
+- `dumpsys mount`：`VolumeInfo{MuMuShared}` → `path=/mnt/shared/MuMuShared/`、`fsUuid=41217664-9172-527a-b3d5-edabb50a7d69`、`state=MOUNTED`。根路径**不含** UUID；旧的 `MatchesVolume` 只认 `primary` 或「路径以 UUID 结尾」，因此返回 `volume-unmapped` 并回退复制。
+- 该 provider 的 children 查询只返回大写 `CSV` / `ERB`（`_display_name`），虽然 vboxsf 视图下 `csv`/`erb` 别名也可列出。复制到大小写敏感的私有 ext4 后保留大写，而引擎 `GamePaths` 把 `csv`/`erb` 硬编码为小写 → `MISSING_CSV`。
+- app 进程（`untrusted_app`）可读可写 `/mnt/shared/MuMuShared/...`，所以这是映射缺口，不是权限缺口。
+- `FileSystemGameDirAccessor.ResolveExactMiss` 对带尾分隔符的路径（`.../csv/`）取不到文件名（`Path.GetFileName` 为空），大小写容错会失效；它是 Core 侧的潜在缺口（见「仍存在的限制」），本次未改。
+
+**做法**：
+- `EraCore.Native.RealPathVolumeMatcher`：`primary` 仍按 `/emulated/0`；UUID 卷同时按 `StorageVolume.Uuid`（去 `-`、忽略大小写）与路径后缀匹配；`home` 始终拒绝。Android 侧逐卷打印 `uuid/primary/state/dir` 便于现场取证。
+- SAF 扫描在**根层**把 `csv`/`erb`/`resources`/`sound`/`font`/`dat`/`debug` 规范为小写（`EraCore.Native.SafImportLayout.MapDirectoryName`），深层目录保持原名。
+- 复制完成、写 marker 前用 `SafImportLayout.Validate` 校验：`csv/` 存在且非空、`erb/` 至少有一个 `.erb`。失败清 staging、返回明确文案，并按 `structure=<issue>` 记录分类（与「枚举为空」「权限被拒」区分）。
+- 降级原因写日志，并转成状态栏中文短原因；未授权「所有文件访问」时 UI 直接引导「先用复制模式导入」，不进入 resolver。
+
+**仍存在的限制**：
+- 若大小写敏感的真实路径源只有 `CSV`（没有 `csv` 别名），引擎仍会 `MISSING_CSV`；要彻底覆盖需让 Core 的目录访问也做逐段大小写容错（包含带尾分隔符的 `DirectoryExists`）。
+- `.txt`/`.json`（含 `train.txt`、`dict/`）按既有白名单默认不复制，不影响引擎启动，但依赖这些文件的脚本会缺数据。
