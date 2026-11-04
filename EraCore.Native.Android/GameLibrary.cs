@@ -318,10 +318,20 @@ internal static class GameLibrary
                 scan.Files.Count, scan.TotalBytes, scan.SkippedOptional));
 
             var files = scan.Files;
+            if (files.Count == 0)
+            {
+                DeleteDirectory(staging);
+                Log.Warn(LogTag, string.Format(
+                    "saf import rejected: empty enumeration queries={0} dirs={1} name={2}",
+                    scan.QueryCount, scan.DirectoryCount, displayName));
+                return GameImportResult.Failure(
+                    "SAF 枚举为空：该目录未返回任何可导入文件（可能无权限，或该来源不支持子目录枚举）。");
+            }
+
             if (!files.Any(f => f.Name.EndsWith(".erb", StringComparison.OrdinalIgnoreCase)))
             {
                 DeleteDirectory(staging);
-                Log.Warn(LogTag, "saf import rejected: no .erb file");
+                Log.Warn(LogTag, $"saf import rejected: no .erb file files={files.Count} name={displayName}");
                 return GameImportResult.Failure("未找到 .erb 文件：请选择 emuera 游戏根目录（包含 erb/）。");
             }
 
@@ -345,7 +355,21 @@ internal static class GameLibrary
                 copy.LargeMs, copy.LargeCount, copy.LargeBytes,
                 copy.LargeCount == 0 ? 0 : copy.LargeMs / copy.LargeCount,
                 copy.LargeMs == 0 ? 0 : copy.LargeBytes / 1024.0 / 1024.0 * 1000 / copy.LargeMs));
-            Log.Info(LogTag, "saf import: copy finished, finalizing");
+            Log.Info(LogTag, "saf import: copy finished, checking structure");
+
+            // 复制完成后、写 marker 前校验引擎必需结构：源 provider 只返回大写 CSV/ERB 时，
+            // 上面已按根层规范化为小写；若仍缺 csv/ 或 erb/，说明源目录本身不完整，
+            // 不能当作成功导入，也绝不留下半成品目录。
+            var structure = SafImportLayout.Validate(staging);
+            if (!structure.IsValid)
+            {
+                DeleteDirectory(staging);
+                Log.Warn(LogTag, string.Format(
+                    "saf import rejected: structure={0} csvFiles={1} erbFiles={2} name={3}",
+                    structure.Issue, structure.CsvFiles, structure.ErbFiles, displayName));
+                return GameImportResult.Failure(structure.Message);
+            }
+            Log.Info(LogTag, $"saf import structure ok: csvFiles={structure.CsvFiles} erbFiles={structure.ErbFiles}");
 
             cancellationToken.ThrowIfCancellationRequested();
             var finalizeWatch = Stopwatch.StartNew();
@@ -363,6 +387,15 @@ internal static class GameLibrary
             Log.Warn(LogTag, "saf import cancelled");
             DeleteDirectory(staging);
             return GameImportResult.Failure("已取消导入。");
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException
+                                       or System.Security.SecurityException
+                                       or global::Java.Lang.SecurityException)
+        {
+            // 失败分类：权限被拒（与「源目录缺 csv」「枚举为空」区分，便于现场判读）。
+            Log.Error(LogTag, "saf import denied: " + ex);
+            DeleteDirectory(staging);
+            return GameImportResult.Failure("没有权限读取所选目录，请重新授权后再试，或改用其他位置。");
         }
         catch (Exception ex)
         {
@@ -393,6 +426,17 @@ internal static class GameLibrary
             {
                 DeleteDirectory(staging);
                 return GameImportResult.Failure("压缩包内没有找到 emuera 游戏（缺少 emuera.config 或 erb/）。");
+            }
+
+            // 与 SAF 导入同一口径：结构不完整（缺 csv/ 或缺 erb/）时不登记为成功。
+            var structure = SafImportLayout.Validate(candidate);
+            if (!structure.IsValid)
+            {
+                Log.Warn(LogTag, string.Format(
+                    "zip import rejected: structure={0} csvFiles={1} erbFiles={2}",
+                    structure.Issue, structure.CsvFiles, structure.ErbFiles));
+                DeleteDirectory(staging);
+                return GameImportResult.Failure(structure.Message);
             }
 
             return FinalizeImport(context, candidate, SanitizeName(fallbackName), markImported: true);
@@ -586,7 +630,13 @@ internal static class GameLibrary
                         Log.Warn(LogTag, $"saf scan: cannot build child uri for {prefix}{displayName}");
                         continue;
                     }
-                    stack.Push((childUri, prefix + SanitizeName(displayName) + "/", depth + 1));
+                    var mappedName = SafImportLayout.MapDirectoryName(displayName, depth);
+                    if (SafImportLayout.IsNormalizedName(displayName, depth))
+                    {
+                        Log.Info(LogTag,
+                            $"saf scan: normalize root dir '{displayName}' -> '{mappedName}'");
+                    }
+                    stack.Push((childUri, prefix + SanitizeName(mappedName) + "/", depth + 1));
                     continue;
                 }
 

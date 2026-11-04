@@ -623,17 +623,38 @@ internal sealed class GameLibraryView : Border
             return;
         }
 
+        var shortReason = DescribeRealPathFailure(reason);
         global::Android.Util.Log.Info("EraCoreNative",
             $"real path unavailable ({reason}), fallback to SAF copy");
-        _statusText.Text = $"无法映射为真实路径（{reason}），改用复制模式导入…";
-        await CopyFolderImportAsync(treeUri).ConfigureAwait(true);
+        _statusText.Text = $"该位置无法直接读取（{shortReason}），改用复制模式…";
+        await CopyFolderImportAsync(treeUri, shortReason).ConfigureAwait(true);
+    }
+
+    /// <summary>把 <see cref="RealPathResolver"/> 的失败原因码翻成状态栏可读的短文案。</summary>
+    private static string DescribeRealPathFailure(string reason)
+    {
+        if (reason.StartsWith("volume-unmapped:", StringComparison.Ordinal))
+            return "存储卷无法映射为真实路径";
+        if (reason.StartsWith("provider=", StringComparison.Ordinal))
+            return "该来源不支持直接读取";
+        return reason switch
+        {
+            "missing-or-forbidden" => "目录不可读或权限受限",
+            "unreadable" => "目录无法枚举",
+            "android-restricted-dir" => "Android/data 受系统保护",
+            "bad-document-id" => "目录标识无法解析",
+            "document-id-unavailable" => "目录标识缺失",
+            _ => reason,
+        };
     }
 
     /// <summary>
     /// SAF 复制模式：ActivityResult 回调 + DocumentsContract 递归复制到私有目录。
     /// 不用 Avalonia 的 IStorageProvider：其 Android 目录枚举会在部分设备的权限确认框后丢失回调。
     /// </summary>
-    private async Task CopyFolderImportAsync(global::Android.Net.Uri? picked = null)
+    private async Task CopyFolderImportAsync(
+        global::Android.Net.Uri? picked = null,
+        string? fallbackReason = null)
     {
         var context = NativeRuntime.AppContext;
         if (context is null)
@@ -678,9 +699,17 @@ internal sealed class GameLibraryView : Border
         }
 
         Refresh(result.Entry?.Name);
-        _statusText.Text = result.Entry is not null
-            ? $"已复制导入 {result.Entry.Name}（{result.Entry.RootPath}）"
-            : result.Error ?? "导入失败。";
+        if (result.Entry is not null)
+        {
+            var note = fallbackReason is null
+                ? string.Empty
+                : $"；该位置无法直接读取（{fallbackReason}），已复制";
+            _statusText.Text = $"已复制导入 {result.Entry.Name}（{result.Entry.RootPath}）{note}";
+        }
+        else
+        {
+            _statusText.Text = result.Error ?? "导入失败。";
+        }
     }
 
     /// <summary>进度回调（UI 线程）：合并为「文件数 / 速率 / ETA / 当前文件」。</summary>
