@@ -4,6 +4,7 @@ using Android.OS;
 using Android.OS.Storage;
 using Android.Provider;
 using Android.Util;
+using EraCore.Native;
 
 namespace EraCore.Native.Android;
 
@@ -142,9 +143,14 @@ internal static class RealPathResolver
                     foreach (var volume in volumes)
                     {
                         var dir = volume.Directory?.AbsolutePath;
+                        // 诊断：厂商共享卷（MuMu /mnt/shared/…）的 path 不含 UUID，
+                        // 只能靠 fsUuid 匹配；把每个卷的 uuid/state/dir 打出来便于现场取证。
+                        Log.Info(LogTag,
+                            $"real path: volume uuid={volume.Uuid} primary={volume.IsPrimary} " +
+                            $"state={volume.State} dir={dir}");
                         if (dir is null)
                             continue;
-                        if (MatchesVolume(dir, volumeId))
+                        if (RealPathVolumeMatcher.Matches(dir, volume.Uuid, volumeId))
                             return dir;
                     }
                 }
@@ -170,8 +176,23 @@ internal static class RealPathResolver
                     }
                     if (root.Length == 0)
                         continue;
-                    if (MatchesVolume(root, volumeId))
+                    if (RealPathVolumeMatcher.Matches(root, volumeUuid: null, volumeId))
                         return root;
+                }
+            }
+
+            // 最后兜底：UUID 形态的卷在部分厂商实现里 StorageVolume.Directory 为 null，
+            // 按系统约定路径探测（存在即用，绝不强塞不存在的路径）。
+            if (!string.Equals(volumeId, "primary", StringComparison.Ordinal)
+                && !string.Equals(volumeId, "home", StringComparison.Ordinal))
+            {
+                foreach (var candidate in new[] { "/storage/" + volumeId, "/mnt/media_rw/" + volumeId })
+                {
+                    if (Directory.Exists(candidate))
+                    {
+                        Log.Info(LogTag, $"real path: volume {volumeId} resolved via fallback {candidate}");
+                        return candidate;
+                    }
                 }
             }
         }
@@ -181,20 +202,5 @@ internal static class RealPathResolver
         }
 
         return null;
-    }
-
-    private static bool MatchesVolume(string root, string volumeId)
-    {
-        if (string.Equals(volumeId, "home", StringComparison.Ordinal))
-            return false;
-        if (string.Equals(volumeId, "primary", StringComparison.Ordinal))
-            return root.EndsWith("/emulated/0", StringComparison.Ordinal)
-                   || root.EndsWith("/emulated/0/", StringComparison.Ordinal);
-
-        // 可移动卷（SD 卡）：volumeId 形如 "1234-5678"，根路径通常以该 id 结尾。
-        var normalizedId = volumeId.Replace("-", string.Empty);
-        var normalizedRoot = root.Replace("-", string.Empty);
-        return normalizedRoot.EndsWith("/" + normalizedId, StringComparison.Ordinal)
-               || normalizedRoot.EndsWith("/" + normalizedId + "/", StringComparison.Ordinal);
     }
 }
