@@ -19,7 +19,9 @@
 | [dialect-porting.md](dialect-porting.md) | 方言指令移植：descriptor 两条路径、参数三件套、flag、测试/面快照、新 fork 接入 |
 | [performance-tuning.md](performance-tuning.md) | 性能与加载开关：ERB 并行加载、未调用函数延迟解析、关联警告开关、实测数据与验收门禁 |
 | [agent-integration.md](agent-integration.md) | Agent 集成：调用链、`start` 的 server 复用优先级、运行期产物、回合协议速览 |
+| [build-a-frontend.md](build-a-frontend.md) | **新前端入门**：三种接入方式、从游戏目录到第一帧的六步、五条必懂规则、常见坑与套件接入 |
 | [turn-protocol.md](turn-protocol.md) | **Turn 协议规格（权威）**：`TurnRecord` 全字段、`diff` 四种行操作、状态与输入类型、帧产出时机、版本演进史 |
+| [host-conformance.md](host-conformance.md) | 宿主一致性套件：能力清单、`IHostUnderTest` 接入、14 个夹具、`DeclaredButUnverified`、版本协商与 checklist |
 
 ## 相关入口
 

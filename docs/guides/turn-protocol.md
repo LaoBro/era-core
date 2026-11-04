@@ -52,6 +52,10 @@
 > `generation` 与 v13 的 `revision` 都是"非 nullable 且每帧必现"的字段——客户端无需处理 `undefined`。
 > `revision` 是**显示修订号**，与 `generation`（按钮代号）不同；
 > 宿主用它对「初始快照 + 增量流」去重（丢弃 `revision <= snapshot.revision` 的帧）。
+>
+> 🔒 **去重只约束非终态帧**：`awaiting.ended` 出现（脚本终态或 B5 致命错误帧）时，
+> 即使 `revision` 不高于宿主已应用的值，该帧也**必须应用**，不得被 revision 去重丢弃。
+> 终态是"会话结束"这一事实的唯一载体，丢弃它会让宿主永远停在旧等待上。
 
 🔒 **v12 起不存在** `state` / `inputType` / `needValue` / `timeLimit` / `displayTime` /
 `timeUpMessage` / `timedOut` 这些顶层字段：它们承载的信息全部并入 `awaiting`。
@@ -352,7 +356,7 @@ v13 的 `revision` 才是单调递增的显示修订号；两者的区别写入�
 `awaiting.wait.timedOut`：快照里它恒不出现）。`awaiting` 与流上帧**同形**
 （同一个工厂、同一个 `req`/`state`），故晚加入者拿到的第一张画面不是另一套契约形状。
 `revision` 与流上帧同源；宿主在「先订阅、再取快照」后应丢弃 `revision <= snapshot.revision`
-的帧，再按 `revision` 顺序应用增量。
+的帧，再按 `revision` 顺序应用增量。终态/错误帧不受此去重约束（§2）。
 
 **晚加入流程**：`GET /snapshot` 建初始画面 → 订阅 `/ws` → 逐帧应用 `diff`。
 
