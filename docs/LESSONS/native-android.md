@@ -77,3 +77,14 @@
 - 解码失败或文件缺失画红色占位框并写 `EraCoreNative` 日志，不静默丢图。
 - 有 `image`/`shape` 时不要再画同片段的 `text`（`text` 是调试标记，缺图时 Protocol 会带 AltText）；都画会把占位框排到文字右侧，占位看不见。
 - `srcb`（悬停图）、多帧动图未实现。
+
+## 9. 游戏库：删除只对「已复制」生效，原目录只移除记录
+
+**场景**：玩家想清理已复制进私有目录的游戏、释放空间。
+
+**做法**：
+- 库页条目右侧操作按钮按来源分流：`Path` → `"移除记录"`（只删 settings.json 登记，**绝不删用户原目录**）；`Internal` → `"删除"`。
+- 删除是两段式确认：第一次点击文案变 `"确认删除？"`，3 秒内未再点自动复位；第二次点击才执行。不引入 MessageBox 依赖，也不用长按菜单。
+- `GameLibrary.DeleteInternalGame` 在后台线程递归删除 `filesDir/games/<dir>`（`.extracted-v1` 在目录内，随目录一起清掉），成功后清 `library.json` 的 `dir:<name>` 游玩记录；删除期间状态栏显示 `"正在删除…"` 并禁用导入类按钮。
+- 安全边界：目标只由 `GamesDirectory()` + 经 `SanitizeName` 校验的目录名拼出；删前用 `Path.GetFullPath` 规范化，要求目标以 `games/` 前缀开头、且父目录恰为 `games/`。越界或来源不是 `Internal` 一律拒绝。
+- 内置示例 `test_game` / `test_game_b` **允许删除**：`NativeRuntime` 启动时 `EnsureBuiltInGamesAsync` 会因 marker 缺失重新解压，成功文案会提示「下次启动时重新解压」。
