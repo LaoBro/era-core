@@ -93,7 +93,7 @@ internal static class NativeSkiaRenderer
         canvas.Save();
         canvas.ClipRect(new SKRect(0, 0, (float)viewportWidth, (float)viewportHeight));
 
-        DrawBackgrounds(canvas, frame, images);
+        DrawBackgrounds(canvas, frame, images, (float)viewportWidth, (float)viewportHeight);
 
         for (var index = window.StartIndex; index < window.EndIndexExclusive; index++)
         {
@@ -244,7 +244,12 @@ internal static class NativeSkiaRenderer
             button);
     }
 
-    private static void DrawBackgrounds(SKCanvas canvas, NativeFrame frame, NativeImageCache images)
+    private static void DrawBackgrounds(
+        SKCanvas canvas,
+        NativeFrame frame,
+        NativeImageCache images,
+        float viewportWidth,
+        float viewportHeight)
     {
         foreach (var background in frame.BackgroundLayers.OrderBy(b => b.Depth))
         {
@@ -252,7 +257,7 @@ internal static class NativeSkiaRenderer
                 continue;
 
             var image = images.Get(background.Src).Image;
-            if (image is null)
+            if (image is null || image.Width <= 0 || image.Height <= 0)
                 continue;
 
             var alpha = (byte)Math.Clamp((int)(background.Opacity * 255), 0, 255);
@@ -261,8 +266,19 @@ internal static class NativeSkiaRenderer
                 Color = new SKColor(255, 255, 255, alpha),
                 IsAntialias = false,
             };
-            // 背景固定不随内容滚动；超出视口的部分由外层 clip 截断。
-            canvas.DrawImage(image, new SKRect(0, 0, image.Width, image.Height), Sampling, paint);
+
+            // 与 Emuera WinForms BakeBackground 一致：等比缩放到「铺满画布」（cover），
+            // 取 max(宽比, 高比) 作唯一缩放系数（不拉伸变形）；水平居中、顶部对齐。
+            // 画布 = 当前视口；超出视口的部分由外层 clip 截断。depth/opacity 语义不变。
+            var coverScale = Math.Max(viewportWidth / image.Width, viewportHeight / image.Height);
+            var drawWidth = image.Width * coverScale;
+            var drawHeight = image.Height * coverScale;
+            var left = (viewportWidth - drawWidth) / 2f;
+            canvas.DrawImage(
+                image,
+                new SKRect(left, 0f, left + drawWidth, drawHeight),
+                Sampling,
+                paint);
         }
     }
 
