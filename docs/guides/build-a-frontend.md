@@ -72,25 +72,32 @@ await foreach (var turn in stream.Turns!.ReadAllAsync())
 
 ### 第四步：画出来
 
-一帧的画面是「行 → 条目 → 片段」三层：`snapshot.lines` 是行，每行 `entries` 是逻辑条目，每个条目 `segments` 是同样式的一段文本。按钮挂在条目上，不在片段上。
+一帧的画面是「行 → 条目 → 片段」三层：`snapshot.lines` 是行，每行 `entries` 是逻辑条目，每个条目 `segments` 是同样式的一段文本、一个图片或一个形状。按钮挂在条目上，不在片段上。背景图不在行里，单独放在 `snapshot.bgImages`。
 
 ```text
 foreach line in snapshot.lines:
-    offset = AlignGeometry.OffsetColumns(line.align, 文本宽度, 容器列数)
+    offset = AlignGeometry.OffsetColumns(line.align, 行内容宽度, 容器列数)
     foreach entry in line.entries:
         foreach seg in entry.segments:
-            用 seg.color/bold/italic/underline/strikeout/fontname 画 seg.text
+            有 seg.image → 按 image.width/height 绘制，占位宽度就是 image.width
+            有 seg.shape → 按 x/y/width/height 填充，占位宽度是 x + width
+            否则按 seg.color/bold/italic/underline/strikeout/fontname 画 seg.text
         if entry.button != null:
             把 entry.button.col + offset 与 entry.button.width 记成可点击区间
 ```
 
-三个要点：
+六个要点：
 
 - `align` 只决定整行的前导偏移；按钮的 `col` 是相对内容起点的列，命中时要加偏移。
 - 片段样式字段是「缺省即不加该样式」，不要把手动 `false` 当成特殊含义。
+- `image.src` 可能是根相对路径（如 `img/x.png`），也可能是 sprite 名（如 `FACE_1`，映射在 `resources/*.csv`）；两种都要能解析。
+- 图片/形状的占位宽度必须与绘制宽度同源：图片占 `image.width`，形状占 `x + width`。当成 0 宽会让整行在加图后跳动。
+- `image`/`shape` 有值时忽略同片段的 `text`：`text` 只是 CLI 调试标记（缺图时 Protocol 会带 AltText）。两者都画会把占位框推到文字右侧，缺图占位就看不见。
+- 带 `crop` 的图片按「裁剪矩形 + 整图负偏移」绘制（等价于 overflow 容器 + 负 margin）。
+- 背景图按 `depth` 升序绘制（小的在底层），`opacity` 是 0–1 的透明度，位置固定不随行滚动。
 - 行高、字号、默认前景色从 `host.Metrics` 读，不要写死。
 
-> 自查：文字、颜色、粗体/斜体、居中行都出现在正确位置；按钮能看出边界。
+> 自查：文字、颜色、粗体/斜体、居中行都出现在正确位置；按钮能看出边界；含图片的行宽度不变、背景层按 depth 叠在内容后面。
 
 ### 第五步：接受输入
 
@@ -144,7 +151,8 @@ Console.WriteLine(report.ToTextTable());
 |---|---|---|
 | 等长行替换后画面不刷新 | 只比较行数或 `generation` | 用 `revision` 判断是否需要重绘 |
 | 比例字体下按钮点偏 | 用「列宽 × 字号」推算像素位置 | 用实际文本测量结果定位按钮区间 |
-| 含内联图片的整行错位 | 未声明 `Images`，又把图片段当 0 宽 | 未声明时按图片声明的宽度补空白占位 |
+| 含内联图片的整行错位 | 图片段被当成 0 宽（不支持 `Images` 时直接跳过） | 不支持绘制也要按 `image.width` 补空白占位；形状占 `x + width` |
+| 立绘/CG 渲染后整片空白且无任何提示 | 图片路径解析失败或解码失败被静默吞掉 | 失败要有可观测后果：占位框或告警日志，不能静默丢图 |
 | 历史回看越翻越错 | 漏了 `shift_head` / `clear_screen` 的滚动补偿 | 先应用行操作，再按可见窗口重算滚动位置 |
 | 终态后界面卡死 | 仍在等输入，忽略 `awaiting.ended` | 终态到达即切换为结束界面并停止输入 |
 
@@ -180,6 +188,8 @@ Console.WriteLine(report.ToTextTable());
 - [ ] 未知 `awaiting` 键回退快照，并留下结构化 warning。
 - [ ] 按钮命中校验 `generation`，旧代按钮不提交。
 - [ ] `shift_head` 与 `clear_screen` 后滚动位置正确。
+- [ ] 图片按 `image.width` 占位并绘制，形状按 `x + width` 占位；背景按 `depth` 升序、`opacity` 透明绘制。
+- [ ] 图片解码失败或资源缺失有占位/日志，不静默丢图。
 - [ ] 文本、数字、任意键/回车、按钮四类输入都能推进。
 - [ ] 倒计时只在 `durationMs > 0` 且 `displayTime` 为真时显示。
 - [ ] manifest 只声明真实实现的能力。
@@ -191,7 +201,8 @@ Console.WriteLine(report.ToTextTable());
 
 | 术语 | 一句话解释 |
 |---|---|
-| `Snapshot` | 当前全量画面：所有行、背景、awaiting、`revision`。 |
+| `Snapshot` | 当前全量画面：所有行、`bgImages` 背景层、awaiting、`revision`。 |
+| `bgImages` | 背景图层：`src` + `depth`（小的在底层）+ `opacity`（0–1），固定不随行滚动。 |
 | `diff` / `lineOps` | 相对上一帧的行变化，按数组顺序应用。 |
 | `revision` | 画面修订号；每次重建递增，用来判断「这帧是否比我的画面新」。 |
 | `generation` | 按钮代号；按钮结构变化时递增，用来拒绝旧代按钮。 |

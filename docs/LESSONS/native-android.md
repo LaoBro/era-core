@@ -18,6 +18,8 @@
 | 10 | 虚拟滚动用 Hosting `VirtualWindow` | 不要自己算 first/last/贴底/滚动条；revision 变化才重绘 | 2026-11-03 |
 | 11 | 按钮命中用实测 run 位置 | `ButtonRef.col/width` 是字符列（按 FontSize/2），比例字体下会偏；命中区在绘制阶段由 Skia 度量产出 | 2026-11-03 |
 | 12 | 终态要按会话状态隐藏输入栏 | `QUIT` 后快照 `awaiting` 可能仍是旧输入等待；再用 `CoreSessionState.Completed/Stopped/Failed` 兜底 | 2026-11-03 |
+| 13 | 图片解码要缓存且不得阻塞绘制 | 后台解码 + 绘制线程只取就绪图；淘汰跳过正在返回的条目，否则释放正在绘制的 `SKImage` | 2026-11-04 |
+| 14 | 图片占位宽度 = 绘制宽度 | 统一走 `NativeGeometry.ImageWidth`；形状占 `x + width`。当 0 宽会让加图后行宽跳动 | 2026-11-04 |
 
 ---
 
@@ -57,3 +59,20 @@
 
 **场景**：`QUIT` 后最后一帧快照的 `awaiting` 可能仍是上一个输入等待，输入栏不消失。
 **解决**：`UpdateInputBar` 同时检查 `CoreSessionState.Completed/Stopped/Failed`，终态隐藏输入栏。
+
+## 8. 图片、形状与背景渲染
+
+**场景**：带立绘/CG/背景的 era 游戏在原生端出现大片空白；或加图后行宽跳动。
+
+**做法**：
+- `NativeRenderModel` 把 `SegmentImage`（含 `crop`）、`SegmentShape`、`snapshot.bgImages` 投影成 `NativeImage`/`NativeShape`/`NativeBgImage`，几何已是显示像素。
+- `NativeImageCache` 按 `src`（直接相对路径或 sprite 名）缓存 `SKBitmap` + `SKImage`；字节经 `GameTree.TryReadImage` 读取（与 `/assets` 同一套消毒 + sprite 名回退），后台线程解码（并发 2），绘制线程只取已就绪的结果，滚动不重复解码。预取只覆盖当前可见行窗口（含 overscan），避免为整份快照一次排队上千张图。
+- 占位/绘制宽度统一走 `NativeGeometry`：图片占 `image.width`，形状占 `x + width`（与 Web/CLI 一致）；缩放随 `NativeRenderStyle.Scale` 同比变化。
+- 裁剪（`crop`）用「裁剪矩形 + 整图负偏移」实现，等价于 Web 的掩膜 + 负 margin。
+- 背景固定不随内容滚动，按 `depth` 升序绘制，`opacity` 映射到 alpha。
+
+**坑**：
+- 淘汰只能发生在绘制线程，且必须跳过「正在返回给绘制线程」的条目；否则会释放正在绘制的 `SKImage`。
+- 解码失败或文件缺失画红色占位框并写 `EraCoreNative` 日志，不静默丢图。
+- 有 `image`/`shape` 时不要再画同片段的 `text`（`text` 是调试标记，缺图时 Protocol 会带 AltText）；都画会把占位框排到文字右侧，占位看不见。
+- `srcb`（悬停图）、`srcm`（点击取像素色）、多帧动图未实现；`srcm` 点击无像素值时拒绝提交并写日志，避免被当成 AnyKey。
