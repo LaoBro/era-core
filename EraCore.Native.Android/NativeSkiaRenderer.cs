@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Android.Util;
 using EraCore.Hosting;
 using EraCore.Native;
 using SkiaSharp;
@@ -20,7 +21,11 @@ namespace EraCore.Native.Android;
 /// </summary>
 internal static class NativeSkiaRenderer
 {
+    private const string LogTag = "EraCoreNative";
     private static readonly SKSamplingOptions Sampling = new(SKFilterMode.Linear, SKMipmapMode.None);
+
+    /// <summary>最近一次已打印的文本布局，避免每帧刷屏；字号/行高/度量变化时重新打印。</summary>
+    private static (float FontSize, float LineHeight, float Ascent, float Descent)? _lastLoggedLayout;
 
     /// <summary>segment 的字体变体（常规 / 粗体 / 斜体 / 粗斜体）。</summary>
     private enum Variant
@@ -84,8 +89,11 @@ internal static class NativeSkiaRenderer
 
         using var measureFont = new SKFont(NativeFontManager.Embedded, fontSize);
         var fontMetrics = measureFont.Metrics;
-        var textHeight = fontMetrics.Descent - fontMetrics.Ascent;
-        var baselineOffset = (lineHeight - textHeight) / 2f - fontMetrics.Ascent;
+        // 格子高度只来自 style.LineHeight；字体度量仅用于「行内」基线位置。
+        var baselineOffset = (float)NativeTextLayout.BaselineOffset(
+            lineHeight,
+            fontMetrics.Ascent,
+            fontMetrics.Descent);
 
         var hits = new List<NativeHitRegion>();
         var imageHits = new List<NativeImageHitRegion>();
@@ -94,6 +102,10 @@ internal static class NativeSkiaRenderer
         canvas.ClipRect(new SKRect(0, 0, (float)viewportWidth, (float)viewportHeight));
 
         DrawBackgrounds(canvas, frame, images, (float)viewportWidth, (float)viewportHeight);
+
+        float? previousBaseline = null;
+        var previousIndex = 0;
+        var measuredBaselineSpacing = lineHeight;
 
         for (var index = window.StartIndex; index < window.EndIndexExclusive; index++)
         {
@@ -142,9 +154,29 @@ internal static class NativeSkiaRenderer
                 continue;
 
             var startX = -sx + (float)AlignGeometry.OffsetPixels(line.Align, total, style.ContentWidth);
-            var lineTop = index * lineHeight - sy;
+            var lineTop = (float)NativeTextLayout.LineTop(index, lineHeight, sy);
             var baseline = lineTop + baselineOffset;
             var x = startX;
+
+            // 实测：相邻有内容的行之间，基线差必须正好是行高的整数倍（空行跳过）。
+            if (previousBaseline.HasValue)
+            {
+                var indexGap = index - previousIndex;
+                var expected = indexGap * lineHeight;
+                var actual = baseline - previousBaseline.Value;
+                if (Math.Abs(actual - expected) > 0.01f)
+                {
+                    Log.Warn(LogTag,
+                        $"baseline spacing mismatch: index {previousIndex}->{index} " +
+                        $"actual={actual:F2} expected={expected:F2} line={lineHeight:F2}");
+                }
+
+                if (indexGap == 1)
+                    measuredBaselineSpacing = actual;
+            }
+
+            previousBaseline = baseline;
+            previousIndex = index;
 
             foreach (var op in ops)
             {
@@ -179,6 +211,9 @@ internal static class NativeSkiaRenderer
             }
         }
 
+        // 回归诊断：打印字号/行高/字体度量/基线偏移，以及实际绘制到的相邻基线间距。
+        LogLayoutOnce(fontSize, lineHeight, fontMetrics.Ascent, fontMetrics.Descent, baselineOffset, measuredBaselineSpacing);
+
         canvas.Restore();
 
         if (window.ThumbHeight > 0)
@@ -195,6 +230,25 @@ internal static class NativeSkiaRenderer
         }
 
         return new NativeDrawHits(hits, imageHits);
+    }
+
+    /// <summary>打印一次文本布局（字号/行高/字体度量/基线偏移/实测基线间距），数值不变时不重复。</summary>
+    private static void LogLayoutOnce(
+        float fontSize,
+        float lineHeight,
+        float ascent,
+        float descent,
+        float baselineOffset,
+        float baselineSpacing)
+    {
+        var key = (fontSize, lineHeight, ascent, descent);
+        if (_lastLoggedLayout == key)
+            return;
+        _lastLoggedLayout = key;
+        Log.Info(LogTag,
+            $"text layout: font={fontSize:F1} line={lineHeight:F1} " +
+            $"ascent={ascent:F2} descent={descent:F2} baselineOffset={baselineOffset:F2} " +
+            $"baselineSpacing={baselineSpacing:F2}");
     }
 
     /// <summary>

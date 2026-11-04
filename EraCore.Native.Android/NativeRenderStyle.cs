@@ -1,4 +1,5 @@
 using System;
+using EraCore.Native;
 using MinorShift.Emuera.Sessions;
 
 namespace EraCore.Native.Android;
@@ -23,10 +24,11 @@ internal sealed record NativeRenderStyle(
     public static NativeRenderStyle From(HostMetrics metrics, AppSettings settings)
     {
         var fontSize = Math.Clamp((double)settings.FontSize, AppSettings.MinFontSize, AppSettings.MaxFontSize);
-        var scale = fontSize / Math.Max(1, metrics.FontSize);
-        var lineHeight = Math.Max(
-            1,
-            metrics.LineHeight * scale * Math.Clamp(settings.LineSpacing, AppSettings.MinLineSpacing, AppSettings.MaxLineSpacing));
+        var scale = NativeTextLayout.FontScale(fontSize, metrics.FontSize);
+        var lineHeight = NativeTextLayout.LineHeight(
+            metrics.LineHeight,
+            scale,
+            Math.Clamp(settings.LineSpacing, AppSettings.MinLineSpacing, AppSettings.MaxLineSpacing));
         var light = settings.Theme == AppTheme.Light;
 
         return new NativeRenderStyle(
