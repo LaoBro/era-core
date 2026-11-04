@@ -41,6 +41,13 @@ internal sealed record GameImportResult(GameLibraryEntry? Entry, string? Error)
     public static GameImportResult Failure(string error) => new(null, error);
 }
 
+/// <summary>删除结果：失败时 <see cref="Error"/> 是可展示的短消息。</summary>
+internal sealed record GameDeleteResult(bool Success, string? Error)
+{
+    public static GameDeleteResult Ok() => new(true, null);
+    public static GameDeleteResult Failure(string error) => new(false, error);
+}
+
 /// <summary>
 /// 游戏库：扫描私有目录 <c>games/*</c>、导入目录/压缩包、记录最后游玩时间、解压内置示例。
 ///
@@ -149,6 +156,16 @@ internal static class GameLibrary
         SavePlayed(context, played);
     }
 
+    /// <summary>清除 <c>library.json</c> 中的一个「最后游玩」记录键（删除游戏时调用）。</summary>
+    public static bool RemovePlayed(Context context, string key)
+    {
+        var played = LoadPlayed(context);
+        if (!played.Remove(key))
+            return false;
+        SavePlayed(context, played);
+        return true;
+    }
+
     /// <summary>
     /// 登记原目录（零拷贝）：只校验并把路径写入 settings.json，不复制、不写 marker、不触碰游戏文件。
     /// 校验顺序与提示一致：权限 → 目录存在 → 是 emuera 游戏 → 至少有一个 .erb。
@@ -201,6 +218,68 @@ internal static class GameLibrary
 
     /// <summary>只移除登记记录，<b>绝不删除用户原目录</b>。</summary>
     public static bool RemovePathSource(string rootPath) => NativeSettings.RemovePathSource(rootPath);
+
+    /// <summary>是否内置示例（<c>test_game</c> / <c>test_game_b</c>）：删除后下次启动会自动重新解压。</summary>
+    public static bool IsBuiltInGame(string name) =>
+        BuiltInGames.Any(g => string.Equals(g.Dir, name, StringComparison.Ordinal));
+
+    /// <summary>
+    /// 删除「已复制」游戏的私有目录，并清理 <c>library.json</c> 的 <c>dir:&lt;name&gt;</c> 记录。
+    ///
+    /// <para>安全边界：目标只由 <see cref="GamesDirectory"/> + 经 <see cref="SanitizeName"/>
+    /// 校验的目录名拼出；删除前用 <c>Path.GetFullPath</c> 规范化并做前缀 + 直接子目录双重校验，
+    /// 绝不触碰 <c>FilesDir/games</c> 之外或用户登记的原目录。标记 <c>.extracted-v1</c>
+    /// 位于游戏目录内，随递归删除一并清理。</para>
+    /// </summary>
+    public static GameDeleteResult DeleteInternalGame(Context context, GameLibraryEntry entry)
+    {
+        if (entry.Source != GameSourceKind.Internal)
+            return GameDeleteResult.Failure("只有「已复制」游戏可以删除；原目录请用「移除记录」。");
+
+        var name = entry.Name;
+        if (string.IsNullOrWhiteSpace(name) || !string.Equals(SanitizeName(name), name, StringComparison.Ordinal))
+            return GameDeleteResult.Failure("目录名不合法，已拒绝删除。");
+
+        string root;
+        string target;
+        try
+        {
+            root = Path.GetFullPath(GamesDirectory(context));
+            target = Path.GetFullPath(Path.Combine(root, name));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return GameDeleteResult.Failure("路径解析失败：" + ex.Message);
+        }
+
+        var rootPrefix = root.EndsWith(Path.DirectorySeparatorChar)
+            ? root
+            : root + Path.DirectorySeparatorChar;
+        var parent = Path.GetDirectoryName(target);
+        if (!target.StartsWith(rootPrefix, StringComparison.Ordinal)
+            || !string.Equals(parent is null ? null : Path.GetFullPath(parent), root, StringComparison.Ordinal))
+        {
+            Log.Warn(LogTag, $"delete rejected outside games/: target={target}");
+            return GameDeleteResult.Failure("目标路径越界，已拒绝删除。");
+        }
+
+        if (!Directory.Exists(target))
+            return GameDeleteResult.Failure("目录不存在：" + name);
+
+        try
+        {
+            Directory.Delete(target, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Warn(LogTag, $"delete internal game failed: name={name} error={ex.Message}");
+            return GameDeleteResult.Failure("删除目录失败：" + ex.Message);
+        }
+
+        var recordRemoved = RemovePlayed(context, entry.PlayedKey);
+        Log.Info(LogTag, $"internal game deleted: name={name} target={target} playedRecordRemoved={recordRemoved}");
+        return GameDeleteResult.Ok();
+    }
 
     private static bool ContainsErbFile(string root)
     {

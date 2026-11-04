@@ -40,6 +40,11 @@ internal sealed class GameLibraryView : Border
     private bool _busy;
     private CancellationTokenSource? _importCancellation;
 
+    // 「已复制」游戏的两段式删除确认：第一次点击进入确认态，3 秒内再次点击才执行。
+    private AvaloniaButton? _pendingDeleteButton;
+    private string? _pendingDeletePath;
+    private DispatcherTimer? _pendingDeleteTimer;
+
     public GameLibraryView()
     {
         Background = BackgroundBrush;
@@ -178,6 +183,7 @@ internal sealed class GameLibraryView : Border
     /// <param name="highlight">导入成功后高亮的条目名（让新游戏在列表中一眼可见）。</param>
     public void Refresh(string? highlight = null)
     {
+        ResetPendingDelete();
         _listPanel.Children.Clear();
         var context = NativeRuntime.AppContext;
         if (context is null)
@@ -230,8 +236,9 @@ internal sealed class GameLibraryView : Border
     }
 
     /// <summary>
-    /// 单个游戏卡片：名称 + 来源标签（原目录/已复制）+ 路径 + 最后游玩时间；
-    /// 原目录条目额外提供「移除记录」（只删登记，绝不动原目录）。路径不可用时点卡片只提示原因。
+    /// 单个游戏卡片：名称 + 来源标签（原目录/已复制）+ 路径 + 最后游玩时间。
+    /// 原目录条目右侧提供「移除记录」（只删登记，绝不动原目录）；已复制条目右侧提供「删除」
+    /// （两段式确认后递归删除私有目录并清游玩记录）。路径不可用时点卡片只提示原因。
     /// </summary>
     private Control BuildEntry(GameLibraryEntry entry, bool highlighted = false)
     {
@@ -312,10 +319,22 @@ internal sealed class GameLibraryView : Border
             GameSelected?.Invoke(entry);
         };
 
-        if (entry.Source != GameSourceKind.Path)
-            return button;
+        // 右侧独立操作按钮（不嵌套在卡片按钮里，避免点操作时同时进游戏）。
+        var action = entry.Source == GameSourceKind.Path
+            ? BuildRemoveRecordButton(entry)
+            : BuildDeleteButton(entry);
 
-        // 原目录条目：右侧独立「移除记录」按钮（不嵌套在卡片按钮里，避免点移除时同时进游戏）。
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        Grid.SetColumn(button, 0);
+        Grid.SetColumn(action, 1);
+        row.Children.Add(button);
+        row.Children.Add(action);
+        return row;
+    }
+
+    /// <summary>原目录条目：只移除登记记录，绝不删除原目录。</summary>
+    private AvaloniaButton BuildRemoveRecordButton(GameLibraryEntry entry)
+    {
         var remove = new AvaloniaButton
         {
             Content = "移除记录",
@@ -335,13 +354,98 @@ internal sealed class GameLibraryView : Border
                 ? $"已移除记录：{entry.Name}（原目录未删除）"
                 : "移除失败：记录不存在。";
         };
+        return remove;
+    }
 
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-        Grid.SetColumn(button, 0);
-        Grid.SetColumn(remove, 1);
-        row.Children.Add(button);
-        row.Children.Add(remove);
-        return row;
+    /// <summary>
+    /// 已复制条目：两段式确认后删除私有目录。
+    /// 第一次点击把按钮文案改为「确认删除？」并在 3 秒后自动复位；再次点击才真正删除。
+    /// 没有 MessageBox 依赖，也不会因列表中有多个删除按钮而误删别的条目。
+    /// </summary>
+    private AvaloniaButton BuildDeleteButton(GameLibraryEntry entry)
+    {
+        var delete = new AvaloniaButton
+        {
+            Content = "删除",
+            FontSize = 12,
+            MinHeight = 40,
+            Padding = new Thickness(10, 2),
+            Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Stretch,
+        };
+        delete.Click += async (_, _) =>
+        {
+            if (_busy)
+                return;
+            if (!ArmDelete(delete, entry))
+                return;
+
+            ResetPendingDelete();
+            var context = NativeRuntime.AppContext;
+            if (context is null)
+            {
+                _statusText.Text = "应用上下文尚未就绪…";
+                return;
+            }
+
+            delete.IsEnabled = false;
+            SetBusy(true, $"正在删除 {entry.Name}…");
+            try
+            {
+                var result = await Task.Run(
+                    () => GameLibrary.DeleteInternalGame(context, entry)).ConfigureAwait(true);
+                Refresh();
+                if (result.Success)
+                {
+                    _statusText.Text = $"已删除：{entry.Name}（私有目录与游玩记录已清理）"
+                        + (GameLibrary.IsBuiltInGame(entry.Name)
+                            ? "；内置示例将在下次启动时重新解压"
+                            : string.Empty);
+                }
+                else
+                {
+                    _statusText.Text = "删除失败：" + (result.Error ?? "未知错误");
+                }
+            }
+            catch (Exception ex)
+            {
+                Refresh();
+                _statusText.Text = "删除失败：" + ex.Message;
+            }
+            finally
+            {
+                SetBusy(false);
+            }
+        };
+        return delete;
+    }
+
+    /// <summary>进入/切换删除确认态；同一按钮第二次点击返回 true。</summary>
+    private bool ArmDelete(AvaloniaButton button, GameLibraryEntry entry)
+    {
+        if (_pendingDeletePath == entry.RootPath)
+            return true;
+
+        ResetPendingDelete();
+        _pendingDeletePath = entry.RootPath;
+        _pendingDeleteButton = button;
+        button.Content = "确认删除？";
+        _statusText.Text = $"再次点击「确认删除？」将删除 {entry.Name}（3 秒内有效）";
+        _pendingDeleteTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        _pendingDeleteTimer.Tick += (_, _) => ResetPendingDelete();
+        _pendingDeleteTimer.Start();
+        return false;
+    }
+
+    /// <summary>复位确认态：恢复文案并停止计时器。</summary>
+    private void ResetPendingDelete()
+    {
+        _pendingDeleteTimer?.Stop();
+        _pendingDeleteTimer = null;
+        if (_pendingDeleteButton is not null)
+            _pendingDeleteButton.Content = "删除";
+        _pendingDeleteButton = null;
+        _pendingDeletePath = null;
     }
 
     /// <summary>
