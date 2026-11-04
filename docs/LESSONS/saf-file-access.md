@@ -423,9 +423,19 @@ string[] csvFiles = Directory.GetFiles(Program.CsvDir, "*.CSV", option); // ← 
 
 **解决**：拍板取方案 A（推翻原 issue 倾向的 B）——accessor 精确 miss 时按父目录「OrdinalIgnoreCase 名映射」重试（`ConcurrentDictionary` 惰性缓存 + 写路径失效父目录），一处修完全部消费点。拍板依据（实施前逐点核对得出）：
 - 全部固定名消费点**本就经 accessor**（漏斗唯一）——「B 要动 ~24 个调用点」是在引擎层重复 accessor 的职责；
-- 容错是 **miss 驱动**：精确命中零开销（与改前逐位一致），miss 集中在加载期 ~20 个固定名 CSV，每目录枚举一次后全字典命中；
+- 容错是 **miss 驱动**：精确命中零开销（与改前逐位一致），miss 集中在加载期 ~20 个固定名 CSV；
 - 「掩盖大小写错误」不是新增面——SAF accessor 与 Windows 挂载本就掩盖，掩盖是引擎的既成契约；
 - B 会让 accessor 契约继续分裂（SAF 容错 / legacy 严格），违背 LESSONS #24「两端一致」。
+
+**后续（2026-11-05）**：方案 A 的首版只解析**最后一段**，且 `.../csv/` 这类带尾分隔符的路径会因
+`Path.GetFileName` 返回空而直接放弃容错——`GamePaths.Validate` 的 `MISSING_CSV` 在「磁盘只有 `CSV`」
+的大小写敏感挂载上仍会触发。现改为**逐段**解析：从最近的可信前缀逐级「精确名优先 → 忽略大小写唯一
+匹配 → 多候选放弃容错」，尾分隔符先裁后重建（中间各级都替换为真实名，后续 `.../csv/xxx.csv` 同样生效）；
+`GetFiles` / `GetDirectories` 的目录参数也走回退，否则校验通过后仍会在枚举入口抛
+`DirectoryNotFoundException`。缓存改为目录条目名 + 短 TTL（1s）+ 写操作失效 + 容量有界（首版是无失效
+边界的永久映射），避免导入/解压等绕过 accessor 的外部写入长期 stale。WSL2 ext4 探针（只有 `CSV`）：
+`DirectoryExists(".../csv/")` / `ReadAllText(".../csv/ABL.CSV")` 均为真，`GetFiles(".../csv/", *, 递归)`
+返回真实文件，1000 次大小写失配读取 35ms。
 
 **教训**：
 - **「今天能工作」要问是哪一层在工作**：OS 挂载的容错（FUSE）不是代码的容错。可移植性硬化类缺陷的触发条件是「换挂载」，真机验收与现有环境都覆盖不到——只能靠审计「谁在替谁容错」发现。

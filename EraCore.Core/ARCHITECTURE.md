@@ -152,7 +152,16 @@ HTTP body —— 的共同终点），再由 **`InputStateApplier`** 翻译成�
 > 「所有文件 IO 必须通过此接口，禁止直接调用 `File.*` / `Directory.*`。」
 
 两个实现：`FileSystemGameDirAccessor`（本地文件系统）与 `SafGameDirAccessor`（Android SAF `content://`，MAUI 侧），
-二者必须**契约一致**（精确名读取大小写不敏感，对齐 SAF 语义）。主要消费者：`GamePaths`（解析/校验游戏根）、
+二者必须**契约一致**：精确名读取大小写不敏感。本地实现在精确 miss 时**逐段**回退——从最近的可信前缀
+逐级解析，每段「精确名优先 → 忽略大小写唯一匹配 → 多候选放弃容错」；带尾分隔符的路径（`.../csv/`）
+同样解析并重建分隔符，`GetFiles` / `GetDirectories` 的目录参数也走同一回退（否则「只存在 `CSV`」的
+目录仍会在枚举入口抛 `DirectoryNotFoundException`）。回退结果每段都取自其父目录的条目枚举，不越界、
+不扩张符号链接；目录条目缓存为短 TTL（1s）+ 写操作失效 + 容量有界，精确命中不进入缓存。
+`SafGameDirAccessor` 按文档 ID 逐级解析并按条目名做 `OrdinalIgnoreCase` 匹配，但不会从「不存在的
+多级理论路径」向前回溯祖先——正常游戏路径先经 `ResolveSubPath` 解析出真实目录，故两侧在消费面等价。
+回退只作用于读取与枚举；写路径（`CreateDirectory` / `OpenWrite` / `Delete`）保持原样——大小写失配的
+写入会在请求名处新建条目，而非改写磁盘上的大小写变体。
+主要消费者：`GamePaths`（解析/校验游戏根）、
 `GameLibrary`（扫描）、`DirectoryLister`。宿主经 `GameTree`（绑定游戏根 + 访问实现的相对路径门面）访问游戏目录；
 目录选择器属于 UI 关注点，不在 IO 契约内。
 
