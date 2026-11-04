@@ -10,7 +10,7 @@ namespace EraCore.Native.Android;
 ///
 /// <para>字号默认跟随游戏（<see cref="AppSettings.FollowGameFontSize"/>），关闭跟随后才用用户绝对值；
 /// 行高严格 = 游戏行高 × 字号同比，没有行距倍率。可绘制宽度 =
-/// <c>WindowX - ShapePositionShift</c>（WinForms <c>Config.DrawableWidth</c>），
+/// <c>WindowX - ShapePositionShift × 2</c>（WinForms <c>Config.DrawableWidth</c>），
 /// 文本/图像/形状统一起点右移同一 shift，保证对齐基准是 game width 而不是视口宽度。</para>
 /// </summary>
 internal sealed record NativeRenderStyle(

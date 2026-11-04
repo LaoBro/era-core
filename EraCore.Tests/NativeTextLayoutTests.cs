@@ -121,11 +121,11 @@ public sealed class NativeTextLayoutTests
     }
 
     [Fact]
-    public void DrawableWidth_UsesGameWidthMinusShift()
+    public void DrawableWidth_UsesGameWidthMinusDoubleShift()
     {
-        // Config.DrawableWidth = WindowX - ShapePositionShift（单侧）。
-        Assert.Equal(758, NativeTextLayout.DrawableWidth(760, 16));
-        Assert.Equal(757, NativeTextLayout.DrawableWidth(760, 18));
+        // WinForms Config.DrawableWidth = WindowX - ShapePositionShift × 2。
+        Assert.Equal(756, NativeTextLayout.DrawableWidth(760, 16));
+        Assert.Equal(754, NativeTextLayout.DrawableWidth(760, 18));
         Assert.Equal(1, NativeTextLayout.DrawableWidth(0, 18));
     }
 

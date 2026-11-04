@@ -9,7 +9,7 @@ namespace EraCore.Native;
 /// 行高 = <c>Config.LineHeight</c>（一次字号同比，没有「行距倍率」）；
 /// 行顶按 WinForms 的贴底语义（最后一行下沿贴视口底，短内容整体下沉）；
 /// 行内基线取顶对齐（<c>-Ascent</c>），字体度量不参与行推进；
-/// 对齐宽度 = <c>Config.DrawableWidth</c> = <c>WindowX - Max(2, FontSize/6)</c>，
+/// 对齐宽度 = <c>Config.DrawableWidth</c> = <c>WindowX - Max(2, FontSize/6) × 2</c>，
 /// 文本起点再右移同一个 shift。</para>
 /// </summary>
 public static class NativeTextLayout
@@ -43,9 +43,14 @@ public static class NativeTextLayout
     public static double HorizontalShift(double gameFontSize)
         => Math.Max(2, Math.Floor(Math.Max(0, gameFontSize) / 6));
 
-    /// <summary>WinForms <c>Config.DrawableWidth</c>：<c>WindowX - ShapePositionShift</c>（单侧）。</summary>
+    /// <summary>
+    /// WinForms <c>Config.DrawableWidth</c>：<c>WindowX - ShapePositionShift × 2</c>。
+    /// 文本起点右移一个 shift、右侧再留一个 shift，左右留白对称。
+    /// （仓库内 <c>EraCore.Core</c> 的 Config 用的是单侧 shift，因为它不从 shift 起笔；
+    /// Native 按参考实现双侧收口，换行宽度仍小于该值，不会越界。）
+    /// </summary>
     public static double DrawableWidth(double gameWindowWidth, double gameFontSize)
-        => Math.Max(1, gameWindowWidth - HorizontalShift(gameFontSize));
+        => Math.Max(1, gameWindowWidth - HorizontalShift(gameFontSize) * 2);
 
     /// <summary>
     /// 短内容贴底补偿：WinForms 把最后一行下沿固定在视口底，
