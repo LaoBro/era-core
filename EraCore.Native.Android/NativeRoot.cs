@@ -111,6 +111,7 @@ internal sealed class NativeRoot : Border
 
         _view = new NativeGameView();
         _view.ButtonActivated += OnButtonActivated;
+        _view.ImageActivated += OnImageActivated;
         Grid.SetRow(_view, 1);
 
         _countdownText = new TextBlock
@@ -435,9 +436,9 @@ internal sealed class NativeRoot : Border
 
         if (button.Value is null)
         {
-            // srcm 取色按钮的值来自点击处像素；当前 Native 尚未实现像素取色，
+            // srcm 图片热区应走 OnImageActivated；这里只兜底协议缺值的普通按钮，
             // 显式拒绝并留下日志，避免把空字符串当成 AnyKey 推进。
-            Log.Warn(LogTag, "button: srcm pixel value unsupported; click ignored");
+            Log.Warn(LogTag, "button: value missing and no srcm hot zone hit; click ignored");
             return;
         }
 
@@ -448,5 +449,35 @@ internal sealed class NativeRoot : Border
         Log.Info(LogTag,
             $"button: value='{value}' isInteger={button.IsInteger} generation={button.Generation} " +
             $"revision={snapshot.revision}");
+    }
+
+    /// <summary>
+    /// srcm 图片热区点击：按点击处像素色（0xRRGGBB 的十进制）提交按钮输入值。
+    /// 取不到（未解码 / 越界 / 透明）时拒绝提交，并按原因写不同日志。
+    /// </summary>
+    private void OnImageActivated(NativeImageHitRegion region, Point point)
+    {
+        var view = _awaitingView;
+        var snapshot = _snapshot;
+        if (view is null || snapshot is null || !view.CanSubmitButton(region.Button.Generation, snapshot.generation))
+            return;
+        if (_submittedRevision == snapshot.revision)
+            return;
+
+        if (!_view.TryReadSrcmPixel(region, point, out var rgb, out var failure))
+        {
+            Log.Warn(LogTag,
+                $"button: srcm rejected ({failure}) srcm='{region.Srcm}' " +
+                $"at=({point.X:F1},{point.Y:F1})");
+            return;
+        }
+
+        var value = rgb.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _submittedRevision = snapshot.revision;
+        NativeRuntime.Submit(new InputFrame(Value: value));
+        _sendButton.IsEnabled = false;
+        Log.Info(LogTag,
+            $"button: srcm value='{value}' rgb=0x{rgb:X6} at=({point.X:F1},{point.Y:F1}) " +
+            $"srcm='{region.Srcm}' generation={region.Button.Generation} revision={snapshot.revision}");
     }
 }

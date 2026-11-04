@@ -34,9 +34,13 @@ internal sealed class NativeGameView : Control
     private Point _lastPoint;
     private double _dragDistance;
     private IReadOnlyList<NativeHitRegion> _hitRegions = Array.Empty<NativeHitRegion>();
+    private IReadOnlyList<NativeImageHitRegion> _imageRegions = Array.Empty<NativeImageHitRegion>();
     private long _version;
 
     public event Action<NativeButton>? ButtonActivated;
+
+    /// <summary>含 srcm 的图片热区被点击（坐标 = 控件局部坐标，即点击点）。</summary>
+    public event Action<NativeImageHitRegion, Point>? ImageActivated;
 
     public NativeGameView()
     {
@@ -115,7 +119,11 @@ internal sealed class NativeGameView : Control
         _images.PrefetchWindow(_frame, _scrollY, size.Height, _style.LineHeight);
         context.Custom(new GameDrawOp(
             new Rect(size), _frame, _style, _images, _scrollX, _scrollY, _version,
-            regions => _hitRegions = regions));
+            hits =>
+            {
+                _hitRegions = hits.Buttons;
+                _imageRegions = hits.Images;
+            }));
     }
 
     protected override Size ArrangeOverride(Size finalSize)
@@ -169,9 +177,22 @@ internal sealed class NativeGameView : Control
             return;
 
         // 轻点（非拖拽）→ 按钮命中；用绘制阶段产出的实际 run 位置，而非列×FontSize/2。
+        // srcm 图片热区优先：与 Web 一致，命中热区后由热区接管（取色失败也不再提交按钮原值）。
         if (_dragDistance < 8)
         {
             var position = e.GetPosition(this);
+            foreach (var region in _imageRegions)
+            {
+                if (!region.Contains(position))
+                    continue;
+                ImageActivated?.Invoke(region, position);
+                _dragging = false;
+                e.Pointer.Capture(null);
+                _followBottom = IsAtBottom();
+                e.Handled = true;
+                return;
+            }
+
             foreach (var region in _hitRegions)
             {
                 if (!region.Contains(position))
@@ -204,6 +225,76 @@ internal sealed class NativeGameView : Control
         return max <= 0 || _scrollY >= max - 2;
     }
 
+    /// <summary>
+    /// srcm 像素取色：把控件局部点击坐标按 Web 的 <c>clickToImagePixel</c> 语义反算回
+    /// 显示图的自然像素坐标，再读映射图（srcm）同坐标像素，返回 0xRRGGBB。
+    ///
+    /// <para>映射基准是**显示图 &lt;img&gt; 元素矩形**（有 crop 时是整图缩放后的矩形），
+    /// 与 Web 的 <c>img.getBoundingClientRect()</c> 完全对应：ypos / 行内游标 / 缩放都已在
+    /// 元素矩形里折进去；crop 的负偏移体现在元素矩形的起点。</para>
+    ///
+    /// <para>失败原因分开返回（未解码 / 越界 / 透明），调用方据此写不同日志并拒绝提交。</para>
+    /// </summary>
+    public bool TryReadSrcmPixel(NativeImageHitRegion region, Point point, out int rgb, out string failure)
+    {
+        rgb = 0;
+
+        var display = _images.Get(region.Src);
+        if (display.State != NativeImageState.Ready || display.Bitmap is not { } displayBitmap)
+        {
+            failure = $"display image not decoded (state={display.State}, detail={display.Detail ?? "none"})";
+            return false;
+        }
+
+        if (!region.ContainsElement(point))
+        {
+            failure = "point outside image element rect";
+            return false;
+        }
+
+        if (!region.ContainsVisible(point))
+        {
+            failure = "point outside crop window";
+            return false;
+        }
+
+        // Web：Math.floor(offset / rect.size * naturalSize)，再钳到 [0, natural-1]。
+        var offsetX = (point.X - region.ElementX) / region.ElementWidth * displayBitmap.Width;
+        var offsetY = (point.Y - region.ElementY) / region.ElementHeight * displayBitmap.Height;
+        var pixelX = Math.Clamp((int)Math.Floor(offsetX), 0, displayBitmap.Width - 1);
+        var pixelY = Math.Clamp((int)Math.Floor(offsetY), 0, displayBitmap.Height - 1);
+
+        var mapping = _images.Get(region.Srcm);
+        if (mapping.State != NativeImageState.Ready || mapping.Bitmap is not { } mapBitmap)
+        {
+            failure = $"srcm not decoded (state={mapping.State}, detail={mapping.Detail ?? "none"})";
+            return false;
+        }
+
+        if (pixelX >= mapBitmap.Width || pixelY >= mapBitmap.Height)
+        {
+            failure =
+                $"mapped pixel ({pixelX},{pixelY}) outside srcm {mapBitmap.Width}x{mapBitmap.Height}";
+            return false;
+        }
+
+        if (!_images.TryReadPixel(region.Srcm, pixelX, pixelY, out var color, out var detail))
+        {
+            failure = $"srcm pixel ({pixelX},{pixelY}) unavailable: {detail}";
+            return false;
+        }
+
+        if (color.Alpha == 0)
+        {
+            failure = $"transparent pixel at ({pixelX},{pixelY})";
+            return false;
+        }
+
+        rgb = (color.Red << 16) | (color.Green << 8) | color.Blue;
+        failure = string.Empty;
+        return true;
+    }
+
     private double MaxScrollY(double viewportHeight)
         => VirtualWindow.Compute(
             _frame.Lines.Count,
@@ -222,7 +313,7 @@ internal sealed class NativeGameView : Control
         private readonly double _scrollX;
         private readonly double _scrollY;
         private readonly long _version;
-        private readonly Action<IReadOnlyList<NativeHitRegion>> _onHitRegions;
+        private readonly Action<NativeDrawHits> _onHitRegions;
 
         public GameDrawOp(
             Rect bounds,
@@ -232,7 +323,7 @@ internal sealed class NativeGameView : Control
             double scrollX,
             double scrollY,
             long version,
-            Action<IReadOnlyList<NativeHitRegion>> onHitRegions)
+            Action<NativeDrawHits> onHitRegions)
         {
             Bounds = bounds;
             _frame = frame;

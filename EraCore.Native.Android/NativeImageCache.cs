@@ -107,6 +107,37 @@ internal sealed class NativeImageCache : IDisposable
     }
 
     /// <summary>
+    /// 在锁内读取一个像素：绘制线程的淘汰/退役与 <see cref="SKBitmap.GetPixel"/> 互斥，
+    /// 避免 UI 线程取色时位图刚好被下一帧淘汰并释放。
+    /// </summary>
+    public bool TryReadPixel(string src, int x, int y, out SKColor color, out string? detail)
+    {
+        color = default;
+        lock (_gate)
+        {
+            if (!_entries.TryGetValue(src.Trim(), out var entry) || entry is null)
+            {
+                detail = "not queued";
+                return false;
+            }
+            if (entry.Bitmap is not { } bitmap)
+            {
+                detail = entry.Failed ? entry.Detail ?? "decode failed" : "decoding";
+                return false;
+            }
+            if (x < 0 || y < 0 || x >= bitmap.Width || y >= bitmap.Height)
+            {
+                detail = $"out of bounds ({x},{y}) vs {bitmap.Width}x{bitmap.Height}";
+                return false;
+            }
+
+            color = bitmap.GetPixel(x, y);
+            detail = null;
+            return true;
+        }
+    }
+
+    /// <summary>
     /// 只预取当前可见行窗口（含 overscan）里的图片，避免为整份快照排队——
     /// 否则大图库会一次解码上千张、且被淘汰后反复重排。滚动时下一帧即补排新进入视口的图。
     /// </summary>
@@ -128,7 +159,12 @@ internal sealed class NativeImageCache : IDisposable
                 foreach (var segment in entry.Segments)
                 {
                     if (segment.Image is { Src: { Length: > 0 } src })
+                    {
                         Queue(src);
+                        // srcm 映射图与显示图一起预取：点击取色时两者都必须已解码。
+                        if (segment.Image.Srcm is { Length: > 0 } srcm)
+                            Queue(srcm);
+                    }
                 }
             }
         }

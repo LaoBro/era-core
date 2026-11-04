@@ -45,9 +45,10 @@ internal static class NativeSkiaRenderer
         float Width,
         Run? Run,
         NativeImage? Image,
-        NativeShape? Shape);
+        NativeShape? Shape,
+        NativeButton? Button);
 
-    public static IReadOnlyList<NativeHitRegion> Draw(
+    public static NativeDrawHits Draw(
         SKCanvas canvas,
         double viewportWidth,
         double viewportHeight,
@@ -59,7 +60,7 @@ internal static class NativeSkiaRenderer
     {
         canvas.Clear(ParseColor(style.BackgroundOverride ?? frame.BackgroundColor, new SKColor(0, 0, 0)));
         if (viewportWidth <= 0 || viewportHeight <= 0)
-            return Array.Empty<NativeHitRegion>();
+            return NativeDrawHits.Empty;
 
         var lineHeight = (float)Math.Max(1, style.LineHeight);
         var fontSize = (float)Math.Max(1, style.FontSize);
@@ -87,6 +88,7 @@ internal static class NativeSkiaRenderer
         var baselineOffset = (lineHeight - textHeight) / 2f - fontMetrics.Ascent;
 
         var hits = new List<NativeHitRegion>();
+        var imageHits = new List<NativeImageHitRegion>();
 
         canvas.Save();
         canvas.ClipRect(new SKRect(0, 0, (float)viewportWidth, (float)viewportHeight));
@@ -113,7 +115,7 @@ internal static class NativeSkiaRenderer
                         var variant = PickVariant(segment);
                         foreach (var run in SplitByTypeface(segment, variant, fonts))
                         {
-                            ops.Add(new DrawOp(run.Width, run, null, null));
+                            ops.Add(new DrawOp(run.Width, run, null, null, entry.Button));
                             total += run.Width;
                         }
                     }
@@ -121,7 +123,7 @@ internal static class NativeSkiaRenderer
                     if (segment.Image is { } image)
                     {
                         var width = NativeGeometry.ImageWidth(image, scale);
-                        ops.Add(new DrawOp(width, null, image, null));
+                        ops.Add(new DrawOp(width, null, image, null, entry.Button));
                         total += width;
                     }
 
@@ -129,7 +131,7 @@ internal static class NativeSkiaRenderer
                     {
                         // 与 Web 掩膜一致：形状占 x + width，起笔从 x 开始。
                         var width = NativeGeometry.ShapeWidth(shape, scale);
-                        ops.Add(new DrawOp(width, null, null, shape));
+                        ops.Add(new DrawOp(width, null, null, shape, entry.Button));
                         total += width;
                     }
                 }
@@ -153,6 +155,8 @@ internal static class NativeSkiaRenderer
                 else if (op.Image is { } image)
                 {
                     DrawImage(canvas, image, x, lineTop, scale, images);
+                    if (op.Button is { } button && !string.IsNullOrEmpty(image.Srcm))
+                        imageHits.Add(CreateImageHit(image, button, x, lineTop, lineHeight, scale));
                 }
                 else if (op.Shape is { } shape)
                 {
@@ -190,7 +194,54 @@ internal static class NativeSkiaRenderer
                 1.5f, 1.5f, thumb);
         }
 
-        return hits;
+        return new NativeDrawHits(hits, imageHits);
+    }
+
+    /// <summary>
+    /// srcm 热区几何：与 Web 的 <c>.term-mask</c> / <c>&lt;img&gt;</c> / <c>.term-crop</c> 三层对应。
+    /// 带 <c>crop</c> 时 <c>&lt;img&gt;</c> 是整图（<c>crop.imgWidth/imgHeight</c>，已含显示缩放），
+    /// 位置加负偏移 <c>crop.x/y</c>；可见区域仍是掩膜处的 <c>image.width/height</c>。
+    /// </summary>
+    private static NativeImageHitRegion CreateImageHit(
+        NativeImage image,
+        NativeButton button,
+        float x,
+        float lineTop,
+        float lineHeight,
+        float scale)
+    {
+        var visibleWidth = NativeGeometry.ImageWidth(image, scale);
+        var visibleHeight = Math.Max(0f, image.Height * scale);
+        var visibleTop = lineTop + image.YPos * scale;
+
+        var elementX = x;
+        var elementY = visibleTop;
+        var elementWidth = visibleWidth;
+        var elementHeight = visibleHeight;
+        if (image.Crop is { } crop)
+        {
+            elementX = x + crop.X * scale;
+            elementY = visibleTop + crop.Y * scale;
+            elementWidth = Math.Max(0f, crop.ImgWidth * scale);
+            elementHeight = Math.Max(0f, crop.ImgHeight * scale);
+        }
+
+        return new NativeImageHitRegion(
+            x,
+            lineTop,
+            visibleWidth,
+            lineHeight,
+            elementX,
+            elementY,
+            elementWidth,
+            elementHeight,
+            x,
+            visibleTop,
+            visibleWidth,
+            visibleHeight,
+            image.Src,
+            image.Srcm!,
+            button);
     }
 
     private static void DrawBackgrounds(SKCanvas canvas, NativeFrame frame, NativeImageCache images)
