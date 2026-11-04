@@ -71,7 +71,7 @@
 - `NativeImageCache` 按 `src`（直接相对路径或 sprite 名）缓存 `SKBitmap` + `SKImage`；字节经 `GameTree.TryReadImage` 读取（与 `/assets` 同一套消毒 + sprite 名回退），后台线程解码（并发 2），绘制线程只取已就绪的结果，滚动不重复解码。预取只覆盖当前可见行窗口（含 overscan），避免为整份快照一次排队上千张图。
 - 占位/绘制宽度统一走 `NativeGeometry`：图片占 `image.width`，形状占 `x + width`（与 Web/CLI 一致）；缩放随 `NativeRenderStyle.Scale` 同比变化。
 - 裁剪（`crop`）用「裁剪矩形 + 整图负偏移」实现，等价于 Web 的掩膜 + 负 margin。
-- 背景固定不随内容滚动，按 `depth` 升序绘制，`opacity` 映射到 alpha；等比缩放到铺满画布（cover：取 `max(视口宽/图宽, 视口高/图高)` 作唯一缩放系数，水平居中、顶部对齐，超出部分裁切）。**语义权威是 Emuera WinForms `BakeBackground`**，Native 已对齐它；Web 端 `.term-bg-img` 也已对齐（`width/height:100%` + `object-fit:cover` + `object-position:center top`），三端同一套规则。Web 的 cover 基准是游戏窗口列宽（`effectiveWindowWidth × scale`），屏幕更宽时右侧留白是有意设计、不是缺陷；Native 以整块画布为基准，属实现差异。
+- 背景不随竖向滚动（横向平移时随内容一起平移），按 `depth` 降序绘制（大的先画、在底层；小的后画、在上层，与 WinForms `BakeBackground` 的 `backgroundList.Sort` 一致），`opacity` 映射到 alpha；等比缩放到铺满画布（cover：取 `max(画布宽/图宽, 画布高/图高)` 作唯一缩放系数，水平居中、顶部对齐，超出部分裁切）。**语义权威是 Emuera WinForms `BakeBackground`**；画布宽 = 游戏画布宽（`HostMetrics.WindowWidth × Scale`），不是视口宽，屏幕更宽时右侧留白是有意设计。Web 的 cover 基准也是游戏窗口列宽（`effectiveWindowWidth × scale`），三端同一套规则。
 - `srcm`：绘制阶段为含 `srcm` 的图片记录三块矩形（掩膜行高带、`<img>` 元素矩形、裁剪可见矩形）；点击时按 Web `clickToImagePixel` 语义反算自然像素，再读映射图同坐标像素，以 `0xRRGGBB` 的十进制提交。映射图与显示图一起预取；显示图未解码 / 坐标越界 / 映射像素 alpha=0 分别拒绝并写不同日志。**跨前端已知差异**：Web `readPixel` 忽略 alpha，透明像素仍返回 RGB 并提交；Native **有意收紧**，遇到 `alpha == 0` 拒绝提交并记日志。这是产品取舍，不是 bug；若将来要与 Web 完全一致，只需放宽 `NativeGameView.TryReadSrcmPixel` 的透明判定。
 
 **坑**：

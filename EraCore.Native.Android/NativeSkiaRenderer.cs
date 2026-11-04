@@ -89,11 +89,8 @@ internal static class NativeSkiaRenderer
 
         using var measureFont = new SKFont(NativeFontManager.Embedded, fontSize);
         var fontMetrics = measureFont.Metrics;
-        // 格子高度只来自 style.LineHeight；字体度量仅用于「行内」基线位置。
-        var baselineOffset = (float)NativeTextLayout.BaselineOffset(
-            lineHeight,
-            fontMetrics.Ascent,
-            fontMetrics.Descent);
+        // 行高只来自 style.LineHeight；字体度量只决定「行内」基线位置（WinForms 顶对齐 = -Ascent）。
+        var baselineOffset = (float)NativeTextLayout.BaselineOffset(fontMetrics.Ascent);
 
         var hits = new List<NativeHitRegion>();
         var imageHits = new List<NativeImageHitRegion>();
@@ -101,7 +98,8 @@ internal static class NativeSkiaRenderer
         canvas.Save();
         canvas.ClipRect(new SKRect(0, 0, (float)viewportWidth, (float)viewportHeight));
 
-        DrawBackgrounds(canvas, frame, images, (float)viewportWidth, (float)viewportHeight);
+        // 背景的烘焙画布与 WinForms 一致：宽 = 游戏画布宽（不是视口宽），高 = 视口高。
+        DrawBackgrounds(canvas, frame, images, (float)style.ContentWidth, (float)viewportHeight, sx);
 
         float? previousBaseline = null;
         var previousIndex = 0;
@@ -153,8 +151,16 @@ internal static class NativeSkiaRenderer
             if (ops.Count == 0)
                 continue;
 
-            var startX = -sx + (float)AlignGeometry.OffsetPixels(line.Align, total, style.ContentWidth);
-            var lineTop = (float)NativeTextLayout.LineTop(index, lineHeight, sy);
+            // WinForms：文本/图像/形状统一起点右移 ShapePositionShift，
+            // 对齐宽度 = Config.DrawableWidth（game width，不是视口宽度）。
+            var startX = (float)style.Inset - sx
+                + (float)AlignGeometry.OffsetPixels(line.Align, total, style.DrawableWidth);
+            var lineTop = (float)NativeTextLayout.LineTop(
+                index,
+                lineHeight,
+                sy,
+                frame.Lines.Count,
+                viewportHeight);
             var baseline = lineTop + baselineOffset;
             var x = startX;
 
@@ -302,10 +308,12 @@ internal static class NativeSkiaRenderer
         SKCanvas canvas,
         NativeFrame frame,
         NativeImageCache images,
-        float viewportWidth,
-        float viewportHeight)
+        float canvasWidth,
+        float canvasHeight,
+        float scrollX)
     {
-        foreach (var background in frame.BackgroundLayers.OrderBy(b => b.Depth))
+        // WinForms BakeBackground：按 depth 降序（大的先画、在底层；小的后画、在上层）。
+        foreach (var background in frame.BackgroundLayers.OrderByDescending(b => b.Depth))
         {
             if (background.Opacity <= 0)
                 continue;
@@ -323,11 +331,11 @@ internal static class NativeSkiaRenderer
 
             // 与 Emuera WinForms BakeBackground 一致：等比缩放到「铺满画布」（cover），
             // 取 max(宽比, 高比) 作唯一缩放系数（不拉伸变形）；水平居中、顶部对齐。
-            // 画布 = 当前视口；超出视口的部分由外层 clip 截断。depth/opacity 语义不变。
-            var coverScale = Math.Max(viewportWidth / image.Width, viewportHeight / image.Height);
+            // 画布宽 = 游戏画布宽；横向平移时背景随内容一起平移（Native 额外能力）。
+            var coverScale = Math.Max(canvasWidth / image.Width, canvasHeight / image.Height);
             var drawWidth = image.Width * coverScale;
             var drawHeight = image.Height * coverScale;
-            var left = (viewportWidth - drawWidth) / 2f;
+            var left = (canvasWidth - drawWidth) / 2f - scrollX;
             canvas.DrawImage(
                 image,
                 new SKRect(left, 0f, left + drawWidth, drawHeight),
