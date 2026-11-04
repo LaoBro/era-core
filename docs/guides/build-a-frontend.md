@@ -94,7 +94,8 @@ foreach line in snapshot.lines:
 - 图片/形状的占位宽度必须与绘制宽度同源：图片占 `image.width`，形状占 `x + width`。当成 0 宽会让整行在加图后跳动。
 - `image`/`shape` 有值时忽略同片段的 `text`：`text` 只是 CLI 调试标记（缺图时 Protocol 会带 AltText）。两者都画会把占位框推到文字右侧，缺图占位就看不见。
 - 带 `crop` 的图片按「裁剪矩形 + 整图负偏移」绘制（等价于 overflow 容器 + 负 margin）。
-- 背景图按 `depth` 升序绘制（小的在底层），`opacity` 是 0–1 的透明度，位置固定不随行滚动。
+- 背景图按 `depth` 升序绘制（小的在底层），`opacity` 是 0–1 的透明度，位置固定不随行滚动。缩放策略要对齐 Emuera `BakeBackground`：等比 cover（`max(视口宽/图宽, 视口高/图高)`），水平居中、顶部对齐、超出裁切，不做非等比拉伸。**以 WinForms 为语义权威**：Native 已按 cover 实现；Web 端 `.term-bg-img` 目前仍是原图尺寸、左上对齐、不缩放，属于**Web 侧尚未跟进的已知差异**，补 Web 时应向此口径看齐。
+- `image.srcm` 是「点击图片取点击处像素色」的映射图：点击坐标按 `<img>` 元素矩形（含 `crop` 负偏移、`ypos`、缩放）反算显示图自然像素，再读 `srcm` 同坐标像素，`0xRRGGBB` 以十进制提交。**已知跨前端差异**：Web `readPixel` 忽略 alpha（透明像素照样返回 RGB），Native 有意收紧——透明像素拒绝提交并记日志；这是取舍不是 bug。
 - 行高、字号、默认前景色从 `host.Metrics` 读，不要写死。
 
 > 自查：文字、颜色、粗体/斜体、居中行都出现在正确位置；按钮能看出边界；含图片的行宽度不变、背景层按 depth 叠在内容后面。
@@ -188,7 +189,8 @@ Console.WriteLine(report.ToTextTable());
 - [ ] 未知 `awaiting` 键回退快照，并留下结构化 warning。
 - [ ] 按钮命中校验 `generation`，旧代按钮不提交。
 - [ ] `shift_head` 与 `clear_screen` 后滚动位置正确。
-- [ ] 图片按 `image.width` 占位并绘制，形状按 `x + width` 占位；背景按 `depth` 升序、`opacity` 透明绘制。
+- [ ] 图片按 `image.width` 占位并绘制，形状按 `x + width` 占位；背景按 `depth` 升序、`opacity` 透明绘制，并按 cover 等比缩放（不留拉伸变形）。
+- [ ] 含 `srcm` 的图片点击能按像素取色提交，未解码/越界/透明有区分日志。
 - [ ] 图片解码失败或资源缺失有占位/日志，不静默丢图。
 - [ ] 文本、数字、任意键/回车、按钮四类输入都能推进。
 - [ ] 倒计时只在 `durationMs > 0` 且 `displayTime` 为真时显示。
