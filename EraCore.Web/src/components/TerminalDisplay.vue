@@ -812,10 +812,18 @@ watch(() => game.inputInFlight, (inFlight) => {
   pointer-events: none;
 }
 .term-bg-img {
-  /* 原图尺寸渲染，左上对齐；opacity 由 inline style 逐张应用 */
+  /* 对齐 Emuera WinForms `BakeBackground` 与 Native 同一套语义：等比 cover——
+     以 max(容器宽/图宽, 容器高/图高) 放大到铺满，水平居中、顶部对齐，溢出裁切，
+     不做非等比拉伸。容器尺寸由 .term-bg-layer 约束（fixed、宽=游戏窗口宽、高=视口高），
+     因此背景固定在可视区域、不随虚拟滚动位移。opacity 由 inline style 逐张应用。
+     object-fit / object-position 均自 Chrome 32 可用，满足 chromium61 地板，无需 legacy 兜底。 */
   position: absolute;
   top: 0;
   left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
 }
 /* 虚拟滚动 spacer——撑总高度（itemCount * rowHeight），position:relative 让子元素 absolute 定位 */
 .term-virtual-spacer {
