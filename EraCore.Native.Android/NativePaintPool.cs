@@ -12,20 +12,28 @@ namespace EraCore.Native.Android;
 /// 上一帧的可变状态；若某个 draw 需要不同配置，必然落在不同 key 上，拿到另一支 paint。</para>
 ///
 /// <para>容量上界：<see cref="MaxEntries"/>。颜色来自游戏文本（通常只有几种），超过上限说明
-/// 颜色数量异常增长，此时整体释放并按需重建，避免无界增长；不保留跨帧可变语义，清空是安全的
-/// （paint 只在当前帧的绘制调用期间被引用）。</para>
+/// 颜色数量异常增长，此时在下一帧开始（<see cref="BeginFrame"/>）整体释放并按需重建。
+/// 不能在 <see cref="Get"/> 内即时释放：本帧已取出的 paint 可能仍被调用栈持有（如默认文本画笔），
+/// 帧内释放会造成「已释放对象仍被绘制」。</para>
 ///
 /// <para>线程约束：与 <c>NativeFontPool</c> 相同，调用方必须保证串行（Android 侧
 /// <c>ICustomDrawOperation.Render</c> 在同一渲染线程串行执行同一 view）；本类不加锁。</para>
 /// </summary>
 internal sealed class NativePaintPool
 {
-    /// <summary>池内 paint 数量上限；超过即整体释放重建。</summary>
+    /// <summary>池内 paint 数量上限；超过即在下一帧开始时整体释放重建。</summary>
     internal const int MaxEntries = 64;
 
     private readonly Dictionary<Key, SKPaint> _paints = new();
 
     public int Count => _paints.Count;
+
+    /// <summary>帧起点调用：上一帧绘制已结束，此时超限可安全整体释放。</summary>
+    public void BeginFrame()
+    {
+        if (_paints.Count > MaxEntries)
+            DisposeAll();
+    }
 
     /// <summary>取一支已配置的 paint；同 key 返回同一实例，调用方禁止修改其状态。</summary>
     public SKPaint Get(SKColor color, SKPaintStyle style = SKPaintStyle.Fill, float strokeWidth = 0f, bool antialias = false)
@@ -33,9 +41,6 @@ internal sealed class NativePaintPool
         var key = new Key(Pack(color), style, strokeWidth, antialias);
         if (_paints.TryGetValue(key, out var cached))
             return cached;
-
-        if (_paints.Count >= MaxEntries)
-            DisposeAll();
 
         var paint = new SKPaint
         {

@@ -62,6 +62,9 @@ internal static class NativeSkiaRenderer
         if (viewportWidth <= 0 || viewportHeight <= 0)
             return NativeDrawHits.Empty;
 
+        // 上一帧绘制已结束，帧起点是安全的池修剪时机。
+        paints.BeginFrame();
+
         var lineHeight = (float)Math.Max(1, style.LineHeight);
         var fontSize = (float)Math.Max(1, style.FontSize);
         var scale = (float)Math.Max(0.1, style.Scale);
