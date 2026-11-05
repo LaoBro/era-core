@@ -99,9 +99,13 @@ internal static class NativeSkiaRenderer
 #if DEBUG
         long layoutTicks = 0;
         long paintTicks = 0;
+        long paintTextTicks = 0;
+        long paintImageTicks = 0;
+        long paintShapeTicks = 0;
         var runs = 0;
         var chars = 0;
         var imageDraws = 0;
+        var textOps = 0;
 #endif
 
         // 量测委托按 (文本, 字体身份, 变体) 走长期字体池；每帧只分配这一个闭包。
@@ -141,9 +145,16 @@ internal static class NativeSkiaRenderer
 #if DEBUG
         var backgroundStart = Stopwatch.GetTimestamp();
 #endif
-        DrawBackgrounds(canvas, frame, images, (float)style.ContentWidth, (float)viewportHeight, sx);
+        var backgroundLayers = DrawBackgrounds(
+            canvas,
+            frame,
+            images,
+            (float)style.ContentWidth,
+            (float)viewportHeight,
+            sx);
 #if DEBUG
-        paintTicks += Stopwatch.GetTimestamp() - backgroundStart;
+        var backgroundTicks = Stopwatch.GetTimestamp() - backgroundStart;
+        paintTicks += backgroundTicks;
 #endif
 
         float? previousBaseline = null;
@@ -199,6 +210,9 @@ internal static class NativeSkiaRenderer
                 if (op.RunIndex >= 0)
                 {
                     var run = layout.Runs[op.RunIndex];
+#if DEBUG
+                    var opStart = Stopwatch.GetTimestamp();
+#endif
                     DrawRun(
                         canvas,
                         run,
@@ -207,14 +221,30 @@ internal static class NativeSkiaRenderer
                         x,
                         baseline,
                         fontSize);
+#if DEBUG
+                    paintTextTicks += Stopwatch.GetTimestamp() - opStart;
+                    textOps++;
+#endif
                 }
                 else if (op.Image is { } image)
                 {
+#if DEBUG
+                    var opStart = Stopwatch.GetTimestamp();
+#endif
                     DrawImageAndHit(image, op.Button, x, lineTop);
+#if DEBUG
+                    paintImageTicks += Stopwatch.GetTimestamp() - opStart;
+#endif
                 }
                 else if (op.Shape is { } shape)
                 {
+#if DEBUG
+                    var opStart = Stopwatch.GetTimestamp();
+#endif
                     DrawShape(canvas, shape, x, lineTop, scale);
+#if DEBUG
+                    paintShapeTicks += Stopwatch.GetTimestamp() - opStart;
+#endif
                 }
 
                 x += op.Width;
@@ -259,7 +289,9 @@ internal static class NativeSkiaRenderer
 #endif
             DrawImageAndHit(extent.Image, extent.Button, startX + prefix.Value, lineTop);
 #if DEBUG
-            paintTicks += Stopwatch.GetTimestamp() - paintStart;
+            var imageTicks = Stopwatch.GetTimestamp() - paintStart;
+            paintTicks += imageTicks;
+            paintImageTicks += imageTicks;
 #endif
         }
 
@@ -318,11 +350,19 @@ internal static class NativeSkiaRenderer
                 1.5f, 1.5f, thumb);
         }
 #if DEBUG
-        paintTicks += Stopwatch.GetTimestamp() - scrollbarStart;
+        var chromeTicks = Stopwatch.GetTimestamp() - scrollbarStart;
+        paintTicks += chromeTicks;
 
         sample.PlanTicks = planTicks;
         sample.LayoutTicks = layoutTicks;
         sample.PaintTicks = paintTicks;
+        sample.PaintTextTicks = paintTextTicks;
+        sample.PaintBackgroundTicks = backgroundTicks;
+        sample.PaintImageTicks = paintImageTicks;
+        sample.PaintShapeTicks = paintShapeTicks;
+        sample.PaintChromeTicks = chromeTicks;
+        sample.BackgroundLayers = backgroundLayers;
+        sample.TextOps = textOps;
         sample.PlanSteps = plan.Count;
         sample.VisibleLines = window.EndIndexExclusive - window.StartIndex;
         sample.ImageDraws = imageDraws;
@@ -424,7 +464,8 @@ internal static class NativeSkiaRenderer
             button);
     }
 
-    private static void DrawBackgrounds(
+    /// <summary>按 depth 降序绘制背景层，返回实际绘制的层数（跳过透明层与未解码层）。</summary>
+    private static int DrawBackgrounds(
         SKCanvas canvas,
         NativeFrame frame,
         NativeImageCache images,
@@ -432,6 +473,8 @@ internal static class NativeSkiaRenderer
         float canvasHeight,
         float scrollX)
     {
+        var drawn = 0;
+
         // WinForms BakeBackground：按 depth 降序（大的先画、在底层；小的后画、在上层）。
         foreach (var background in frame.BackgroundLayers.OrderByDescending(b => b.Depth))
         {
@@ -461,7 +504,10 @@ internal static class NativeSkiaRenderer
                 new SKRect(left, 0f, left + drawWidth, drawHeight),
                 Sampling,
                 paint);
+            drawn++;
         }
+
+        return drawn;
     }
 
     private static void DrawRun(
