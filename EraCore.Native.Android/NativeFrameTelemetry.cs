@@ -47,6 +47,15 @@ internal struct NativeFrameSample
 
     /// <summary>实际绘制的文本 op 数。</summary>
     public int TextOps;
+
+    /// <summary>本次 Draw 的 blob 命中数。</summary>
+    public int TextBlobHits;
+
+    /// <summary>本次 Draw 的 blob 未命中（新建 blob）数。</summary>
+    public int TextBlobMisses;
+
+    /// <summary>本次 Draw 因代理对等原因回退到直接 DrawText 的 run 数。</summary>
+    public int TextBlobFallbacks;
 }
 
 /// <summary>
@@ -178,6 +187,8 @@ internal sealed class NativeFrameTelemetry
             $"pChrome={Avg(b.PaintChromeMs, n):F2} [ms] " +
             $"alloc={Avg(b.AllocKb, n):F1}/{b.AllocKb.Max:F1}KB " +
             $"bgLayers={Avg(b.BgLayers, n):F1} textOps={Avg(b.TextOps, n):F1} " +
+            $"blobs={Avg(b.TextBlobHits, n):F1}h/{Avg(b.TextBlobMisses, n):F1}m/" +
+            $"{Avg(b.TextBlobFallbacks, n):F1}f " +
             $"imageOps={Avg(b.ImageDraws, n):F1} runs={Avg(b.Runs, n):F0} chars={Avg(b.Chars, n):F0} " +
             $"layout={Avg(b.LayoutMs, n):F2} lines={Avg(b.VisibleLines, n):F1}";
     }
@@ -217,6 +228,9 @@ internal sealed class NativeFrameTelemetry
         public Agg LayoutMisses = new();
         public Agg BgLayers = new();
         public Agg TextOps = new();
+        public Agg TextBlobHits = new();
+        public Agg TextBlobMisses = new();
+        public Agg TextBlobFallbacks = new();
 
         public void Add(NativeFrameSample s, double drawMs, double allocKb)
         {
@@ -243,6 +257,9 @@ internal sealed class NativeFrameTelemetry
             LayoutMisses.Add(s.LayoutMisses);
             BgLayers.Add(s.BackgroundLayers);
             TextOps.Add(s.TextOps);
+            TextBlobHits.Add(s.TextBlobHits);
+            TextBlobMisses.Add(s.TextBlobMisses);
+            TextBlobFallbacks.Add(s.TextBlobFallbacks);
         }
     }
 

@@ -45,7 +45,8 @@ internal static class NativeSkiaRenderer
         double scrollY,
         NativeLineLayoutCache layoutCache,
         NativeFontPool<SKFont> fonts,
-        NativePaintPool paints
+        NativePaintPool paints,
+        NativeTextBlobCache textBlobs
 #if DEBUG
         , NativeFrameTelemetry telemetry
 #endif
@@ -80,10 +81,14 @@ internal static class NativeSkiaRenderer
 
         // 行布局缓存：frame 引用或 style 全字段变化时整体清空（口径与原 NativeImageLayoutCache 一致）。
         layoutCache.Prepare(frame, style);
+        // 文本 blob 缓存与行布局共用同一失效口径；滚动帧内复用，换帧/换 style 清空。
+        textBlobs.Prepare(frame, style);
 #if DEBUG
         // 命中/未命中按「本次 Draw 的增量」上报；累计值会在同一帧的多次重绘里越滚越大，不可当速率看。
         var cacheHitsStart = layoutCache.Hits;
         var cacheMissesStart = layoutCache.Misses;
+        var blobHitsStart = textBlobs.Hits;
+        var blobMissesStart = textBlobs.Misses;
 #endif
 
         var defaultPaint = paints.Get(
@@ -110,6 +115,7 @@ internal static class NativeSkiaRenderer
         var chars = 0;
         var imageDraws = 0;
         var textOps = 0;
+        var blobFallbacks = 0;
 #endif
 
         // 量测委托按 (文本, 字体身份, 变体) 走长期字体池；每帧只分配这一个闭包。
@@ -217,19 +223,30 @@ internal static class NativeSkiaRenderer
                     var run = layout.Runs[op.RunIndex];
 #if DEBUG
                     var opStart = Stopwatch.GetTimestamp();
-#endif
+                    blobFallbacks += DrawRun(
+                        canvas,
+                        run,
+                        fonts.Get(run.Typeface, run.Variant, fontSize),
+                        defaultPaint,
+                        paints,
+                        textBlobs,
+                        x,
+                        baseline,
+                        fontSize) ? 0 : 1;
+                    var paintOpTicks = Stopwatch.GetTimestamp();
+                    paintTextTicks += paintOpTicks - opStart;
+                    textOps++;
+#else
                     DrawRun(
                         canvas,
                         run,
                         fonts.Get(run.Typeface, run.Variant, fontSize),
                         defaultPaint,
                         paints,
+                        textBlobs,
                         x,
                         baseline,
                         fontSize);
-#if DEBUG
-                    paintTextTicks += Stopwatch.GetTimestamp() - opStart;
-                    textOps++;
 #endif
                 }
                 else if (op.Image is { } image)
@@ -370,6 +387,9 @@ internal static class NativeSkiaRenderer
         sample.PaintChromeTicks = chromeTicks;
         sample.BackgroundLayers = backgroundLayers;
         sample.TextOps = textOps;
+        sample.TextBlobHits = textBlobs.Hits - blobHitsStart;
+        sample.TextBlobMisses = textBlobs.Misses - blobMissesStart;
+        sample.TextBlobFallbacks = blobFallbacks;
         sample.PlanSteps = plan.Count;
         sample.VisibleLines = window.EndIndexExclusive - window.StartIndex;
         sample.ImageDraws = imageDraws;
@@ -514,12 +534,17 @@ internal static class NativeSkiaRenderer
         return drawn;
     }
 
-    private static void DrawRun(
+    /// <summary>
+    /// 绘制一个文本 run。返回是否走了 blob 路径（false = 因不保证几何一致而回退到直接 DrawText）。
+    /// 两条路径使用同一支字体、同一坐标、同一 paint，仅「预先 shaping」与「即时 shaping」的区别。
+    /// </summary>
+    private static bool DrawRun(
         SKCanvas canvas,
         NativeLayoutRun run,
         SKFont font,
         SKPaint defaultPaint,
         NativePaintPool paints,
+        NativeTextBlobCache textBlobs,
         float x,
         float baseline,
         float fontSize)
@@ -532,7 +557,23 @@ internal static class NativeSkiaRenderer
             ? defaultPaint
             : paints.Get(color, SKPaintStyle.Fill, 0f, antialias: true);
 
-        canvas.DrawText(run.Text, x, baseline, font, paint);
+        // 代理对（BMP 外字符）在 blob 与 DrawText 的 UTF-16→glyph 映射上不保证逐像素一致，
+        // 这类 run 回退到直接绘制；ERB 文本里几乎不出现，回退占比应由诊断字段可观测。
+        // blob 创建失败（SKTextBlob.Create 返回 null）同样回退。
+        var usedBlob = !HasSurrogatePair(run.Text);
+        var blob = usedBlob
+            ? textBlobs.Get(run.Text, run.Typeface, run.Variant, fontSize, font)
+            : null;
+
+        if (blob is not null)
+        {
+            canvas.DrawText(blob, x, baseline, paint);
+        }
+        else
+        {
+            usedBlob = false;
+            canvas.DrawText(run.Text, x, baseline, font, paint);
+        }
 
         if (run.Underline || run.Strikeout)
         {
@@ -552,6 +593,19 @@ internal static class NativeSkiaRenderer
                 canvas.DrawLine(x, y, x + run.Width, y, decor);
             }
         }
+
+        return usedBlob;
+    }
+
+    /// <summary>文本中是否存在成对的 UTF-16 代理（BMP 外字符）。</summary>
+    private static bool HasSurrogatePair(string text)
+    {
+        for (var i = 0; i < text.Length - 1; i++)
+        {
+            if (char.IsHighSurrogate(text[i]) && char.IsLowSurrogate(text[i + 1]))
+                return true;
+        }
+        return false;
     }
 
     private static void DrawImage(
