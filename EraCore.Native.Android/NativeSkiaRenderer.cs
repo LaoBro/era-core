@@ -28,39 +28,11 @@ internal static class NativeSkiaRenderer
     /// <summary>最近一次已打印的文本布局，避免每帧刷屏；字号/行高/度量变化时重新打印。</summary>
     private static (float FontSize, float LineHeight, float Ascent, float Descent)? _lastLoggedLayout;
 
-    /// <summary>segment 的字体变体（常规 / 粗体 / 斜体 / 粗斜体）。</summary>
-    private enum Variant
-    {
-        Regular,
-        Bold,
-        Italic,
-        BoldItalic,
-    }
-
-    private readonly record struct Run(
-        string Text,
-        SKFont Font,
-        float Width,
-        string? Color,
-        bool Underline,
-        bool Strikeout);
-
-    private readonly record struct EntryLayout(float StartX, float Width, NativeButton? Button);
-
-    private readonly record struct DrawOp(
-        float Width,
-        Run? Run,
-        NativeImage? Image,
-        NativeShape? Shape,
-        NativeButton? Button,
-        int EntryIndex,
-        int SegmentIndex);
-
-    /// <summary>一行的完整按行布局（含字体 run，只在本次绘制内有效）。</summary>
-    private readonly record struct LineLayout(
-        float TotalWidth,
-        List<DrawOp> Ops,
-        List<EntryLayout> Entries);
+    /// <summary>
+    /// 字体身份的稳定解析：<c>NativeFontManager.Resolve</c> 返回静态缓存的同一实例，
+    /// 故身份对象可跨帧保存在行布局缓存里（缓存不持有 <see cref="SKFont"/>）。
+    /// </summary>
+    private static readonly Func<char, object> ResolveTypeface = static c => NativeFontManager.Resolve(c);
 
     public static NativeDrawHits Draw(
         SKCanvas canvas,
@@ -71,7 +43,8 @@ internal static class NativeSkiaRenderer
         NativeImageCache images,
         double scrollX,
         double scrollY,
-        NativeImageLayoutCache layoutCache
+        NativeLineLayoutCache layoutCache,
+        NativeFontPool<SKFont> fonts
 #if DEBUG
         , NativeFrameTelemetry telemetry
 #endif
@@ -101,14 +74,21 @@ internal static class NativeSkiaRenderer
             new VirtualWindowOptions(style.LineHeight));
         var sy = (float)window.ScrollY;
 
-        var fonts = new FontCache(fontSize);
+        // 行布局缓存：frame 引用或 style 全字段变化时整体清空（口径与原 NativeImageLayoutCache 一致）。
+        layoutCache.Prepare(frame, style);
+#if DEBUG
+        // 命中/未命中按「本次 Draw 的增量」上报；累计值会在同一帧的多次重绘里越滚越大，不可当速率看。
+        var cacheHitsStart = layoutCache.Hits;
+        var cacheMissesStart = layoutCache.Misses;
+#endif
+
         using var defaultPaint = new SKPaint
         {
             Color = ParseColor(style.ForeColor, new SKColor(0xC0, 0xC0, 0xC0)),
             IsAntialias = true,
         };
 
-        using var measureFont = new SKFont(NativeFontManager.Embedded, fontSize);
+        var measureFont = fonts.Get(NativeFontManager.Embedded, NativeFontVariant.Regular, fontSize);
         var fontMetrics = measureFont.Metrics;
         // 行高只来自 style.LineHeight；字体度量只决定「行内」基线位置（WinForms 顶对齐 = -Ascent）。
         var baselineOffset = (float)NativeTextLayout.BaselineOffset(fontMetrics.Ascent);
@@ -123,6 +103,36 @@ internal static class NativeSkiaRenderer
         var chars = 0;
         var imageDraws = 0;
 #endif
+
+        // 量测委托按 (文本, 字体身份, 变体) 走长期字体池；每帧只分配这一个闭包。
+        var measureText = (string text, object typeface, NativeFontVariant variant) =>
+            fonts.Get(typeface, variant, fontSize).MeasureText(text);
+
+        // 按行布局缓存：命中直接复用实测宽度；未命中才量测（逐字符 Resolve + MeasureText + Substring）。
+        // 窗口行与窗口外锚定行共用这一层，不再有第二套图片布局缓存。
+        NativeLineLayout GetLayout(int index)
+        {
+            if (layoutCache.TryGet(index) is { } cached)
+                return cached;
+
+#if DEBUG
+            var layoutStart = Stopwatch.GetTimestamp();
+#endif
+            var built = NativeLineLayoutBuilder.Build(
+                frame.Lines[index],
+                scale,
+                ResolveTypeface,
+                measureText,
+                out var measuredRuns,
+                out var measuredChars);
+#if DEBUG
+            layoutTicks += Stopwatch.GetTimestamp() - layoutStart;
+            runs += measuredRuns;
+            chars += measuredChars;
+#endif
+            layoutCache.Store(index, built);
+            return built;
+        }
 
         canvas.Save();
         canvas.ClipRect(new SKRect(0, 0, (float)viewportWidth, (float)viewportHeight));
@@ -144,21 +154,12 @@ internal static class NativeSkiaRenderer
         void DrawLineSlot(int index)
         {
             var line = frame.Lines[index];
-#if DEBUG
-            var layoutStart = Stopwatch.GetTimestamp();
-#endif
-            var layout = LayoutLine(line, fonts, scale);
-#if DEBUG
-            var layoutEnd = Stopwatch.GetTimestamp();
-            layoutTicks += layoutEnd - layoutStart;
-#endif
+            var layout = GetLayout(index);
             if (layout.Ops.Count == 0)
-            {
-#if DEBUG
-                paintTicks += Stopwatch.GetTimestamp() - layoutEnd;
-#endif
                 return;
-            }
+#if DEBUG
+            var paintStart = Stopwatch.GetTimestamp();
+#endif
 
             // WinForms：文本/图像/形状统一起点右移 ShapePositionShift，
             // 对齐宽度 = Config.DrawableWidth（game width，不是视口宽度）。
@@ -195,13 +196,17 @@ internal static class NativeSkiaRenderer
 
             foreach (var op in layout.Ops)
             {
-                if (op.Run is { } run)
+                if (op.RunIndex >= 0)
                 {
-#if DEBUG
-                    runs++;
-                    chars += run.Text.Length;
-#endif
-                    DrawRun(canvas, run, defaultPaint, x, baseline, fontSize);
+                    var run = layout.Runs[op.RunIndex];
+                    DrawRun(
+                        canvas,
+                        run,
+                        fonts.Get(run.Typeface, run.Variant, fontSize),
+                        defaultPaint,
+                        x,
+                        baseline,
+                        fontSize);
                 }
                 else if (op.Image is { } image)
                 {
@@ -228,43 +233,18 @@ internal static class NativeSkiaRenderer
             }
 
 #if DEBUG
-            paintTicks += Stopwatch.GetTimestamp() - layoutEnd;
+            paintTicks += Stopwatch.GetTimestamp() - paintStart;
 #endif
         }
 
-        // 锚定行在窗口外的跨界图片：只画图，不画该行文本；x 由按行缓存布局算，避免每帧量测。
+        // 锚定行在窗口外的跨界图片：只画图，不画该行文本；x 由同一按行缓存布局算。
         void DrawImageSlot(NativeImageExtent extent)
         {
-#if DEBUG
-            var slotStart = Stopwatch.GetTimestamp();
-            long slotLayoutTicks = 0;
-#endif
             var line = frame.Lines[extent.LineIndex];
-            var layout = layoutCache.GetOrCreate(
-                frame,
-                style,
-                extent.LineIndex,
-                () =>
-                {
-#if DEBUG
-                    var missStart = Stopwatch.GetTimestamp();
-#endif
-                    var built = BuildImageLayout(LayoutLine(line, fonts, scale));
-#if DEBUG
-                    var missTicks = Stopwatch.GetTimestamp() - missStart;
-                    slotLayoutTicks += missTicks;
-                    layoutTicks += missTicks;
-#endif
-                    return built;
-                });
+            var layout = GetLayout(extent.LineIndex);
             var prefix = layout.PrefixOf(extent.EntryIndex, extent.SegmentIndex);
             if (prefix is null)
-            {
-#if DEBUG
-                paintTicks += Stopwatch.GetTimestamp() - slotStart - slotLayoutTicks;
-#endif
                 return;
-            }
 
             var startX = (float)style.Inset - sx
                 + (float)AlignGeometry.OffsetPixels(line.Align, layout.TotalWidth, style.DrawableWidth);
@@ -274,9 +254,12 @@ internal static class NativeSkiaRenderer
                 sy,
                 frame.Lines.Count,
                 viewportHeight);
+#if DEBUG
+            var paintStart = Stopwatch.GetTimestamp();
+#endif
             DrawImageAndHit(extent.Image, extent.Button, startX + prefix.Value, lineTop);
 #if DEBUG
-            paintTicks += Stopwatch.GetTimestamp() - slotStart - slotLayoutTicks;
+            paintTicks += Stopwatch.GetTimestamp() - paintStart;
 #endif
         }
 
@@ -345,81 +328,34 @@ internal static class NativeSkiaRenderer
         sample.ImageDraws = imageDraws;
         sample.Runs = runs;
         sample.Chars = chars;
-        sample.LayoutHits = layoutCache.Hits;
-        sample.LayoutMisses = layoutCache.Misses;
+        sample.LayoutHits = layoutCache.Hits - cacheHitsStart;
+        sample.LayoutMisses = layoutCache.Misses - cacheMissesStart;
 #endif
 
         return new NativeDrawHits(hits, imageHits);
     }
 
     /// <summary>
-    /// 按行构建 op 流与 entry 布局。窗口行与「窗口外锚定行」共用同一套累加口径，
-    /// 避免为跨界图片另写一份宽度计算而与绘制顺序漂移。
+    /// 字体池工厂（Android 侧）：按 (字体身份, 变体, 字号) 创建 <see cref="SKFont"/>。
+    /// 池按字号变化整体 Dispose，因此不会跨字号复用；变体通过 <c>Embolden/SkewX</c> 模拟。
     /// </summary>
-    private static LineLayout LayoutLine(NativeLine line, FontCache fonts, float scale)
+    internal static SKFont CreateFont(object typeface, NativeFontVariant variant, float size)
     {
-        var ops = new List<DrawOp>(line.Entries.Count);
-        var entries = new List<EntryLayout>(line.Entries.Count);
-        var total = 0f;
-
-        for (var entryIndex = 0; entryIndex < line.Entries.Count; entryIndex++)
+        var font = new SKFont((SKTypeface)typeface, size);
+        switch (variant)
         {
-            var entry = line.Entries[entryIndex];
-            var entryStart = total;
-
-            for (var segmentIndex = 0; segmentIndex < entry.Segments.Count; segmentIndex++)
-            {
-                var segment = entry.Segments[segmentIndex];
-                // 与 Web 一致：有 image/shape 时忽略 text（text 只是 CLI 调试标记，
-                // 缺图时 Protocol 仍会带 AltText）。否则会把占位框推到文字右侧，导致看不见。
-                var hasVisual = segment.Image is not null || segment.Shape is not null;
-                if (!hasVisual && !string.IsNullOrEmpty(segment.Text))
-                {
-                    var variant = PickVariant(segment);
-                    foreach (var run in SplitByTypeface(segment, variant, fonts))
-                    {
-                        ops.Add(new DrawOp(
-                            run.Width, run, null, null, entry.Button, entryIndex, segmentIndex));
-                        total += run.Width;
-                    }
-                }
-
-                if (segment.Image is { } image)
-                {
-                    var width = NativeGeometry.ImageWidth(image, scale);
-                    ops.Add(new DrawOp(
-                        width, null, image, null, entry.Button, entryIndex, segmentIndex));
-                    total += width;
-                }
-
-                if (segment.Shape is { } shape)
-                {
-                    // 与 Web 掩膜一致：形状占 x + width，起笔从 x 开始。
-                    var width = NativeGeometry.ShapeWidth(shape, scale);
-                    ops.Add(new DrawOp(
-                        width, null, null, shape, entry.Button, entryIndex, segmentIndex));
-                    total += width;
-                }
-            }
-
-            entries.Add(new EntryLayout(entryStart, total - entryStart, entry.Button));
+            case NativeFontVariant.Bold:
+                font.Embolden = true;
+                break;
+            case NativeFontVariant.Italic:
+                font.SkewX = -0.25f;
+                break;
+            case NativeFontVariant.BoldItalic:
+                font.Embolden = true;
+                font.SkewX = -0.25f;
+                break;
         }
-
-        return new LineLayout(total, ops, entries);
-    }
-
-    /// <summary>从整行布局提取图片的 op 前缀宽度；与 <see cref="LayoutLine"/> 的累加顺序同源。</summary>
-    private static NativeLineImageLayout BuildImageLayout(LineLayout layout)
-    {
-        var images = new List<NativeLineImageOffset>();
-        var prefix = 0f;
-        foreach (var op in layout.Ops)
-        {
-            if (op.Image is not null)
-                images.Add(new NativeLineImageOffset(op.EntryIndex, op.SegmentIndex, prefix));
-            prefix += op.Width;
-        }
-        return new NativeLineImageLayout(layout.TotalWidth, images);
+        return font;
     }
 
     /// <summary>打印一次文本布局（字号/行高/字体度量/基线偏移/实测基线间距），数值不变时不重复。</summary>
@@ -530,7 +466,8 @@ internal static class NativeSkiaRenderer
 
     private static void DrawRun(
         SKCanvas canvas,
-        Run run,
+        NativeLayoutRun run,
+        SKFont font,
         SKPaint defaultPaint,
         float x,
         float baseline,
@@ -552,7 +489,7 @@ internal static class NativeSkiaRenderer
             ownsPaint = true;
         }
 
-        canvas.DrawText(run.Text, x, baseline, run.Font, paint);
+        canvas.DrawText(run.Text, x, baseline, font, paint);
 
         if (run.Underline || run.Strikeout)
         {
@@ -662,88 +599,6 @@ internal static class NativeSkiaRenderer
             IsAntialias = false,
         };
         canvas.DrawRect(new SKRect(left, top, left + width, top + height), paint);
-    }
-
-    private static Variant PickVariant(NativeSegment segment)
-    {
-        if (segment.Bold)
-            return segment.Italic ? Variant.BoldItalic : Variant.Bold;
-        return segment.Italic ? Variant.Italic : Variant.Regular;
-    }
-
-    /// <summary>
-    /// 按码点选择「内置字体 → 系统回退字体」的 typeface，把文本切成同字体的连续 run。
-    /// 每个 run 用同一种字体度量与绘制，宽度总和与命中区保持一致。
-    /// </summary>
-    private static List<Run> SplitByTypeface(NativeSegment segment, Variant variant, FontCache fonts)
-    {
-        var text = segment.Text;
-        var runs = new List<Run>();
-        var start = 0;
-        var current = NativeFontManager.Resolve(text[0]);
-        for (var i = 1; i < text.Length; i++)
-        {
-            var typeface = NativeFontManager.Resolve(text[i]);
-            if (typeface == current)
-                continue;
-            runs.Add(MakeRun(segment, text.Substring(start, i - start), current, variant, fonts));
-            start = i;
-            current = typeface;
-        }
-        runs.Add(MakeRun(segment, text.Substring(start), current, variant, fonts));
-        return runs;
-    }
-
-    private static Run MakeRun(
-        NativeSegment segment,
-        string text,
-        SKTypeface typeface,
-        Variant variant,
-        FontCache fonts)
-    {
-        var font = fonts.Get(typeface, variant);
-        var width = font.MeasureText(text);
-        return new Run(text, font, width, segment.Color, segment.Underline, segment.Strikeout);
-    }
-
-    /// <summary>按 (typeface, 变体) 缓存本次绘制的 <see cref="SKFont"/>；绘制结束统一释放。</summary>
-    private sealed class FontCache : IDisposable
-    {
-        private readonly float _size;
-        private readonly Dictionary<(SKTypeface, Variant), SKFont> _fonts = new();
-
-        public FontCache(float size) => _size = size;
-
-        public SKFont Get(SKTypeface typeface, Variant variant)
-        {
-            var key = (typeface, variant);
-            if (_fonts.TryGetValue(key, out var cached))
-                return cached;
-
-            var font = new SKFont(typeface, _size);
-            switch (variant)
-            {
-                case Variant.Bold:
-                    font.Embolden = true;
-                    break;
-                case Variant.Italic:
-                    font.SkewX = -0.25f;
-                    break;
-                case Variant.BoldItalic:
-                    font.Embolden = true;
-                    font.SkewX = -0.25f;
-                    break;
-            }
-            _fonts[key] = font;
-            return font;
-        }
-
-        public void Dispose()
-        {
-            foreach (var font in _fonts.Values)
-                font.Dispose();
-            _fonts.Clear();
-        }
     }
 
     /// <summary>"#RRGGBB" → SKColor；非法值回退。</summary>

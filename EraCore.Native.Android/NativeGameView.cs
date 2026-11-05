@@ -29,7 +29,9 @@ internal sealed class NativeGameView : Control
     private NativeFrame _frame = NativeFrame.Empty;
     private NativeRenderStyle _style = NativeRenderStyle.From(NativeDefaults.Metrics, AppSettings.Default);
     private readonly NativeImageCache _images;
-    private readonly NativeImageLayoutCache _imageLayout = new();
+    private readonly NativeLineLayoutCache _lineLayout = new();
+    private readonly NativeFontPool<SKFont> _fonts =
+        new(NativeSkiaRenderer.CreateFont);
 #if DEBUG
     private readonly NativeFrameTelemetry _telemetry = new();
 #endif
@@ -132,7 +134,7 @@ internal sealed class NativeGameView : Control
         _telemetry.AddPrefetchTicks(Stopwatch.GetTimestamp() - prefetchStart);
 #endif
         context.Custom(new GameDrawOp(
-            new Rect(size), _frame, _style, _images, _imageLayout, _scrollX, _scrollY, _version,
+            new Rect(size), _frame, _style, _images, _lineLayout, _fonts, _scrollX, _scrollY, _version,
             hits =>
             {
                 _hitRegions = hits.Buttons;
@@ -330,7 +332,8 @@ internal sealed class NativeGameView : Control
         private readonly NativeFrame _frame;
         private readonly NativeRenderStyle _style;
         private readonly NativeImageCache _images;
-        private readonly NativeImageLayoutCache _imageLayout;
+        private readonly NativeLineLayoutCache _lineLayout;
+        private readonly NativeFontPool<SKFont> _fonts;
         private readonly double _scrollX;
         private readonly double _scrollY;
         private readonly long _version;
@@ -344,7 +347,8 @@ internal sealed class NativeGameView : Control
             NativeFrame frame,
             NativeRenderStyle style,
             NativeImageCache images,
-            NativeImageLayoutCache imageLayout,
+            NativeLineLayoutCache lineLayout,
+            NativeFontPool<SKFont> fonts,
             double scrollX,
             double scrollY,
             long version,
@@ -358,7 +362,8 @@ internal sealed class NativeGameView : Control
             _frame = frame;
             _style = style;
             _images = images;
-            _imageLayout = imageLayout;
+            _lineLayout = lineLayout;
+            _fonts = fonts;
             _scrollX = scrollX;
             _scrollY = scrollY;
             _version = version;
@@ -399,7 +404,8 @@ internal sealed class NativeGameView : Control
                 _images,
                 _scrollX,
                 _scrollY,
-                _imageLayout
+                _lineLayout,
+                _fonts
 #if DEBUG
                 , _telemetry
 #endif
