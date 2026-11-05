@@ -88,13 +88,14 @@ export function readSrcmPixelFromContext(
 }
 
 /**
- * 背景层排序：按 depth 升序返回（渲染时数组后者在上）。
- * WinForms 是"降序烘焙"——depth 大的图最后绘制、视觉在上；CSS 层叠同 z-index 下
- * DOM 顺序后者在上，故升序数组 + 顺序渲染 = 大 depth 在上，语义对齐。
+ * 背景层排序：按 depth **降序**返回（渲染时数组前者先画、在底层）。
+ * WinForms `EmueraConsole.BakeBackground` 对 `backgroundList` 按 depth 降序烘焙——
+ * 大 depth 先画、在底层；小 depth 后画、在上层。CSS 层叠同 z-index 下按 DOM 顺序后者
+ * 在上，故降序数组 + 顺序渲染 = 大 depth 在底层，语义对齐。
  * 不修改入参（返回新数组）。
  */
 export function sortBgImages(bgImages: BgImageState[]): BgImageState[] {
-  return [...bgImages].sort((a, b) => a.depth - b.depth);
+  return [...bgImages].sort((a, b) => b.depth - a.depth);
 }
 
 // 模块级单例离屏 canvas + ctx 缓存（spec B：srcm 读像素 canvas 复用）。

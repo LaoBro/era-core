@@ -113,7 +113,7 @@ export interface SegmentShape {
 /**
  * v8：背景图状态（C# `BgImageState`，issue 02）。
  * - `src`：游戏根相对路径
- * - `depth`：z 序（WinForms 降序烘焙——depth 大的在上）
+ * - `depth`：z 序（WinForms 降序烘焙——depth 大的先画、在底层）
  * - `opacity`：0.0-1.0
  */
 export interface BgImageState {
@@ -253,7 +253,7 @@ export interface DisplayLine {
  *
  * - `lines`：当前所有显示行
  * - `bgColor`：当前背景色（CSS hex 形如 "#FF0000"，可能为 null）
- * - `bgImages`：v8——当前背景图列表（depth 降序应用；空/省略 = 无背景图）
+ * - `bgImages`：v8——当前背景图列表（按 depth 降序烘焙：大 depth 在底层；空/省略 = 无背景图）
  * - `awaiting`：**v12 唯一契约字段（必填）**——与流上帧**同形**（同一个 C# 工厂、
  *   同一个 req/state），故晚加入者拿到的第一张画面不是另一套契约形状。
  *   TINPUT 计时元数据随 `awaiting.wait` 一并下发（顶层不再重复）。
@@ -270,7 +270,7 @@ export interface DisplayLine {
 export interface DisplaySnapshot {
   lines: DisplayLine[];
   bgColor?: string | null;
-  /** v8：背景图列表。depth 降序应用；省略/空 = 无背景图（C# 紧凑归一：空列表不进 JSON）。 */
+  /** v8：背景图列表。按 depth 降序烘焙（大 depth 在底层）；省略/空 = 无背景图（C# 紧凑归一：空列表不进 JSON）。 */
   bgImages?: BgImageState[] | null;
   /** v12：唯一契约字段（必填；与流上帧同形）。见上方说明。 */
   awaiting: AwaitInfo;

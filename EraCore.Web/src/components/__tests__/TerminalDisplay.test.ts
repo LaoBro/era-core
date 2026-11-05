@@ -322,6 +322,9 @@ describe('TerminalDisplay: 贴底渲染样式契约', () => {
     const body = rule![1];
     expect(body).toContain('min-height: 100%');
     expect(body).toContain('justify-content: flex-end');
+    // 左右 padding（WinForms ShapePositionShift）是在固定 width 内扣的——必须 border-box，
+    // 否则窗口外框会被撑成 游戏宽度 + 2×shift。
+    expect(body).toContain('box-sizing: border-box');
   });
 
   it('.term-virtual-spacer 必须是 flex:none（贴底改 flex 列后不得被压扁）', () => {
@@ -329,6 +332,31 @@ describe('TerminalDisplay: 贴底渲染样式契约', () => {
     const rule = /\.term-virtual-spacer\s*\{([^}]*)\}/.exec(src);
     expect(rule, '.term-virtual-spacer 规则缺失').toBeTruthy();
     expect(rule![1]).toContain('flex: none');
+  });
+});
+
+describe('TerminalDisplay: 对齐基准（WinForms DrawableWidth / ShapePositionShift）', () => {
+  it('内容盒左右 padding = max(2, floor(fontSize/6)) × scale；宽度仍是游戏窗口宽', async () => {
+    const { wrapper, game } = await mountWith([line([imgSeg()])]);
+    // 对齐基准必须是游戏画布宽（windowWidth），不是视口宽。
+    game.setGameLayout({ fontSize: 24, windowWidth: 640, lineHeight: 28 });
+    game.setScale(1.5);
+    await wrapper.vm.$nextTick();
+
+    const style = wrapper.find('.terminal-content').attributes('style') ?? '';
+    expect(style).toContain('width: 960px'); // 640 × 1.5（游戏宽，而非视口宽）
+    // WinForms shift = max(2, FontSize/6) = max(2, 4) = 4，随 scale 等比 → 6px
+    expect(style).toContain('padding-left: 6px');
+    expect(style).toContain('padding-right: 6px');
+  });
+
+  it('fontSize 缺失时回落 18 → shift = 3px（scale=1）', async () => {
+    // 显式 scale=1：前一个用例 setScale(1.5) 会写 localStorage，同文件后续 store 会继承。
+    const { wrapper } = await mountWith([line([imgSeg()])], [], 1);
+    const style = wrapper.find('.terminal-content').attributes('style') ?? '';
+    expect(style).toContain('width: 760px'); // 默认游戏宽
+    expect(style).toContain('padding-left: 3px');
+    expect(style).toContain('padding-right: 3px');
   });
 });
 
@@ -447,7 +475,7 @@ describe('TerminalDisplay: srcm 热区点击', () => {
 });
 
 describe('TerminalDisplay: 背景图层', () => {
-  it('bgImages 渲染 + depth 排序（大 depth 在后/在上）+ opacity', async () => {
+  it('bgImages 渲染 + depth 降序（DOM 前者在下/大 depth 在底层）+ opacity', async () => {
     const bgImages: BgImageState[] = [
       { src: 'bg/top.png', depth: 5, opacity: 0.8 },
       { src: 'bg/bottom.png', depth: 0, opacity: 0.4 },
@@ -462,12 +490,16 @@ describe('TerminalDisplay: 背景图层', () => {
 
     const imgs = wrapper.findAll('.term-bg-img');
     expect(imgs).toHaveLength(3);
-    // 排序后：depth 0 → 2 → 5（渲染顺序=升序，大 depth 最后画=视觉在上）
-    expect(imgs[0].attributes('src')).toBe('/assets/bg/bottom.png');
+    // 排序后：depth 5 → 2 → 0（DOM 序=降序，大 depth 先画=在底层，小 depth 后画=在上层）
+    expect(imgs[0].attributes('src')).toBe('/assets/bg/top.png');
     expect(imgs[1].attributes('src')).toBe('/assets/bg/mid.png');
-    expect(imgs[2].attributes('src')).toBe('/assets/bg/top.png');
-    expect(imgs[0].attributes('style')).toContain('opacity: 0.4');
-    expect(imgs[2].attributes('style')).toContain('opacity: 0.8');
+    expect(imgs[2].attributes('src')).toBe('/assets/bg/bottom.png');
+    expect(imgs[0].attributes('style')).toContain('opacity: 0.8');
+    expect(imgs[2].attributes('style')).toContain('opacity: 0.4');
+    // 层叠只靠 DOM 顺序——单张背景图不设 z-index（避免负 z-index / 层叠上下文在旧 WebView 不稳）
+    for (const img of imgs) {
+      expect(img.attributes('style') ?? '').not.toContain('z-index');
+    }
   });
 
   it('无 bgImages 不渲染背景层', async () => {

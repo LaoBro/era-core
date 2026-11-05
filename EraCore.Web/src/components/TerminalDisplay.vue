@@ -64,6 +64,10 @@ import type { ButtonValue, SegmentImage, DisplayLine, DisplayEntry } from '../ty
  * （`width: windowWidth × scale px; margin: 0`）约束在游戏设计宽度内、靠左对齐。
  * 这解决了固定宽度布局导致的一半黑一半灰/滚动条不在窗口边缘的问题，
  * 同时保持居中行在游戏宽度内居中（不受窗口实际宽度影响）。
+ * 左右各留 `ShapePositionShift`（`max(2, floor(fontSize/6)) × scale`）的内边距——
+ * 复现 WinForms `DrawableWidth = WindowX − 2 × shift` 的可绘制区：文本左起点 = shift，
+ * 右对齐终点 = WindowX − shift，居中中心仍在 WindowX/2。背景层是 fixed 定位，
+ * 不受该 padding 影响，仍按整幅游戏宽度 cover。
  * 靠左对齐为右侧虚拟按键预留空间；窗口宽于屏幕时保持原宽自然溢出到屏幕外，
  * 由 `.terminal` 的 overflow-x 横向滚动兜底。
  * - `font-size` = `game.fontSize` 像素（默认 18）
@@ -174,15 +178,32 @@ const terminalStyle = computed<Record<string, string>>(() => {
 });
 
 /**
+ * 文本可绘制区的左右留白（px，含 effectiveScale）——对齐 WinForms
+ * `Config.DrawingParam_ShapePositionShift = Math.Max(2, FontSize / 6)`（int 除法截断）。
+ * WinForms 文本绘制起点是 `PointX + shift`，对齐基准是
+ * `DrawableWidth = WindowX − 2 × shift`；Web 用左右 padding 复现同一可绘制区。
+ */
+const horizontalShiftPx = computed(
+  () => Math.max(2, Math.floor(effectiveFontSize.value / 6)) * game.effectiveScale,
+);
+
+/**
  * 游戏窗口（.terminal-content）内联 style——游戏输出存放在与游戏宽度相同的窗口里：
  * 固定宽 = 游戏设计宽度 × 缩放系数，靠左对齐（margin: 0，为右侧虚拟按键预留空间）。
  * 窗口比屏幕宽时保持原宽、自然溢出到屏幕外（由 .terminal 的 overflow-x 横向滚动兜底）。
  * 缩放（effectiveScale）同时作用于字体（terminalStyle）与窗口宽度，内容与窗口等比缩放，
  * 横线等覆盖整行的元素始终铺满窗口（不会因内容缩小而脱离窗口）。
+ *
+ * 左右 padding = `horizontalShiftPx`（全局 `box-sizing: border-box`，故窗口外框仍是
+ * 游戏宽度，内容盒 = 游戏宽度 − 2 × shift = WinForms DrawableWidth）。于是
+ * `text-align` 的 left/center/right 分别落在 shift / WindowX÷2 / WindowX − shift，
+ * 与 WinForms ConsoleDisplayLine 的对齐公式一致。背景层 fixed 定位不受 padding 影响。
  */
 const contentStyle = computed<Record<string, string>>(() => ({
   width: `${effectiveWindowWidth.value * game.effectiveScale}px`,
   margin: '0',
+  paddingLeft: `${horizontalShiftPx.value}px`,
+  paddingRight: `${horizontalShiftPx.value}px`,
 }));
 
 /**
@@ -544,8 +565,9 @@ function onTerminalClick(e: MouseEvent): void {
 // ---------- 背景图层（issue 04，spec Q6） ----------
 //
 // .terminal 内 fixed 定位层：滚动不随内容动（WinForms 主画布语义）；z-index 低于文本层。
-// sortBgImages 升序 → 渲染顺序小 depth 在前、大 depth 在后（CSS 后者在上）=
-// WinForms 降序烘焙（大 depth 最终在上）。opacity 逐张应用。
+// sortBgImages 降序 → 渲染顺序大 depth 在前（在底层）、小 depth 在后（在上层），
+// 与 WinForms BakeBackground 的降序烘焙一致。层叠只靠 DOM 顺序，不给单张图设 z-index。
+// opacity 逐张应用。
 // 掩膜渲染（image/rect 三态）已下沉到 SegmentRenderer.vue（review 2026-08-06 抽重复）。
 // 过滤 opacity<=0 的隐藏层（spec D）：透明度 0 = 不显示，渲染与否视觉等价；
 // 过滤后可避免隐藏层请求资源 + 解码整图 + 上传 GPU 纹理的纯浪费。filter 保序，与 sort 顺序等价。
@@ -789,7 +811,10 @@ watch(() => game.inputInFlight, (inFlight) => {
   box-sizing: border-box;
 }
 .terminal-content {
-  /* 固定宽 = 游戏设计宽度（× scale），靠左对齐；width/margin 由 inline style 动态绑定 */
+  /* 固定宽 = 游戏设计宽度（× scale），靠左对齐；width/margin/左右 padding 由 inline style 动态绑定 */
+  /* 左右 padding = WinForms ShapePositionShift，width 含 padding（border-box）——
+     内容盒宽度 = 游戏宽度 − 2 × shift = WinForms DrawableWidth。 */
+  box-sizing: border-box;
   /* v8：相对定位 + z-index 1——浮在背景图层（z-index 0）之上 */
   position: relative;
   z-index: 1;

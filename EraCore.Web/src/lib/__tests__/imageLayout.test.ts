@@ -116,9 +116,9 @@ describe('readSrcmPixelFromContext', () => {
 describe('sortBgImages', () => {
   const bg = (src: string, depth: number): BgImageState => ({ src, depth, opacity: 1 });
 
-  it('按 depth 升序排列——渲染时后者在上（WinForms 烘焙：大 depth 最终在上）', () => {
+  it('按 depth 降序排列——DOM 前者先画、在底层（WinForms：大 depth 先烘焙）', () => {
     const sorted = sortBgImages([bg('c', 5), bg('a', 0), bg('b', 2)]);
-    expect(sorted.map((b) => b.depth)).toEqual([0, 2, 5]);
+    expect(sorted.map((b) => b.depth)).toEqual([5, 2, 0]);
   });
 
   it('不修改入参数组', () => {
