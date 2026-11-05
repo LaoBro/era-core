@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+#if DEBUG
+using System.Diagnostics;
+#endif
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -27,6 +30,9 @@ internal sealed class NativeGameView : Control
     private NativeRenderStyle _style = NativeRenderStyle.From(NativeDefaults.Metrics, AppSettings.Default);
     private readonly NativeImageCache _images;
     private readonly NativeImageLayoutCache _imageLayout = new();
+#if DEBUG
+    private readonly NativeFrameTelemetry _telemetry = new();
+#endif
 
     private double _scrollY;
     private double _scrollX;
@@ -117,14 +123,25 @@ internal sealed class NativeGameView : Control
         var size = Bounds.Size;
         if (size.Width <= 0 || size.Height <= 0)
             return;
+#if DEBUG
+        _telemetry.BeginFrame(_scrollY, _frame.Revision);
+        var prefetchStart = Stopwatch.GetTimestamp();
+#endif
         _images.PrefetchWindow(_frame, _scrollY, size.Height, _style.LineHeight, _style.Scale);
+#if DEBUG
+        _telemetry.AddPrefetchTicks(Stopwatch.GetTimestamp() - prefetchStart);
+#endif
         context.Custom(new GameDrawOp(
             new Rect(size), _frame, _style, _images, _imageLayout, _scrollX, _scrollY, _version,
             hits =>
             {
                 _hitRegions = hits.Buttons;
                 _imageRegions = hits.Images;
-            }));
+            }
+#if DEBUG
+            , _telemetry
+#endif
+            ));
     }
 
     protected override Size ArrangeOverride(Size finalSize)
@@ -318,6 +335,9 @@ internal sealed class NativeGameView : Control
         private readonly double _scrollY;
         private readonly long _version;
         private readonly Action<NativeDrawHits> _onHitRegions;
+#if DEBUG
+        private readonly NativeFrameTelemetry _telemetry;
+#endif
 
         public GameDrawOp(
             Rect bounds,
@@ -328,7 +348,11 @@ internal sealed class NativeGameView : Control
             double scrollX,
             double scrollY,
             long version,
-            Action<NativeDrawHits> onHitRegions)
+            Action<NativeDrawHits> onHitRegions
+#if DEBUG
+            , NativeFrameTelemetry telemetry
+#endif
+            )
         {
             Bounds = bounds;
             _frame = frame;
@@ -339,6 +363,9 @@ internal sealed class NativeGameView : Control
             _scrollY = scrollY;
             _version = version;
             _onHitRegions = onHitRegions;
+#if DEBUG
+            _telemetry = telemetry;
+#endif
         }
 
         public Rect Bounds { get; }
@@ -372,8 +399,15 @@ internal sealed class NativeGameView : Control
                 _images,
                 _scrollX,
                 _scrollY,
-                _imageLayout);
+                _imageLayout
+#if DEBUG
+                , _telemetry
+#endif
+                );
             _onHitRegions(regions);
+#if DEBUG
+            _telemetry.EndFrame();
+#endif
         }
     }
 }

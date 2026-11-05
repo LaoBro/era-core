@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using Android.Util;
 using EraCore.Hosting;
@@ -70,8 +71,19 @@ internal static class NativeSkiaRenderer
         NativeImageCache images,
         double scrollX,
         double scrollY,
-        NativeImageLayoutCache layoutCache)
+        NativeImageLayoutCache layoutCache
+#if DEBUG
+        , NativeFrameTelemetry telemetry
+#endif
+        )
     {
+#if DEBUG
+        ref var sample = ref telemetry.Sample;
+        sample.DrawStartTicks = Stopwatch.GetTimestamp();
+        sample.AllocStart = GC.GetAllocatedBytesForCurrentThread();
+        sample.Lines = frame.Lines.Count;
+        sample.Extents = frame.ImageExtentList.Count;
+#endif
         canvas.Clear(ParseColor(style.BackgroundOverride ?? frame.BackgroundColor, new SKColor(0, 0, 0)));
         if (viewportWidth <= 0 || viewportHeight <= 0)
             return NativeDrawHits.Empty;
@@ -104,11 +116,25 @@ internal static class NativeSkiaRenderer
         var hits = new List<NativeHitRegion>();
         var imageHits = new List<NativeImageHitRegion>();
 
+#if DEBUG
+        long layoutTicks = 0;
+        long paintTicks = 0;
+        var runs = 0;
+        var chars = 0;
+        var imageDraws = 0;
+#endif
+
         canvas.Save();
         canvas.ClipRect(new SKRect(0, 0, (float)viewportWidth, (float)viewportHeight));
 
         // 背景的烘焙画布与 WinForms 一致：宽 = 游戏画布宽（不是视口宽），高 = 视口高。
+#if DEBUG
+        var backgroundStart = Stopwatch.GetTimestamp();
+#endif
         DrawBackgrounds(canvas, frame, images, (float)style.ContentWidth, (float)viewportHeight, sx);
+#if DEBUG
+        paintTicks += Stopwatch.GetTimestamp() - backgroundStart;
+#endif
 
         float? previousBaseline = null;
         var previousIndex = 0;
@@ -118,9 +144,21 @@ internal static class NativeSkiaRenderer
         void DrawLineSlot(int index)
         {
             var line = frame.Lines[index];
+#if DEBUG
+            var layoutStart = Stopwatch.GetTimestamp();
+#endif
             var layout = LayoutLine(line, fonts, scale);
+#if DEBUG
+            var layoutEnd = Stopwatch.GetTimestamp();
+            layoutTicks += layoutEnd - layoutStart;
+#endif
             if (layout.Ops.Count == 0)
+            {
+#if DEBUG
+                paintTicks += Stopwatch.GetTimestamp() - layoutEnd;
+#endif
                 return;
+            }
 
             // WinForms：文本/图像/形状统一起点右移 ShapePositionShift，
             // 对齐宽度 = Config.DrawableWidth（game width，不是视口宽度）。
@@ -159,6 +197,10 @@ internal static class NativeSkiaRenderer
             {
                 if (op.Run is { } run)
                 {
+#if DEBUG
+                    runs++;
+                    chars += run.Text.Length;
+#endif
                     DrawRun(canvas, run, defaultPaint, x, baseline, fontSize);
                 }
                 else if (op.Image is { } image)
@@ -184,20 +226,45 @@ internal static class NativeSkiaRenderer
                     lineHeight,
                     entry.Button));
             }
+
+#if DEBUG
+            paintTicks += Stopwatch.GetTimestamp() - layoutEnd;
+#endif
         }
 
         // 锚定行在窗口外的跨界图片：只画图，不画该行文本；x 由按行缓存布局算，避免每帧量测。
         void DrawImageSlot(NativeImageExtent extent)
         {
+#if DEBUG
+            var slotStart = Stopwatch.GetTimestamp();
+            long slotLayoutTicks = 0;
+#endif
             var line = frame.Lines[extent.LineIndex];
             var layout = layoutCache.GetOrCreate(
                 frame,
                 style,
                 extent.LineIndex,
-                () => BuildImageLayout(LayoutLine(line, fonts, scale)));
+                () =>
+                {
+#if DEBUG
+                    var missStart = Stopwatch.GetTimestamp();
+#endif
+                    var built = BuildImageLayout(LayoutLine(line, fonts, scale));
+#if DEBUG
+                    var missTicks = Stopwatch.GetTimestamp() - missStart;
+                    slotLayoutTicks += missTicks;
+                    layoutTicks += missTicks;
+#endif
+                    return built;
+                });
             var prefix = layout.PrefixOf(extent.EntryIndex, extent.SegmentIndex);
             if (prefix is null)
+            {
+#if DEBUG
+                paintTicks += Stopwatch.GetTimestamp() - slotStart - slotLayoutTicks;
+#endif
                 return;
+            }
 
             var startX = (float)style.Inset - sx
                 + (float)AlignGeometry.OffsetPixels(line.Align, layout.TotalWidth, style.DrawableWidth);
@@ -208,16 +275,25 @@ internal static class NativeSkiaRenderer
                 frame.Lines.Count,
                 viewportHeight);
             DrawImageAndHit(extent.Image, extent.Button, startX + prefix.Value, lineTop);
+#if DEBUG
+            paintTicks += Stopwatch.GetTimestamp() - slotStart - slotLayoutTicks;
+#endif
         }
 
         void DrawImageAndHit(NativeImage image, NativeButton? button, float x, float lineTop)
         {
             DrawImage(canvas, image, x, lineTop, scale, images);
+#if DEBUG
+            imageDraws++;
+#endif
             if (button is { } b && !string.IsNullOrEmpty(image.Srcm))
                 imageHits.Add(CreateImageHit(image, b, x, lineTop, lineHeight, scale));
         }
 
         // 唯一绘制序列：上方表 → 窗口行（内联）→ 下方表。禁止两趟式分层。
+#if DEBUG
+        var planStart = Stopwatch.GetTimestamp();
+#endif
         var plan = NativeImageViewport.Plan(
             frame,
             lineHeight,
@@ -226,6 +302,9 @@ internal static class NativeSkiaRenderer
             scale,
             window.StartIndex,
             window.EndIndexExclusive);
+#if DEBUG
+        var planTicks = Stopwatch.GetTimestamp() - planStart;
+#endif
 
         foreach (var step in plan)
         {
@@ -240,6 +319,9 @@ internal static class NativeSkiaRenderer
 
         canvas.Restore();
 
+#if DEBUG
+        var scrollbarStart = Stopwatch.GetTimestamp();
+#endif
         if (window.ThumbHeight > 0)
         {
             var trackWidth = 3f;
@@ -252,6 +334,20 @@ internal static class NativeSkiaRenderer
                 new SKRect(trackX, (float)window.ThumbY, trackX + trackWidth, (float)(window.ThumbY + window.ThumbHeight)),
                 1.5f, 1.5f, thumb);
         }
+#if DEBUG
+        paintTicks += Stopwatch.GetTimestamp() - scrollbarStart;
+
+        sample.PlanTicks = planTicks;
+        sample.LayoutTicks = layoutTicks;
+        sample.PaintTicks = paintTicks;
+        sample.PlanSteps = plan.Count;
+        sample.VisibleLines = window.EndIndexExclusive - window.StartIndex;
+        sample.ImageDraws = imageDraws;
+        sample.Runs = runs;
+        sample.Chars = chars;
+        sample.LayoutHits = layoutCache.Hits;
+        sample.LayoutMisses = layoutCache.Misses;
+#endif
 
         return new NativeDrawHits(hits, imageHits);
     }

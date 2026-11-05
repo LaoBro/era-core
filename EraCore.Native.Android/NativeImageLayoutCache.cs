@@ -43,6 +43,14 @@ internal sealed class NativeImageLayoutCache
     private NativeRenderStyle? _style;
     private readonly Dictionary<int, NativeLineImageLayout> _lines = new();
 
+#if DEBUG
+    /// <summary>诊断计数（仅 Debug）：命中次数。清表时归零。</summary>
+    public int Hits { get; private set; }
+
+    /// <summary>诊断计数（仅 Debug）：未命中次数（= 真正调用 <c>LayoutLine</c> 的次数）。</summary>
+    public int Misses { get; private set; }
+#endif
+
     public NativeLineImageLayout GetOrCreate(
         NativeFrame frame,
         NativeRenderStyle style,
@@ -58,13 +66,25 @@ internal sealed class NativeImageLayoutCache
             _lines.Clear();
             _frame = frame;
             _style = style;
+#if DEBUG
+            Hits = 0;
+            Misses = 0;
+#endif
         }
 
         if (_lines.TryGetValue(lineIndex, out var cached))
+        {
+#if DEBUG
+            Hits++;
+#endif
             return cached;
+        }
 
         var built = factory();
         _lines[lineIndex] = built;
+#if DEBUG
+        Misses++;
+#endif
         return built;
     }
 }
