@@ -22,6 +22,7 @@
 | 14 | 图片占位宽度 = 绘制宽度 | 统一走 `NativeGeometry.ImageWidth`；形状占 `x + width`。当 0 宽会让加图后行宽跳动 | 2026-11-04 |
 | 15 | 共享卷真实路径按 fsUuid 匹配 | MuMu 根路径 `/mnt/shared/MuMuShared` 不含 UUID，只按路径后缀会误判 `volume-unmapped` | 2026-11-05 |
 | 16 | SAF 导入要小写化根目录 | provider 只返回 `CSV`/`ERB`，复制到大小写敏感的私有 ext4 后引擎报 `MISSING_CSV` | 2026-11-05 |
+| 17 | 跨行图片解耦：extent 索引 + 锚定行槽归并 | 图片独立按「锚定行 + op」排序筛选；窗口外锚定行只画图不画文本，绘制顺序仍是上方表 → 窗口行 → 下方表；热区改可见矩形 ∩ 元素矩形（Web 待跟进） | 2026-11-05 |
 
 ---
 
@@ -68,11 +69,11 @@
 
 **做法**：
 - `NativeRenderModel` 把 `SegmentImage`（含 `crop`）、`SegmentShape`、`snapshot.bgImages` 投影成 `NativeImage`/`NativeShape`/`NativeBgImage`，几何已是显示像素。
-- `NativeImageCache` 按 `src`（直接相对路径或 sprite 名）缓存 `SKBitmap` + `SKImage`；字节经 `GameTree.TryReadImage` 读取（与 `/assets` 同一套消毒 + sprite 名回退），后台线程解码（并发 2），绘制线程只取已就绪的结果，滚动不重复解码。预取只覆盖当前可见行窗口（含 overscan），避免为整份快照一次排队上千张图。
+- `NativeImageCache` 按 `src`（直接相对路径或 sprite 名）缓存 `SKBitmap` + `SKImage`；字节经 `GameTree.TryReadImage` 读取（与 `/assets` 同一套消毒 + sprite 名回退），后台线程解码（并发 2），绘制线程只取已就绪的结果，滚动不重复解码。预取按 `NativeImageExtentList` 与「视口 ± 2 行余量」的矩形相交筛选（见第 11 节），既覆盖可见行，也覆盖锚定行在窗口外、但图伸进视口的跨界图；仍不会为整份快照一次排队上千张图。
 - 占位/绘制宽度统一走 `NativeGeometry`：图片占 `image.width`，形状占 `x + width`（与 Web/CLI 一致）；缩放随 `NativeRenderStyle.Scale` 同比变化。
 - 裁剪（`crop`）用「裁剪矩形 + 整图负偏移」实现，等价于 Web 的掩膜 + 负 margin。
 - 背景不随竖向滚动（横向平移时随内容一起平移），按 `depth` 降序绘制（大的先画、在底层；小的后画、在上层，与 WinForms `BakeBackground` 的 `backgroundList.Sort` 一致），`opacity` 映射到 alpha；等比缩放到铺满画布（cover：取 `max(画布宽/图宽, 画布高/图高)` 作唯一缩放系数，水平居中、顶部对齐，超出部分裁切）。**语义权威是 Emuera WinForms `BakeBackground`**；画布宽 = 游戏画布宽（`HostMetrics.WindowWidth × Scale`），不是视口宽，屏幕更宽时右侧留白是有意设计。Web 的 cover 基准也是游戏窗口列宽（`effectiveWindowWidth × scale`），三端同一套规则。
-- `srcm`：绘制阶段为含 `srcm` 的图片记录三块矩形（掩膜行高带、`<img>` 元素矩形、裁剪可见矩形）；点击时按 Web `clickToImagePixel` 语义反算自然像素，再读映射图同坐标像素，以 `0xRRGGBB` 的十进制提交。映射图与显示图一起预取；显示图未解码 / 坐标越界 / 映射像素 alpha=0 分别拒绝并写不同日志。**跨前端已知差异**：Web `readPixel` 忽略 alpha，透明像素仍返回 RGB 并提交；Native **有意收紧**，遇到 `alpha == 0` 拒绝提交并记日志。这是产品取舍，不是 bug；若将来要与 Web 完全一致，只需放宽 `NativeGameView.TryReadSrcmPixel` 的透明判定。
+- `srcm`：绘制阶段为含 `srcm` 的图片记录三块矩形（掩膜行高带、`<img>` 元素矩形、裁剪可见矩形）；点击时按 Web `clickToImagePixel` 语义反算自然像素，再读映射图同坐标像素，以 `0xRRGGBB` 的十进制提交。命中判定见第 11 节（Native 为可见矩形 ∩ 元素矩形，掩膜带仅作诊断）。映射图与显示图一起预取；显示图未解码 / 坐标越界 / 映射像素 alpha=0 分别拒绝并写不同日志。**跨前端已知差异**：Web `readPixel` 忽略 alpha，透明像素仍返回 RGB 并提交；Native **有意收紧**，遇到 `alpha == 0` 拒绝提交并记日志。这是产品取舍，不是 bug；若将来要与 Web 完全一致，只需放宽 `NativeGameView.TryReadSrcmPixel` 的透明判定。
 
 **坑**：
 - 淘汰只能发生在绘制线程，且必须跳过「正在返回给绘制线程」的条目；否则会释放正在绘制的 `SKImage`。
@@ -112,3 +113,24 @@
 **仍存在的限制**：
 - 若大小写敏感的真实路径源只有 `CSV`（没有 `csv` 别名），引擎仍会 `MISSING_CSV`；要彻底覆盖需让 Core 的目录访问也做逐段大小写容错（包含带尾分隔符的 `DirectoryExists`）。
 - `.txt`/`.json`（含 `train.txt`、`dict/`）按既有白名单默认不复制，不影响引擎启动，但依赖这些文件的脚本会缺数据。
+
+## 11. 跨行图片解耦：extent 索引与锚定行槽归并
+
+**场景**：图片锚定行在虚拟窗口（`[window.StartIndex, window.EndIndexExclusive)`）之外，但图本身（`ypos` 可为负、`height` 可远超行高）伸进视口。旧实现只在行循环里画图，锚定行不进窗口 → 不 `DrawImage`、不注册热区、不进解码队列，表现为「跨行大图整块消失」。Web 端用邻居行覆盖（约 4096px 半径）修过同类问题，Native 改为彻底解耦。
+
+**做法**：
+- `NativeFrame` 附带 `NativeImageExtentList`：`FromSnapshot` 逐行逐 entry/segment 顺序追加 `(LineIndex, EntryIndex, SegmentIndex, Image, Button)`，**不排序、不存绝对 top/bottom、不存 x**；构建成本与原有投影同一 O(总行数)，没有额外一趟遍历。
+- `EraCore.Native.NativeImageViewport`（纯函数，Windows 可测）：
+  - `Top/Bottom` 用 `NativeTextLayout.LineTop` 现算（含 `BottomInset`），再叠加 `YPos/Height × scale`；
+  - `Select` 只保留「矩形 ∩ 视口」相交、且锚定行在窗口外的项，拆成 `Above`（锚定行 < windowStart）与 `Below`（≥ windowEndExclusive），保持帧内原顺序；窗口内锚定行一律排除；
+  - `Plan` 输出唯一绘制序列：**上方表 → 窗口内每一行（图片保持内联在 op 流里）→ 下方表**。
+- 渲染侧只消费 `Plan`：窗口外锚定行只画图、绝不画该行文本；窗口内图片仍在 `LayoutLine` 的 op 序里，保证「图片之后的文字压图、之前的文字被图压」与行序语义完全一致。**禁止**「先画全部文本、再画全部图片」的两趟式分层——那会让锚定行之后的行被图反压。
+- `x` 不能进 `NativeFrame`：它依赖 Skia 实测文本宽度 + 对齐偏移 + `shift`。Android 侧新增 `NativeImageLayoutCache`（只存「整行总宽 + 各图片 op 前缀宽」数值，不持有 `SKFont`），键为 frame 引用 + `NativeRenderStyle` 全字段（含 `FontSize/LineHeight/FontName/Scale/ContentWidth/Inset`）；窗口外锚定行首帧布局一次，滚动帧命中缓存。
+- 预取改按 extent 与「视口 ± 2 行余量」相交筛选，跨行图的 `src`/`srcm` 能提前解码；背景仍全量入队。
+- 背景层、`VirtualWindow.Compute`、`MaxScrollY`、滚动条 Thumb、可见行数均不参与图片层计算，行为不变。
+
+**热区口径 B（Native 先行）**：可点 = `VisibleRect ∩ ElementRect`，即跨行图溢出锚定行行高带的部分也可点；`srcm` 取色仍以整图元素矩形 + crop 为基准。命中列表按绘制顺序追加，因此点击必须**逆序**遍历（最后画的才是视觉最上层）。旧实现只认锚定行行高带，长图大部分看得见却点不到。
+
+**跨端差异与跟进项**：Web 的 `.term-mask` 仍只覆盖锚定行行高带，因此 Web 上同类跨行图的溢出部分不可点。这是**有意的 Native 先行**；待 Web 侧把掩膜改为图片可见矩形后即可对齐，届时两端口径一致。
+
+**验证限制**：单测覆盖选择器/计划器/投影（Windows），Android 编译通过；**未实机/模拟器复验**，跨行图的真实解码与点击取色仍需真机日志确认。
