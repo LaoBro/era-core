@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Android.Util;
-using EraCore.Hosting;
 using EraCore.Native;
 using MinorShift.Emuera.Files;
 using SkiaSharp;
@@ -138,36 +137,42 @@ internal sealed class NativeImageCache : IDisposable
     }
 
     /// <summary>
-    /// 只预取当前可见行窗口（含 overscan）里的图片，避免为整份快照排队——
-    /// 否则大图库会一次解码上千张、且被淘汰后反复重排。滚动时下一帧即补排新进入视口的图。
+    /// 按 extent 表预取「图片矩形与视口（±2 行余量）相交」的图，而不是只扫可见行窗口——
+    /// 锚定行在窗口外、但图向上/向下伸进视口的跨界图也能及时解码。背景仍全量入队。
     /// </summary>
-    public void PrefetchWindow(NativeFrame frame, double scrollY, double viewportHeight, double lineHeight)
+    public void PrefetchWindow(
+        NativeFrame frame,
+        double scrollY,
+        double viewportHeight,
+        double lineHeight,
+        double scale)
     {
         DrainRetired();
 
-        var window = VirtualWindow.Compute(
-            frame.Lines.Count,
-            scrollY,
-            viewportHeight,
-            new VirtualWindowOptions(lineHeight, Overscan: 2));
-        var start = Math.Max(0, window.StartIndex);
-        var end = Math.Min(frame.Lines.Count, window.EndIndexExclusive);
-        for (var i = start; i < end; i++)
+        if (lineHeight > 0 && scale > 0)
         {
-            foreach (var entry in frame.Lines[i].Entries)
+            var margin = lineHeight * 2;
+            foreach (var extent in frame.ImageExtentList)
             {
-                foreach (var segment in entry.Segments)
-                {
-                    if (segment.Image is { Src: { Length: > 0 } src })
-                    {
-                        Queue(src);
-                        // srcm 映射图与显示图一起预取：点击取色时两者都必须已解码。
-                        if (segment.Image.Srcm is { Length: > 0 } srcm)
-                            Queue(srcm);
-                    }
-                }
+                if (!NativeImageViewport.Intersects(
+                        extent,
+                        frame.Lines.Count,
+                        lineHeight,
+                        scrollY,
+                        viewportHeight,
+                        scale,
+                        margin))
+                    continue;
+
+                var image = extent.Image;
+                if (image.Src.Length > 0)
+                    Queue(image.Src);
+                // srcm 映射图与显示图一起预取：点击取色时两者都必须已解码。
+                if (image.Srcm is { Length: > 0 } srcm)
+                    Queue(srcm);
             }
         }
+
         foreach (var background in frame.BackgroundLayers)
             Queue(background.Src);
     }

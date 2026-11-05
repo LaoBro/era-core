@@ -117,7 +117,7 @@ internal sealed class NativeGameView : Control
         var size = Bounds.Size;
         if (size.Width <= 0 || size.Height <= 0)
             return;
-        _images.PrefetchWindow(_frame, _scrollY, size.Height, _style.LineHeight);
+        _images.PrefetchWindow(_frame, _scrollY, size.Height, _style.LineHeight, _style.Scale);
         context.Custom(new GameDrawOp(
             new Rect(size), _frame, _style, _images, _imageLayout, _scrollX, _scrollY, _version,
             hits =>
