@@ -44,7 +44,8 @@ internal static class NativeSkiaRenderer
         double scrollX,
         double scrollY,
         NativeLineLayoutCache layoutCache,
-        NativeFontPool<SKFont> fonts
+        NativeFontPool<SKFont> fonts,
+        NativePaintPool paints
 #if DEBUG
         , NativeFrameTelemetry telemetry
 #endif
@@ -82,11 +83,11 @@ internal static class NativeSkiaRenderer
         var cacheMissesStart = layoutCache.Misses;
 #endif
 
-        using var defaultPaint = new SKPaint
-        {
-            Color = ParseColor(style.ForeColor, new SKColor(0xC0, 0xC0, 0xC0)),
-            IsAntialias = true,
-        };
+        var defaultPaint = paints.Get(
+            ParseColor(style.ForeColor, new SKColor(0xC0, 0xC0, 0xC0)),
+            SKPaintStyle.Fill,
+            0f,
+            antialias: true);
 
         var measureFont = fonts.Get(NativeFontManager.Embedded, NativeFontVariant.Regular, fontSize);
         var fontMetrics = measureFont.Metrics;
@@ -149,6 +150,7 @@ internal static class NativeSkiaRenderer
             canvas,
             frame,
             images,
+            paints,
             (float)style.ContentWidth,
             (float)viewportHeight,
             sx);
@@ -218,6 +220,7 @@ internal static class NativeSkiaRenderer
                         run,
                         fonts.Get(run.Typeface, run.Variant, fontSize),
                         defaultPaint,
+                        paints,
                         x,
                         baseline,
                         fontSize);
@@ -241,7 +244,7 @@ internal static class NativeSkiaRenderer
 #if DEBUG
                     var opStart = Stopwatch.GetTimestamp();
 #endif
-                    DrawShape(canvas, shape, x, lineTop, scale);
+                    DrawShape(canvas, shape, paints, x, lineTop, scale);
 #if DEBUG
                     paintShapeTicks += Stopwatch.GetTimestamp() - opStart;
 #endif
@@ -297,7 +300,7 @@ internal static class NativeSkiaRenderer
 
         void DrawImageAndHit(NativeImage image, NativeButton? button, float x, float lineTop)
         {
-            DrawImage(canvas, image, x, lineTop, scale, images);
+            DrawImage(canvas, image, x, lineTop, scale, images, paints);
 #if DEBUG
             imageDraws++;
 #endif
@@ -341,13 +344,14 @@ internal static class NativeSkiaRenderer
         {
             var trackWidth = 3f;
             var trackX = (float)viewportWidth - trackWidth - 2f;
-            using var track = new SKPaint { Color = new SKColor(255, 255, 255, 24), IsAntialias = false };
-            canvas.DrawRect(new SKRect(trackX, 0, trackX + trackWidth, (float)viewportHeight), track);
+            canvas.DrawRect(
+                new SKRect(trackX, 0, trackX + trackWidth, (float)viewportHeight),
+                paints.Get(new SKColor(255, 255, 255, 24)));
 
-            using var thumb = new SKPaint { Color = new SKColor(255, 255, 255, 110), IsAntialias = true };
             canvas.DrawRoundRect(
                 new SKRect(trackX, (float)window.ThumbY, trackX + trackWidth, (float)(window.ThumbY + window.ThumbHeight)),
-                1.5f, 1.5f, thumb);
+                1.5f, 1.5f,
+                paints.Get(new SKColor(255, 255, 255, 110), SKPaintStyle.Fill, 0f, antialias: true));
         }
 #if DEBUG
         var chromeTicks = Stopwatch.GetTimestamp() - scrollbarStart;
@@ -469,6 +473,7 @@ internal static class NativeSkiaRenderer
         SKCanvas canvas,
         NativeFrame frame,
         NativeImageCache images,
+        NativePaintPool paints,
         float canvasWidth,
         float canvasHeight,
         float scrollX)
@@ -486,11 +491,7 @@ internal static class NativeSkiaRenderer
                 continue;
 
             var alpha = (byte)Math.Clamp((int)(background.Opacity * 255), 0, 255);
-            using var paint = new SKPaint
-            {
-                Color = new SKColor(255, 255, 255, alpha),
-                IsAntialias = false,
-            };
+            var paint = paints.Get(new SKColor(255, 255, 255, alpha));
 
             // 与 Emuera WinForms BakeBackground 一致：等比缩放到「铺满画布」（cover），
             // 取 max(宽比, 高比) 作唯一缩放系数（不拉伸变形）；水平居中、顶部对齐。
@@ -515,6 +516,7 @@ internal static class NativeSkiaRenderer
         NativeLayoutRun run,
         SKFont font,
         SKPaint defaultPaint,
+        NativePaintPool paints,
         float x,
         float baseline,
         float fontSize)
@@ -523,29 +525,19 @@ internal static class NativeSkiaRenderer
             ? defaultPaint.Color
             : ParseColor(run.Color, defaultPaint.Color);
 
-        SKPaint paint;
-        var ownsPaint = false;
-        if (run.Color is null)
-        {
-            paint = defaultPaint;
-        }
-        else
-        {
-            paint = new SKPaint { Color = color, IsAntialias = true };
-            ownsPaint = true;
-        }
+        var paint = run.Color is null
+            ? defaultPaint
+            : paints.Get(color, SKPaintStyle.Fill, 0f, antialias: true);
 
         canvas.DrawText(run.Text, x, baseline, font, paint);
 
         if (run.Underline || run.Strikeout)
         {
-            using var decor = new SKPaint
-            {
-                Color = color,
-                IsAntialias = false,
-                Style = SKPaintStyle.Stroke,
-                StrokeWidth = Math.Max(1f, fontSize / 16f),
-            };
+            var decor = paints.Get(
+                color,
+                SKPaintStyle.Stroke,
+                Math.Max(1f, fontSize / 16f),
+                antialias: false);
             if (run.Underline)
             {
                 var y = baseline + fontSize * 0.12f;
@@ -557,9 +549,6 @@ internal static class NativeSkiaRenderer
                 canvas.DrawLine(x, y, x + run.Width, y, decor);
             }
         }
-
-        if (ownsPaint)
-            paint.Dispose();
     }
 
     private static void DrawImage(
@@ -568,7 +557,8 @@ internal static class NativeSkiaRenderer
         float x,
         float lineTop,
         float scale,
-        NativeImageCache images)
+        NativeImageCache images,
+        NativePaintPool paints)
     {
         var width = NativeGeometry.ImageWidth(image, scale);
         var height = Math.Max(0f, image.Height * scale);
@@ -583,15 +573,11 @@ internal static class NativeSkiaRenderer
         {
             // 加载中保持空白；缺资源/解码失败画红色占位框，保证可观测。
             if (result.State is NativeImageState.Missing or NativeImageState.Failed)
-                DrawImagePlaceholder(canvas, mask);
+                DrawImagePlaceholder(canvas, mask, paints);
             return;
         }
 
-        using var paint = new SKPaint
-        {
-            Color = SKColors.White,
-            IsAntialias = false,
-        };
+        var paint = paints.Get(SKColors.White);
 
         if (image.Crop is { } crop)
         {
@@ -613,21 +599,21 @@ internal static class NativeSkiaRenderer
         }
     }
 
-    private static void DrawImagePlaceholder(SKCanvas canvas, SKRect mask)
+    private static void DrawImagePlaceholder(SKCanvas canvas, SKRect mask, NativePaintPool paints)
     {
-        using var fill = new SKPaint { Color = new SKColor(255, 0, 0, 36), IsAntialias = false };
-        using var border = new SKPaint
-        {
-            Color = new SKColor(255, 0, 0, 120),
-            IsAntialias = false,
-            Style = SKPaintStyle.Stroke,
-            StrokeWidth = 1f,
-        };
-        canvas.DrawRect(mask, fill);
-        canvas.DrawRect(mask, border);
+        canvas.DrawRect(mask, paints.Get(new SKColor(255, 0, 0, 36)));
+        canvas.DrawRect(
+            mask,
+            paints.Get(new SKColor(255, 0, 0, 120), SKPaintStyle.Stroke, 1f));
     }
 
-    private static void DrawShape(SKCanvas canvas, NativeShape shape, float x, float lineTop, float scale)
+    private static void DrawShape(
+        SKCanvas canvas,
+        NativeShape shape,
+        NativePaintPool paints,
+        float x,
+        float lineTop,
+        float scale)
     {
         if (!string.Equals(shape.Type, "rect", StringComparison.OrdinalIgnoreCase))
             return;
@@ -639,12 +625,9 @@ internal static class NativeSkiaRenderer
         if (width <= 0 || height <= 0)
             return;
 
-        using var paint = new SKPaint
-        {
-            Color = ParseColor(shape.Color, new SKColor(0x80, 0x80, 0x80)),
-            IsAntialias = false,
-        };
-        canvas.DrawRect(new SKRect(left, top, left + width, top + height), paint);
+        canvas.DrawRect(
+            new SKRect(left, top, left + width, top + height),
+            paints.Get(ParseColor(shape.Color, new SKColor(0x80, 0x80, 0x80))));
     }
 
     /// <summary>"#RRGGBB" → SKColor；非法值回退。</summary>

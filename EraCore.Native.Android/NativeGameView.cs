@@ -32,6 +32,7 @@ internal sealed class NativeGameView : Control
     private readonly NativeLineLayoutCache _lineLayout = new();
     private readonly NativeFontPool<SKFont> _fonts =
         new(NativeSkiaRenderer.CreateFont);
+    private readonly NativePaintPool _paints = new();
 #if DEBUG
     private readonly NativeFrameTelemetry _telemetry = new();
 #endif
@@ -134,7 +135,7 @@ internal sealed class NativeGameView : Control
         _telemetry.AddPrefetchTicks(Stopwatch.GetTimestamp() - prefetchStart);
 #endif
         context.Custom(new GameDrawOp(
-            new Rect(size), _frame, _style, _images, _lineLayout, _fonts, _scrollX, _scrollY, _version,
+            new Rect(size), _frame, _style, _images, _lineLayout, _fonts, _paints, _scrollX, _scrollY, _version,
             hits =>
             {
                 _hitRegions = hits.Buttons;
@@ -334,6 +335,7 @@ internal sealed class NativeGameView : Control
         private readonly NativeImageCache _images;
         private readonly NativeLineLayoutCache _lineLayout;
         private readonly NativeFontPool<SKFont> _fonts;
+        private readonly NativePaintPool _paints;
         private readonly double _scrollX;
         private readonly double _scrollY;
         private readonly long _version;
@@ -349,6 +351,7 @@ internal sealed class NativeGameView : Control
             NativeImageCache images,
             NativeLineLayoutCache lineLayout,
             NativeFontPool<SKFont> fonts,
+            NativePaintPool paints,
             double scrollX,
             double scrollY,
             long version,
@@ -364,6 +367,7 @@ internal sealed class NativeGameView : Control
             _images = images;
             _lineLayout = lineLayout;
             _fonts = fonts;
+            _paints = paints;
             _scrollX = scrollX;
             _scrollY = scrollY;
             _version = version;
@@ -405,7 +409,8 @@ internal sealed class NativeGameView : Control
                 _scrollX,
                 _scrollY,
                 _lineLayout,
-                _fonts
+                _fonts,
+                _paints
 #if DEBUG
                 , _telemetry
 #endif
