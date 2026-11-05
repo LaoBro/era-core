@@ -54,8 +54,20 @@ public sealed record NativeEntry(IReadOnlyList<NativeSegment> Segments, NativeBu
 public sealed record NativeLine(IReadOnlyList<NativeEntry> Entries, string? Align);
 
 /// <summary>
+/// 图片在帧内的垂直索引项：只记录「图片属于哪一行、行内哪个 op」，**不存绝对 top/bottom**。
+/// 竖坐标由 <see cref="NativeImageViewport"/> 用 <see cref="NativeTextLayout.LineTop"/> 现算，
+/// 因此滚动、贴底补偿与字号缩放变化都不需要重建索引；水平 <c>x</c> 依赖字体度量，留在渲染层。
+/// </summary>
+public sealed record NativeImageExtent(
+    int LineIndex,
+    int EntryIndex,
+    int SegmentIndex,
+    NativeImage Image,
+    NativeButton? Button);
+
+/// <summary>
 /// 一帧可绘制数据：平台无关、不可变，供任意原生渲染后端消费。
-/// 图像/形状保留几何，纯文本后端按宽度占位；背景层按 Depth 升序绘制。
+/// 图像/形状保留几何，纯文本后端按宽度占位；背景层按 Depth 降序绘制（大 depth 在底层）。
 /// </summary>
 public sealed record NativeFrame(
     IReadOnlyList<NativeLine> Lines,
@@ -64,9 +76,13 @@ public sealed record NativeFrame(
     int ProtocolVersion,
     long Revision,
     string? EndedTerminal,
-    IReadOnlyList<NativeBgImage>? Backgrounds = null)
+    IReadOnlyList<NativeBgImage>? Backgrounds = null,
+    IReadOnlyList<NativeImageExtent>? ImageExtents = null)
 {
     public IReadOnlyList<NativeBgImage> BackgroundLayers => Backgrounds ?? Array.Empty<NativeBgImage>();
+
+    /// <summary>按（锚定行索引, EntryIndex, SegmentIndex）升序排列的图片索引；空帧为空表。</summary>
+    public IReadOnlyList<NativeImageExtent> ImageExtentList => ImageExtents ?? Array.Empty<NativeImageExtent>();
 
     public static NativeFrame Empty { get; } =
         new(Array.Empty<NativeLine>(), "#000000", 0, 0, 0, null);
@@ -81,8 +97,9 @@ public static class NativeRenderModel
             return NativeFrame.Empty;
 
         var lines = new List<NativeLine>(snapshot.lines.Count);
-        foreach (var line in snapshot.lines)
-            lines.Add(ProjectLine(line));
+        var extents = new List<NativeImageExtent>();
+        for (var i = 0; i < snapshot.lines.Count; i++)
+            lines.Add(ProjectLine(snapshot.lines[i], i, extents));
 
         return new NativeFrame(
             lines,
@@ -91,17 +108,32 @@ public static class NativeRenderModel
             snapshot.protocolVersion,
             snapshot.revision,
             snapshot.awaiting?.ended?.terminal,
-            ProjectBackgrounds(snapshot.bgImages));
+            ProjectBackgrounds(snapshot.bgImages),
+            extents);
     }
 
-    public static NativeLine ProjectLine(DisplayLine line)
+    public static NativeLine ProjectLine(DisplayLine line) => ProjectLine(line, 0, null);
+
+    private static NativeLine ProjectLine(
+        DisplayLine line,
+        int lineIndex,
+        List<NativeImageExtent>? extents)
     {
         var entries = new List<NativeEntry>(line.entries.Count);
-        foreach (var entry in line.entries)
+        for (var entryIndex = 0; entryIndex < line.entries.Count; entryIndex++)
         {
+            var entry = line.entries[entryIndex];
+            var button = entry.button is { } b
+                ? new NativeButton(b.value, b.isInteger, b.generation, b.col, b.width)
+                : null;
+
             var segments = new List<NativeSegment>(entry.segments.Count);
-            foreach (var segment in entry.segments)
+            for (var segmentIndex = 0; segmentIndex < entry.segments.Count; segmentIndex++)
             {
+                var segment = entry.segments[segmentIndex];
+                var image = ProjectImage(segment.image);
+                var shape = ProjectShape(segment.shape);
+
                 segments.Add(new NativeSegment(
                     segment.text,
                     segment.color,
@@ -110,15 +142,16 @@ public static class NativeRenderModel
                     segment.fontname,
                     segment.underline == true,
                     segment.strikeout == true,
-                    segment.image is not null,
-                    segment.shape is not null,
-                    ProjectImage(segment.image),
-                    ProjectShape(segment.shape)));
-            }
+                    image is not null,
+                    shape is not null,
+                    image,
+                    shape));
 
-            var button = entry.button is { } b
-                ? new NativeButton(b.value, b.isInteger, b.generation, b.col, b.width)
-                : null;
+                // 逐行、逐 entry、逐 segment 顺序 append：extent 表天然按锚定行/op 升序，
+                // 调用方无需再排序；竖坐标留到绘制时现算。
+                if (image is not null && extents is not null)
+                    extents.Add(new NativeImageExtent(lineIndex, entryIndex, segmentIndex, image, button));
+            }
 
             entries.Add(new NativeEntry(segments, button));
         }

@@ -103,4 +103,47 @@ public sealed class NativeRenderModelTests
         Assert.Equal(0.4f, frame.BackgroundLayers[0].Opacity);
         Assert.Equal("bg/base.png", frame.BackgroundLayers[1].Src);
     }
+
+    [Fact]
+    public void ImageExtents_ProjectLineEntrySegmentOrder_WithCropAndButton()
+    {
+        var crop = new SegmentCrop(-36, 0, 72, 36);
+        var button = new ButtonRef("BTN", false, 9, 0, 10);
+        var imageLine = new DisplayLine(
+            new List<DisplayEntry>
+            {
+                new(
+                    new List<PrintSegment>
+                    {
+                        new(
+                            string.Empty, null, null, null, null,
+                            new SegmentImage("FACE_1", "FACE_1_B", "FACE_1_M", 36, 18, 2, crop)),
+                    },
+                    button),
+            },
+            null,
+            true);
+        var textLine = Line(new PrintSegment("plain", null, null, null, null));
+
+        var snapshot = new DisplaySnapshot(
+            new List<DisplayLine> { textLine, imageLine },
+            "#000000",
+            null!,
+            13,
+            0,
+            null,
+            0);
+        var frame = NativeRenderModel.FromSnapshot(snapshot);
+
+        var extent = Assert.Single(frame.ImageExtentList);
+        Assert.Equal(1, extent.LineIndex);
+        Assert.Equal(0, extent.EntryIndex);
+        Assert.Equal(0, extent.SegmentIndex);
+        Assert.Equal("FACE_1", extent.Image.Src);
+        Assert.Equal("FACE_1_M", extent.Image.Srcm);
+        Assert.NotNull(extent.Image.Crop);
+        Assert.Equal(-36, extent.Image.Crop!.X);
+        Assert.Equal(72, extent.Image.Crop.ImgWidth);
+        Assert.Equal("BTN", Assert.IsType<string>(extent.Button!.Value));
+    }
 }
