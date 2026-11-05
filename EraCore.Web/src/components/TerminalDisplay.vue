@@ -798,7 +798,8 @@ watch(() => game.inputInFlight, (inFlight) => {
   /* .terminal 填满父容器宽度（flex: 1），内容宽度由 .terminal-content 约束。
      超长行由 overflow-x: auto 水平滚动兜底（保留行不拆分）。
      垂直方向由父容器 align-items: stretch（默认）撑满。
-     无 padding——与 WinForms mainPicBox / CLI 终端一致，字符画从容器边缘开始渲染。 */
+     容器本身无 padding——与 WinForms mainPicBox / CLI 终端一致；字符起点由
+     `.terminal-content` 的左右 shift padding（WinForms ShapePositionShift）控制。 */
   overflow-y: auto;
   overflow-x: auto;
   /* 触屏手势仲裁（usePinchZoom 的前置依赖，见其注释）：
