@@ -26,6 +26,7 @@ internal sealed class NativeGameView : Control
     private NativeFrame _frame = NativeFrame.Empty;
     private NativeRenderStyle _style = NativeRenderStyle.From(NativeDefaults.Metrics, AppSettings.Default);
     private readonly NativeImageCache _images;
+    private readonly NativeImageLayoutCache _imageLayout = new();
 
     private double _scrollY;
     private double _scrollX;
@@ -118,7 +119,7 @@ internal sealed class NativeGameView : Control
             return;
         _images.PrefetchWindow(_frame, _scrollY, size.Height, _style.LineHeight);
         context.Custom(new GameDrawOp(
-            new Rect(size), _frame, _style, _images, _scrollX, _scrollY, _version,
+            new Rect(size), _frame, _style, _images, _imageLayout, _scrollX, _scrollY, _version,
             hits =>
             {
                 _hitRegions = hits.Buttons;
@@ -181,8 +182,10 @@ internal sealed class NativeGameView : Control
         if (_dragDistance < 8)
         {
             var position = e.GetPosition(this);
-            foreach (var region in _imageRegions)
+            // 逆序：热区列表按绘制顺序追加，最后一个命中的才是视觉最上层的那张图。
+            for (var i = _imageRegions.Count - 1; i >= 0; i--)
             {
+                var region = _imageRegions[i];
                 if (!region.Contains(position))
                     continue;
                 ImageActivated?.Invoke(region, position);
@@ -310,6 +313,7 @@ internal sealed class NativeGameView : Control
         private readonly NativeFrame _frame;
         private readonly NativeRenderStyle _style;
         private readonly NativeImageCache _images;
+        private readonly NativeImageLayoutCache _imageLayout;
         private readonly double _scrollX;
         private readonly double _scrollY;
         private readonly long _version;
@@ -320,6 +324,7 @@ internal sealed class NativeGameView : Control
             NativeFrame frame,
             NativeRenderStyle style,
             NativeImageCache images,
+            NativeImageLayoutCache imageLayout,
             double scrollX,
             double scrollY,
             long version,
@@ -329,6 +334,7 @@ internal sealed class NativeGameView : Control
             _frame = frame;
             _style = style;
             _images = images;
+            _imageLayout = imageLayout;
             _scrollX = scrollX;
             _scrollY = scrollY;
             _version = version;
@@ -365,7 +371,8 @@ internal sealed class NativeGameView : Control
                 _style,
                 _images,
                 _scrollX,
-                _scrollY);
+                _scrollY,
+                _imageLayout);
             _onHitRegions(regions);
         }
     }

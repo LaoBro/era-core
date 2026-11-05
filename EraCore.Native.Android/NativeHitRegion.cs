@@ -21,7 +21,7 @@ internal sealed record NativeHitRegion(
 /// <para>三块矩形与 Web 的 DOM 结构一一对应：</para>
 /// <list type="bullet">
 /// <item><description><c>X/Y/Width/Height</c> = 掩膜带（<c>.term-mask</c>，宽度=图片显示宽、高度=行高），
-/// 决定「点击是否落在热区」——与 Web 一样只在图片锚定行的行高带内可点。</description></item>
+/// 仅作诊断/兼容保留，**不再决定命中**。</description></item>
 /// <item><description><c>Element*</c> = <c>&lt;img&gt;</c> 元素矩形；有 <c>crop</c> 时是**整图**按
 /// <c>crop.imgWidth/imgHeight</c> 缩放并加 <c>crop.x/y</c> 负偏移后的位置（Web 用
 /// <c>img.getBoundingClientRect()</c> 取的就是这块），坐标反算以它为基准。</description></item>
@@ -46,8 +46,12 @@ internal sealed record NativeImageHitRegion(
     string Srcm,
     NativeButton Button)
 {
-    public bool Contains(Point point)
-        => point.X >= X && point.X < X + Width && point.Y >= Y && point.Y < Y + Height;
+    /// <summary>
+    /// 口径 B（Native 先行）：可点 = 可见矩形 ∩ 元素矩形。
+    /// 跨行图片溢出锚定行行高带的部分也可点；Web 的 <c>.term-mask</c> 仍是行高带，
+    /// 两端暂时存在语义差异，已记跟进项。
+    /// </summary>
+    public bool Contains(Point point) => ContainsElement(point) && ContainsVisible(point);
 
     public bool ContainsElement(Point point)
         => ElementWidth > 0 && ElementHeight > 0

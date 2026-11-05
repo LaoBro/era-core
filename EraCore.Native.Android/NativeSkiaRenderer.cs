@@ -51,7 +51,15 @@ internal static class NativeSkiaRenderer
         Run? Run,
         NativeImage? Image,
         NativeShape? Shape,
-        NativeButton? Button);
+        NativeButton? Button,
+        int EntryIndex,
+        int SegmentIndex);
+
+    /// <summary>一行的完整按行布局（含字体 run，只在本次绘制内有效）。</summary>
+    private readonly record struct LineLayout(
+        float TotalWidth,
+        List<DrawOp> Ops,
+        List<EntryLayout> Entries);
 
     public static NativeDrawHits Draw(
         SKCanvas canvas,
@@ -61,7 +69,8 @@ internal static class NativeSkiaRenderer
         NativeRenderStyle style,
         NativeImageCache images,
         double scrollX,
-        double scrollY)
+        double scrollY,
+        NativeImageLayoutCache layoutCache)
     {
         canvas.Clear(ParseColor(style.BackgroundOverride ?? frame.BackgroundColor, new SKColor(0, 0, 0)));
         if (viewportWidth <= 0 || viewportHeight <= 0)
@@ -105,56 +114,18 @@ internal static class NativeSkiaRenderer
         var previousIndex = 0;
         var measuredBaselineSpacing = lineHeight;
 
-        for (var index = window.StartIndex; index < window.EndIndexExclusive; index++)
+        // 窗口行：整行绘制（文本 + 内联图片），顺序与 old 行循环完全一致。
+        void DrawLineSlot(int index)
         {
             var line = frame.Lines[index];
-            var ops = new List<DrawOp>(line.Entries.Count);
-            var entries = new List<EntryLayout>(line.Entries.Count);
-            var total = 0f;
-
-            foreach (var entry in line.Entries)
-            {
-                var entryStart = total;
-                foreach (var segment in entry.Segments)
-                {
-                    // 与 Web 一致：有 image/shape 时忽略 text（text 只是 CLI 调试标记，
-                    // 缺图时 Protocol 仍会带 AltText）。否则会把占位框推到文字右侧，导致看不见。
-                    var hasVisual = segment.Image is not null || segment.Shape is not null;
-                    if (!hasVisual && !string.IsNullOrEmpty(segment.Text))
-                    {
-                        var variant = PickVariant(segment);
-                        foreach (var run in SplitByTypeface(segment, variant, fonts))
-                        {
-                            ops.Add(new DrawOp(run.Width, run, null, null, entry.Button));
-                            total += run.Width;
-                        }
-                    }
-
-                    if (segment.Image is { } image)
-                    {
-                        var width = NativeGeometry.ImageWidth(image, scale);
-                        ops.Add(new DrawOp(width, null, image, null, entry.Button));
-                        total += width;
-                    }
-
-                    if (segment.Shape is { } shape)
-                    {
-                        // 与 Web 掩膜一致：形状占 x + width，起笔从 x 开始。
-                        var width = NativeGeometry.ShapeWidth(shape, scale);
-                        ops.Add(new DrawOp(width, null, null, shape, entry.Button));
-                        total += width;
-                    }
-                }
-                entries.Add(new EntryLayout(entryStart, total - entryStart, entry.Button));
-            }
-
-            if (ops.Count == 0)
-                continue;
+            var layout = LayoutLine(line, fonts, scale);
+            if (layout.Ops.Count == 0)
+                return;
 
             // WinForms：文本/图像/形状统一起点右移 ShapePositionShift，
             // 对齐宽度 = Config.DrawableWidth（game width，不是视口宽度）。
             var startX = (float)style.Inset - sx
-                + (float)AlignGeometry.OffsetPixels(line.Align, total, style.DrawableWidth);
+                + (float)AlignGeometry.OffsetPixels(line.Align, layout.TotalWidth, style.DrawableWidth);
             var lineTop = (float)NativeTextLayout.LineTop(
                 index,
                 lineHeight,
@@ -184,7 +155,7 @@ internal static class NativeSkiaRenderer
             previousBaseline = baseline;
             previousIndex = index;
 
-            foreach (var op in ops)
+            foreach (var op in layout.Ops)
             {
                 if (op.Run is { } run)
                 {
@@ -192,9 +163,7 @@ internal static class NativeSkiaRenderer
                 }
                 else if (op.Image is { } image)
                 {
-                    DrawImage(canvas, image, x, lineTop, scale, images);
-                    if (op.Button is { } button && !string.IsNullOrEmpty(image.Srcm))
-                        imageHits.Add(CreateImageHit(image, button, x, lineTop, lineHeight, scale));
+                    DrawImageAndHit(image, op.Button, x, lineTop);
                 }
                 else if (op.Shape is { } shape)
                 {
@@ -204,7 +173,7 @@ internal static class NativeSkiaRenderer
                 x += op.Width;
             }
 
-            foreach (var entry in entries)
+            foreach (var entry in layout.Entries)
             {
                 if (entry.Button is null || entry.Width <= 0)
                     continue;
@@ -215,6 +184,55 @@ internal static class NativeSkiaRenderer
                     lineHeight,
                     entry.Button));
             }
+        }
+
+        // 锚定行在窗口外的跨界图片：只画图，不画该行文本；x 由按行缓存布局算，避免每帧量测。
+        void DrawImageSlot(NativeImageExtent extent)
+        {
+            var line = frame.Lines[extent.LineIndex];
+            var layout = layoutCache.GetOrCreate(
+                frame,
+                style,
+                extent.LineIndex,
+                () => BuildImageLayout(LayoutLine(line, fonts, scale)));
+            var prefix = layout.PrefixOf(extent.EntryIndex, extent.SegmentIndex);
+            if (prefix is null)
+                return;
+
+            var startX = (float)style.Inset - sx
+                + (float)AlignGeometry.OffsetPixels(line.Align, layout.TotalWidth, style.DrawableWidth);
+            var lineTop = (float)NativeTextLayout.LineTop(
+                extent.LineIndex,
+                lineHeight,
+                sy,
+                frame.Lines.Count,
+                viewportHeight);
+            DrawImageAndHit(extent.Image, extent.Button, startX + prefix.Value, lineTop);
+        }
+
+        void DrawImageAndHit(NativeImage image, NativeButton? button, float x, float lineTop)
+        {
+            DrawImage(canvas, image, x, lineTop, scale, images);
+            if (button is { } b && !string.IsNullOrEmpty(image.Srcm))
+                imageHits.Add(CreateImageHit(image, b, x, lineTop, lineHeight, scale));
+        }
+
+        // 唯一绘制序列：上方表 → 窗口行（内联）→ 下方表。禁止两趟式分层。
+        var plan = NativeImageViewport.Plan(
+            frame,
+            lineHeight,
+            sy,
+            viewportHeight,
+            scale,
+            window.StartIndex,
+            window.EndIndexExclusive);
+
+        foreach (var step in plan)
+        {
+            if (step.DrawLine)
+                DrawLineSlot(step.LineIndex);
+            else if (step.Image is { } extent)
+                DrawImageSlot(extent);
         }
 
         // 回归诊断：打印字号/行高/字体度量/基线偏移，以及实际绘制到的相邻基线间距。
@@ -236,6 +254,76 @@ internal static class NativeSkiaRenderer
         }
 
         return new NativeDrawHits(hits, imageHits);
+    }
+
+    /// <summary>
+    /// 按行构建 op 流与 entry 布局。窗口行与「窗口外锚定行」共用同一套累加口径，
+    /// 避免为跨界图片另写一份宽度计算而与绘制顺序漂移。
+    /// </summary>
+    private static LineLayout LayoutLine(NativeLine line, FontCache fonts, float scale)
+    {
+        var ops = new List<DrawOp>(line.Entries.Count);
+        var entries = new List<EntryLayout>(line.Entries.Count);
+        var total = 0f;
+
+        for (var entryIndex = 0; entryIndex < line.Entries.Count; entryIndex++)
+        {
+            var entry = line.Entries[entryIndex];
+            var entryStart = total;
+
+            for (var segmentIndex = 0; segmentIndex < entry.Segments.Count; segmentIndex++)
+            {
+                var segment = entry.Segments[segmentIndex];
+                // 与 Web 一致：有 image/shape 时忽略 text（text 只是 CLI 调试标记，
+                // 缺图时 Protocol 仍会带 AltText）。否则会把占位框推到文字右侧，导致看不见。
+                var hasVisual = segment.Image is not null || segment.Shape is not null;
+                if (!hasVisual && !string.IsNullOrEmpty(segment.Text))
+                {
+                    var variant = PickVariant(segment);
+                    foreach (var run in SplitByTypeface(segment, variant, fonts))
+                    {
+                        ops.Add(new DrawOp(
+                            run.Width, run, null, null, entry.Button, entryIndex, segmentIndex));
+                        total += run.Width;
+                    }
+                }
+
+                if (segment.Image is { } image)
+                {
+                    var width = NativeGeometry.ImageWidth(image, scale);
+                    ops.Add(new DrawOp(
+                        width, null, image, null, entry.Button, entryIndex, segmentIndex));
+                    total += width;
+                }
+
+                if (segment.Shape is { } shape)
+                {
+                    // 与 Web 掩膜一致：形状占 x + width，起笔从 x 开始。
+                    var width = NativeGeometry.ShapeWidth(shape, scale);
+                    ops.Add(new DrawOp(
+                        width, null, null, shape, entry.Button, entryIndex, segmentIndex));
+                    total += width;
+                }
+            }
+
+            entries.Add(new EntryLayout(entryStart, total - entryStart, entry.Button));
+        }
+
+        return new LineLayout(total, ops, entries);
+    }
+
+    /// <summary>从整行布局提取图片的 op 前缀宽度；与 <see cref="LayoutLine"/> 的累加顺序同源。</summary>
+    private static NativeLineImageLayout BuildImageLayout(LineLayout layout)
+    {
+        var images = new List<NativeLineImageOffset>();
+        var prefix = 0f;
+        foreach (var op in layout.Ops)
+        {
+            if (op.Image is not null)
+                images.Add(new NativeLineImageOffset(op.EntryIndex, op.SegmentIndex, prefix));
+            prefix += op.Width;
+        }
+        return new NativeLineImageLayout(layout.TotalWidth, images);
     }
 
     /// <summary>打印一次文本布局（字号/行高/字体度量/基线偏移/实测基线间距），数值不变时不重复。</summary>
