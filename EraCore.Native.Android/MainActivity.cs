@@ -17,6 +17,12 @@ namespace EraCore.Native.Android;
 [Activity(
     Label = "era-core Native",
     MainLauncher = true,
+    // 单 Activity 实例：Avalonia 的 SingleView 生命周期持有同一个 NativeShell 控件。
+    // 标准 launchMode 下 `am start -n` 会在旧实例仍持有（visual parent = 旧 AvaloniaView 的
+    // ContentPresenter）时再建一个实例，新 AvaloniaView 重新挂载同一 NativeShell 会抛
+    // "already has a visual parent ContentPresenter"。SingleTop 让重入复用已有实例（走 OnNewIntent），
+    // 不改变进程重建 / 配置变更时的正常创建流程。
+    LaunchMode = LaunchMode.SingleTop,
     ScreenOrientation = ScreenOrientation.FullUser,
     // 转屏 / 分屏 / 显示尺寸变化时不重建 Activity：会话（以及游戏运行状态）跨配置变更存活。
     // ScreenLayout / SmallestScreenSize / Density 缺一不可——缺少任一都会让旋转或 wm size 触发
