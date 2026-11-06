@@ -10,6 +10,7 @@ using Avalonia.Media;
 using Avalonia.Rendering.SceneGraph;
 using Avalonia.Skia;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using EraCore.Hosting;
 using EraCore.Native;
 using SkiaSharp;
@@ -34,6 +35,9 @@ internal sealed class NativeGameView : Control
         new(NativeSkiaRenderer.CreateFont);
     private readonly NativePaintPool _paints = new();
     private readonly NativeTextBlobCache _textBlobs = new();
+
+    /// <summary>可见窗口布局预热；随 view 挂载创建、卸载时停止并等待其退出。</summary>
+    private NativeLayoutPrewarmer? _prewarm;
 #if DEBUG
     private readonly NativeFrameTelemetry _telemetry = new();
 #endif
@@ -121,9 +125,26 @@ internal sealed class NativeGameView : Control
 
         _followBottom = wasAtBottom;
         _version++;
+        // 帧对象/样式已定、滚动位置已定：把「可见窗口 + overscan」的行布局交给后台预热。
+        // 用同一 style 值与同一字体池构建；渲染线程并入前还会校验 frame 引用与行对象引用。
+        _prewarm?.Request(frame, style, _scrollY, hasLayout ? viewportHeight : 0);
         NativeTrace.Begin("era:invalidate");
         NativeTrace.End();
         InvalidateVisual();
+    }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _prewarm ??= new NativeLayoutPrewarmer(_fonts);
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        // 先停预热线程再交给上层释放字体池：保证没有线程仍在 MeasureText 即将 Dispose 的 SKFont。
+        _prewarm?.Dispose();
+        _prewarm = null;
+        base.OnDetachedFromVisualTree(e);
     }
 
     public override void Render(DrawingContext context)
@@ -142,7 +163,8 @@ internal sealed class NativeGameView : Control
         _telemetry.AddPrefetchTicks(Stopwatch.GetTimestamp() - prefetchStart);
 #endif
         context.Custom(new GameDrawOp(
-            new Rect(size), _frame, _style, _images, _lineLayout, _fonts, _paints, _textBlobs, _scrollX, _scrollY, _version,
+            new Rect(size), _frame, _style, _images, _lineLayout, _fonts, _paints, _textBlobs, _prewarm,
+            _scrollX, _scrollY, _version,
             hits =>
             {
                 _hitRegions = hits.Buttons;
@@ -351,6 +373,7 @@ internal sealed class NativeGameView : Control
         private readonly NativeFontPool<SKFont> _fonts;
         private readonly NativePaintPool _paints;
         private readonly NativeTextBlobCache _textBlobs;
+        private readonly NativeLayoutPrewarmer? _prewarm;
         private readonly double _scrollX;
         private readonly double _scrollY;
         private readonly long _version;
@@ -368,6 +391,7 @@ internal sealed class NativeGameView : Control
             NativeFontPool<SKFont> fonts,
             NativePaintPool paints,
             NativeTextBlobCache textBlobs,
+            NativeLayoutPrewarmer? prewarm,
             double scrollX,
             double scrollY,
             long version,
@@ -385,6 +409,7 @@ internal sealed class NativeGameView : Control
             _fonts = fonts;
             _paints = paints;
             _textBlobs = textBlobs;
+            _prewarm = prewarm;
             _scrollX = scrollX;
             _scrollY = scrollY;
             _version = version;
@@ -429,7 +454,8 @@ internal sealed class NativeGameView : Control
                 _lineLayout,
                 _fonts,
                 _paints,
-                _textBlobs
+                _textBlobs,
+                _prewarm
 #if DEBUG
                 , _telemetry
 #endif

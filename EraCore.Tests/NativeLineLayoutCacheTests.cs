@@ -280,19 +280,25 @@ public sealed class NativeLineLayoutCacheTests
     }
 
     [Fact]
-    public void FontPool_DisposesOnSizeChange()
+    public void FontPool_KeepsFontsAcrossSizeChange()
     {
         var pool = new NativeFontPool<FakeFont>((_, _, _) => new FakeFont());
 
         var oldFont = pool.Get(Latin, NativeFontVariant.Regular, 16f);
         Assert.False(oldFont.Disposed);
 
+        // 字号变化不再整体释放：预热线程可能仍在用旧字号字体量测，释放会造成 use-after-dispose。
         var newFont = pool.Get(Latin, NativeFontVariant.Regular, 18f);
 
-        Assert.True(oldFont.Disposed);
+        Assert.False(oldFont.Disposed);
         Assert.False(newFont.Disposed);
-        Assert.Equal(1, pool.Count);
+        Assert.NotSame(oldFont, newFont);
+        Assert.Equal(2, pool.Count);
         Assert.Equal(18f, pool.FontSize);
+
+        // 回到旧字号仍复用同一实例，不会重建。
+        Assert.Same(oldFont, pool.Get(Latin, NativeFontVariant.Regular, 16f));
+        Assert.Equal(2, pool.Count);
     }
 
     [Fact]

@@ -46,7 +46,8 @@ internal static class NativeSkiaRenderer
         NativeLineLayoutCache layoutCache,
         NativeFontPool<SKFont> fonts,
         NativePaintPool paints,
-        NativeTextBlobCache textBlobs
+        NativeTextBlobCache textBlobs,
+        NativeLayoutPrewarmer? prewarm
 #if DEBUG
         , NativeFrameTelemetry telemetry
 #endif
@@ -105,6 +106,9 @@ internal static class NativeSkiaRenderer
         layoutCache.Prepare(frame, style);
         // 文本 blob 缓存与行布局共用同一失效口径；滚动帧内复用；换帧/换 style 清空。
         textBlobs.Prepare(frame, style);
+        // 后台预热批次：与 Prepare 同一失效口径（frame 引用 + style 全字段值相等），并入时再逐行校验
+        // 行对象引用；窗口在预热与绘制之间偏移时只会并入仍然对得上的行。
+        prewarm?.TryAdopt(layoutCache, frame, style);
 #if DEBUG
         // 命中/未命中按「本次 Draw 的增量」上报；累计值会在同一帧的多次重绘里越滚越大，不可当速率看。
         var cacheHitsStart = layoutCache.Hits;
