@@ -60,6 +60,7 @@ internal static class NativeSkiaRenderer
         var aggDrawStart = traceAgg ? Stopwatch.GetTimestamp() : 0;
         long aggClear = 0, aggPrep = 0, aggBg = 0, aggPlan = 0, aggLines = 0;
         long aggText = 0, aggImage = 0, aggShape = 0, aggLayoutHit = 0, aggLayoutMiss = 0, aggHits = 0;
+        long aggImgGet = 0, aggImgPaint = 0, aggImgDraw = 0;
         long aggChrome = 0;
         var aggRuns = 0;
         var aggImages = 0;
@@ -403,7 +404,15 @@ internal static class NativeSkiaRenderer
 
         void DrawImageAndHit(NativeImage image, NativeButton? button, float x, float lineTop)
         {
-            DrawImage(canvas, image, x, lineTop, scale, images, paints);
+            long imgGetTicks = 0, imgPaintTicks = 0, imgDrawTicks = 0;
+            DrawImage(canvas, image, x, lineTop, scale, images, paints, traceAgg,
+                out imgGetTicks, out imgPaintTicks, out imgDrawTicks);
+            if (traceAgg)
+            {
+                aggImgGet += imgGetTicks;
+                aggImgPaint += imgPaintTicks;
+                aggImgDraw += imgDrawTicks;
+            }
 #if DEBUG
             imageDraws++;
 #endif
@@ -497,7 +506,8 @@ internal static class NativeSkiaRenderer
             FlushAggregate(
                 aggDrawStart, aggClear, aggPrep, aggBg, aggPlan, aggLines, aggText, aggImage, aggShape,
                 aggLayoutHit, aggLayoutMiss, aggHits, aggChrome,
-                aggRuns, aggImages, aggShapes, aggLayoutHits, aggLayoutMisses, aggHitRegions);
+                aggRuns, aggImages, aggShapes, aggLayoutHits, aggLayoutMisses, aggHitRegions,
+                aggImgGet, aggImgPaint, aggImgDraw);
 
         return new NativeDrawHits(hits, imageHits);
     }
@@ -507,7 +517,8 @@ internal static class NativeSkiaRenderer
         long drawStart,
         long clear, long prep, long bg, long plan, long lines, long text, long image, long shape,
         long layoutHit, long layoutMiss, long hits, long chrome,
-        int runs, int images, int shapes, int layoutHits, int layoutMisses, int hitRegions)
+        int runs, int images, int shapes, int layoutHits, int layoutMisses, int hitRegions,
+        long imgGet, long imgPaint, long imgDraw)
     {
         var now = Stopwatch.GetTimestamp();
         var frames = ++_aggFrames;
@@ -530,6 +541,9 @@ internal static class NativeSkiaRenderer
         _aggLayoutHits += layoutHits;
         _aggLayoutMisses += layoutMisses;
         _aggHitRegions += hitRegions;
+        _aggImgGet += imgGet;
+        _aggImgPaint += imgPaint;
+        _aggImgDraw += imgDraw;
 
         if (_aggLastLog == 0)
             _aggLastLog = now;
@@ -542,7 +556,9 @@ internal static class NativeSkiaRenderer
             $"frames={n} draw={_aggDraw * ticksToMs / n:F2} clear={_aggClear * ticksToMs / n:F3} " +
             $"prep={_aggPrep * ticksToMs / n:F3} bg={_aggBg * ticksToMs / n:F3} plan={_aggPlan * ticksToMs / n:F3} " +
             $"lines={_aggLines * ticksToMs / n:F2} text={_aggText * ticksToMs / n:F2} " +
-            $"img={_aggImage * ticksToMs / n:F2} shape={_aggShape * ticksToMs / n:F3} " +
+            $"img={_aggImage * ticksToMs / n:F2} imgGet={_aggImgGet * ticksToMs / n:F3} " +
+            $"imgPaint={_aggImgPaint * ticksToMs / n:F3} imgDraw={_aggImgDraw * ticksToMs / n:F3} " +
+            $"shape={_aggShape * ticksToMs / n:F3} " +
             $"layoutHit={_aggLayoutHit * ticksToMs / n:F3} layoutMiss={_aggLayoutMiss * ticksToMs / n:F3} " +
             $"hits={_aggHits * ticksToMs / n:F3} chrome={_aggChrome * ticksToMs / n:F3} " +
             $"runs/f={_aggRuns / (double)n:F1} imgs/f={_aggImages / (double)n:F1} shapes/f={_aggShapes / (double)n:F1} " +
@@ -552,6 +568,7 @@ internal static class NativeSkiaRenderer
         _aggFrames = _aggDraw = _aggClear = _aggPrep = _aggBg = _aggPlan = _aggLines = 0;
         _aggText = _aggImage = _aggShape = _aggLayoutHit = _aggLayoutMiss = _aggHits = _aggChrome = 0;
         _aggRuns = _aggImages = _aggShapes = _aggLayoutHits = _aggLayoutMisses = _aggHitRegions = 0;
+        _aggImgGet = _aggImgPaint = _aggImgDraw = 0;
         _aggLastLog = now;
     }
 
@@ -559,6 +576,7 @@ internal static class NativeSkiaRenderer
     private static long _aggFrames, _aggDraw, _aggClear, _aggPrep, _aggBg, _aggPlan, _aggLines;
     private static long _aggText, _aggImage, _aggShape, _aggLayoutHit, _aggLayoutMiss, _aggHits, _aggChrome;
     private static long _aggRuns, _aggImages, _aggShapes, _aggLayoutHits, _aggLayoutMisses, _aggHitRegions;
+    private static long _aggImgGet, _aggImgPaint, _aggImgDraw;
 
     /// <summary>
     /// 字体池工厂（Android 侧）：按 (字体身份, 变体, 字号) 创建 <see cref="SKFont"/>。
@@ -773,8 +791,16 @@ internal static class NativeSkiaRenderer
         float lineTop,
         float scale,
         NativeImageCache images,
-        NativePaintPool paints)
+        NativePaintPool paints,
+        bool trace,
+        out long getTicks,
+        out long paintTicks,
+        out long drawTicks)
     {
+        getTicks = 0;
+        paintTicks = 0;
+        drawTicks = 0;
+
         var width = NativeGeometry.ImageWidth(image, scale);
         var height = Math.Max(0f, image.Height * scale);
         if (width <= 0 || height <= 0)
@@ -782,7 +808,10 @@ internal static class NativeSkiaRenderer
 
         var top = lineTop + image.YPos * scale;
         var mask = new SKRect(x, top, x + width, top + height);
+        var getStart = trace ? Stopwatch.GetTimestamp() : 0;
         var result = images.Get(image.Src);
+        if (trace)
+            getTicks = Stopwatch.GetTimestamp() - getStart;
 
         if (result.Image is not { } skImage)
         {
@@ -792,8 +821,12 @@ internal static class NativeSkiaRenderer
             return;
         }
 
+        var paintStart = trace ? Stopwatch.GetTimestamp() : 0;
         var paint = paints.Get(SKColors.White);
+        if (trace)
+            paintTicks = Stopwatch.GetTimestamp() - paintStart;
 
+        var drawStart = trace ? Stopwatch.GetTimestamp() : 0;
         if (image.Crop is { } crop)
         {
             // 与 Web 的「掩膜 + 负 margin」等价：整图按 imgWidth/imgHeight 绘制，
@@ -812,6 +845,9 @@ internal static class NativeSkiaRenderer
         {
             canvas.DrawImage(skImage, mask, Sampling, paint);
         }
+
+        if (trace)
+            drawTicks = Stopwatch.GetTimestamp() - drawStart;
     }
 
     private static void DrawImagePlaceholder(SKCanvas canvas, SKRect mask, NativePaintPool paints)
