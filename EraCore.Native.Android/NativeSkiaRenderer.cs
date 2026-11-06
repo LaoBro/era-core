@@ -52,6 +52,21 @@ internal static class NativeSkiaRenderer
 #endif
         )
     {
+        using var traceDraw = NativeTrace.Section("era:draw");
+        // 精确分项：只在 trace 开关打开时用 Stopwatch 累加（Release AOT 下一次 GetTimestamp ≈ 数十 ns），
+        // 每 50 帧汇总打一条日志；ATrace 逐 op 分片在本机（MT6763）每次约 23µs，会把 11ms 帧放大到 15ms，
+        // 因此分项走这里、整帧用 era:draw 分片交叉校验。
+        var traceAgg = NativeTrace.Enabled;
+        var aggDrawStart = traceAgg ? Stopwatch.GetTimestamp() : 0;
+        long aggClear = 0, aggPrep = 0, aggBg = 0, aggPlan = 0, aggLines = 0;
+        long aggText = 0, aggImage = 0, aggShape = 0, aggLayoutHit = 0, aggLayoutMiss = 0, aggHits = 0;
+        long aggChrome = 0;
+        var aggRuns = 0;
+        var aggImages = 0;
+        var aggShapes = 0;
+        var aggLayoutHits = 0;
+        var aggLayoutMisses = 0;
+        var aggHitRegions = 0;
 #if DEBUG
         ref var sample = ref telemetry.Sample;
         sample.DrawStartTicks = Stopwatch.GetTimestamp();
@@ -59,18 +74,24 @@ internal static class NativeSkiaRenderer
         sample.Lines = frame.Lines.Count;
         sample.Extents = frame.ImageExtentList.Count;
 #endif
-        canvas.Clear(ParseColor(style.BackgroundOverride ?? frame.BackgroundColor, new SKColor(0, 0, 0)));
+        var aggMark = traceAgg ? Stopwatch.GetTimestamp() : 0;
+        using (NativeTrace.Section("era:clear"))
+            canvas.Clear(ParseColor(style.BackgroundOverride ?? frame.BackgroundColor, new SKColor(0, 0, 0)));
+        if (traceAgg)
+            aggClear += Stopwatch.GetTimestamp() - aggMark;
         if (viewportWidth <= 0 || viewportHeight <= 0)
             return NativeDrawHits.Empty;
 
-        // 上一帧绘制已结束，帧起点是安全的池修剪时机。
-        paints.BeginFrame();
-
+        var aggPrepMark = traceAgg ? Stopwatch.GetTimestamp() : 0;
         var lineHeight = (float)Math.Max(1, style.LineHeight);
         var fontSize = (float)Math.Max(1, style.FontSize);
         var scale = (float)Math.Max(0.1, style.Scale);
         var maxScrollX = Math.Max(0f, (float)style.ContentWidth - (float)viewportWidth);
         var sx = Math.Clamp((float)scrollX, 0f, maxScrollX);
+        var prepScope = NativeTrace.Section("era:prep");
+
+        // 上一帧绘制已结束，帧起点是安全的池修剪时机。
+        paints.BeginFrame();
 
         var window = VirtualWindow.Compute(
             frame.Lines.Count,
@@ -81,7 +102,7 @@ internal static class NativeSkiaRenderer
 
         // 行布局缓存：frame 引用或 style 全字段变化时整体清空（口径与原 NativeImageLayoutCache 一致）。
         layoutCache.Prepare(frame, style);
-        // 文本 blob 缓存与行布局共用同一失效口径；滚动帧内复用，换帧/换 style 清空。
+        // 文本 blob 缓存与行布局共用同一失效口径；滚动帧内复用；换帧/换 style 清空。
         textBlobs.Prepare(frame, style);
 #if DEBUG
         // 命中/未命中按「本次 Draw 的增量」上报；累计值会在同一帧的多次重绘里越滚越大，不可当速率看。
@@ -101,6 +122,9 @@ internal static class NativeSkiaRenderer
         var fontMetrics = measureFont.Metrics;
         // 行高只来自 style.LineHeight；字体度量只决定「行内」基线位置（WinForms 顶对齐 = -Ascent）。
         var baselineOffset = (float)NativeTextLayout.BaselineOffset(fontMetrics.Ascent);
+        prepScope.Dispose();
+        if (traceAgg)
+            aggPrep += Stopwatch.GetTimestamp() - aggPrepMark;
 
         var hits = new List<NativeHitRegion>();
         var imageHits = new List<NativeImageHitRegion>();
@@ -126,9 +150,31 @@ internal static class NativeSkiaRenderer
         // 窗口行与窗口外锚定行共用这一层，不再有第二套图片布局缓存。
         NativeLineLayout GetLayout(int index)
         {
-            if (layoutCache.TryGet(index) is { } cached)
-                return cached;
+            if (traceAgg)
+            {
+                var hitStart = Stopwatch.GetTimestamp();
+                if (layoutCache.TryGet(index) is { } cached)
+                {
+                    aggLayoutHit += Stopwatch.GetTimestamp() - hitStart;
+                    aggLayoutHits++;
+                    return cached;
+                }
+                aggLayoutHit += Stopwatch.GetTimestamp() - hitStart;
+                aggLayoutHits++;
+                var missStart = Stopwatch.GetTimestamp();
+                var builtHit = BuildAndStore(index);
+                aggLayoutMiss += Stopwatch.GetTimestamp() - missStart;
+                aggLayoutMisses++;
+                return builtHit;
+            }
 
+            if (layoutCache.TryGet(index) is { } cacheHit)
+                return cacheHit;
+            return BuildAndStore(index);
+        }
+
+        NativeLineLayout BuildAndStore(int index)
+        {
 #if DEBUG
             var layoutStart = Stopwatch.GetTimestamp();
 #endif
@@ -155,14 +201,19 @@ internal static class NativeSkiaRenderer
 #if DEBUG
         var backgroundStart = Stopwatch.GetTimestamp();
 #endif
-        var backgroundLayers = DrawBackgrounds(
-            canvas,
-            frame,
-            images,
-            paints,
-            (float)style.ContentWidth,
-            (float)viewportHeight,
-            sx);
+        int backgroundLayers;
+        var aggBgMark = traceAgg ? Stopwatch.GetTimestamp() : 0;
+        using (NativeTrace.Section("era:paint.bg"))
+            backgroundLayers = DrawBackgrounds(
+                canvas,
+                frame,
+                images,
+                paints,
+                (float)style.ContentWidth,
+                (float)viewportHeight,
+                sx);
+        if (traceAgg)
+            aggBg += Stopwatch.GetTimestamp() - aggBgMark;
 #if DEBUG
         var backgroundTicks = Stopwatch.GetTimestamp() - backgroundStart;
         paintTicks += backgroundTicks;
@@ -175,10 +226,15 @@ internal static class NativeSkiaRenderer
         // 窗口行：整行绘制（文本 + 内联图片），顺序与 old 行循环完全一致。
         void DrawLineSlot(int index)
         {
+            var aggLineMark = traceAgg ? Stopwatch.GetTimestamp() : 0;
             var line = frame.Lines[index];
             var layout = GetLayout(index);
             if (layout.Ops.Count == 0)
+            {
+                if (traceAgg)
+                    aggLines += Stopwatch.GetTimestamp() - aggLineMark;
                 return;
+            }
 #if DEBUG
             var paintStart = Stopwatch.GetTimestamp();
 #endif
@@ -237,42 +293,62 @@ internal static class NativeSkiaRenderer
                     paintTextTicks += paintOpTicks - opStart;
                     textOps++;
 #else
-                    DrawRun(
-                        canvas,
-                        run,
-                        fonts.Get(run.Typeface, run.Variant, fontSize),
-                        defaultPaint,
-                        paints,
-                        textBlobs,
-                        x,
-                        baseline,
-                        fontSize);
+                    if (traceAgg)
+                    {
+                        var opStart = Stopwatch.GetTimestamp();
+                        DrawRun(
+                            canvas,
+                            run,
+                            fonts.Get(run.Typeface, run.Variant, fontSize),
+                            defaultPaint,
+                            paints,
+                            textBlobs,
+                            x,
+                            baseline,
+                            fontSize);
+                        aggText += Stopwatch.GetTimestamp() - opStart;
+                        aggRuns++;
+                    }
+                    else
+                    {
+                        DrawRun(
+                            canvas,
+                            run,
+                            fonts.Get(run.Typeface, run.Variant, fontSize),
+                            defaultPaint,
+                            paints,
+                            textBlobs,
+                            x,
+                            baseline,
+                            fontSize);
+                    }
 #endif
                 }
                 else if (op.Image is { } image)
                 {
-#if DEBUG
-                    var opStart = Stopwatch.GetTimestamp();
-#endif
+                    var opStart = traceAgg ? Stopwatch.GetTimestamp() : 0;
                     DrawImageAndHit(image, op.Button, x, lineTop);
-#if DEBUG
-                    paintImageTicks += Stopwatch.GetTimestamp() - opStart;
-#endif
+                    if (traceAgg)
+                    {
+                        aggImage += Stopwatch.GetTimestamp() - opStart;
+                        aggImages++;
+                    }
                 }
                 else if (op.Shape is { } shape)
                 {
-#if DEBUG
-                    var opStart = Stopwatch.GetTimestamp();
-#endif
+                    var opStart = traceAgg ? Stopwatch.GetTimestamp() : 0;
                     DrawShape(canvas, shape, paints, x, lineTop, scale);
-#if DEBUG
-                    paintShapeTicks += Stopwatch.GetTimestamp() - opStart;
-#endif
+                    if (traceAgg)
+                    {
+                        aggShape += Stopwatch.GetTimestamp() - opStart;
+                        aggShapes++;
+                    }
                 }
 
                 x += op.Width;
             }
 
+            var aggHitMark = traceAgg ? Stopwatch.GetTimestamp() : 0;
             foreach (var entry in layout.Entries)
             {
                 if (entry.Button is null || entry.Width <= 0)
@@ -283,10 +359,17 @@ internal static class NativeSkiaRenderer
                     entry.Width,
                     lineHeight,
                     entry.Button));
+                aggHitRegions++;
             }
+            if (traceAgg)
+                aggHits += Stopwatch.GetTimestamp() - aggHitMark;
+
+            if (traceAgg)
+                aggLines += Stopwatch.GetTimestamp() - aggLineMark;
 
 #if DEBUG
-            paintTicks += Stopwatch.GetTimestamp() - paintStart;
+            if (traceAgg)
+                paintTicks += Stopwatch.GetTimestamp() - paintStart;
 #endif
         }
 
@@ -332,14 +415,19 @@ internal static class NativeSkiaRenderer
 #if DEBUG
         var planStart = Stopwatch.GetTimestamp();
 #endif
-        var plan = NativeImageViewport.Plan(
-            frame,
-            lineHeight,
-            sy,
-            viewportHeight,
-            scale,
-            window.StartIndex,
-            window.EndIndexExclusive);
+        IReadOnlyList<NativeDrawStep> plan;
+        var aggPlanMark = traceAgg ? Stopwatch.GetTimestamp() : 0;
+        using (NativeTrace.Section("era:plan"))
+            plan = NativeImageViewport.Plan(
+                frame,
+                lineHeight,
+                sy,
+                viewportHeight,
+                scale,
+                window.StartIndex,
+                window.EndIndexExclusive);
+        if (traceAgg)
+            aggPlan += Stopwatch.GetTimestamp() - aggPlanMark;
 #if DEBUG
         var planTicks = Stopwatch.GetTimestamp() - planStart;
 #endif
@@ -360,19 +448,25 @@ internal static class NativeSkiaRenderer
 #if DEBUG
         var scrollbarStart = Stopwatch.GetTimestamp();
 #endif
-        if (window.ThumbHeight > 0)
+        var aggChromeMark = traceAgg ? Stopwatch.GetTimestamp() : 0;
+        using (NativeTrace.Section("era:paint.chrome"))
         {
-            var trackWidth = 3f;
-            var trackX = (float)viewportWidth - trackWidth - 2f;
-            canvas.DrawRect(
-                new SKRect(trackX, 0, trackX + trackWidth, (float)viewportHeight),
-                paints.Get(new SKColor(255, 255, 255, 24)));
+            if (window.ThumbHeight > 0)
+            {
+                var trackWidth = 3f;
+                var trackX = (float)viewportWidth - trackWidth - 2f;
+                canvas.DrawRect(
+                    new SKRect(trackX, 0, trackX + trackWidth, (float)viewportHeight),
+                    paints.Get(new SKColor(255, 255, 255, 24)));
 
-            canvas.DrawRoundRect(
-                new SKRect(trackX, (float)window.ThumbY, trackX + trackWidth, (float)(window.ThumbY + window.ThumbHeight)),
-                1.5f, 1.5f,
-                paints.Get(new SKColor(255, 255, 255, 110), SKPaintStyle.Fill, 0f, antialias: true));
+                canvas.DrawRoundRect(
+                    new SKRect(trackX, (float)window.ThumbY, trackX + trackWidth, (float)(window.ThumbY + window.ThumbHeight)),
+                    1.5f, 1.5f,
+                    paints.Get(new SKColor(255, 255, 255, 110), SKPaintStyle.Fill, 0f, antialias: true));
+            }
         }
+        if (traceAgg)
+            aggChrome += Stopwatch.GetTimestamp() - aggChromeMark;
 #if DEBUG
         var chromeTicks = Stopwatch.GetTimestamp() - scrollbarStart;
         paintTicks += chromeTicks;
@@ -399,8 +493,72 @@ internal static class NativeSkiaRenderer
         sample.LayoutMisses = layoutCache.Misses - cacheMissesStart;
 #endif
 
+        if (traceAgg)
+            FlushAggregate(
+                aggDrawStart, aggClear, aggPrep, aggBg, aggPlan, aggLines, aggText, aggImage, aggShape,
+                aggLayoutHit, aggLayoutMiss, aggHits, aggChrome,
+                aggRuns, aggImages, aggShapes, aggLayoutHits, aggLayoutMisses, aggHitRegions);
+
         return new NativeDrawHits(hits, imageHits);
     }
+
+    /// <summary>每秒汇总一次分项耗时到 logcat（仅 trace 开关打开时调用）。</summary>
+    private static void FlushAggregate(
+        long drawStart,
+        long clear, long prep, long bg, long plan, long lines, long text, long image, long shape,
+        long layoutHit, long layoutMiss, long hits, long chrome,
+        int runs, int images, int shapes, int layoutHits, int layoutMisses, int hitRegions)
+    {
+        var now = Stopwatch.GetTimestamp();
+        var frames = ++_aggFrames;
+        _aggDraw += now - drawStart;
+        _aggClear += clear;
+        _aggPrep += prep;
+        _aggBg += bg;
+        _aggPlan += plan;
+        _aggLines += lines;
+        _aggText += text;
+        _aggImage += image;
+        _aggShape += shape;
+        _aggLayoutHit += layoutHit;
+        _aggLayoutMiss += layoutMiss;
+        _aggHits += hits;
+        _aggChrome += chrome;
+        _aggRuns += runs;
+        _aggImages += images;
+        _aggShapes += shapes;
+        _aggLayoutHits += layoutHits;
+        _aggLayoutMisses += layoutMisses;
+        _aggHitRegions += hitRegions;
+
+        if (_aggLastLog == 0)
+            _aggLastLog = now;
+        if (now - _aggLastLog < Stopwatch.Frequency)
+            return;
+
+        var ticksToMs = 1000.0 / Stopwatch.Frequency;
+        var n = _aggFrames;
+        Log.Info("EraTraceAgg",
+            $"frames={n} draw={_aggDraw * ticksToMs / n:F2} clear={_aggClear * ticksToMs / n:F3} " +
+            $"prep={_aggPrep * ticksToMs / n:F3} bg={_aggBg * ticksToMs / n:F3} plan={_aggPlan * ticksToMs / n:F3} " +
+            $"lines={_aggLines * ticksToMs / n:F2} text={_aggText * ticksToMs / n:F2} " +
+            $"img={_aggImage * ticksToMs / n:F2} shape={_aggShape * ticksToMs / n:F3} " +
+            $"layoutHit={_aggLayoutHit * ticksToMs / n:F3} layoutMiss={_aggLayoutMiss * ticksToMs / n:F3} " +
+            $"hits={_aggHits * ticksToMs / n:F3} chrome={_aggChrome * ticksToMs / n:F3} " +
+            $"runs/f={_aggRuns / (double)n:F1} imgs/f={_aggImages / (double)n:F1} shapes/f={_aggShapes / (double)n:F1} " +
+            $"layoutHit/f={_aggLayoutHits / (double)n:F1} layoutMiss/f={_aggLayoutMisses / (double)n:F1} " +
+            $"hitRegions/f={_aggHitRegions / (double)n:F1}");
+
+        _aggFrames = _aggDraw = _aggClear = _aggPrep = _aggBg = _aggPlan = _aggLines = 0;
+        _aggText = _aggImage = _aggShape = _aggLayoutHit = _aggLayoutMiss = _aggHits = _aggChrome = 0;
+        _aggRuns = _aggImages = _aggShapes = _aggLayoutHits = _aggLayoutMisses = _aggHitRegions = 0;
+        _aggLastLog = now;
+    }
+
+    private static long _aggLastLog;
+    private static long _aggFrames, _aggDraw, _aggClear, _aggPrep, _aggBg, _aggPlan, _aggLines;
+    private static long _aggText, _aggImage, _aggShape, _aggLayoutHit, _aggLayoutMiss, _aggHits, _aggChrome;
+    private static long _aggRuns, _aggImages, _aggShapes, _aggLayoutHits, _aggLayoutMisses, _aggHitRegions;
 
     /// <summary>
     /// 字体池工厂（Android 侧）：按 (字体身份, 变体, 字号) 创建 <see cref="SKFont"/>。

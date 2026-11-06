@@ -43,6 +43,9 @@ public class MainActivity : AvaloniaMainActivity
     protected override void OnCreate(Bundle? savedInstanceState)
     {
         Instance = this;
+        // 性能测量开关：`am start ... --ez eracore.trace true` 才打开 ATrace 分片，默认关闭。
+        NativeTrace.Enabled = Intent?.GetBooleanExtra("eracore.trace", false) ?? false;
+        Log.Info(LogTag, $"atrace sections: {(NativeTrace.Enabled ? "on" : "off")}");
         // 平台初始化（设置 / 内置字体 / 内置示例解压）已在 NativeAndroidApplication.OnCreate 完成，
         // 那里早于 Avalonia 构造 NativeShell，能保证持久化的主题/方向在首帧前生效。
         base.OnCreate(savedInstanceState);

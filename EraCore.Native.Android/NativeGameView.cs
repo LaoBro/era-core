@@ -65,6 +65,8 @@ internal sealed class NativeGameView : Control
         Dispatcher.UIThread.Post(() =>
         {
             _version++;
+            NativeTrace.Begin("era:invalidate");
+            NativeTrace.End();
             InvalidateVisual();
         });
     }
@@ -119,6 +121,8 @@ internal sealed class NativeGameView : Control
 
         _followBottom = wasAtBottom;
         _version++;
+        NativeTrace.Begin("era:invalidate");
+        NativeTrace.End();
         InvalidateVisual();
     }
 
@@ -127,11 +131,13 @@ internal sealed class NativeGameView : Control
         var size = Bounds.Size;
         if (size.Width <= 0 || size.Height <= 0)
             return;
+        using var traceView = NativeTrace.Section("era:view");
 #if DEBUG
         _telemetry.BeginFrame(_scrollY, _frame.Revision);
         var prefetchStart = Stopwatch.GetTimestamp();
 #endif
-        _images.PrefetchWindow(_frame, _scrollY, size.Height, _style.LineHeight, _style.Scale);
+        using (NativeTrace.Section("era:prefetch"))
+            _images.PrefetchWindow(_frame, _scrollY, size.Height, _style.LineHeight, _style.Scale);
 #if DEBUG
         _telemetry.AddPrefetchTicks(Stopwatch.GetTimestamp() - prefetchStart);
 #endif
@@ -160,6 +166,7 @@ internal sealed class NativeGameView : Control
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
+        using var traceInput = NativeTrace.Section("era:input.press");
         base.OnPointerPressed(e);
         var point = e.GetCurrentPoint(this);
         if (!point.Properties.IsLeftButtonPressed && !point.Properties.IsRightButtonPressed)
@@ -177,6 +184,7 @@ internal sealed class NativeGameView : Control
         base.OnPointerMoved(e);
         if (!_dragging)
             return;
+        using var traceInput = NativeTrace.Section("era:input.move");
 
         var position = e.GetPosition(this);
         var dx = position.X - _lastPoint.X;
@@ -188,12 +196,15 @@ internal sealed class NativeGameView : Control
         _scrollX = Math.Clamp(_scrollX - dx, 0, MaxScrollX(Bounds.Width));
         _followBottom = IsAtBottom();
         _version++;
+        NativeTrace.Begin("era:invalidate");
+        NativeTrace.End();
         InvalidateVisual();
         e.Handled = true;
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
+        using var traceInput = NativeTrace.Section("era:input.release");
         base.OnPointerReleased(e);
         if (!_dragging)
             return;
@@ -239,6 +250,8 @@ internal sealed class NativeGameView : Control
         _scrollY = Math.Clamp(_scrollY - (e.Delta.Y * step), 0, MaxScrollY(Bounds.Height));
         _followBottom = IsAtBottom();
         _version++;
+        NativeTrace.Begin("era:invalidate");
+        NativeTrace.End();
         InvalidateVisual();
         e.Handled = true;
     }
@@ -394,6 +407,7 @@ internal sealed class NativeGameView : Control
 
         public void Render(ImmediateDrawingContext context)
         {
+            using var traceOp = NativeTrace.Section("era:drawop");
             var feature = context.TryGetFeature<ISkiaSharpApiLeaseFeature>();
             if (feature is null)
                 return;
@@ -420,7 +434,8 @@ internal sealed class NativeGameView : Control
                 , _telemetry
 #endif
                 );
-            _onHitRegions(regions);
+            using (NativeTrace.Section("era:hits.collect"))
+                _onHitRegions(regions);
 #if DEBUG
             _telemetry.EndFrame();
 #endif

@@ -278,6 +278,7 @@ internal sealed class NativeRoot : Border
 
     private void Poll()
     {
+        using var tracePoll = NativeTrace.Section("era:poll");
         ApplyInsets(force: false);
 
         var snapshot = NativeRuntime.Snapshot;
@@ -311,8 +312,12 @@ internal sealed class NativeRoot : Border
             _lastStyle = style;
             _lastMetrics = metrics;
 
-            var frame = NativeRenderModel.FromSnapshot(snapshot);
-            _view.SetFrame(frame, style);
+            NativeFrame frame;
+            using (NativeTrace.Section("era:poll.frame"))
+            {
+                frame = NativeRenderModel.FromSnapshot(snapshot);
+                _view.SetFrame(frame, style);
+            }
 
             if (!_firstFrameLogged)
             {
@@ -325,7 +330,8 @@ internal sealed class NativeRoot : Border
             }
         }
 
-        UpdateInputBar();
+        using (NativeTrace.Section("era:poll.input"))
+            UpdateInputBar();
     }
 
     private AwaitingView ComputeAwaitingView(DisplaySnapshot snapshot)
