@@ -57,6 +57,8 @@ internal sealed class NativeImageCache : IDisposable
     private int _generation;
     private long _clock;
     private bool _disposed;
+    /// <summary>已缓存的位图字节数（增量维护）。不在每次 <see cref="Get"/> 里遍历条目重算。</summary>
+    private long _bytes;
 
     public NativeImageCache(Action onChanged)
     {
@@ -262,6 +264,7 @@ internal sealed class NativeImageCache : IDisposable
             if (bitmap is not null)
             {
                 entry.Bitmap = bitmap;
+                _bytes += BitmapBytes(bitmap);
                 entry.Image = SKImage.FromBitmap(bitmap);
             }
             else
@@ -282,6 +285,7 @@ internal sealed class NativeImageCache : IDisposable
         foreach (var entry in _entries.Values)
             RetireLocked(entry);
         _entries.Clear();
+        _bytes = 0;
         _clock = 0;
     }
 
@@ -289,10 +293,14 @@ internal sealed class NativeImageCache : IDisposable
     {
         if (entry.Image is null && entry.Bitmap is null)
             return;
+        if (entry.Bitmap is not null)
+            _bytes -= BitmapBytes(entry.Bitmap);
         _retired.Add((entry.Image, entry.Bitmap));
         entry.Image = null;
         entry.Bitmap = null;
     }
+
+    private static long BitmapBytes(SKBitmap bitmap) => (long)bitmap.Width * bitmap.Height * 4;
 
     /// <summary>
     /// 在绘制线程每次开始新一帧时调用：上一帧的 Skia 绘制已结束，此时释放退役位图才安全。
@@ -319,13 +327,7 @@ internal sealed class NativeImageCache : IDisposable
         }
     }
 
-    private long BytesLocked()
-    {
-        var total = 0L;
-        foreach (var entry in _entries.Values)
-            total += entry.Bitmap is null ? 0 : (long)entry.Bitmap.Width * entry.Bitmap.Height * 4;
-        return total;
-    }
+    private long BytesLocked() => _bytes;
 
     /// <summary>只在绘制线程（<see cref="Get"/>）调用，避免解码线程释放正在绘制的位图。</summary>
     private void TrimLocked(string inUseKey)
