@@ -19,7 +19,9 @@ namespace EraCore.Native.Android;
 /// 下一帧再收缩。</para>
 ///
 /// <para>线程约束：与 <c>NativeFontPool</c>/<c>NativePaintPool</c> 相同，调用方保证串行
-/// （Android 侧 <c>ICustomDrawOperation.Render</c> 在同一渲染线程串行执行同一 view）；本类不加锁。</para>
+/// （Android 侧 <c>ICustomDrawOperation.Render</c> 在同一渲染线程串行执行同一 view）；本类不加锁。
+/// 后台预热线程<b>不直接</b>写本类：它只构建私有批次，由渲染线程在 <c>Draw</c> 起点调用
+/// <see cref="Adopt"/> 并入。</para>
 /// </summary>
 internal sealed class NativeTextBlobCache
 {
@@ -27,7 +29,7 @@ internal sealed class NativeTextBlobCache
 
     private sealed class Entry
     {
-        public Entry(SKTextBlob blob, LinkedListNode<Key> node, long epoch)
+        public Entry(SKTextBlob blob, LinkedListNode<NativeTextBlobKey> node, long epoch)
         {
             Blob = blob;
             Node = node;
@@ -36,13 +38,13 @@ internal sealed class NativeTextBlobCache
 
         public SKTextBlob Blob { get; }
 
-        public LinkedListNode<Key> Node { get; }
+        public LinkedListNode<NativeTextBlobKey> Node { get; }
 
         public long Epoch { get; set; }
     }
 
-    private readonly Dictionary<Key, Entry> _blobs;
-    private readonly LinkedList<Key> _lru = new();
+    private readonly Dictionary<NativeTextBlobKey, Entry> _blobs;
+    private readonly LinkedList<NativeTextBlobKey> _lru = new();
     private object? _frame;
     private object? _style;
     private long _epoch;
@@ -52,7 +54,7 @@ internal sealed class NativeTextBlobCache
         if (capacity <= 0)
             throw new ArgumentOutOfRangeException(nameof(capacity), "capacity 必须为正数");
         Capacity = capacity;
-        _blobs = new Dictionary<Key, Entry>(capacity);
+        _blobs = new Dictionary<NativeTextBlobKey, Entry>(capacity);
     }
 
     public int Capacity { get; }
@@ -64,6 +66,9 @@ internal sealed class NativeTextBlobCache
 
     /// <summary>未命中（= 本帧新建 blob）次数（<see cref="Prepare"/> 重置时归零）。</summary>
     public int Misses { get; private set; }
+
+    /// <summary>累计从后台预热批次接管的 blob 数（不随 <see cref="Reset"/> 归零，用于生命周期对账）。</summary>
+    internal int Adopted { get; private set; }
 
     /// <summary>每帧绘制前调用：frame 引用或 style 值变化时整体清空并进入新 epoch。</summary>
     public void Prepare(object frame, object style)
@@ -85,7 +90,7 @@ internal sealed class NativeTextBlobCache
         float fontSize,
         SKFont font)
     {
-        var key = new Key(text, typeface, variant, fontSize);
+        var key = new NativeTextBlobKey(text, typeface, variant, fontSize);
         if (_blobs.TryGetValue(key, out var cached))
         {
             _lru.Remove(cached.Node);
@@ -104,6 +109,26 @@ internal sealed class NativeTextBlobCache
         _blobs[key] = new Entry(blob, node, _epoch);
         Trim();
         return blob;
+    }
+
+    /// <summary>
+    /// 渲染线程：接管一个后台预热好的 blob。返回 false 表示同键条目已存在（调用方必须释放新造的那个）。
+    ///
+    /// <para>预热条目与本帧现场新建的条目一样打上当前 epoch：本帧真正用到它之前不会被 <c>Trim</c>
+    /// 淘汰。换帧时的 <see cref="Reset"/> 会连同预热条目一起 Dispose，不会漏。</para>
+    /// </summary>
+    internal bool Adopt(NativeTextBlobKey key, SKTextBlob blob)
+    {
+        ArgumentNullException.ThrowIfNull(blob);
+
+        if (_blobs.ContainsKey(key))
+            return false;
+
+        var node = _lru.AddFirst(key);
+        _blobs[key] = new Entry(blob, node, _epoch);
+        Adopted++;
+        Trim();
+        return true;
     }
 
     /// <summary>清空全部 blob 与统计（保留容量）。</summary>
@@ -138,6 +163,4 @@ internal sealed class NativeTextBlobCache
             entry.Blob.Dispose();
         }
     }
-
-    private readonly record struct Key(string Text, object Typeface, NativeFontVariant Variant, float FontSize);
 }

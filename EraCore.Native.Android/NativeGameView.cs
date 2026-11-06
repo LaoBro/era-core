@@ -36,8 +36,8 @@ internal sealed class NativeGameView : Control
     private readonly NativePaintPool _paints = new();
     private readonly NativeTextBlobCache _textBlobs = new();
 
-    /// <summary>可见窗口布局预热；随 view 挂载创建、卸载时停止并等待其退出。</summary>
-    private NativeLayoutPrewarmer? _prewarm;
+    /// <summary>可见窗口预热（行布局 + 文本 blob）；随 view 挂载创建、卸载时停止并等待其退出。</summary>
+    private NativeWindowPrewarmer? _prewarm;
 #if DEBUG
     private readonly NativeFrameTelemetry _telemetry = new();
 #endif
@@ -136,7 +136,7 @@ internal sealed class NativeGameView : Control
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
-        _prewarm ??= new NativeLayoutPrewarmer(_fonts);
+        _prewarm ??= new NativeWindowPrewarmer(_fonts);
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -373,7 +373,7 @@ internal sealed class NativeGameView : Control
         private readonly NativeFontPool<SKFont> _fonts;
         private readonly NativePaintPool _paints;
         private readonly NativeTextBlobCache _textBlobs;
-        private readonly NativeLayoutPrewarmer? _prewarm;
+        private readonly NativeWindowPrewarmer? _prewarm;
         private readonly double _scrollX;
         private readonly double _scrollY;
         private readonly long _version;
@@ -391,7 +391,7 @@ internal sealed class NativeGameView : Control
             NativeFontPool<SKFont> fonts,
             NativePaintPool paints,
             NativeTextBlobCache textBlobs,
-            NativeLayoutPrewarmer? prewarm,
+            NativeWindowPrewarmer? prewarm,
             double scrollX,
             double scrollY,
             long version,

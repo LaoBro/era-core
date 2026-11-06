@@ -47,7 +47,7 @@ internal static class NativeSkiaRenderer
         NativeFontPool<SKFont> fonts,
         NativePaintPool paints,
         NativeTextBlobCache textBlobs,
-        NativeLayoutPrewarmer? prewarm
+        NativeWindowPrewarmer? prewarm
 #if DEBUG
         , NativeFrameTelemetry telemetry
 #endif
@@ -108,7 +108,8 @@ internal static class NativeSkiaRenderer
         textBlobs.Prepare(frame, style);
         // 后台预热批次：与 Prepare 同一失效口径（frame 引用 + style 全字段值相等），并入时再逐行校验
         // 行对象引用；窗口在预热与绘制之间偏移时只会并入仍然对得上的行。
-        prewarm?.TryAdopt(layoutCache, frame, style);
+        // blob 批次只按「frame 引用 + style 值」校验：blob 键本身就是文本 + 字体 + 字号，与行下标无关。
+        prewarm?.TryAdopt(layoutCache, textBlobs, frame, style);
 #if DEBUG
         // 命中/未命中按「本次 Draw 的增量」上报；累计值会在同一帧的多次重绘里越滚越大，不可当速率看。
         var cacheHitsStart = layoutCache.Hits;
@@ -740,7 +741,8 @@ internal static class NativeSkiaRenderer
         // 代理对（BMP 外字符）在 blob 与 DrawText 的 UTF-16→glyph 映射上不保证逐像素一致，
         // 这类 run 回退到直接绘制；ERB 文本里几乎不出现，回退占比应由诊断字段可观测。
         // blob 创建失败（SKTextBlob.Create 返回 null）同样回退。
-        var usedBlob = !HasSurrogatePair(run.Text);
+        // 判定与后台预热共用 NativeTextBlobPolicy，避免预热为最终回退的 run 白造 blob。
+        var usedBlob = NativeTextBlobPolicy.CanBlob(run.Text);
         var blob = usedBlob
             ? textBlobs.Get(run.Text, run.Typeface, run.Variant, fontSize, font)
             : null;
@@ -775,17 +777,6 @@ internal static class NativeSkiaRenderer
         }
 
         return usedBlob;
-    }
-
-    /// <summary>文本中是否存在成对的 UTF-16 代理（BMP 外字符）。</summary>
-    private static bool HasSurrogatePair(string text)
-    {
-        for (var i = 0; i < text.Length - 1; i++)
-        {
-            if (char.IsHighSurrogate(text[i]) && char.IsLowSurrogate(text[i + 1]))
-                return true;
-        }
-        return false;
     }
 
     private static void DrawImage(
