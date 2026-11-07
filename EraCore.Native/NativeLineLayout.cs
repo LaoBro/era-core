@@ -46,11 +46,17 @@ public readonly record struct NativeLayoutEntry(float StartX, float Width, Nativ
 public readonly record struct NativeLineImageOffset(int EntryIndex, int SegmentIndex, float PrefixWidth);
 
 /// <summary>
-/// 一行的完整按行布局：整行总宽 + op 流 + 文本 run + entry 命中区 + 图片前缀宽。
+/// 一行的完整按行布局：整行总宽 + 文本网格宽 + op 流 + 文本 run + entry 命中区 + 图片前缀宽。
 /// 不可变，可跨帧复用（仅当 frame 引用或 style 全字段变化时由缓存整体丢弃）。
+///
+/// <para><see cref="TotalWidth"/> 是字体实际 advance 的累加（绘制前进量，与命中区同源）；
+/// <see cref="GridWidth"/> 是游戏设计的字符网格宽（文本列数 × FontSize/2 + 图片/形状宽）。
+/// 对齐偏移必须用 <see cref="GridWidth"/>：WinForms 的 <c>ConsoleDisplayLine.SetAlignment</c>
+/// 用列宽 <c>GetDisplayLength</c>，而不是字体实测宽。</para>
 /// </summary>
 public sealed record NativeLineLayout(
     float TotalWidth,
+    float GridWidth,
     IReadOnlyList<NativeLayoutOp> Ops,
     IReadOnlyList<NativeLayoutRun> Runs,
     IReadOnlyList<NativeLayoutEntry> Entries,
@@ -68,6 +74,7 @@ public sealed record NativeLineLayout(
     }
 
     public static NativeLineLayout Empty { get; } = new(
+        0f,
         0f,
         Array.Empty<NativeLayoutOp>(),
         Array.Empty<NativeLayoutRun>(),
@@ -89,11 +96,14 @@ public static class NativeLineLayoutBuilder
     /// <summary>
     /// 构建一行布局。<paramref name="resolveTypeface"/> 返回字体的稳定身份对象（同一字体必须返回同一实例），
     /// <paramref name="measureText"/> 用 (文本, 字体身份, 变体) 量测宽度。
+    /// <paramref name="halfCellWidth"/> 是游戏网格的半角列宽（FontSize/2，已含缩放），用于累加
+    /// <see cref="NativeLineLayout.GridWidth"/>；对齐偏移只用该网格宽，不受字体比例 advance 影响。
     /// <paramref name="measuredRuns"/>/<paramref name="measuredChars"/> 是本次真正量测的规模，供诊断统计。
     /// </summary>
     public static NativeLineLayout Build(
         NativeLine line,
         float scale,
+        float halfCellWidth,
         Func<char, object> resolveTypeface,
         Func<string, object, NativeFontVariant, float> measureText,
         out int measuredRuns,
@@ -108,6 +118,7 @@ public static class NativeLineLayoutBuilder
         var entries = new List<NativeLayoutEntry>(line.Entries.Count);
         var images = new List<NativeLineImageOffset>();
         var total = 0f;
+        var gridTotal = 0f;
         measuredRuns = 0;
         measuredChars = 0;
 
@@ -124,6 +135,8 @@ public static class NativeLineLayoutBuilder
                 var hasVisual = segment.Image is not null || segment.Shape is not null;
                 if (!hasVisual && !string.IsNullOrEmpty(segment.Text))
                 {
+                    // 网格宽按游戏列数折算，与引擎/协议（StringMeasure.GetDisplayLength）同源。
+                    gridTotal += (float)NativeDisplayWidth.Pixels(segment.Text, halfCellWidth);
                     var variant = PickVariant(segment);
                     AppendTextRuns(
                         segment, entry.Button, variant, entryIndex, segmentIndex,
@@ -138,6 +151,7 @@ public static class NativeLineLayoutBuilder
                     images.Add(new NativeLineImageOffset(entryIndex, segmentIndex, total));
                     ops.Add(new NativeLayoutOp(width, -1, image, null, entry.Button, entryIndex, segmentIndex));
                     total += width;
+                    gridTotal += width;
                 }
 
                 if (segment.Shape is { } shape)
@@ -146,6 +160,7 @@ public static class NativeLineLayoutBuilder
                     var width = NativeGeometry.ShapeWidth(shape, scale);
                     ops.Add(new NativeLayoutOp(width, -1, null, shape, entry.Button, entryIndex, segmentIndex));
                     total += width;
+                    gridTotal += width;
                 }
             }
 
@@ -154,6 +169,7 @@ public static class NativeLineLayoutBuilder
 
         return new NativeLineLayout(
             total,
+            gridTotal,
             ops.ToArray(),
             runs.ToArray(),
             entries.ToArray(),

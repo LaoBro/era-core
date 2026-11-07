@@ -39,8 +39,8 @@ public sealed class NativeLineLayoutCacheTests
         string? color = null, bool underline = false, bool strikeout = false)
         => new(text, color, bold, italic, null, underline, strikeout);
 
-    private static NativeLineLayout Build(NativeLine line, float scale = 1f)
-        => NativeLineLayoutBuilder.Build(line, scale, ResolveTypeface, Measure, out _, out _);
+    private static NativeLineLayout Build(NativeLine line, float scale = 1f, float halfCellWidth = 8f)
+        => NativeLineLayoutBuilder.Build(line, scale, halfCellWidth, ResolveTypeface, Measure, out _, out _);
 
     [Fact]
     public void Build_SplitsRunsByTypeface_AndAccumulatesWidths()
@@ -245,7 +245,7 @@ public sealed class NativeLineLayoutCacheTests
         cache.Prepare(frame, style);
 
         // 「强制 bypass」路径
-        var fresh = NativeLineLayoutBuilder.Build(line, 1.25f, ResolveTypeface, Measure, out _, out _);
+        var fresh = NativeLineLayoutBuilder.Build(line, 1.25f, 8f, ResolveTypeface, Measure, out _, out _);
 
         // 「走缓存」路径
         cache.Store(0, fresh);
@@ -254,7 +254,7 @@ public sealed class NativeLineLayoutCacheTests
         AssertSameLayout(fresh, cached);
 
         // 再独立构建一次，确认缓存只是一个普通值（不引入额外状态）
-        AssertSameLayout(fresh, NativeLineLayoutBuilder.Build(line, 1.25f, ResolveTypeface, Measure, out _, out _));
+        AssertSameLayout(fresh, NativeLineLayoutBuilder.Build(line, 1.25f, 8f, ResolveTypeface, Measure, out _, out _));
     }
 
     [Fact]
@@ -321,6 +321,7 @@ public sealed class NativeLineLayoutCacheTests
     private static void AssertSameLayout(NativeLineLayout expected, NativeLineLayout actual)
     {
         Assert.Equal(expected.TotalWidth, actual.TotalWidth);
+        Assert.Equal(expected.GridWidth, actual.GridWidth);
         Assert.Equal(expected.Ops.Count, actual.Ops.Count);
         for (var i = 0; i < expected.Ops.Count; i++)
             Assert.Equal(expected.Ops[i], actual.Ops[i]);

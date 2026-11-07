@@ -187,6 +187,7 @@ internal static class NativeSkiaRenderer
             var built = NativeLineLayoutBuilder.Build(
                 frame.Lines[index],
                 scale,
+                fontSize / 2f,
                 ResolveTypeface,
                 measureText,
                 out var measuredRuns,
@@ -247,8 +248,10 @@ internal static class NativeSkiaRenderer
 
             // WinForms：文本/图像/形状统一起点右移 ShapePositionShift，
             // 对齐宽度 = Config.DrawableWidth（game width，不是视口宽度）。
+            // 对齐用游戏字符网格宽（GridWidth），而不是字体实测宽：比例字体的 ASCII advance
+            // 小于半角格，逐行居中会让同为固定列数的字符画/整行横线各自偏移。
             var startX = (float)style.Inset - sx
-                + (float)AlignGeometry.OffsetPixels(line.Align, layout.TotalWidth, style.DrawableWidth);
+                + (float)AlignGeometry.OffsetPixels(line.Align, layout.GridWidth, style.DrawableWidth);
             var lineTop = (float)NativeTextLayout.LineTop(
                 index,
                 lineHeight,

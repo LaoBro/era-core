@@ -113,6 +113,7 @@ public sealed class NativeLayoutPrewarmTests
         var direct = NativeLineLayoutBuilder.Build(
             line,
             1f,
+            8f,
             ResolveTypeface,
             Measure,
             out var directRuns,
@@ -124,6 +125,7 @@ public sealed class NativeLayoutPrewarmTests
         var prewarmed = NativeLineLayoutBuilder.Build(
             line,
             1f,
+            8f,
             ResolveTypeface,
             Measure,
             out _, out _);

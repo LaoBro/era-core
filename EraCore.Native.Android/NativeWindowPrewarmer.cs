@@ -247,7 +247,7 @@ internal sealed class NativeWindowPrewarmer : IDisposable
 
                 var index = start + offset;
                 var layout = NativeLineLayoutBuilder.Build(
-                    frame.Lines[index], scale, ResolveTypeface, measureText, out _, out _);
+                    frame.Lines[index], scale, fontSize / 2f, ResolveTypeface, measureText, out _, out _);
 
                 builtLayouts[offset] = layout;
                 chunkIndices[filled] = index;
