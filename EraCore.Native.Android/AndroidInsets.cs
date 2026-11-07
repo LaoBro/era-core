@@ -10,10 +10,14 @@ namespace EraCore.Native.Android;
 internal readonly record struct SystemBarInsets(double Left, double Top, double Right, double Bottom);
 
 /// <summary>
-/// Android 系统栏安全区（Avalonia 在 Android 上边到边绘制）。
+/// Android 系统栏安全区（Avalonia 逻辑像素）。
 ///
-/// <para>顶部状态栏、底部手势条/导航栏，以及横屏时可能在右侧的导航栏都要让位。
-/// 与 IME inset 合并时底部取 <c>max</c>（键盘弹出时系统栏通常已被遮挡，相加会重复留白）。</para>
+/// <para>状态栏已通过 <c>WindowInsetsControllerCompat</c> 隐藏，内容要顶到屏幕最上方，
+/// 因此顶部只避让 <b>display cutout</b>（挖孔/刘海），不能继续预留状态栏高度。
+/// 最近一次实测：无挖孔设备上 cutout=0，内容真正贴顶；有挖孔设备取 SafeInsetTop。</para>
+///
+/// <para>顶部刻意不使用 <c>SystemBars()</c> 的 top：状态栏被滑动临时唤出时该值会变，
+/// 会让画布 <c>Bounds</c> 抖动。底部导航栏未隐藏，继续按系统栏底部让位。</para>
 ///
 /// <para>注意：只在 Activity 尺寸/方向变化后重算，避免每帧查询 insets。</para>
 /// </summary>
@@ -33,23 +37,27 @@ internal static class AndroidInsets
                 if (OperatingSystem.IsAndroidVersionAtLeast(30))
                 {
                     var bars = insets.GetInsets(WindowInsets.Type.SystemBars());
+                    var cutout = insets.GetInsets(WindowInsets.Type.DisplayCutout());
+                    // 顶部状态栏已隐藏，只避让挖孔；左右取系统栏与挖孔的较大值（横屏刘海在侧边）。
                     return new SystemBarInsets(
-                        bars.Left / density,
-                        bars.Top / density,
-                        bars.Right / density,
+                        Math.Max(bars.Left, cutout.Left) / density,
+                        cutout.Top / density,
+                        Math.Max(bars.Right, cutout.Right) / density,
                         bars.Bottom / density);
                 }
                 if (OperatingSystem.IsAndroidVersionAtLeast(28))
                 {
+                    var cutout = insets.DisplayCutout;
                     return new SystemBarInsets(
-                        insets.StableInsetLeft / density,
-                        insets.StableInsetTop / density,
-                        insets.StableInsetRight / density,
-                        insets.StableInsetBottom / density);
+                        Math.Max(insets.SystemWindowInsetLeft, cutout?.SafeInsetLeft ?? 0) / density,
+                        (cutout?.SafeInsetTop ?? 0) / density,
+                        Math.Max(insets.SystemWindowInsetRight, cutout?.SafeInsetRight ?? 0) / density,
+                        insets.SystemWindowInsetBottom / density);
                 }
+                // API 28 以下没有 display cutout 概念；状态栏隐藏后顶部无需让位。
                 return new SystemBarInsets(
                     insets.SystemWindowInsetLeft / density,
-                    insets.SystemWindowInsetTop / density,
+                    0,
                     insets.SystemWindowInsetRight / density,
                     insets.SystemWindowInsetBottom / density);
             }
@@ -59,10 +67,10 @@ internal static class AndroidInsets
             Log.Warn(LogTag, "system bar inset query failed: " + ex.Message);
         }
 
-        // 兜底：资源里的状态栏 / 导航栏高度（手势导航下通常是手势条高度）。
+        // 兜底：状态栏已隐藏，顶部不再预留；底部用导航栏/手势条高度。
         return new SystemBarInsets(
             0,
-            ResourceDimensionDp("status_bar_height"),
+            0,
             0,
             ResourceDimensionDp("navigation_bar_height"));
     }

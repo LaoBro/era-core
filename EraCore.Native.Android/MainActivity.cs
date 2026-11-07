@@ -5,6 +5,7 @@ using Android.Util;
 using Android.Views;
 using AndroidX.Activity.Result;
 using AndroidX.Activity.Result.Contract;
+using AndroidX.Core.View;
 using Avalonia.Android;
 
 namespace EraCore.Native.Android;
@@ -49,6 +50,9 @@ public class MainActivity : AvaloniaMainActivity
         // 平台初始化（设置 / 内置字体 / 内置示例解压）已在 NativeAndroidApplication.OnCreate 完成，
         // 那里早于 Avalonia 构造 NativeShell，能保证持久化的主题/方向在首帧前生效。
         base.OnCreate(savedInstanceState);
+
+        // 状态栏隐藏、内容延伸到状态栏/挖孔区域；从顶部下滑可临时唤出状态栏并自动隐藏。
+        ApplyImmersiveMode();
 
         // 原生 SAF 目录选择注册在 STARTED 之前（AndroidX 要求）。
         _safFolderLauncher = RegisterForActivityResult(
@@ -95,6 +99,9 @@ public class MainActivity : AvaloniaMainActivity
     protected override void OnResume()
     {
         base.OnResume();
+        // 从外部页面（SAF 选择器 / 设置页）返回后状态栏可能重新出现，这里再压一次。
+        ApplyImmersiveMode();
+        ApplyImmersiveModeSoon();
         try
         {
             NativeApp.Shell?.OnResume();
@@ -102,6 +109,77 @@ public class MainActivity : AvaloniaMainActivity
         catch (Exception ex)
         {
             Log.Warn(LogTag, "shell onResume failed: " + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Avalonia 的 SystemBarStyle/窗口初始化可能在 <see cref="OnResume"/> 之后才重新设置
+    /// systemUi 标志（尤其 API &lt; 30），窗口拿到焦点时再压一次，保证状态栏保持隐藏。
+    /// </summary>
+    public override void OnWindowFocusChanged(bool hasFocus)
+    {
+        base.OnWindowFocusChanged(hasFocus);
+        if (hasFocus)
+            ApplyImmersiveMode();
+    }
+
+    private void ApplyImmersiveModeSoon()
+    {
+        try
+        {
+            Window?.DecorView?.Post(() => ApplyImmersiveMode());
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(LogTag, "immersive mode post failed: " + ex.Message);
+        }
+    }
+
+    /// <summary>供 NativeRoot 在键盘弹出等时机重新压住状态栏。</summary>
+    internal static void EnsureImmersiveMode()
+    {
+        Instance?.ApplyImmersiveMode();
+    }
+
+    /// <summary>
+    /// 边到边 + 隐藏状态栏：
+    /// - <c>SetDecorFitsSystemWindows(false)</c> 让窗口内容延伸到状态栏/挖孔区域。
+    /// - 隐藏只针对状态栏，底部导航栏保持原样。
+    /// - <c>BehaviorShowTransientBarsBySwipe</c> 保留「顶部下滑临时唤出、随后自动隐藏」，
+    ///   不使用已废弃的 SystemUiFlags 常量化写法。
+    /// </summary>
+    private void ApplyImmersiveMode()
+    {
+        try
+        {
+            var window = Window;
+            if (window is null)
+                return;
+
+            WindowCompat.SetDecorFitsSystemWindows(window, false);
+            window.AddFlags(WindowManagerFlags.LayoutInScreen);
+            if (!OperatingSystem.IsAndroidVersionAtLeast(30))
+            {
+                // API 30 以下：Compat 的 Hide 只写 decor 的 systemUi 标志；部分 ROM 在 IME
+                // 弹出时会按窗口级 flags 重新计算状态栏可见性，这里补上 FLAG_FULLSCREEN，
+                // 让窗口自己声明「全屏」，键盘弹出后也不会把状态栏顶出来。
+                window.AddFlags(WindowManagerFlags.Fullscreen);
+            }
+
+            var decor = window.DecorView;
+            if (decor is null)
+                return;
+
+            var controller = WindowCompat.GetInsetsController(window, decor);
+            if (controller is null)
+                return;
+            controller.SystemBarsBehavior = WindowInsetsControllerCompat.BehaviorShowTransientBarsBySwipe;
+            controller.Hide(WindowInsetsCompat.Type.StatusBars());
+            Log.Info(LogTag, "immersive: status bar hidden (transient by swipe)");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(LogTag, "immersive mode apply failed: " + ex.Message);
         }
     }
 

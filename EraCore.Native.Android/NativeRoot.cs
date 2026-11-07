@@ -55,6 +55,7 @@ internal sealed class NativeRoot : Border
 
     private SystemBarInsets _systemInsets;
     private double _imeInset;
+    private DateTimeOffset _immersiveReapplyAt = DateTimeOffset.MinValue;
     private Avalonia.Size _lastInsetSize;
     private SystemBarInsets _lastLoggedInsets;
     private double _lastLoggedIme;
@@ -319,6 +320,14 @@ internal sealed class NativeRoot : Border
         _imeInset = inset;
         ApplyInsets(force: true);
         Log.Info(LogTag, $"ime inset={inset:F1}");
+
+        // 部分 ROM 会在 IME 布局完成后才重新显示状态栏：立即压一次，并在 500ms 后再补一次。
+        // 只改系统栏可见性，不碰 Avalonia 布局，因此不会让画布跳动。
+        if (inset > 0)
+        {
+            MainActivity.EnsureImmersiveMode();
+            _immersiveReapplyAt = DateTimeOffset.UtcNow.AddMilliseconds(500);
+        }
     }
 
     /// <summary>
@@ -358,10 +367,11 @@ internal sealed class NativeRoot : Border
         }
     }
 
-    /// <summary>底部浮层让位键盘：根 Padding 已含底部安全区，只补两者的差额。</summary>
+    /// <summary>底部浮层让位键盘：面板本就位于底部安全区之上，IME 遮挡高度已按同一口径测量。</summary>
     private void UpdateImeLift()
     {
-        var lift = Math.Max(0, _imeInset - _systemInsets.Bottom);
+        // 用 IME 遮挡高度直接抬高：键盘顶边到窗口底部的距离 = 遮挡高度（Avalonia 上报值不含底部安全区）。
+        var lift = Math.Max(0, _imeInset);
         var margin = new Thickness(0, 0, 0, lift);
         if (_inputPanel.Margin != margin)
             _inputPanel.Margin = margin;
@@ -371,6 +381,12 @@ internal sealed class NativeRoot : Border
     {
         using var tracePoll = NativeTrace.Section("era:poll");
         ApplyInsets(force: false);
+        if (_immersiveReapplyAt != DateTimeOffset.MinValue
+            && DateTimeOffset.UtcNow >= _immersiveReapplyAt)
+        {
+            _immersiveReapplyAt = DateTimeOffset.MinValue;
+            MainActivity.EnsureImmersiveMode();
+        }
 
         var snapshot = NativeRuntime.Snapshot;
         _gameLabel.Text = NativeRuntime.CurrentGameName;
