@@ -18,18 +18,28 @@ using AvaloniaButton = Avalonia.Controls.Button;
 namespace EraCore.Native.Android;
 
 /// <summary>
-/// 游戏画面根视图：顶部工具条（游戏名 / 设置 / 游戏库）+ 全屏自绘画布 + 输入栏/倒计时。
+/// 游戏画面根视图：全屏自绘画布 + 右上角两个悬浮按钮（输入 ⌨ / 菜单 ☰）+ 底部浮层输入栏。
 ///
-/// <para>输入栏只由 <c>awaiting</c> 驱动（Hosting <see cref="AwaitingView"/>）：
-/// Text 输入框 / AnyKey、EnterKey 继续按钮 / 终态隐藏。IME 经 <see cref="IInputPane"/>
-/// 把键盘遮挡高度加入根 Padding；底部安全区与 IME 取 <c>max</c>，避免手势条 + 键盘重复叠加。</para>
+/// <para>画面铺满整个安全区，输入栏、倒计时、菜单都是覆盖层，不占布局高度，因此唤出/收起
+/// 输入框不会改变 <see cref="NativeGameView"/> 的可绘区域（画面不会重排或跳动）。</para>
+///
+/// <para>输入栏只由用户点击悬浮输入按钮打开（<see cref="_inputVisible"/>），不再随回合推进
+/// 自动聚焦。<see cref="HostInputMode.Text"/> 模式下打开时聚焦输入框弹出 IME；提交/按钮推进
+/// 或切走模式时把焦点交还画布，IME 随之收起。</para>
 /// </summary>
 internal sealed class NativeRoot : Border
 {
     private const string LogTag = "EraCoreNative";
-    private const double ToolbarHeight = 36;
+    private const double FloatingButtonSize = 48;
+    private const double FloatingMargin = 8;
 
-    private readonly Grid _grid;
+    private static readonly IBrush IdleButtonBrush =
+        new SolidColorBrush(Color.FromArgb(0x66, 0x10, 0x10, 0x18));
+
+    private static readonly IBrush ActiveButtonBrush =
+        new SolidColorBrush(Color.FromArgb(0xB0, 0x2E, 0x6B, 0xC0));
+
+    private readonly Panel _layers;
     private readonly NativeGameView _view;
     private readonly TextBlock _gameLabel;
     private readonly TextBlock _status;
@@ -37,12 +47,22 @@ internal sealed class NativeRoot : Border
     private readonly TextBox _inputBox;
     private readonly AvaloniaButton _sendButton;
     private readonly TextBlock _countdownText;
+    private readonly Border _countdownPill;
+    private readonly AvaloniaButton _inputToggle;
+    private readonly Border _menuScrim;
+    private readonly Border _menuPanel;
     private readonly DispatcherTimer _timer;
 
     private SystemBarInsets _systemInsets;
     private double _imeInset;
     private Avalonia.Size _lastInsetSize;
+    private SystemBarInsets _lastLoggedInsets;
+    private double _lastLoggedIme;
+    private bool _hasLoggedInsets;
     private IInputPane? _inputPane;
+
+    private bool _inputVisible;
+    private bool _menuVisible;
 
     private NativeRenderStyle _lastStyle = NativeRenderStyle.From(NativeDefaults.Metrics, AppSettings.Default);
     private HostMetrics _lastMetrics = NativeDefaults.Metrics;
@@ -53,73 +73,50 @@ internal sealed class NativeRoot : Border
     private AwaitingView? _awaitingView;
     private DateTimeOffset? _waitStartedAt;
     private string? _waitKey;
-    private long _focusRevision = long.MinValue;
     private long _submittedRevision = long.MinValue;
 
     public NativeRoot()
     {
         Background = new SolidColorBrush(Color.FromRgb(0, 0, 0));
 
-        _grid = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto") };
-
-        _gameLabel = new TextBlock
-        {
-            VerticalAlignment = VerticalAlignment.Center,
-            FontSize = 12,
-            Foreground = new SolidColorBrush(Color.FromRgb(150, 160, 185)),
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            Margin = new Thickness(12, 0, 8, 0),
-        };
-
-        var settingsButton = new AvaloniaButton
-        {
-            Content = "设置",
-            FontSize = 12,
-            MinHeight = 28,
-            Padding = new Thickness(10, 2),
-            Margin = new Thickness(0, 0, 8, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        settingsButton.Click += (_, _) => SettingsRequested?.Invoke();
-
-        var libraryButton = new AvaloniaButton
-        {
-            Content = "游戏库",
-            FontSize = 12,
-            MinHeight = 28,
-            Padding = new Thickness(10, 2),
-            Margin = new Thickness(0, 0, 10, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        libraryButton.Click += (_, _) => LibraryRequested?.Invoke();
-
-        var toolbarRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto") };
-        Grid.SetColumn(_gameLabel, 0);
-        Grid.SetColumn(settingsButton, 1);
-        Grid.SetColumn(libraryButton, 2);
-        toolbarRow.Children.Add(_gameLabel);
-        toolbarRow.Children.Add(settingsButton);
-        toolbarRow.Children.Add(libraryButton);
-
-        var toolbar = new Border
-        {
-            Height = ToolbarHeight,
-            Background = new SolidColorBrush(Color.FromRgb(16, 16, 24)),
-            Child = toolbarRow,
-        };
-        Grid.SetRow(toolbar, 0);
+        _layers = new Panel();
 
         _view = new NativeGameView();
         _view.ButtonActivated += OnButtonActivated;
         _view.ImageActivated += OnImageActivated;
-        Grid.SetRow(_view, 1);
+        _layers.Children.Add(_view);
+
+        _status = new TextBlock
+        {
+            Text = "正在启动…",
+            FontSize = 14,
+            Foreground = new SolidColorBrush(Color.FromRgb(170, 170, 190)),
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(24),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsVisible = true,
+        };
+        _layers.Children.Add(_status);
 
         _countdownText = new TextBlock
         {
             FontSize = 12,
             Foreground = new SolidColorBrush(Color.FromRgb(255, 209, 102)),
-            IsVisible = false,
         };
+        _countdownPill = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0xE0, 0x10, 0x10, 0x18)),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(10, 4),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 8, 0, 0),
+            IsVisible = false,
+            Child = _countdownText,
+        };
+        _layers.Children.Add(_countdownPill);
 
         _inputBox = new TextBox
         {
@@ -144,48 +141,104 @@ internal sealed class NativeRoot : Border
         inputRow.Children.Add(_inputBox);
         inputRow.Children.Add(_sendButton);
 
-        var inputStack = new StackPanel { Spacing = 6 };
-        inputStack.Children.Add(_countdownText);
-        inputStack.Children.Add(inputRow);
-
         _inputPanel = new Border
         {
             Background = new SolidColorBrush(Color.FromRgb(20, 20, 30)),
+            CornerRadius = new CornerRadius(12, 12, 0, 0),
             Padding = new Thickness(12, 8, 12, 10),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Bottom,
             IsVisible = false,
-            Child = inputStack,
+            Child = inputRow,
         };
-        Grid.SetRow(_inputPanel, 2);
+        _layers.Children.Add(_inputPanel);
 
-        _status = new TextBlock
+        _inputToggle = CreateFloatingButton("⌨", "输入");
+        _inputToggle.Click += (_, _) => ToggleInput();
+
+        var menuToggle = CreateFloatingButton("☰", "菜单");
+        menuToggle.Click += (_, _) => SetMenuVisible(!_menuVisible);
+
+        var floatingControls = new StackPanel
         {
-            Text = "正在启动…",
-            FontSize = 14,
-            Foreground = new SolidColorBrush(Color.FromRgb(170, 170, 190)),
-            TextWrapping = TextWrapping.Wrap,
-            TextAlignment = TextAlignment.Center,
-            Margin = new Thickness(24),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            IsVisible = true,
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, FloatingMargin, FloatingMargin, 0),
         };
-        Grid.SetRow(_status, 1);
+        floatingControls.Children.Add(_inputToggle);
+        floatingControls.Children.Add(menuToggle);
+        _layers.Children.Add(floatingControls);
 
-        _grid.Children.Add(toolbar);
-        _grid.Children.Add(_view);
-        _grid.Children.Add(_inputPanel);
-        _grid.Children.Add(_status);
-        Child = _grid;
+        _menuScrim = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x44, 0, 0, 0)),
+            IsVisible = false,
+        };
+        _menuScrim.PointerPressed += (_, e) =>
+        {
+            SetMenuVisible(false);
+            e.Handled = true;
+        };
+        _layers.Children.Add(_menuScrim);
+
+        _gameLabel = new TextBlock
+        {
+            FontSize = 12,
+            Foreground = new SolidColorBrush(Color.FromRgb(150, 160, 185)),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(4, 4, 4, 6),
+        };
+
+        var menuStack = new StackPanel { Spacing = 6 };
+        menuStack.Children.Add(_gameLabel);
+        menuStack.Children.Add(CreateMenuItem("设置", () =>
+        {
+            SetMenuVisible(false);
+            SettingsRequested?.Invoke();
+        }));
+        menuStack.Children.Add(CreateMenuItem("游戏库", () =>
+        {
+            SetMenuVisible(false);
+            LibraryRequested?.Invoke();
+        }));
+
+        _menuPanel = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0xF0, 0x10, 0x10, 0x18)),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(8, 6, 8, 8),
+            Width = 200,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, FloatingMargin + FloatingButtonSize + 8, FloatingMargin, 0),
+            IsVisible = false,
+            Child = menuStack,
+        };
+        _layers.Children.Add(_menuPanel);
+
+        Child = _layers;
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
         _timer.Tick += (_, _) => Poll();
 
         ApplyInsets(force: true);
+        UpdateInputToggle(canInput: false);
     }
 
     public event Action? LibraryRequested;
 
     public event Action? SettingsRequested;
+
+    /// <summary>返回键：菜单打开时先关闭菜单，返回 true 表示已消费。</summary>
+    public bool HandleBack()
+    {
+        if (!_menuVisible)
+            return false;
+        SetMenuVisible(false);
+        return true;
+    }
 
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
@@ -199,8 +252,11 @@ internal sealed class NativeRoot : Border
         }
 
         ApplyInsets(force: true);
-        _timer.Start();
-        Poll();
+        if (IsVisible)
+        {
+            _timer.Start();
+            Poll();
+        }
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -219,6 +275,7 @@ internal sealed class NativeRoot : Border
         _lastRevision = long.MinValue;
         _lastLineCount = -1;
         _firstFrameLogged = false;
+        CloseOverlays();
         ApplyInsets(force: true);
         if (!_timer.IsEnabled)
             _timer.Start();
@@ -234,10 +291,22 @@ internal sealed class NativeRoot : Border
         _snapshot = null;
         _submittedRevision = long.MinValue;
         _inputBox.Text = string.Empty;
+        CloseOverlays();
     }
 
     /// <summary>离开游戏画面时停止轮询，避免后台定时器继续跑。</summary>
-    public void Suspend() => _timer.Stop();
+    public void Suspend()
+    {
+        _timer.Stop();
+        CloseOverlays();
+    }
+
+    private void CloseOverlays()
+    {
+        DismissInput();
+        SetMenuVisible(false);
+        UpdateInputToggle(canInput: false);
+    }
 
     private void OnInputPaneStateChanged(object? sender, InputPaneStateEventArgs e)
         => ApplyImeInset(e.EndRect.Height);
@@ -252,7 +321,10 @@ internal sealed class NativeRoot : Border
         Log.Info(LogTag, $"ime inset={inset:F1}");
     }
 
-    /// <summary>系统栏与 IME 取 max：键盘弹出时手势条区域通常已被键盘覆盖，相加会重复留白。</summary>
+    /// <summary>
+    /// 系统栏安全区进根 Padding；IME 不进 Padding——键盘弹出时画布尺寸保持不变，
+    /// 只把底部输入浮层抬到键盘上方（<see cref="UpdateImeLift"/>）。
+    /// </summary>
     private void ApplyInsets(bool force)
     {
         var size = Bounds.Size;
@@ -262,18 +334,37 @@ internal sealed class NativeRoot : Border
             _systemInsets = AndroidInsets.SystemBars();
         }
 
-        var bottom = Math.Max(_systemInsets.Bottom, _imeInset);
         var padding = new Thickness(
             _systemInsets.Left,
             _systemInsets.Top,
             _systemInsets.Right,
-            bottom);
-        if (padding == Padding)
-            return;
-        Padding = padding;
-        Log.Info(LogTag,
-            $"insets: left={_systemInsets.Left:F1} top={_systemInsets.Top:F1} " +
-            $"right={_systemInsets.Right:F1} bottom={_systemInsets.Bottom:F1} ime={_imeInset:F1} -> {bottom:F1}");
+            _systemInsets.Bottom);
+        if (padding != Padding)
+            Padding = padding;
+
+        UpdateImeLift();
+
+        // 轮询每 150ms 都会走到这里，只在 inset 真正变化时写日志，避免刷屏拖慢主线程。
+        if (!_hasLoggedInsets
+            || _systemInsets != _lastLoggedInsets
+            || Math.Abs(_imeInset - _lastLoggedIme) > 0.5)
+        {
+            _hasLoggedInsets = true;
+            _lastLoggedInsets = _systemInsets;
+            _lastLoggedIme = _imeInset;
+            Log.Info(LogTag,
+                $"insets: left={_systemInsets.Left:F1} top={_systemInsets.Top:F1} " +
+                $"right={_systemInsets.Right:F1} bottom={_systemInsets.Bottom:F1} ime={_imeInset:F1}");
+        }
+    }
+
+    /// <summary>底部浮层让位键盘：根 Padding 已含底部安全区，只补两者的差额。</summary>
+    private void UpdateImeLift()
+    {
+        var lift = Math.Max(0, _imeInset - _systemInsets.Bottom);
+        var margin = new Thickness(0, 0, 0, lift);
+        if (_inputPanel.Margin != margin)
+            _inputPanel.Margin = margin;
     }
 
     private void Poll()
@@ -289,7 +380,9 @@ internal sealed class NativeRoot : Border
             _status.IsVisible = true;
             _status.Text = NativeRuntime.Status;
             _view.IsVisible = false;
-            _inputPanel.IsVisible = false;
+            DismissInput();
+            _countdownPill.IsVisible = false;
+            UpdateInputToggle(canInput: false);
             return;
         }
 
@@ -353,44 +446,136 @@ internal sealed class NativeRoot : Border
             "TINPUT 超时，游戏以默认值继续");
     }
 
-    private void UpdateInputBar()
+    /// <summary>当前回合是否允许唤出输入浮层（文本 / AnyKey / EnterKey）。</summary>
+    private bool CanShowInput()
     {
         var view = _awaitingView;
-        if (view is null ||
-            view.IsTerminal ||
-            NativeRuntime.State is CoreSessionState.Completed or CoreSessionState.Stopped or CoreSessionState.Failed ||
-            view.Mode is not (HostInputMode.Text or HostInputMode.AnyKey or HostInputMode.EnterKey))
+        return view is not null
+               && view.IsWaitingForInput
+               && !view.IsTerminal
+               && NativeRuntime.State is not (CoreSessionState.Completed or CoreSessionState.Stopped or CoreSessionState.Failed)
+               && view.Mode is HostInputMode.Text or HostInputMode.AnyKey or HostInputMode.EnterKey;
+    }
+
+    private void ToggleInput()
+    {
+        if (_inputVisible)
+            DismissInput();
+        else
+            OpenInput();
+    }
+
+    /// <summary>仅由悬浮输入按钮触发：打开浮层，文本模式才聚焦输入框并弹出 IME。</summary>
+    private void OpenInput()
+    {
+        if (!CanShowInput())
+            return;
+
+        _inputVisible = true;
+        UpdateInputBar();
+
+        if (_awaitingView is { Mode: HostInputMode.Text })
         {
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_inputVisible)
+                    _inputBox.Focus();
+            }, DispatcherPriority.Loaded);
+        }
+    }
+
+    /// <summary>收起输入浮层、焦点交还画布并显式请求系统收起 IME。</summary>
+    private void DismissInput()
+    {
+        if (!_inputVisible && !_inputPanel.IsVisible)
+            return;
+
+        _inputVisible = false;
+        _view.Focus();
+        HideAndroidKeyboard();
+        _inputPanel.IsVisible = false;
+        UpdateInputToggle(CanShowInput());
+    }
+
+    /// <summary>
+    /// 焦点移出文本控件后 Avalonia 的 IME 收尾在不同设备上可能滞后，这里再向
+    /// InputMethodManager 显式请求收起，避免键盘残留在画面上。
+    /// </summary>
+    private static void HideAndroidKeyboard()
+    {
+        try
+        {
+            var activity = MainActivity.Instance;
+            if (activity is null)
+                return;
+            var imm = activity.GetSystemService(global::Android.Content.Context.InputMethodService)
+                as global::Android.Views.InputMethods.InputMethodManager;
+            imm?.HideSoftInputFromWindow(activity.Window?.DecorView?.WindowToken, 0);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(LogTag, "hide ime failed: " + ex.Message);
+        }
+    }
+
+    private void SetMenuVisible(bool visible)
+    {
+        _menuVisible = visible;
+        _menuScrim.IsVisible = visible;
+        _menuPanel.IsVisible = visible;
+    }
+
+    private void UpdateInputBar()
+    {
+        UpdateCountdown();
+
+        if (!CanShowInput())
+        {
+            DismissInput();
             _inputPanel.IsVisible = false;
+            UpdateInputToggle(canInput: false);
             return;
         }
 
-        _inputPanel.IsVisible = true;
+        var view = _awaitingView!;
         var isText = view.Mode == HostInputMode.Text;
         _inputBox.IsVisible = isText;
         _sendButton.Content = isText ? "发送" : "继续";
         _sendButton.IsEnabled = _submittedRevision != (_snapshot?.revision ?? 0);
+        _inputPanel.IsVisible = _inputVisible;
+        UpdateInputToggle(canInput: true);
+    }
+
+    /// <summary>TINPUT 倒计时独立于输入浮层显示（时间关键，不要求先唤出输入栏）。</summary>
+    private void UpdateCountdown()
+    {
+        var view = _awaitingView;
+        if (view is null)
+        {
+            _countdownPill.IsVisible = false;
+            return;
+        }
 
         if (view.DisplayCountdown && view.RemainingMs is { } remaining)
         {
-            _countdownText.IsVisible = true;
+            _countdownPill.IsVisible = true;
             _countdownText.Text = $"⏱ {remaining / 1000.0:F1}s";
         }
         else if (view.TimedOut)
         {
-            _countdownText.IsVisible = true;
+            _countdownPill.IsVisible = true;
             _countdownText.Text = view.TimeUpMessage ?? "已超时";
         }
         else
         {
-            _countdownText.IsVisible = false;
+            _countdownPill.IsVisible = false;
         }
+    }
 
-        if (isText && _snapshot is { } snapshot && _focusRevision != snapshot.revision)
-        {
-            _focusRevision = snapshot.revision;
-            Dispatcher.UIThread.Post(() => _inputBox.Focus(), DispatcherPriority.Loaded);
-        }
+    private void UpdateInputToggle(bool canInput)
+    {
+        _inputToggle.IsEnabled = canInput;
+        _inputToggle.Background = _inputVisible && canInput ? ActiveButtonBrush : IdleButtonBrush;
     }
 
     private void OnInputKeyDown(object? sender, KeyEventArgs e)
@@ -429,6 +614,9 @@ internal sealed class NativeRoot : Border
 
         if (view.Mode == HostInputMode.Text)
             _inputBox.Text = string.Empty;
+
+        // 提交后收起键盘：后续回合不再自动聚焦输入框。
+        DismissInput();
     }
 
     private void OnButtonActivated(NativeButton button)
@@ -452,6 +640,7 @@ internal sealed class NativeRoot : Border
         _submittedRevision = snapshot.revision;
         NativeRuntime.Submit(new InputFrame(Value: value));
         _sendButton.IsEnabled = false;
+        DismissInput();
         Log.Info(LogTag,
             $"button: value='{value}' isInteger={button.IsInteger} generation={button.Generation} " +
             $"revision={snapshot.revision}");
@@ -482,8 +671,44 @@ internal sealed class NativeRoot : Border
         _submittedRevision = snapshot.revision;
         NativeRuntime.Submit(new InputFrame(Value: value));
         _sendButton.IsEnabled = false;
+        DismissInput();
         Log.Info(LogTag,
             $"button: srcm value='{value}' rgb=0x{rgb:X6} at=({point.X:F1},{point.Y:F1}) " +
             $"srcm='{region.Srcm}' generation={region.Button.Generation} revision={snapshot.revision}");
+    }
+
+    private static AvaloniaButton CreateFloatingButton(string glyph, string tip)
+    {
+        var button = new AvaloniaButton
+        {
+            Content = glyph,
+            Width = FloatingButtonSize,
+            Height = FloatingButtonSize,
+            MinWidth = 0,
+            MinHeight = 0,
+            FontSize = 20,
+            Padding = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = IdleButtonBrush,
+            Foreground = new SolidColorBrush(Color.FromRgb(232, 234, 248)),
+        };
+        ToolTip.SetTip(button, tip);
+        return button;
+    }
+
+    private static AvaloniaButton CreateMenuItem(string text, Action onClick)
+    {
+        var button = new AvaloniaButton
+        {
+            Content = text,
+            FontSize = 14,
+            MinHeight = 44,
+            Padding = new Thickness(12, 4),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+        };
+        button.Click += (_, _) => onClick();
+        return button;
     }
 }

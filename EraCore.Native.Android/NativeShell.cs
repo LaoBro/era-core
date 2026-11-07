@@ -62,6 +62,9 @@ internal sealed class NativeShell : Panel
 
         if (_game.IsVisible)
         {
+            // 菜单打开时先关菜单，不直接把玩家踢回游戏库。
+            if (_game.HandleBack())
+                return true;
             ShowLibrary();
             return true;
         }
