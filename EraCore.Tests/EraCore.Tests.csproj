@@ -13,6 +13,9 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- 字体解析单测需要真读 ttf 的 cmap / hmtx（与 Android 侧同一 Skia 版本），
+         仅测试项目引用，生产项目（Core / Native）仍不依赖 SkiaSharp。 -->
+    <PackageReference Include="SkiaSharp" Version="3.119.4" />
   </ItemGroup>
 
   <!-- issue 01：三项目拆分后，Tests 同时引用 Core（GlobalStatic/EmueraConsole/AgentJsonlProtocol 等）
@@ -27,6 +30,11 @@
 
   <ItemGroup>
     <Content Include="TestData\Phase0\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- 直接读 APK 内置字体资产：字体解析单测断言的是实际打包的 ttf，而不是另存的副本。 -->
+    <Content Include="..\EraCore.Native.Android\Assets\fonts\*.ttf"
+             Link="Fonts\%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
