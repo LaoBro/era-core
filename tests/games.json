@@ -13,7 +13,7 @@
     },
     {
       "id": "eratw-sub-modding-develop",
-      "profile": "eratw",
+      "profile": "snake",
       "matchHints": ["eratw"],
       "anchors": [
         { "path": "ERB/TITLE.ERB", "contains": "@SYSTEM_TITLE" },

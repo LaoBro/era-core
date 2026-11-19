@@ -50,13 +50,13 @@ python -m eracore_agent acquire
 
 ### 1.1 方言 profile（`--profile`）——加载真实游戏时**必须**
 
-`--profile` 只对**本次新拉起**的 server 生效，取值 `v24pure`（默认）/ `snake` / `eratw`。
+`--profile` 只对**本次新拉起**的 server 生效，取值 `v24pure`（默认）/ `snake`；`eratw` 为废弃别名（归一为 `snake`）。
 
 ```bash
-python -m eracore_agent start --game-dir "d:/era/eratw-sub-modding-develop" --profile eratw
+python -m eracore_agent start --game-dir "d:/era/eratw-sub-modding-develop" --profile snake
 ```
 
-- **eraTW 画蛇添足版必须 `--profile eratw`**。不带则 ERB 加载到一半就终止，`start` 返回
+- **eraTW 画蛇添足版必须 `--profile snake`**（旧 `eratw` 也可，但会提示废弃）。不带则 ERB 加载到一半就终止，`start` 返回
   `awaiting.ended.terminal == "Error"` —— 排查见 §11。
 - **复用已有 server 时 profile 改不了**：CLI 有守卫，请求的 profile 与在跑 server 的记录
   不一致会直接报错退出 ⇒ 换 profile 必须先 `stop` 再 `start`（不能指望 `start` 覆盖）。
@@ -258,7 +258,7 @@ python -m eracore_agent settings reset                   # 清 headless 内存 s
 
 1. **`status`**：`state` / `isRunning` / `threadAlive` / `lastError`。
    ⚠️ `lastError` **经常是 `null`**，别据此判断"没出错"。
-2. **profile 对不对**（§1.1）——eraTW 没带 `--profile eratw` 就是这个症状，且极难从日志看出：
+2. **profile 对不对**（§1.1）——eraTW 没带 `--profile snake` 就是这个症状，且极难从日志看出：
    `agent.log` 只会停在 `LoadPendingParallel: merged=3840/3936` 之类的进度行上，**没有任何错误行**。
 3. **游戏目录**：`status` 的 `game.gameDir` 是否真是你要加载的那个。
 

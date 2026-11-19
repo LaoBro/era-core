@@ -96,7 +96,7 @@ internal sealed class HeadlessOptions
     internal static readonly Option<string> DialectProfileOption = new(
         "--profile", "-profile", "-PROFILE")
     {
-        Description = "会话级方言 profile id（实现票 25）：v24pure(默认)/snake/eratw。控制哪些方言指令/函数对本次会话可见"
+        Description = "会话级方言 profile id：v24pure(默认)/snake；eratw 为废弃别名（按 snake 处理）。控制哪些方言指令/函数对本次会话可见"
     };
 
     internal static readonly Option<string[]> SettingOption = new("--setting")

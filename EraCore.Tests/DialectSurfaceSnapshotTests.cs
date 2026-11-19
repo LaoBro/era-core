@@ -16,8 +16,9 @@ namespace MinorShift.Emuera.Tests;
 /// 重写快照：设环境变量 <c>ERACORE_DIALECT_SURFACE_UPDATE=1</c> 运行本测试（等价于票面的 <c>--update</c>）；
 /// 常规运行（无该变量）执行比对。快照文件位于 <c>tools/dialect-inventory/surface.&lt;profile&gt;.txt</c>。
 ///
-/// 证据边界：此刻 P0 方言键（票 18–24）尚未落地，snake/eratw 的快照与 v24pure 相同是**正确**状态；
+/// 证据边界：此刻 P0 方言键（票 18–24）尚未落地，snake 的快照与 v24pure 相同是**正确**状态；
 /// 待 P0 落地时其差异会作为显式快照变更被评审，正是本门禁的价值。
+/// <c>eratw</c> 仅为别名，复用 snake 快照（ADR-0055），不单独维护文件。
 /// </summary>
 public sealed class DialectSurfaceSnapshotTests
 {
@@ -27,7 +28,6 @@ public sealed class DialectSurfaceSnapshotTests
 	[
 		DialectRegistry.V24PureId,
 		DialectRegistry.SnakeId,
-		DialectRegistry.EratwId,
 	];
 
 	[Fact]
@@ -44,7 +44,7 @@ public sealed class DialectSurfaceSnapshotTests
 	{
 		using var scope = GlobalStatic.OpenScope(new ConfigData());
 
-		DialectProfile profile = DialectRegistry.Resolve(DialectRegistry.EratwId);
+		DialectProfile profile = DialectRegistry.Resolve(DialectRegistry.SnakeId);
 		Assert.Equal(DialectSurface.Serialize(profile), DialectSurface.Serialize(profile));
 	}
 
@@ -55,10 +55,8 @@ public sealed class DialectSurfaceSnapshotTests
 
 		IReadOnlySet<SurfaceEntry> v24 = DialectSurface.EntrySet(DialectRegistry.Resolve(DialectRegistry.V24PureId));
 		IReadOnlySet<SurfaceEntry> snake = DialectSurface.EntrySet(DialectRegistry.Resolve(DialectRegistry.SnakeId));
-		IReadOnlySet<SurfaceEntry> eratw = DialectSurface.EntrySet(DialectRegistry.Resolve(DialectRegistry.EratwId));
 
 		Assert.True(v24.IsSubsetOf(snake), "snake 面必须是 v24pure 面的超集。");
-		Assert.True(snake.IsSubsetOf(eratw), "eratw 面必须是 snake 面的超集。");
 	}
 
 	private static void AssertProfileSnapshot(string profileId)

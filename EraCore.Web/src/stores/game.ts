@@ -609,7 +609,7 @@ export const useGameStore = defineStore('game', () => {
   const dimLockPolicy = ref<DimLockPolicyValue>('auto');
   /**
    * 方言兼容（MAUI 接入）：当前选中的 dialect profile——C# 权威状态（来自 config 消息的 dialectProfile 字段）。
-   * '' = 默认 v24pure（与 C# Preferences 未设置语义一致）；其余为已知 profile id（snake / eratw）。
+   * '' = 默认 v24pure（与 C# Preferences 未设置语义一致）；其余为已知 profile id（v24pure / snake）。
    * 设置页据此渲染；切换时投递 setDialectProfile 请求 C# 写 Preferences，C# 推回 config 消息后同步回此值。
    * 仅 MAUI bridge 宿主有值；纯 server/浏览器模式恒 ''（该分组不渲染）。
    */

@@ -51,13 +51,13 @@ dotnet exec EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.dll --ExeDir test_game --s
 ### 运行 eraTW 画蛇添足版（方言 profile）
 
 ```bash
-# CLI/Server：必须加 --profile eratw
-dotnet exec EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.dll --ExeDir <eraTW> --server --port 8080 --profile eratw
+# CLI/Server：显式加 --profile snake（eratw 为废弃别名，仍可用）
+dotnet exec EraCore.Cli/bin/Debug/net10.0/EraCore.Cli.dll --ExeDir <eraTW> --server --port 8080 --profile snake
 
 # Agent
-python -m eracore_agent start --game-dir <eraTW> --profile eratw
+python -m eracore_agent start --game-dir <eraTW> --profile snake
 
-# MAUI：设置页选“方言兼容 = eratw”，重载游戏生效
+# MAUI：设置页选“方言兼容 = snake”，重载游戏生效
 ```
 
 CLI/Server 运行 SQL 脚本时需要 `e_sqlite3.dll`；构建输出在
@@ -122,7 +122,7 @@ python -m eracore_agent stop
 
 - Core/Server/Cli/Maui 开启 `TreatWarningsAsErrors`；新增 warning 必须修复，不能随意增加 `NoWarn`。
 - 新增内置方言指令/函数只改两个声明点之一：`FunctionIdentifier.Registry.cs`（指令）或 `Creator.Registry.cs`（函数）；不要改 `FunctionCode` 枚举，也不要在其它文件重复登记同名键。
-- 方言键默认进 `snake`/`eratw` 模块，**不得泄漏进 `v24pure`**；面快照变更必须显式评审并用 `ERACORE_DIALECT_SURFACE_UPDATE=1` 重写。
+- 方言键默认进 `snake` 模块，**不得泄漏进 `v24pure`**；面快照变更必须显式评审并用 `ERACORE_DIALECT_SURFACE_UPDATE=1` 重写。
 - T-024 后 stdin pipe 和 JSONL stdin/stdout 模式已删除；自动化统一使用 `--server`。
 - 升级 Agent 协议版本时，必须同步更新 C# `TurnRecord.CurrentProtocolVersion` 和 Python `tests/emuera_server.py:PROTOCOL_VERSION`。
 - MAUI 只依赖 Core，不引入 Server/Cli 的 ASP.NET Core 依赖。

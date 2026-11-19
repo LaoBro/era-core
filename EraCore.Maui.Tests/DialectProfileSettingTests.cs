@@ -16,12 +16,12 @@ namespace EraCore.Maui.Tests;
 /// </summary>
 public class DialectProfileSettingTests
 {
-	/// <summary>合法：<c>""</c>（清除 = v24pure）与三个已知 profile id 原样返回。</summary>
+	/// <summary>合法：<c>""</c>（清除 = v24pure）与 canonical profile id 原样返回；旧别名 eratw 归一为 snake。</summary>
 	[Theory]
 	[InlineData("", "")]
 	[InlineData("v24pure", "v24pure")]
 	[InlineData("snake", "snake")]
-	[InlineData("eratw", "eratw")]
+	[InlineData("eratw", "snake")]
 	public void Normalize_keeps_clear_and_known_profiles(string value, string expected)
 	{
 		Assert.Equal(expected, BridgeHost.NormalizeDialectProfileSetting(value));

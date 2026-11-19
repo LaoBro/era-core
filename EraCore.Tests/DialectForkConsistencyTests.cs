@@ -18,7 +18,7 @@ namespace MinorShift.Emuera.Tests;
 public sealed class DialectForkConsistencyTests
 {
 	private static readonly string[] AllowedStatuses = ["pending", "excluded", "out-of-scope"];
-	private static readonly string[] SurfaceFiles = ["surface.snake.txt", "surface.eratw.txt"];
+	private static readonly string[] SurfaceFiles = ["surface.snake.txt"];
 
 	[Fact]
 	public void Ported_keys_are_not_still_marked_pending_or_excluded()

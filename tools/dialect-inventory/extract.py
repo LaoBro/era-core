@@ -75,7 +75,7 @@ STATUS_EXCLUDED = "excluded"
 STATUS_OUT_OF_SCOPE = "out-of-scope"
 STATUSES = (STATUS_PENDING, STATUS_EXCLUDED, STATUS_OUT_OF_SCOPE)
 CONTRADICTION_STATUSES = (STATUS_PENDING, STATUS_EXCLUDED)
-STATUS_PROFILES = ("snake", "eratw")
+STATUS_PROFILES = ("snake",)
 
 _ENV_TOKEN = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
 _enum_head = re.compile(r"^enum\s+FunctionCode")

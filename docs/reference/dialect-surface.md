@@ -1,11 +1,11 @@
 # 方言键权威清单
 
-本文是 era-core 当前**已登记的方言键**（`snake` / `eratw` 模块）的权威清单：逐键的 kind、模块、家族、移植状态与说明由生成物 [`dialect-keys.md`](dialect-keys.md) 提供；本文只保留口径、已知差异与范围外说明。
+本文是 era-core 当前**已登记的方言键**（`snake` 模块；`eratw` 为别名）的权威清单：逐键的 kind、模块、家族、移植状态与说明由生成物 [`dialect-keys.md`](dialect-keys.md) 提供；本文只保留口径、已知差异与范围外说明。
 
 机器可读真值：
 
-- 键索引（生成物，全部 633 键）：[`dialect-keys.md`](dialect-keys.md)
-- 运行期可见面：`tools/dialect-inventory/surface.v24pure.txt` / `surface.snake.txt` / `surface.eratw.txt`
+- 键索引（生成物，全部 637 键）：[`dialect-keys.md`](dialect-keys.md)
+- 运行期可见面：`tools/dialect-inventory/surface.v24pure.txt` / `surface.snake.txt`（`eratw` 别名复用 snake 快照）
 - 上游 fork 增量：`dialects/skia.json` + `tools/dialect-inventory/skia-delta-inventory.txt`
 - 门禁：`EraCore.Tests/DialectSurfaceSnapshotTests.cs`、`EraCore.Tests/DialectKeyIndexTests.cs`、`EraCore.Tests/DialectDescriptorMetadataTests.cs`、`EraCore.Tests/DialectForkConsistencyTests.cs`、`EraCore.Tests/DialectProfileTests.cs`
 
@@ -18,10 +18,10 @@
 | 项 | 值 |
 |---|---|
 | `v24pure` 面 | 567 行（baseline） |
-| `snake` / `eratw` 面 | 各 637 行 |
+| `snake` 面 | 637 行 |
 | 方言增量 | **70 键**（18 指令 + 52 函数） |
 | `snake` 模块声明键 | 70 |
-| `eratw` 模块声明键 | 0（当前为空） |
+| `eratw` 别名 | 复用 `snake`（无独立模块 / 快照） |
 
 `surface.*.txt` 每行 `name<TAB>kind`，按行序号排序，UTF-8 / LF。`kind` 只有 `directive` 与 `function` 两种。
 

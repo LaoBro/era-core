@@ -102,7 +102,6 @@ class ExtractToolTests(unittest.TestCase):
 
     def _write_surfaces(self, keys: set[tuple[str, str]]) -> None:
         self._write_surface("snake", keys)
-        self._write_surface("eratw", set())
 
     def _capture_status(self) -> tuple[int, str]:
         buffer = io.StringIO()

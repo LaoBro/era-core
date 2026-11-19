@@ -8,11 +8,10 @@ using Xunit;
 namespace MinorShift.Emuera.Tests;
 
 /// <summary>
-/// P3a 模块注册接缝（spec §4.3）：把「能力已存在但不可达」的断点接上。
+/// 模块注册接缝（spec §4.3）：把「能力已存在但不可达」的断点接上。
 ///
 /// - <see cref="DialectRegistry.BuildModule"/> 是纯函数，声明里的
-///   <c>priority</c> / <c>overrides</c> / <c>hiddenKeys</c> 必须逐字段透传——
-///   真实表数据当前全空，只有直接喂声明才能证明字段没有丢失；
+///   <c>hiddenKeys</c> / <c>capabilities</c> 必须逐字段透传；
 /// - 模块容器按 id 查找，生产源码不得再出现 <c>modules.Value[</c> 位置式访问；
 /// - <c>HiddenKeys</c> 只在 profile 构造期做可见面减法，**不参与 baseline 推导**。
 /// </summary>
@@ -25,28 +24,22 @@ public sealed class DialectModuleBuildTests
 			Dialect.Snake,
 			DeclaredKeys: ["FOO", "BAR"],
 			HiddenKeys: ["FOO"],
-			Owner: "skia",
-			Priority: 5,
-			Overrides: ["其它"]);
+			Capabilities: LanguageCapability.Float);
 
 		DialectModule module = DialectRegistry.BuildModule(declaration);
 
 		Assert.Equal(Dialect.Snake, module.Id);
-		Assert.Equal("skia", module.Owner);
-		Assert.Equal(5, module.Priority);
-		Assert.True(module.Overrides.SetEquals(["其它"]));
+		Assert.Equal(LanguageCapability.Float, module.Capabilities);
 		Assert.True(module.HiddenKeys.SetEquals(["FOO"]));
 		Assert.True(module.DeclaredKeys.SetEquals(["FOO", "BAR"]));
 	}
 
 	[Fact]
-	public void BuildModule_defaults_owner_and_optional_fields()
+	public void BuildModule_defaults_optional_fields()
 	{
-		DialectModule module = DialectRegistry.BuildModule(new(Dialect.Eratw, ["FOO"]));
+		DialectModule module = DialectRegistry.BuildModule(new(Dialect.Snake, ["FOO"]));
 
-		Assert.Equal("Eratw", module.Owner);
-		Assert.Equal(0, module.Priority);
-		Assert.Empty(module.Overrides);
+		Assert.Equal(LanguageCapability.None, module.Capabilities);
 		Assert.Empty(module.HiddenKeys);
 	}
 

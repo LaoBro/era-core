@@ -27,8 +27,8 @@ public sealed class DialectProfileTests
 	public void Surface_is_the_union_of_selected_module_declarations()
 	{
 		var snake = new DialectModule(Dialect.Snake, ["ALPHA", "BETA"]);
-		var eratw = new DialectModule(Dialect.Eratw, ["GAMMA"]);
-		var profile = ProfileOf("test", snake, eratw);
+		var baseline = new DialectModule(Dialect.Baseline, ["GAMMA"]);
+		var profile = ProfileOf("test", snake, baseline);
 
 		Assert.True(profile.IsVisible("ALPHA"));
 		Assert.True(profile.IsVisible("BETA"));
@@ -52,7 +52,7 @@ public sealed class DialectProfileTests
 	public void Explicit_hide_wins_over_declaration()
 	{
 		var declares = new DialectModule(Dialect.Snake, ["ALPHA", "BETA"]);
-		var hides = new DialectModule(Dialect.Eratw, declaredKeys: [], hiddenKeys: ["ALPHA"]);
+		var hides = new DialectModule(Dialect.Baseline, declaredKeys: [], hiddenKeys: ["ALPHA"]);
 		var profile = ProfileOf("test", declares, hides);
 
 		Assert.False(profile.IsVisible("ALPHA"));
@@ -110,6 +110,8 @@ public sealed class DialectProfileTests
 	[Fact]
 	public void Resolved_surface_is_cached_by_profile_id()
 	{
+		using var scope = GlobalStatic.OpenScope(new ConfigData());
+
 		Assert.Same(
 			DialectRegistry.Resolve(DialectRegistry.SnakeId),
 			DialectRegistry.Resolve(DialectRegistry.SnakeId));
@@ -118,12 +120,35 @@ public sealed class DialectProfileTests
 	[Fact]
 	public void Real_profiles_form_a_monotone_closure_chain()
 	{
+		using var scope = GlobalStatic.OpenScope(new ConfigData());
+
 		DialectProfile v24 = DialectRegistry.Resolve(DialectRegistry.V24PureId);
 		DialectProfile snake = DialectRegistry.Resolve(DialectRegistry.SnakeId);
-		DialectProfile eratw = DialectRegistry.Resolve(DialectRegistry.EratwId);
 
 		Assert.All(v24.VisibleKeys, key => Assert.True(snake.IsVisible(key)));
-		Assert.All(snake.VisibleKeys, key => Assert.True(eratw.IsVisible(key)));
+	}
+
+	[Fact]
+	public void Eratw_alias_resolves_to_the_same_snake_surface()
+	{
+		using var scope = GlobalStatic.OpenScope(new ConfigData());
+
+		DialectProfile snake = DialectRegistry.Resolve(DialectRegistry.SnakeId);
+		DialectProfile alias = DialectRegistry.Resolve(DialectRegistry.EratwAliasId);
+
+		Assert.Same(snake, alias);
+		Assert.Equal(DialectRegistry.SnakeId, alias.ProfileId);
+		Assert.True(DialectRegistry.IsKnownProfile(DialectRegistry.EratwAliasId));
+		Assert.Equal(DialectRegistry.SnakeId, DialectRegistry.CanonicalizeProfileId(DialectRegistry.EratwAliasId));
+	}
+
+	[Fact]
+	public void Known_profiles_exclude_the_alias()
+	{
+		Assert.Equal(
+			[DialectRegistry.SnakeId, DialectRegistry.V24PureId],
+			DialectRegistry.KnownProfileIds.OrderBy(id => id, StringComparer.Ordinal).ToArray());
+		Assert.DoesNotContain(DialectRegistry.EratwAliasId, DialectRegistry.KnownProfileIds);
 	}
 
 	[Fact]
@@ -133,9 +158,8 @@ public sealed class DialectProfileTests
 
 		// 方言声明：snake 已登记 Skia P0 数学/取整/无检查/位/求值 19 键（票 18）+ 集合 MAP_* 6 键（票 19）
 		// + 动态调用指令 5 键（票 20）+ NF 输入指令 4 键（票 21）+ 图像层指令 4 键（票 22）+ HTML/文本指令 4 键（票 23）
-		// + SQL_* 22 键与 GETPLATFORM/GETANIMETIMER（票 28）；eratw 暂无游戏适配键。
+		// + SQL_* 22 键与 GETPLATFORM/GETANIMETIMER（票 28）。
 		Assert.Equal(70, DialectRegistry.Snake.DeclaredKeys.Count);
-		Assert.Empty(DialectRegistry.Eratw.DeclaredKeys);
 
 		// baseline = 注册表全键 − 方言声明键：方言键不落入 v24pure，既有键仍在。
 		Assert.Contains("SIN", DialectRegistry.Snake.DeclaredKeys);
@@ -178,7 +202,7 @@ public sealed class DialectProfileTests
 	public async Task Concurrent_scopes_keep_their_own_profile()
 	{
 		var profileA = new DialectProfile("iso-a", [new DialectModule(Dialect.Snake, ["ALPHA"])]);
-		var profileB = new DialectProfile("iso-b", [new DialectModule(Dialect.Eratw, ["BETA"])]);
+		var profileB = new DialectProfile("iso-b", [new DialectModule(Dialect.Baseline, ["BETA"])]);
 
 		var taskA = Task.Run(() =>
 		{
@@ -265,10 +289,21 @@ public class DialectProfileProjectionIntegrationTests
 public class DialectProfilePipelineTests
 {
 	[Fact]
-	public async Task Eratw_profile_exposes_snake_keys_in_the_process_surface()
+	public async Task Snake_profile_exposes_snake_keys_in_the_process_surface()
 	{
 		using var harness = new LoaderTestHarness(
-			dialectProfile: DialectRegistry.Resolve(DialectRegistry.EratwId));
+			dialectProfile: DialectRegistry.Resolve(DialectRegistry.SnakeId));
+		await harness.InitializeAsync();
+
+		Assert.NotNull(harness.IdDic.GetFunctionIdentifier("TEXT_BGC_OFF"));
+		Assert.NotNull(harness.IdDic.GetFunctionIdentifier("SQL_CONNECT"));
+	}
+
+	[Fact]
+	public async Task Eratw_alias_exposes_the_same_surface_in_the_process()
+	{
+		using var harness = new LoaderTestHarness(
+			dialectProfile: DialectRegistry.Resolve(DialectRegistry.EratwAliasId));
 		await harness.InitializeAsync();
 
 		Assert.NotNull(harness.IdDic.GetFunctionIdentifier("TEXT_BGC_OFF"));

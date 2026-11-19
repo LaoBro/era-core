@@ -36,7 +36,7 @@ public sealed class DialectKeyIndexTests
 		using var scope = GlobalStatic.OpenScope(new ConfigData());
 
 		List<KeyIndexRow> rows = BuildRows();
-		IReadOnlyList<SurfaceEntry> surface = DialectSurface.Entries(DialectRegistry.Resolve(DialectRegistry.EratwId));
+		IReadOnlyList<SurfaceEntry> surface = DialectSurface.Entries(DialectRegistry.Resolve(DialectRegistry.SnakeId));
 
 		Assert.Equal(surface.Count, rows.Count);
 		int dialectRows = rows.Count(row => row.Module != BaselineModule);
@@ -76,7 +76,7 @@ public sealed class DialectKeyIndexTests
 		IReadOnlyDictionary<string, FunctionMethod> methods = FunctionMethodCreator.GetMethodList();
 
 		List<KeyIndexRow> rows = [];
-		foreach (SurfaceEntry entry in DialectSurface.Entries(DialectRegistry.Resolve(DialectRegistry.EratwId)))
+		foreach (SurfaceEntry entry in DialectSurface.Entries(DialectRegistry.Resolve(DialectRegistry.SnakeId)))
 		{
 			if (entry.Kind == DialectSurface.DirectiveKind && instructionMeta.TryGetValue(entry.Name, out InstructionDescriptor? instruction))
 			{
@@ -117,7 +117,6 @@ public sealed class DialectKeyIndexTests
 	private static string ModuleId(Dialect dialect) => dialect switch
 	{
 		Dialect.Snake => DialectRegistry.SnakeId,
-		Dialect.Eratw => DialectRegistry.EratwId,
 		_ => BaselineModule,
 	};
 

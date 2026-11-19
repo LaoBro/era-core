@@ -71,8 +71,8 @@ internal sealed class BridgeHost : IDisposable
 
     /// <summary>
     /// Preferences key——方言兼容 profile（MAUI 接入）。
-    /// 值域 = <c>""</c>（未设置 = v24pure）| <c>"v24pure"</c> | <c>"snake"</c> | <c>"eratw"</c>
-    /// （动态取 <c>DialectRegistry.KnownProfileIds</c>）。建会话前（<see cref="StartHostedSessionAsync"/>）
+    /// 值域 = <c>""</c>（未设置 = v24pure）| <c>"v24pure"</c> | <c>"snake"</c>；旧值 <c>"eratw"</c> 自动归一为 <c>"snake"</c>
+    /// （动态取 <c>DialectRegistry.KnownProfileIds</c>，别名不列 UI）。建会话前（<see cref="StartHostedSessionAsync"/>）
     /// 读此 key 按会话传入 <c>SessionRegistry</c>；设置页经 <see cref="HandleSetDialectProfile"/> 写此 key。
     /// </summary>
     internal const string DialectProfileKey = "app.dialectProfile";
@@ -1294,17 +1294,22 @@ internal sealed class BridgeHost : IDisposable
     /// <summary>
     /// 方言 profile 设置值的校验与规范化（纯函数，单测覆盖）：
     /// <c>""</c> = 未设置/清除（语义 = v24pure，对齐 <c>SessionRegistry</c> 的 <c>null</c>）；
-    /// 已知 profile id 原样返回；其它（含 <c>null</c>）返回 <c>null</c> = 非法，拒绝写入。
+    /// canonical id 原样返回，废弃别名（<c>eratw</c>）归一为 canonical（<c>snake</c>）；
+    /// 其它（含 <c>null</c>）返回 <c>null</c> = 非法，拒绝写入。
     /// </summary>
     internal static string? NormalizeDialectProfileSetting(string? value)
     {
         if (value == "")
             return "";
-        return value != null && DialectRegistry.IsKnownProfile(value) ? value : null;
+        if (value == null)
+            return null;
+        var canonical = DialectRegistry.CanonicalizeProfileId(value);
+        return DialectRegistry.IsKnownProfile(canonical) ? canonical : null;
     }
 
     /// <summary>
     /// 读 Preferences 的方言 profile 原始设置——未设置 / Preferences 不可用返回 <c>null</c>（= v24pure）。
+    /// 读到废弃别名（<c>eratw</c>）时归一为 canonical（<c>snake</c>）并写回，完成持久化迁移（ADR-0055）。
     /// 不做合法性判断（非法残留值由调用点决定：建会话前 fail-fast / config 消息回落空串）。
     /// </summary>
     private static string? LoadDialectProfileSetting()
@@ -1312,7 +1317,15 @@ internal sealed class BridgeHost : IDisposable
         try
         {
             var stored = Preferences.Get(DialectProfileKey, null);
-            return string.IsNullOrEmpty(stored) ? null : stored;
+            if (string.IsNullOrEmpty(stored))
+                return null;
+            var canonical = DialectRegistry.CanonicalizeProfileId(stored);
+            if (!string.Equals(canonical, stored, StringComparison.Ordinal))
+            {
+                try { Preferences.Set(DialectProfileKey, canonical); }
+                catch { /* Preferences 不可用——本次仍按 canonical 使用 */ }
+            }
+            return canonical;
         }
         catch
         {
@@ -1323,7 +1336,7 @@ internal sealed class BridgeHost : IDisposable
     /// <summary>
     /// 方言兼容（MAUI 接入）：设置页选择 dialect profile——写 Preferences。
     /// <para>
-    /// 接收 <c>{"type":"setDialectProfile","value":""|"v24pure"|"snake"|"eratw"}</c>；
+    /// 接收 <c>{"type":"setDialectProfile","value":""|"v24pure"|"snake"}</c>（旧值 <c>eratw</c> 归一为 <c>snake</c>）；
     /// 值域校验（<see cref="NormalizeDialectProfileSetting"/>）：<c>""</c> 清除（= v24pure），已知 id 写入，
     /// 非法值拒绝写入并打日志（同时推回 config 让 UI 与 C# 权威状态对齐）。写入的 key 由
     /// <see cref="StartHostedSessionAsync"/> 在建会话前读取，故本局不受影响，**重载游戏后生效**。
@@ -1899,7 +1912,7 @@ internal sealed class BridgeHost : IDisposable
     /// <para>
     /// 消息格式：<c>{"type":"config","maxLog":5000,"agentLogEnabled":false,"displayReportOverride":"auto",
     /// "lazyFunctionLoad":"auto",...,"sweepGatePolicy":"auto","safReadDegree":"auto",
-    /// "maxParallelErbFiles":"auto","dimLockPolicy":"auto","dialectProfile":"","dialectProfiles":["v24pure","snake","eratw"]}</c>
+    /// "maxParallelErbFiles":"auto","dimLockPolicy":"auto","dialectProfile":"","dialectProfiles":["v24pure","snake"]}</c>
     /// （性能覆盖四字段为对应 Preferences 三态权威值 auto/off/on，sweepGatePolicy 为 ADR-0026 诊断旋钮一权威值
     /// auto/forceon/forceoff，safReadDegree 为旋钮二权威值 auto/&lt;1-64&gt;，maxParallelErbFiles 为
     /// 旋钮三权威值 auto/4/8/16，dimLockPolicy 为旋钮四权威值 auto/nolock——切换后对应 Handle* 推回同步；

@@ -88,11 +88,11 @@ describe('全局设置 store（ADR-0030）', () => {
   it('applySettingsUpdate 应用 dialectProfile / dialectProfiles（MAUI 方言兼容）', () => {
     const game = useGameStore();
     game.applySettingsUpdate({
-      dialectProfile: 'eratw',
-      dialectProfiles: ['v24pure', 'snake', 'eratw'],
+      dialectProfile: 'snake',
+      dialectProfiles: ['v24pure', 'snake'],
     });
-    expect(game.dialectProfile).toBe('eratw');
-    expect(game.dialectProfiles).toEqual(['v24pure', 'snake', 'eratw']);
+    expect(game.dialectProfile).toBe('snake');
+    expect(game.dialectProfiles).toEqual(['v24pure', 'snake']);
   });
 
   it('applySettingsUpdate 忽略非法 dialectProfile / dialectProfiles', () => {

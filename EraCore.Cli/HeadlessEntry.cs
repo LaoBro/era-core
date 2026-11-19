@@ -35,20 +35,25 @@ internal static class HeadlessEntry
         var options = HeadlessOptions.Parse(args);
         if (options == null) return;
 
-        // 实现票 25：--profile 启动期 fail-fast 校验（不构建 surface，无 Config ambient 依赖）。
-        // 未知 id 不静默降级——否则会以错误可见面加载游戏，误导排查。
-        if (options.DialectProfile is { } profileId && !DialectRegistry.IsKnownProfile(profileId))
+        // 实现票 25 / ADR-0055：--profile 启动期 fail-fast 校验（不构建 surface，无 Config ambient 依赖）。
+        // 别名（eratw）先归一为 canonical id；未知 id 不静默降级——否则会以错误可见面加载游戏，误导排查。
+        string? dialectProfileId = options.DialectProfile is { } requestedProfile
+            ? DialectRegistry.CanonicalizeProfileId(requestedProfile)
+            : null;
+        if (dialectProfileId is { } profileId && !DialectRegistry.IsKnownProfile(profileId))
         {
             EmueraLog.Error("options",
                 $"未知的方言 profile「{profileId}」——已知：{string.Join(", ", DialectRegistry.KnownProfileIds)}");
             Environment.Exit(1);
             return;
         }
+        if (options.DialectProfile is { } alias && !string.Equals(alias, dialectProfileId, StringComparison.Ordinal))
+            EmueraLog.Warn("options", $"方言 profile「{alias}」已废弃，按「{dialectProfileId}」处理。");
 
         // MAUI 接入票 01 / Q20：会话启动恒定标注方言 profile 与来源——CLI/Server 侧来源只有 --profile 或缺省
         // （MAUI 侧在 BridgeHost.StartHostedSessionAsync 打 (source: setting|default)，两侧同款文案）。
         EmueraLog.Info("options",
-            options.DialectProfile is { } effectiveProfile
+            dialectProfileId is { } effectiveProfile
                 ? $"dialect profile = {effectiveProfile} (source: --profile)"
                 : "dialect profile = v24pure (source: default)");
 
@@ -104,19 +109,19 @@ internal static class HeadlessEntry
 #if !ANDROID_NO_SERVER
             // --open-browser 便捷模式且未显式 --port → 传 0，由 ServerRunner 自动挑空闲端口。
             var port = options.OpenBrowser && !options.PortExplicit ? 0 : options.Port;
-            await ServerRunner.RunAsync(port, terminalSetup, configData, options.DisplayReportOverride, options.OpenBrowser, BuildAppSettings(options), options.DialectProfile);
+            await ServerRunner.RunAsync(port, terminalSetup, configData, options.DisplayReportOverride, options.OpenBrowser, BuildAppSettings(options), dialectProfileId);
 #else
             // android 交叉产物（3.2 验证）：无 Kestrel（AspNetCore 无 android runtime pack），
             // server 模式不可用——明确提示后走 CLI 模式，避免静默忽略 --server。
             EmueraLog.Error("server", "server 模式在 Android 上不可用（无 Kestrel），已忽略 --server 参数");
-            await HeadlessRunner.RunAsync(paths, options.Protocol, options.TermWidthHint, terminalSetup, configData, options.DialectProfile);
+            await HeadlessRunner.RunAsync(paths, options.Protocol, options.TermWidthHint, terminalSetup, configData, dialectProfileId);
 #endif
         }
         else
         {
             // ITerminalInput 在 HeadlessRunner 内创建：CLI 模式专属，stdin 重定向
             // 等环境错误由 HeadlessRunner 的 HeadlessFatalException 捕获块统一处理。
-            await HeadlessRunner.RunAsync(paths, options.Protocol, options.TermWidthHint, terminalSetup, configData, options.DialectProfile);
+            await HeadlessRunner.RunAsync(paths, options.Protocol, options.TermWidthHint, terminalSetup, configData, dialectProfileId);
         }
     }
 

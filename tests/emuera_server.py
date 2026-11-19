@@ -289,7 +289,7 @@ def start_server(game_dir=None, project_dir=None, binary=None, port=None, extra_
     T-025：game_dir 改为可选——None 时不传 --ExeDir，server 进入空闲启动模式
     （Program.Main 跳过 Validate，等待 /load-game 加载游戏）。
     extra_env：合并进子进程环境（如 EMUERA_CONTROL_LEASE_SECONDS）。
-    extra_args：追加到启动命令（实现票 25，如 ["--profile", "eratw"]）。
+    extra_args：追加到启动命令（实现票 25，如 ["--profile", "snake"]）。
     """
     if project_dir is None:
         project_dir = PROJECT_DIR

@@ -483,14 +483,14 @@ export function setDimLockPolicy(value: DimLockPolicyValue): void {
  * 方言兼容（MAUI 接入）：选择 dialect profile——请求 C# 写 Preferences。
  *
  * C# `BridgeHost.HandleSetDialectProfile` 收到后：
- * 1. 值域校验（`''` = 清除/v24pure；否则须为已知 profile id；非法值拒绝写入并打日志）
+ * 1. 值域校验（`''` = 清除/v24pure；canonical id 写入；旧别名 eratw 归一为 snake；非法值拒绝写入并打日志）
  * 2. 写 Preferences（key=`app.dialectProfile`——建会话前 StartHostedSessionAsync 读同一 key
  *    按会话传入 SessionRegistry；非法残留值使打开游戏 fail-fast）
  * 3. 推回 `config` 消息（含 dialectProfile / dialectProfiles 字段）同步设置页
  *
  * 注意：profile 在建会话前绑定，当前会话不受影响，**重载游戏后生效**。
  *
- * @param value ''=默认 v24pure；'snake'；'eratw'=eraTW 画蛇添足版
+ * @param value ''=默认 v24pure；'snake'=eraTW 画蛇添足版
  */
 export function setDialectProfile(value: string): void {
   postInput(JSON.stringify({ type: 'setDialectProfile', value }));

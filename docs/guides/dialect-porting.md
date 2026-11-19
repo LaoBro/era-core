@@ -22,7 +22,7 @@
 ## 1. 分层与单一真相源
 
 ```text
-descriptor（Dialect = Baseline | Snake | Eratw）
+descriptor（Dialect = Baseline | Snake）
    │  指令：FunctionIdentifier.Registry.cs
    │  函数：Function/Creator.Registry.cs
    ▼
@@ -33,7 +33,7 @@ descriptor（Dialect = Baseline | Snake | Eratw）
 DialectRegistry：模块 → profile 闭包 → 不可变 DialectProfile（按 id 缓存）
    │  v24pure = [baseline]
    │  snake   = [baseline, snake]
-   │  eratw   = [baseline, snake, eratw]
+   │  eratw   = 别名 → snake（无独立模块 / 快照，ADR-0055）
    ▼
 GlobalStatic.OpenScope(configData, profileId)：在构造 Process 之前绑定
    ▼
@@ -69,19 +69,19 @@ IdentifierDictionary 构造期：DialectProjection.Filter 一次性过滤
 
 ---
 
-## 2. 先判断归属：Baseline / Snake / Eratw
+## 2. 先判断归属：Baseline / Snake
 
 | 情况 | 归属 | 处理 |
 |---|---|---|
 | era-core 移植前的既有键 | `Baseline` | 不写标签；默认可见 |
 | 上游 fork 存在的语义键（如 Skia 的 `TINPUTNF`、`SQL_*`） | `Snake` | 写 descriptor + `Dialect.Snake` |
-| 只服务于某个游戏、上游不存在的兜底键 | `Eratw` | 写 descriptor + `Dialect.Eratw`，默认在 `eratw` profile 可见 |
+| 只服务于某个游戏、上游不存在的兜底键 | 暂不登记 | `eratw` 模块已移除（ADR-0055）；如确有需要，先重新引入模块并明确归属 |
 | 已有键的**向后兼容**签名扩展（只新增可选尾参，不改既有语义/返回/副作用） | `Baseline` | 直接改实现，**不加标签**，面快照保持不变 |
 | 已有键的**不兼容**签名变化（改参数语义/返回值） | 暂不实现 | 需要先扩展投影为“同名多 variant 择一”，见 §9 |
 | 渲染/性能层键（SkiaSharp 管线、lazyload、`SET_SKIA_QUALITY` 等） | 不移植 | 在 fork JSON 标 `status: out-of-scope`，不登记 descriptor |
 
-> 判据：**上游是否存在该行为**。有 → 方言面（`snake`）；没有（游戏专属）→ 游戏适配（`eratw`）。
-> 注意：运行时 `DialectModule.Owner` 默认取模块名（`Snake` / `Eratw`），`dialects/*.json` 里的 `owner: skia` 是**库存工具元数据**，两者不是同一字段。
+> 判据：**上游是否存在该行为**。有 → 方言面（`snake`）；没有（游戏专属）→ 当前不登记（`eratw` 仅保留为 profile 别名）。
+> 注意：跨 fork 的 `DialectModule.Owner` / `Priority` / `Overrides` 已移除（ADR-0055）；`dialects/*.json` 里的 `owner: skia` 是**库存工具元数据**，与运行期无关。
 
 ---
 
@@ -110,10 +110,10 @@ new InstructionDescriptor
 | `CreateInstruction` | 处理体工厂；可复用既有私有嵌套类，也可新建 |
 | `AdditionalFlag` | 在 `AInstruction` 自带 flag 之上追加（如 `EXTENDED`、`IS_PRINT`） |
 | `Code` | **新增方言指令保持默认 `FunctionCode.__NULL__`**；只有迁移既有结构化指令才填真实码 |
-| `Dialect` | `Baseline` / `Snake` / `Eratw` |
+| `Dialect` | `Baseline` / `Snake` |
 | `Family` | 检索分组；非空值必须 ∈ canonical 10 词（`DialectDescriptorMetadataTests` 锁定），未归类留 `null` |
 | `Status` | `Semantic`（默认）/ `AcceptedNoOp` / `StateOnly`；非默认值必须在 [`dialect-surface.md`](../reference/dialect-surface.md) §5 点名 |
-| `Note` | 中文一句话差异/理由；`Status != Semantic` 与 `Eratw` 键**必填**，不复制参数表 |
+| `Note` | 中文一句话差异/理由；`Status != Semantic` 键**必填**，不复制参数表 |
 
 no-op / 仅状态示例：
 
@@ -228,7 +228,7 @@ SQL_CONNECT "db", "Data Source=plugins/qol_data.db"
 
 - `AddInstructionDescriptors(funcDic, BuiltInInstructionDescriptors)` 在 `FunctionIdentifier` 静态构造器调用；
 - `AddMethodDescriptors(methodList, BuiltInMethodDescriptors)` 在 `FunctionMethodCreator` 静态构造器、`SetMethodName` 之前调用；
-- `DialectRegistry` 从 descriptor 的 `Dialect` 标签收集 `snake` / `eratw` 声明键；
+- `DialectRegistry` 从 descriptor 的 `Dialect` 标签收集 `snake` 声明键（`eratw` 仅为别名，不再收集）；
 - `Baseline` = 注册表全键 − 方言声明键（隐式基线，新增方言键不会泄漏进 `v24pure`）；
 - `IdentifierDictionary` 构造期按 profile 过滤，并据此生成 `nameDic`。
 
@@ -243,7 +243,7 @@ SQL_CONNECT "db", "Data Source=plugins/qol_data.db"
 | 解析 fixture | 指令/函数能被识别，`InstructionLine.IsError == false`；`TRY/CATCH` 等配对正确 |
 | 执行 fixture | `DoInstruction` 产出预期 `InputRequest` / 状态变化 / 返回值 |
 | 反射 flag | `IsPrint` / `IsInput` / `IsJump` / `IsTry` / `IsTryC` / `IsPartial` 与上游一致 |
-| profile 可见性 | `v24pure` 不可见、`snake`/`eratw` 可见；既有基线键不受影响 |
+| profile 可见性 | `v24pure` 不可见、`snake` 可见；既有的 `eratw` 别名与 snake 同面 |
 
 运行：
 
@@ -262,7 +262,7 @@ Remove-Item Env:ERACORE_DIALECT_SURFACE_UPDATE
 dotnet test EraCore.Tests/EraCore.Tests.csproj --filter "FullyQualifiedName~DialectSurfaceSnapshotTests|FullyQualifiedName~DialectKeyIndexTests"
 ```
 
-产物：面快照 `tools/dialect-inventory/surface.v24pure.txt` / `surface.snake.txt` / `surface.eratw.txt`，键索引 `docs/reference/dialect-keys.md`。
+产物：面快照 `tools/dialect-inventory/surface.v24pure.txt` / `surface.snake.txt`（`eratw` 别名复用 snake 快照，无独立文件），键索引 `docs/reference/dialect-keys.md`。
 
 口径：面快照每行 `name<TAB>kind`；键索引方言行 = 键 / kind / 模块 / 家族 / 状态 / 说明，baseline 行 = 键 / kind / baseline / 处理体。两者均按序号排序、UTF-8 / LF，比对时归一化 BOM 与 CRLF，但**不要**手工编辑。
 
@@ -295,7 +295,7 @@ python tests/test_conformance_kit.py --game-dir <游戏目录> --build
 ```json
 {
   "id": "eratw-sub-modding-develop",
-  "profile": "eratw",
+  "profile": "snake",
   "matchHints": ["eratw"],
   "anchors": [{ "path": "ERB/TITLE.ERB", "contains": "@SYSTEM_TITLE" }],
   "knownLv2": ["TEMP_CHARA_LIST_BY_DT.ERB:第931行"],
@@ -433,7 +433,7 @@ python tools/dialect-inventory/classify.py --fork skia --scaffold --key NEW_KEY 
 
 - **`ported` 不是可登记值**：fork 键是否已移植由 `additions ∩ surface.*.txt` 推导，任何文件不得显式书写。
 - 已 ported 的键**不写** `status`；未移植键缺省 `pending`。已 ported 却显式标 `pending`/`excluded` 是矛盾，`dotnet test` 红、`--status` 退出 1。
-- `Status != Semantic` 的键必须在 [`dialect-surface.md`](../reference/dialect-surface.md) §5 **逐键点名**，并写 `Note`；`Eratw` 键也必须写 `Note`。
+- `Status != Semantic` 的键必须在 [`dialect-surface.md`](../reference/dialect-surface.md) §5 **逐键点名**，并写 `Note`。
 - 进度查询：`python tools/dialect-inventory/extract.py --fork <id> --status`（repo-local，不需要上游 checkout）。
 
 禁止把 no-op 写成“已完成”。没有登记的状态就是隐藏的兼容性债务。
@@ -517,7 +517,7 @@ python tools/dialect-inventory/classify.py --fork skia --scaffold --key NEW_KEY 
 - [ ] 非 `Semantic` 键与已知差异已写入 [`dialect-surface.md`](../reference/dialect-surface.md) §5（逐键点名）
 - [ ] flag 与上游一致，并有反射测试锁定
 - [ ] 新参数形状已注册到 `ArgumentParser` 静态构造器
-- [ ] `v24pure` 面未变化；`snake`/`eratw` 面按预期增加
+- [ ] `v24pure` 面未变化；`snake` 面按预期增加（`eratw` 别名同 snake）
 - [ ] 面快照与 [`dialect-keys.md`](../reference/dialect-keys.md) 已用同一开关显式重写并提交
 - [ ] fork JSON 中已 ported 的键没有残留 `status: pending/excluded`；`extract.py --fork <id> --status` 退出 0
 - [ ] P0 家族测试通过

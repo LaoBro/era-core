@@ -16,8 +16,18 @@ internal enum Dialect
 	Baseline,
 	/// <summary>Skia 方言语义键（P0 指令/函数）。</summary>
 	Snake,
-	/// <summary>游戏适配（兜底函数、宽容度策略）。</summary>
-	Eratw,
+}
+
+/// <summary>
+/// 语言能力：不新增方言键、但改变解析语法的能力位（ADR-0055）。
+/// 由 <see cref="DialectModule.Capabilities"/> 声明，profile 取并集；只在解析期消费。
+/// </summary>
+[Flags]
+internal enum LanguageCapability
+{
+	None = 0,
+	/// <summary>浮点字面量、`#DIMF`、`#LOCALFSIZE` 与内建 `LOCALF`（票 27）。</summary>
+	Float = 1 << 0,
 }
 
 /// <summary>
@@ -70,7 +80,7 @@ internal sealed class InstructionDescriptor
 
 	/// <summary>
 	/// 一句话差异/理由：中文 ≤ 60 字无换行（评审纪律），不复制参数表、不写测试链接。
-	/// <see cref="PortStatus.Semantic"/> 之外的键与 <see cref="Dialect.Eratw"/> 键必填（测试锁定）。
+	/// <see cref="PortStatus.Semantic"/> 之外的键必填（测试锁定）。
 	/// </summary>
 	public string? Note { get; init; }
 }
@@ -101,7 +111,7 @@ internal sealed class FunctionMethodDescriptor
 
 	/// <summary>
 	/// 一句话差异/理由：中文 ≤ 60 字无换行（评审纪律），不复制参数表、不写测试链接。
-	/// <see cref="PortStatus.Semantic"/> 之外的键与 <see cref="Dialect.Eratw"/> 键必填（测试锁定）。
+	/// <see cref="PortStatus.Semantic"/> 之外的键必填（测试锁定）。
 	/// </summary>
 	public string? Note { get; init; }
 }

@@ -165,6 +165,16 @@ def _display_report_flags(value: str) -> list[str]:
     return []
 
 
+_PROFILE_ALIASES = {"eratw": "snake"}
+
+
+def _canonical_profile(profile: str | None) -> str | None:
+    """ADR-0055：废弃别名归一为 canonical id（不阻断；记录与比较统一用 canonical）。"""
+    if profile is None:
+        return None
+    return _PROFILE_ALIASES.get(profile, profile)
+
+
 def _start_eracore_server(binary_path: str, game_dir: str | None, port: int,
                           display_report: str = "off", settings: list[str] | None = None,
                           profile: str | None = None) -> subprocess.Popen:
@@ -251,7 +261,9 @@ def cmd_start(args) -> int:
         configured = config.get("gameDir")
         game_dir = resolve_path(configured) if configured else os.path.join(PROJECT_DIR, "test_game")
 
-    profile = args.profile
+    profile = _canonical_profile(args.profile)
+    if args.profile and profile != args.profile:
+        print(f"eracore_agent: profile '{args.profile}' 已废弃，按 '{profile}' 处理", file=sys.stderr)
     existing = load_server_record()
     reused = False
     started_by_agent = False
@@ -281,7 +293,7 @@ def cmd_start(args) -> int:
             maui_hosted = True
             pid = None
             game_dir = maui_record.get("gameDir") or game_dir
-            reused_profile = maui_record.get("profile")
+            reused_profile = _canonical_profile(maui_record.get("profile"))
 
     if not reused and existing and existing.get("port"):
         token = existing.get("token")
@@ -293,7 +305,7 @@ def cmd_start(args) -> int:
             pid = existing.get("pid")
             started_by_agent = bool(existing.get("startedByAgent"))
             maui_hosted = bool(existing.get("mauiHosted"))
-            reused_profile = existing.get("profile")
+            reused_profile = _canonical_profile(existing.get("profile"))
             if not token:
                 token = secrets.token_urlsafe(24)
 
@@ -711,7 +723,7 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--host", default="127.0.0.1", help="server 主机（默认 127.0.0.1）")
     start.add_argument("--game-dir", default=None, help="游戏目录")
     start.add_argument("--profile", default=None,
-                       help="会话级方言 profile id（实现票 25）：v24pure/snake/eratw；"
+                       help="会话级方言 profile id：v24pure/snake；eratw 为废弃别名（按 snake 处理）；"
                             "仅对本次新拉起的 server 生效（复用已运行 server 时以其启动参数为准）")
     start.add_argument("--eracore-path", default=None, help="EraCore.Cli 二进制路径")
     start.add_argument("--display-report", choices=["auto", "off", "on"], default="off",

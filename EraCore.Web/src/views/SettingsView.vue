@@ -202,12 +202,12 @@ function chooseDimLockPolicy(value: DimLockPolicyValue): void {
 }
 
 /**
- * 方言兼容（MAUI 接入）：profile id → 显示文案（v24pure = 默认；eratw = eraTW 画蛇添足版）。
- * 选项来自 C# 权威的 game.dialectProfiles（DialectRegistry.KnownProfileIds）。
+ * 方言兼容（MAUI 接入）：profile id → 显示文案（v24pure = 默认；snake = Skia 方言面 / eraTW）。
+ * 选项来自 C# 权威的 game.dialectProfiles（DialectRegistry.KnownProfileIds；不含废弃别名 eratw）。
  */
 function dialectLabel(id: string): string {
   if (id === 'v24pure') return '默认（v24pure）';
-  if (id === 'eratw') return 'eraTW 画蛇添足版';
+  if (id === 'snake') return 'eraTW 画蛇添足版（snake）';
   return id;
 }
 
@@ -312,7 +312,7 @@ const logCopied = ref(false);
           </div>
         </div>
         <p class="hint-text">
-          eraTW 画蛇添足版请选 eratw；普通游戏请保持 v24pure（默认）。图像层 / 文本背景观感尚未追平
+          eraTW 画蛇添足版请选 snake；普通游戏请保持 v24pure（默认）。图像层 / 文本背景观感尚未追平
           （已知差异）：SETIMAGELAYER* / CLEARIMAGELAYER* 仍是语义 no-op，TEXT_BGC_ON/OFF 只存状态不渲染。
           改动需重载游戏后生效——用游戏列表里现成的「同目录一键重载」重新打开当前游戏即可，无需另设按钮。
         </p>

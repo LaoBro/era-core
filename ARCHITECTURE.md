@@ -108,7 +108,7 @@ Core 的接触面（从外到内）：
 era-core **不 fork 核心**来兼容其他 Emuera 分支。上游 fork 的语义键（如 Skia 的 `TINPUTNF`、`SQL_*`）作为**方言模块**登记在内置注册表中，默认对普通游戏隐藏；会话绑定 profile 后，才在解析期进入可见面。
 
 ```text
-descriptor（Dialect = Baseline | Snake | Eratw）
+descriptor（Dialect = Baseline | Snake）
   -> FunctionIdentifier.funcDic / FunctionMethodCreator.methodList
   -> DialectRegistry：模块 -> profile 闭包 -> 不可变 surface（按 id 缓存）
   -> GlobalStatic.OpenScope(configData, profileId)
@@ -120,7 +120,7 @@ descriptor（Dialect = Baseline | Snake | Eratw）
 |---|---|---|
 | `v24pure`（默认） | `baseline` | 普通 Emuera 游戏；与移植前行为一致 |
 | `snake` | `baseline + snake` | Skia 语义键（17 指令 + 49 函数） |
-| `eratw` | `baseline + snake + eratw` | eraTW 画蛇添足版；当前 `eratw` 模块为空 |
+| `eratw`（别名） | 同 `snake` | eraTW 画蛇添足版；`Resolve` 返回 snake 同一缓存对象 |
 
 约定：
 

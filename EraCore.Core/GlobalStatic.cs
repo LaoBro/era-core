@@ -147,6 +147,13 @@ internal sealed class GlobalStatic
             ? DialectRegistry.Default
             : DialectRegistry.Resolve(Current!._dialectProfileId);
 
+    /// <summary>
+    /// 会话级语言能力（ADR-0055 / 票 27）：由 <see cref="DialectProfile.Capabilities"/> 派生，
+    /// 无会话级覆盖（不做 <c>--features</c>）。只在解析期消费（`#DIMF` / 浮点字面量 / `LOCALF` 注册）；
+    /// 执行期按值类型分派，不读本属性。
+    /// </summary>
+    public static LanguageCapability LanguageCapabilities => DialectProfile.Capabilities;
+
     /// <summary>ERB loader に引数解析の結果を渡すための橋渡し変数（AnalysisMode 用）。</summary>
     public static Dictionary<string, long> tempDic => Current!._tempDic;
 

@@ -16,7 +16,7 @@ namespace MinorShift.Emuera.Tests;
 /// 三条纪律：
 /// - <c>Family</c> 非空时必须来自 canonical 集合（族是检索分组，新增家族 = 改这里的列表一行）；
 /// - <c>Status != Semantic</c> ⇔ <c>docs/reference/dialect-surface.md</c> 的「已知差异」区点名该键；
-/// - <c>Status != Semantic</c> 或 <c>Dialect.Eratw</c> 的键必须有 <c>Note</c>。
+/// - <c>Status != Semantic</c> 的键必须有 <c>Note</c>。
 ///
 /// 「点名」的约定：已知差异区内用反引号书写的全大写标识符，且该标识符是已登记的 descriptor。
 /// 因此 baseline 键（如 `EXISTVAR`）与本区散文里的文件名不会误入判定；反向亦成立——已登记
@@ -83,13 +83,13 @@ public sealed class DialectDescriptorMetadataTests
 	}
 
 	[Fact]
-	public void Non_semantic_and_eratw_descriptors_carry_a_note()
+	public void Non_semantic_descriptors_carry_a_note()
 	{
 		using var scope = GlobalStatic.OpenScope(new ConfigData());
 
 		foreach (DescriptorView descriptor in AllDescriptors())
 		{
-			if (descriptor.Status == PortStatus.Semantic && descriptor.Dialect != Dialect.Eratw)
+			if (descriptor.Status == PortStatus.Semantic)
 				continue;
 			Assert.False(string.IsNullOrWhiteSpace(descriptor.Note),
 				$"{descriptor.Kind}「{descriptor.Name}」的状态是 {descriptor.Status}（dialect={descriptor.Dialect}），必须写 Note。");

@@ -37,7 +37,7 @@
 | `additions[].note` | 决策理由（Float 依赖、渲染/性能层范围外等）；`excluded` 必填 |
 | `ownerNotes` | 归属判据与范围外说明 |
 
-`owner` 是**库存元数据**，用于跨 fork 冲突评审；运行期 `DialectModule.Owner` 默认取模块名（`Snake`/`Eratw`），两者不是同一字段。
+`owner` 是**库存元数据**，用于跨 fork 冲突评审；运行期跨 fork 的 `DialectModule.Owner` / `Priority` / `Overrides` 已移除（ADR-0055），两者不是同一概念。
 
 ## 用法
 

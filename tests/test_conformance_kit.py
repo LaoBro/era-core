@@ -34,7 +34,7 @@ def check(ok, message):
 def main():
     parser = argparse.ArgumentParser(description="一致性套件 + DoD 单入口（实现票 25）")
     parser.add_argument("--game-dir", default="test_game", help="游戏目录")
-    parser.add_argument("--profile", help="显式 profile id（v24pure/snake/eratw）；缺省按 games.json 解析")
+    parser.add_argument("--profile", help="显式 profile id（v24pure/snake；eratw 为废弃别名）；缺省按 games.json 解析")
     parser.add_argument("--binary", help="EraCore.Cli 二进制路径（缺省自动查找）")
     parser.add_argument("--games-json", help="fixture 映射文件（缺省 tests/games.json）")
     parser.add_argument("--build", action="store_true", help="先 dotnet build EraCore.Cli")
