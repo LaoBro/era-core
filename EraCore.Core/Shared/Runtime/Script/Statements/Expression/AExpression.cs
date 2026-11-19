@@ -21,10 +21,16 @@ internal abstract class AExpression
 	{
 		return "";
 	}
+	public virtual double GetFloatValue(ExpressionMediator exm)
+	{
+		return 0.0;
+	}
 	public virtual SingleTerm GetValue(ExpressionMediator exm)
 	{
 		if (type == typeof(long))
 			return new SingleLongTerm(0);
+		else if (type == typeof(double))
+			return new SingleFloatTerm(0.0);
 		else
 			return new SingleStrTerm("");
 	}
@@ -35,6 +41,10 @@ internal abstract class AExpression
 	public bool IsString
 	{
 		get { return type == typeof(string); }
+	}
+	public bool IsFloat
+	{
+		get { return type == typeof(double); }
 	}
 
 	/// <summary>

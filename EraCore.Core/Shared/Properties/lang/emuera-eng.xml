@@ -350,6 +350,13 @@ Settings apply only at start]]></tr>
     <tr id="Error.AssignToVarOoR"><![CDATA[Attempted to assign beyond the number of elements in array variable "{0}"]]></tr>
     <tr id="Error.MissingVarArg"><![CDATA[Variable "{0}" is missing required arguments]]></tr>
     <tr id="Error.CallStrAsInt"><![CDATA[Non-integer variable "{0}" is called as an integer]]></tr>
+    <tr id="Error.CallFloatAsInt"><![CDATA[Float variable "{0}" is called as an integer]]></tr>
+    <tr id="Error.CallNonFloatAsFloat"><![CDATA[Non-float variable "{0}" is called as a float]]></tr>
+    <tr id="Error.CallNonFloatArrayAsFloat"><![CDATA[Non-float-array variable "{0}" is called as a float array]]></tr>
+    <tr id="Error.SetFloatToInt"><![CDATA[Cannot assign a float value to integer variable "{0}"]]></tr>
+    <tr id="Error.CanNotConvertFloatToInt"><![CDATA[Argument {1} of function "{0}" cannot be a float value]]></tr>
+    <tr id="Error.ArgIsNotFloat"><![CDATA[Argument {1} of function "{0}" is not a float value]]></tr>
+    <tr id="Error.FloatType"><![CDATA[Float]]></tr>
     <tr id="Error.CallIntAsStr"><![CDATA[Non-string variable "{0}" is called as a string]]></tr>
     <tr id="Error.CallNDStrAsInt"><![CDATA[Non-integer array variable "{0}" is called as an integer]]></tr>
     <tr id="Error.CallNDIntAsStr"><![CDATA[Non-string array variable "{0}" is called as a string]]></tr>

@@ -1,5 +1,6 @@
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Script.Data;
+using MinorShift.Emuera.Runtime.Script.Statements;
 using MinorShift.Emuera.Runtime.Script.Statements.Expression;
 using MinorShift.Emuera.Runtime.Utils;
 using System;
@@ -333,7 +334,7 @@ internal static partial class LexicalAnalyzer
 	/// </summary>
 	/// <param name="st"></param>
 	/// <returns></returns>
-	public static double ReadDouble(CharStream st)
+	public static double ReadDouble(CharStream st, bool retZero)
 	{
 		int start = st.CurrentPosition;
 		//大雑把に読み込んでエラー処理はConvertクラスに任せる。
@@ -356,14 +357,14 @@ internal static partial class LexicalAnalyzer
 		if (st.Current == 'e' || st.Current == 'E')
 		{
 			st.ShiftNext();
-			if (st.Current == '-')
+			if (st.Current == '-' || st.Current == '+')
 			{
 				st.ShiftNext();
 			}
 			while (!st.EOS)
 			{//指数部
 				char c = st.Current;
-				if (char.IsDigit(c) || c == '.')
+				if (char.IsDigit(c))
 				{
 					st.ShiftNext();
 					continue;
@@ -371,7 +372,11 @@ internal static partial class LexicalAnalyzer
 				break;
 			}
 		}
-		return double.Parse(st.SubstringROS(start, st.CurrentPosition - start), CultureInfo.InvariantCulture);
+		if (double.TryParse(st.SubstringROS(start, st.CurrentPosition - start), NumberStyles.Float, CultureInfo.InvariantCulture, out double result))
+			return result;
+		if (retZero)
+			return 0.0;
+		throw new CodeEE(string.Format(trerror.CanNotConvertToInt.Text, st.Substring(start, st.CurrentPosition - start)));
 	}
 
 	/// <summary>
@@ -870,7 +875,24 @@ internal static partial class LexicalAnalyzer
 					case '7':
 					case '8':
 					case '9':
-						ret.Add(new LiteralIntegerWord(ReadInt64(st, false)));
+						{
+							// 票 27 / Skia 对齐：数字后紧邻 '.' 才识别为浮点字面量。
+							// 1e4 仍走整数；1. / 1.0e3 走浮点；.5 由 '.' 单独成 SymbolWord（语法错误）。
+							if (GlobalStatic.LanguageCapabilities.HasFlag(LanguageCapability.Float))
+							{
+								int pos = st.CurrentPosition;
+								while (!st.EOS && char.IsDigit(st.Current))
+									st.ShiftNext();
+								bool isFloat = !st.EOS && st.Current == '.';
+								st.CurrentPosition = pos;
+								if (isFloat)
+								{
+									ret.Add(new LiteralFloatWord(ReadDouble(st, false)));
+									break;
+								}
+							}
+							ret.Add(new LiteralIntegerWord(ReadInt64(st, false)));
+						}
 						break;
 					case '>':
 						if (endWith == LexEndWith.GreaterThan)

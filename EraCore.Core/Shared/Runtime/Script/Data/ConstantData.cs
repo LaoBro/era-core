@@ -82,6 +82,7 @@ internal sealed class ConstantData
 
 	public int[] VariableIntArrayLength = null!;
 	public int[] VariableStrArrayLength = null!;
+	public int[] VariableFloatArrayLength = null!;
 	public long[] VariableIntArray2DLength = null!;
 	public long[] VariableStrArray2DLength = null!;
 	public long[] VariableIntArray3DLength = null!;
@@ -177,6 +178,7 @@ internal sealed class ConstantData
 
 		VariableIntArrayLength = new int[(int)VariableCode.__COUNT_INTEGER_ARRAY__];
 		VariableStrArrayLength = new int[(int)VariableCode.__COUNT_STRING_ARRAY__];
+		VariableFloatArrayLength = new int[(int)VariableCode.__COUNT_FLOAT_ARRAY__];
 		VariableIntArray2DLength = new long[(int)VariableCode.__COUNT_INTEGER_ARRAY_2D__];
 		VariableStrArray2DLength = [];
 		VariableIntArray3DLength = new long[(int)VariableCode.__COUNT_INTEGER_ARRAY_3D__];
@@ -187,6 +189,9 @@ internal sealed class ConstantData
 		CharacterStrArray2DLength = [];
 		for (int i = 0; i < VariableIntArrayLength.Length; i++)
 			VariableIntArrayLength[i] = 1000;
+		// 票 27 / Skia 对齐：LOCALF 默认长度 10，与 #LOCALSIZE 完全解耦。
+		for (int i = 0; i < VariableFloatArrayLength.Length; i++)
+			VariableFloatArrayLength[i] = 10;
 		VariableIntArrayLength[(int)(VariableCode.__LOWERCASE__ & VariableCode.FLAG)] = 10000;
 		VariableIntArrayLength[(int)(VariableCode.__LOWERCASE__ & VariableCode.ITEMPRICE)] = MaxDataList[itemIndex];
 

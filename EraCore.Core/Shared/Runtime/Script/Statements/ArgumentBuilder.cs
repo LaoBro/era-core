@@ -543,7 +543,7 @@ internal static partial class ArgumentParser
 			try
 			{
 				LexicalAnalyzer.SkipWhiteSpace(st);
-				d = LexicalAnalyzer.ReadDouble(st);
+				d = LexicalAnalyzer.ReadDouble(st, false);
 				LexicalAnalyzer.SkipWhiteSpace(st);
 				if (!st.EOS)
 					warn(trerror.TooManyArg.Text, line, 1, false);
@@ -1038,8 +1038,9 @@ internal static partial class ArgumentParser
 				st = new CharStream("");
 			OperatorCode op = line.AssignOperator;
 			AExpression src;
-			if (varTerm.IsInteger)
+			if (varTerm.IsInteger || varTerm.IsFloat)
 			{
+				bool destIsFloat = varTerm.IsFloat;
 				if (op == OperatorCode.AssignmentStr)
 				{
 					assignwarn(string.Format(trerror.InvalidOpWithInt.Text, OperatorManager.ToOperatorString(op)), line, 2, false);
@@ -1061,12 +1062,24 @@ internal static partial class ArgumentParser
 							return null!;
 						}
 					}
-					ret = new SpSetArgument(varTerm, null!)
+					if (destIsFloat)
 					{
-						IsConst = true,
-						ConstInt = op == OperatorCode.Increment ? 1 : -1,
-						AddConst = true
-					};
+						ret = new SpSetArgument(varTerm, null!)
+						{
+							IsConst = true,
+							ConstFloat = op == OperatorCode.Increment ? 1.0 : -1.0,
+							AddConst = true
+						};
+					}
+					else
+					{
+						ret = new SpSetArgument(varTerm, null!)
+						{
+							IsConst = true,
+							ConstInt = op == OperatorCode.Increment ? 1 : -1,
+							AddConst = true
+						};
+					}
 					return ret;
 				}
 				WordCollection srcWc = LexicalAnalyzer.Analyse(st, LexEndWith.EoL, LexAnalyzeFlag.None);
@@ -1084,8 +1097,36 @@ internal static partial class ArgumentParser
 						assignwarn(trerror.CanNotContainMultipleValue.Text, line, 2, false);
 						return null!;
 					}
+					if (destIsFloat)
+					{
+						bool allConstFloat = true;
+						double[] constValues = new double[srcTerms.Count];
+						for (int i = 0; i < srcTerms.Count; i++)
+						{
+							if (srcTerms[i] == null)
+							{
+								assignwarn(trerror.CanNotOmitRight.Text, line, 2, false);
+								return null!;
+							}
+							if (srcTerms[i].IsString)
+							{
+								assignwarn(trerror.CanNotAssignStrToInt.Text, line, 2, false);
+								return null!;
+							}
+							srcTerms[i] = srcTerms[i].Restructure(exm);
+							if (allConstFloat && (srcTerms[i] is SingleTerm))
+								constValues[i] = srcTerms[i].GetOperandType() == typeof(double) ? srcTerms[i].GetFloatValue(null!) : srcTerms[i].GetIntValue(null!);
+							else
+								allConstFloat = false;
+						}
+						var arrayarg = new SpSetArrayArgument(varTerm, srcTerms, constValues)
+						{
+							IsConst = allConstFloat
+						};
+						return arrayarg;
+					}
 					bool allConst = true;
-					long[] constValues = new long[srcTerms.Count];
+					long[] constValuesInt = new long[srcTerms.Count];
 					for (int i = 0; i < srcTerms.Count; i++)
 					{
 						if (srcTerms[i] == null)
@@ -1093,26 +1134,36 @@ internal static partial class ArgumentParser
 							assignwarn(trerror.CanNotOmitRight.Text, line, 2, false);
 							return null!;
 						}
-						if (!srcTerms[i].IsInteger)
+						if (srcTerms[i].IsString)
 						{
 							assignwarn(trerror.CanNotAssignStrToInt.Text, line, 2, false);
 							return null!;
 						}
+						if (srcTerms[i].GetOperandType() == typeof(double))
+						{
+							assignwarn(string.Format(trerror.SetFloatToInt.Text, varTerm.Identifier.Name), line, 2, false);
+							return null!;
+						}
 						srcTerms[i] = srcTerms[i].Restructure(exm);
 						if (allConst && (srcTerms[i] is SingleTerm))
-							constValues[i] = srcTerms[i].GetIntValue(null!);
+							constValuesInt[i] = srcTerms[i].GetIntValue(null!);
 						else
 							allConst = false;
 					}
-					var arrayarg = new SpSetArrayArgument(varTerm, srcTerms, constValues)
+					var arrayargInt = new SpSetArrayArgument(varTerm, srcTerms, constValuesInt)
 					{
 						IsConst = allConst
 					};
-					return arrayarg;
+					return arrayargInt;
 				}
-				if (!srcTerms[0].IsInteger)
+				if (srcTerms[0].IsString)
 				{
 					assignwarn(trerror.CanNotAssignStrToInt.Text, line, 2, false);
+					return null!;
+				}
+				if (!destIsFloat && srcTerms[0].GetOperandType() == typeof(double))
+				{
+					assignwarn(string.Format(trerror.SetFloatToInt.Text, varTerm.Identifier.Name), line, 2, false);
 					return null!;
 				}
 				src = srcTerms[0].Restructure(exm);
@@ -1123,7 +1174,10 @@ internal static partial class ArgumentParser
 					{
 						ret.IsConst = true;
 						ret.AddConst = false;
-						ret.ConstInt = src.GetIntValue(null!);
+						if (destIsFloat)
+							ret.ConstFloat = src.GetOperandType() == typeof(double) ? src.GetFloatValue(null!) : src.GetIntValue(null!);
+						else
+							ret.ConstInt = src.GetIntValue(null!);
 					}
 					return ret;
 				}
@@ -1131,12 +1185,25 @@ internal static partial class ArgumentParser
 				{
 					if (src is SingleTerm)
 					{
-						ret = new SpSetArgument(varTerm, null!)
+						if (destIsFloat)
 						{
-							IsConst = true,
-							ConstInt = op == OperatorCode.Plus ? src.GetIntValue(null!) : -src.GetIntValue(null!),
-							AddConst = true
-						};
+							double sv = src.GetOperandType() == typeof(double) ? src.GetFloatValue(null!) : src.GetIntValue(null!);
+							ret = new SpSetArgument(varTerm, null!)
+							{
+								IsConst = true,
+								ConstFloat = op == OperatorCode.Plus ? sv : -sv,
+								AddConst = true
+							};
+						}
+						else
+						{
+							ret = new SpSetArgument(varTerm, null!)
+							{
+								IsConst = true,
+								ConstInt = op == OperatorCode.Plus ? src.GetIntValue(null!) : -src.GetIntValue(null!),
+								AddConst = true
+							};
+						}
 						return ret;
 					}
 				}
@@ -2474,7 +2541,7 @@ internal static partial class ArgumentParser
 				try
 				{
 					LexicalAnalyzer.SkipWhiteSpace(st);
-					d = LexicalAnalyzer.ReadDouble(st);
+					d = LexicalAnalyzer.ReadDouble(st, false);
 					LexicalAnalyzer.SkipWhiteSpace(st);
 					if (!st.EOS)
 						warn(trerror.TooManyArg.Text, line, 1, false);

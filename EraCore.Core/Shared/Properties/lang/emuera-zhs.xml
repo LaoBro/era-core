@@ -347,6 +347,13 @@ Emuera的历史版本有效的内容变得无效等等现象而设置的。
     <tr id="Error.AssignToVarOoR"><![CDATA[试图赋值的数组变量"{0}"超出元素数量]]></tr>
     <tr id="Error.MissingVarArg"><![CDATA[变量"{0}"缺少必要的参数]]></tr>
     <tr id="Error.CallStrAsInt"><![CDATA[非数值变量"{0}"被当作数值调用]]></tr>
+    <tr id="Error.CallFloatAsInt"><![CDATA[浮点变量"{0}"被当作整数调用]]></tr>
+    <tr id="Error.CallNonFloatAsFloat"><![CDATA[非浮点变量"{0}"被当作浮点调用]]></tr>
+    <tr id="Error.CallNonFloatArrayAsFloat"><![CDATA[非浮点数组变量"{0}"被当作浮点数组调用]]></tr>
+    <tr id="Error.SetFloatToInt"><![CDATA[试图把浮点值代入整数变量"{0}"]]></tr>
+    <tr id="Error.CanNotConvertFloatToInt"><![CDATA[函数"{0}"的第{1}个参数不能是浮点值]]></tr>
+    <tr id="Error.ArgIsNotFloat"><![CDATA[函数"{0}"的第{1}个参数不是浮点值]]></tr>
+    <tr id="Error.FloatType"><![CDATA[浮点型]]></tr>
     <tr id="Error.CallIntAsStr"><![CDATA[非字符串变量"{0}"被当作字符串调用]]></tr>
     <tr id="Error.CallNDStrAsInt"><![CDATA[非数值数组变量"{0}"被当作数值调用]]></tr>
     <tr id="Error.CallNDIntAsStr"><![CDATA[非字符串数组变量"{0}"被当作字符串调用]]></tr>

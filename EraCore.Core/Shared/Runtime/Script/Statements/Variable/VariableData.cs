@@ -1,5 +1,6 @@
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Script.Data;
+using MinorShift.Emuera.Runtime.Script.Statements;
 using MinorShift.Emuera.Runtime.Script.Statements.Variable;
 using MinorShift.Emuera.Runtime.Utils;
 using System;
@@ -363,6 +364,11 @@ internal sealed partial class VariableData : IDisposable
 		localvarTokenDic.Add("LOCALS", new VariableLocal(VariableCode.LOCALS, size, CreateLocalStr));
 		size = constant.VariableStrArrayLength[(int)(VariableCode.__LOWERCASE__ & VariableCode.ARGS)];
 		localvarTokenDic.Add("ARGS", new VariableLocal(VariableCode.ARGS, size, CreateLocalStr));
+		if (GlobalStatic.LanguageCapabilities.HasFlag(LanguageCapability.Float))
+		{
+			size = constant.VariableFloatArrayLength[(int)(VariableCode.__LOWERCASE__ & VariableCode.LOCALF)];
+			localvarTokenDic.Add("LOCALF", new VariableLocal(VariableCode.LOCALF, size, CreateLocalFloat));
+		}
 
 	}
 
@@ -373,6 +379,10 @@ internal sealed partial class VariableData : IDisposable
 	private LocalStr1DVariableToken CreateLocalStr(VariableCode varCode, string subKey, int size)
 	{
 		return new LocalStr1DVariableToken(varCode, this, subKey, size);
+	}
+	private LocalFloat1DVariableToken CreateLocalFloat(VariableCode varCode, string subKey, int size)
+	{
+		return new LocalFloat1DVariableToken(varCode, this, subKey, size);
 	}
 	public Dictionary<string, VariableToken> GetVarTokenDicClone()
 	{
@@ -419,7 +429,13 @@ internal sealed partial class VariableData : IDisposable
 	public UserDefinedVariableToken CreateUserDefVariable(UserDefinedVariableData data, DimLineWC dimline)
 	{
 		UserDefinedVariableToken ret;
-		if (data.TypeIsStr)
+		if (data.TypeIsFloat)
+			switch (data.Dimension)
+			{
+				case 1: ret = new StaticFloat1DVariableToken(data); break;
+				default: throw new ExeEE(trerror.AbnormalVarDeclaration.Text);
+			}
+		else if (data.TypeIsStr)
 			switch (data.Dimension)
 			{
 				case 1: ret = new StaticStr1DVariableToken(data); break;
@@ -482,7 +498,15 @@ internal sealed partial class VariableData : IDisposable
 		}
 		else if (data.Static)
 		{
-			if (data.TypeIsStr)
+			if (data.TypeIsFloat)
+			{
+				switch (data.Dimension)
+				{
+					case 1: ret = new StaticFloat1DVariableToken(data); break;
+					default: throw new ExeEE(trerror.AbnormalVarDeclaration.Text);
+				}
+			}
+			else if (data.TypeIsStr)
 			{
 				switch (data.Dimension)
 				{
@@ -508,7 +532,15 @@ internal sealed partial class VariableData : IDisposable
 		}
 		else
 		{
-			if (data.TypeIsStr)
+			if (data.TypeIsFloat)
+			{
+				switch (data.Dimension)
+				{
+					case 1: ret = new PrivateFloat1DVariableToken(data); break;
+					default: throw new ExeEE(trerror.AbnormalVarDeclaration.Text);
+				}
+			}
+			else if (data.TypeIsStr)
 			{
 				switch (data.Dimension)
 				{

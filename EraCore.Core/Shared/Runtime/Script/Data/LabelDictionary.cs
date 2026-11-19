@@ -94,12 +94,15 @@ internal sealed class LabelDictionary
 			List<FunctionLabelLine> laterlist = [];
 			int localMax = 0;
 			int localsMax = 0;
+			int localFloatMax = 0;
 			for (int i = 0; i < list.Count; i++)
 			{
 				if (list[i].LocalLength > localMax)
 					localMax = list[i].LocalLength;
 				if (list[i].LocalsLength > localsMax)
 					localsMax = list[i].LocalsLength;
+				if (list[i].LocalFloatLength > localFloatMax)
+					localFloatMax = list[i].LocalFloatLength;
 				if (list[i].IsOnly)
 					onlylist.Add(list[i]);
 				if (list[i].IsPri)
@@ -123,6 +126,7 @@ internal sealed class LabelDictionary
 				{
 					eventLabels[i][j].LocalLength = localMax;
 					eventLabels[i][j].LocalsLength = localsMax;
+					eventLabels[i][j].LocalFloatLength = localFloatMax;
 				}
 			}
 			eventLabelDic.Add(key, eventLabels);

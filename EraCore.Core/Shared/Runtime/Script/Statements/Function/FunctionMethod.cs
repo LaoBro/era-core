@@ -12,6 +12,13 @@ internal abstract class FunctionMethod
 {
 	// 唯一参数规则源为 argumentTypeArrayEx；旧 argumentTypeArray 已废弃。
 	public Type ReturnType { get; protected set; } = null!;
+
+	/// <summary>
+	/// 票 27：函数可按实参类型动态返回 Integer 或 Float。为 true 时
+	/// <see cref="FunctionMethodTerm"/> 按「任一实参为 Float」决定表达式的操作数类型，
+	/// <see cref="GetReturnValue"/> 相应返回 <see cref="SingleFloatTerm"/> 或 <see cref="SingleLongTerm"/>。
+	/// </summary>
+	public bool CanReturnFloat { get; protected set; }
 	protected string Name { get; private set; } = null!;
 	#region EM_私家版_Emuera多言語化改造
 	protected enum ArgType
@@ -31,6 +38,9 @@ internal abstract class FunctionMethod
 		CharacterData = Ref | 1 << 10,
 		AllowConstRef = 1 << 11,
 		DisallowVoid = 1 << 12,
+		Float = 1 << 13,
+
+		IntOrFloat = Int | Float,
 
 		RefInt = Ref | Int,
 		RefAny = Ref | Any,
@@ -64,8 +74,9 @@ internal abstract class FunctionMethod
 			get
 			{
 				if (Int) return typeof(long);
+				if (Float) return typeof(double);
 				if (String) return typeof(string);
-				throw new InvalidOperationException("_ArgType.Type is only valid for Int or String rules.");
+				throw new InvalidOperationException("_ArgType.Type is only valid for Int, Float or String rules.");
 			}
 		}
 		public ArgType type = ArgType.Invalid;
@@ -74,6 +85,7 @@ internal abstract class FunctionMethod
 		public bool Ref { get { return (type & ArgType.Ref) != 0; } }
 		public bool Any { get { return (type & ArgType.Any) != 0; } }
 		public bool Int { get { return (type & ArgType.Int) != 0; } }
+		public bool Float { get { return (type & ArgType.Float) != 0; } }
 		public bool Array { get { return (type & ArgType.Array) != 0; } }
 		public bool Array1D { get { return (type & ArgType.Array1D) != 0; } }
 		public bool Array2D { get { return (type & ArgType.Array2D) != 0; } }
@@ -82,6 +94,15 @@ internal abstract class FunctionMethod
 		public bool Variadic { get { return (type & ArgType.Variadic) != 0; } }
 		public bool SameAsFirst { get { return (type & ArgType.SameAsFirst) != 0; } }
 		public bool CharacterData { get { return ((int)type & 1 << 10) != 0; } }
+
+		/// <summary>票 27：规则是否接受该操作数类型（Int/Float 可同时开放）。</summary>
+		public bool Accepts(Type t)
+		{
+			if (Int && t == typeof(long)) return true;
+			if (Float && t == typeof(double)) return true;
+			if (String && t == typeof(string)) return true;
+			return false;
+		}
 		public int ArrayDims
 		{
 			get
@@ -170,7 +191,7 @@ internal abstract class FunctionMethod
 					}
 					bool typeNotMatch = rule.SameAsFirst
 						? arguments[0].GetOperandType() != arguments[i].GetOperandType()
-						: !rule.Any && rule.Type != arguments[i].GetOperandType();
+						: !rule.Any && !rule.Accepts(arguments[i].GetOperandType());
 					if (rule.Ref)
 					{
 						if (rule.CharacterData && (!(arguments[i] is VariableTerm cvarTerm) || !cvarTerm.Identifier.IsCharacterData))
@@ -232,10 +253,15 @@ internal abstract class FunctionMethod
 					}
 					else if (typeNotMatch)
 					{
-						var type = rule.SameAsFirst ? arguments[0].GetOperandType() : rule.Type;
-						// 引数の型が違う
-						errMsg[idx] = type == typeof(string) ? string.Format(trerror.ArgIsNotStr.Text, name, i + 1)
-							: string.Format(trerror.ArgIsNotInt.Text, name, i + 1);
+						var operandType = rule.SameAsFirst ? arguments[0].GetOperandType() : rule.Type;
+						// 票 27：Float 实参不能隐式转 Int（对齐 Skia 的显式转换口径）。
+						if (operandType == typeof(long) && arguments[i].GetOperandType() == typeof(double))
+							errMsg[idx] = string.Format(trerror.CanNotConvertFloatToInt.Text, name, i + 1);
+						else
+							// 引数の型が違う
+							errMsg[idx] = operandType == typeof(string) ? string.Format(trerror.ArgIsNotStr.Text, name, i + 1)
+								: operandType == typeof(double) ? string.Format(trerror.ArgIsNotFloat.Text, name, i + 1)
+								: string.Format(trerror.ArgIsNotInt.Text, name, i + 1);
 						break;
 					}
 				}
@@ -293,12 +319,35 @@ internal abstract class FunctionMethod
 	//実際の計算。
 	public virtual long GetIntValue(ExpressionMediator exm, List<AExpression> arguments) { throw new ExeEE(trerror.ReturnTypeDifferentOrNotImpelemnt.Text); }
 	public virtual string GetStrValue(ExpressionMediator exm, List<AExpression> arguments) { throw new ExeEE(trerror.ReturnTypeDifferentOrNotImpelemnt.Text); }
+	public virtual double GetFloatValue(ExpressionMediator exm, List<AExpression> arguments) { throw new ExeEE(trerror.ReturnTypeDifferentOrNotImpelemnt.Text); }
 	public virtual SingleTerm GetReturnValue(ExpressionMediator exm, List<AExpression> arguments)
 	{
+		if (CanReturnFloat)
+			return HasFloatArg(arguments)
+				? new SingleFloatTerm(GetFloatValue(exm, arguments))
+				: new SingleLongTerm(GetIntValue(exm, arguments));
 		if (ReturnType == typeof(long))
 			return new SingleLongTerm(GetIntValue(exm, arguments));
-		else
-			return new SingleStrTerm(GetStrValue(exm, arguments));
+		if (ReturnType == typeof(double))
+			return new SingleFloatTerm(GetFloatValue(exm, arguments));
+		return new SingleStrTerm(GetStrValue(exm, arguments));
+	}
+
+	/// <summary>票 27：任一实参为 Float（含 null 占位跳过）。</summary>
+	protected static bool HasFloatArg(List<AExpression> arguments)
+	{
+		for (int i = 0; i < arguments.Count; i++)
+		{
+			if (arguments[i] != null && arguments[i].GetOperandType() == typeof(double))
+				return true;
+		}
+		return false;
+	}
+
+	/// <summary>票 27：按操作数类型取 double（Int 隐式拓宽）。</summary>
+	protected static double ToDouble(AExpression arg, ExpressionMediator exm)
+	{
+		return arg.GetOperandType() == typeof(double) ? arg.GetFloatValue(exm) : arg.GetIntValue(exm);
 	}
 
 	/// <summary>

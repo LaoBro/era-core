@@ -222,7 +222,8 @@ internal static class LogicalLineParser
 					}
 					break;
 				case var s when s.Equals("LOCALSIZE", Config.Config.StringComparison) ||
-								s.Equals("LOCALSSIZE", Config.Config.StringComparison):
+								s.Equals("LOCALSSIZE", Config.Config.StringComparison) ||
+								s.Equals("LOCALFSIZE", Config.Config.StringComparison) && GlobalStatic.LanguageCapabilities.HasFlag(LanguageCapability.Float):
 					{
 						WordCollection wc = LexicalAnalyzer.Analyse(st, LexEndWith.EoL, LexAnalyzeFlag.AllowAssignment);
 						if (wc.EOL)
@@ -264,7 +265,7 @@ internal static class LogicalLineParser
 								ParserMediator.Warn(trerror.DuplicateLocalsize.Text, position, 1);
 							label.LocalLength = size;
 						}
-						else
+						else if (token.SequenceEqual("LOCALSSIZE"))
 						{
 							if (GlobalStatic.IdentifierDictionary.getLocalIsForbid("LOCALS"))
 							{
@@ -275,14 +276,27 @@ internal static class LogicalLineParser
 								ParserMediator.Warn(trerror.DuplicateLocalssize.Text, position, 1);
 							label.LocalsLength = size;
 						}
+						else if (token.SequenceEqual("LOCALFSIZE"))
+						{
+							if (GlobalStatic.IdentifierDictionary.getLocalIsForbid("LOCALF"))
+							{
+								ParserMediator.Warn(string.Format(trerror.LocalIsProhibited.Text, token.ToString(), "LOCALF"), position, 2);
+								break;
+							}
+							if (label.LocalFloatLength > 0)
+								ParserMediator.Warn(trerror.DuplicateLocalsize.Text, position, 1);
+							label.LocalFloatLength = size;
+						}
 					}
 					break;
 				case var s when s.Equals("DIM", Config.Config.StringComparison) ||
-								s.Equals("DIMS", Config.Config.StringComparison):
+								s.Equals("DIMS", Config.Config.StringComparison) ||
+								s.Equals("DIMF", Config.Config.StringComparison) && GlobalStatic.LanguageCapabilities.HasFlag(LanguageCapability.Float):
 					{
 						var wc = LexicalAnalyzer.Analyse(st, LexEndWith.EoL, LexAnalyzeFlag.AllowAssignment);
 
-						UserDefinedVariableData data = UserDefinedVariableData.Create(wc, token.SequenceEqual("DIMS"), true, position);
+						bool dimf = token.SequenceEqual("DIMF");
+						UserDefinedVariableData data = UserDefinedVariableData.Create(wc, token.SequenceEqual("DIMS"), dimf, true, position);
 						if (!label.AddPrivateVariable(data))
 						{
 							ParserMediator.Warn(string.Format(trerror.VarNameAlreadyUsed.Text, data.Name), position, 2);

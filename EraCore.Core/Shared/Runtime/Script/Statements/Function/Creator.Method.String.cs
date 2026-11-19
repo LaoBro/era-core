@@ -303,8 +303,26 @@ internal static partial class FunctionMethodCreator
 			CanRestructure = true;
 		}
 
+		/// <summary>
+		/// 票 27 / Skia 对齐：浮点能力开启时 TOINT 无参数类型规则（可接 Float/Int/String）；
+		/// 关闭时保持 v24pure 的「只接受字符串」行为。
+		/// </summary>
+		public override string CheckArgumentType(string name, List<AExpression> arguments)
+		{
+			if (GlobalStatic.LanguageCapabilities.HasFlag(LanguageCapability.Float))
+			{
+				if (arguments.Count != 1 || arguments[0] == null)
+					return string.Format(trerror.ArgsCountNotMatches.Text, name, 1, arguments.Count);
+				return null!;
+			}
+			return base.CheckArgumentType(name, arguments);
+		}
+
 		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
 		{
+			// 票 27：Float 实参向零截断（对齐 Skia）。
+			if (arguments[0].GetOperandType() == typeof(double))
+				return (long)arguments[0].GetFloatValue(exm);
 			string str = arguments[0].GetStrValue(exm);
 			if (str == null || string.IsNullOrEmpty(str))
 				return 0;

@@ -46,6 +46,19 @@ internal sealed class LiteralIntegerWord : Word
 	}
 }
 
+internal sealed class LiteralFloatWord : Word
+{
+	public LiteralFloatWord(double d) { code = d; }
+	readonly double code;
+	public double Float { get { return code; } }
+	public long Int { get { return (long)code; } }
+	public override char Type { get { return 'R'; } }
+	public override string ToString()
+	{
+		return code.ToString("G");
+	}
+}
+
 internal sealed class LiteralStringWord : Word
 {
 	public LiteralStringWord(string s) { code = s; }

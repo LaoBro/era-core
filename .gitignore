@@ -85,6 +85,9 @@ test_game/_IRCache/
 test_game/emuera.log
 test_game/profile
 test_game/debug/
+test_game_float/_IRCache/
+test_game_float/emuera.log
+test_game_float/profile
 Emuera.CLI/artifacts/
 
 *.diff

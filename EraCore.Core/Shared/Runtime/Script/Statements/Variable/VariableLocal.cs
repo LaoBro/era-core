@@ -44,6 +44,8 @@ internal sealed class VariableLocal
 			newSize = func.ArgLength;
 		else if (varCode == VariableCode.ARGS)
 			newSize = func.ArgsLength;
+		else if (varCode == VariableCode.LOCALF)
+			newSize = func.LocalFloatLength;
 		if (newSize > 0)
 		{
 			if (newSize < size && (varCode == VariableCode.ARG || varCode == VariableCode.ARGS))

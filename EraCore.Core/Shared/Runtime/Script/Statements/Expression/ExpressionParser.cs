@@ -398,6 +398,9 @@ internal static class ExpressionParser
 				case '0'://LiteralIntegerWT
 					stack.Add((token as LiteralIntegerWord)!.Int);
 					break;
+				case 'R'://LiteralFloatWT
+					stack.Add((token as LiteralFloatWord)!.Float);
+					break;
 				case 'F'://FormattedStringWT
 					stack.Add(ToStrFormTerm((token as StrFormWord)!));
 					break;
@@ -580,6 +583,7 @@ internal static class ExpressionParser
 			throw new CodeEE(trerror.UnrecognizedSyntax.Text);
 		}
 		public void Add(long i) { Add(new SingleLongTerm(i)); }
+		public void Add(double d) { Add(new SingleFloatTerm(d)); }
 		public void Add(string s) { Add(new SingleStrTerm(s)); }
 		public void Add(AExpression term)
 		{

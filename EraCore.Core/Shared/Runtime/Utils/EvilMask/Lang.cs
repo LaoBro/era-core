@@ -578,6 +578,13 @@ internal sealed partial class Lang
 		[Managed] public static TranslatableString MissingVarArg { get; } = new TranslatableString("変数\"{0}\"に必要な引数が不足しています");
 		[Managed] public static TranslatableString CallStrAsInt { get; } = new TranslatableString("整数型でない変数\"{0}\"を整数型として呼び出しました");
 		[Managed] public static TranslatableString CallIntAsStr { get; } = new TranslatableString("文字列型でない変数\"{0}\"を文字列型として呼び出しました");
+		[Managed] public static TranslatableString CallFloatAsInt { get; } = new TranslatableString("浮動小数点型変数\"{0}\"を整数型として呼び出しました");
+		[Managed] public static TranslatableString CallNonFloatAsFloat { get; } = new TranslatableString("浮動小数点型でない変数\"{0}\"を浮動小数点型として呼び出しました");
+		[Managed] public static TranslatableString CallNonFloatArrayAsFloat { get; } = new TranslatableString("浮動小数点型配列でない変数\"{0}\"を浮動小数点型配列として呼び出しました");
+		[Managed] public static TranslatableString SetFloatToInt { get; } = new TranslatableString("浮動小数点型の値を整数型変数\"{0}\"に代入しようとしました");
+		[Managed] public static TranslatableString CanNotConvertFloatToInt { get; } = new TranslatableString("関数\"{0}\"の第{1}引数に浮動小数点型の値を指定できません");
+		[Managed] public static TranslatableString ArgIsNotFloat { get; } = new TranslatableString("関数\"{0}\"の第{1}引数が浮動小数点型ではありません");
+		[Managed] public static TranslatableString FloatType { get; } = new TranslatableString("浮動小数点型");
 		[Managed] public static TranslatableString CallNDStrAsInt { get; } = new TranslatableString("整数型配列でない変数\"{0}\"を整数型配列として呼び出しました");
 		[Managed] public static TranslatableString CallNDIntAsStr { get; } = new TranslatableString("文字列型配列でない変数\"{0}\"を文字列型配列として呼び出しました");
 		[Managed] public static TranslatableString GetSize0DVar { get; } = new TranslatableString("配列型でない変数\"{0}\"の長さを取得しようとしました");

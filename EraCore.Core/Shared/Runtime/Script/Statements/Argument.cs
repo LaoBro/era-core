@@ -661,6 +661,7 @@ internal sealed class SpSetArgument : Argument
 	readonly public VariableTerm VariableDest;
 	readonly public AExpression Term;
 	public bool AddConst;
+	public double ConstFloat;
 }
 
 internal sealed class SpSetArrayArgument : Argument
@@ -677,10 +678,17 @@ internal sealed class SpSetArrayArgument : Argument
 		TermList = termList;
 		ConstStrList = constList;
 	}
+	public SpSetArrayArgument(VariableTerm var, List<AExpression> termList, double[] constList)
+	{
+		VariableDest = var;
+		TermList = termList;
+		ConstFloatList = constList;
+	}
 	readonly public VariableTerm VariableDest;
 	readonly public List<AExpression> TermList;
 	readonly public long[] ConstIntList = null!;
 	readonly public string[] ConstStrList = null!;
+	readonly public double[] ConstFloatList = null!;
 }
 #endregion
 

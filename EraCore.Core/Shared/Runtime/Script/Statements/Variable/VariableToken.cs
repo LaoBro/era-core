@@ -97,23 +97,33 @@ internal abstract class VariableToken
 
 	//CodeEEにしているけど実際はExeEEかもしれない
 	public virtual long GetIntValue(ExpressionMediator exm, long[] arguments)
-	{ throw new CodeEE(string.Format(trerror.CallStrAsInt.Text, varName)); }
+	{ throw new CodeEE(string.Format(IsFloat ? trerror.CallFloatAsInt.Text : trerror.CallStrAsInt.Text, varName)); }
 	public virtual string GetStrValue(ExpressionMediator exm, long[] arguments)
 	{ throw new CodeEE(string.Format(trerror.CallIntAsStr.Text, varName)); }
+	public virtual double GetFloatValue(ExpressionMediator exm, long[] arguments)
+	{ throw new CodeEE(string.Format(trerror.CallNonFloatAsFloat.Text, varName)); }
 	public virtual void SetValue(long value, long[] arguments)
-	{ throw new CodeEE(string.Format(trerror.CallStrAsInt.Text, varName)); }
+	{ throw new CodeEE(string.Format(IsFloat ? trerror.CallFloatAsInt.Text : trerror.CallStrAsInt.Text, varName)); }
 	public virtual void SetValue(string value, long[] arguments)
 	{ throw new CodeEE(string.Format(trerror.CallIntAsStr.Text, varName)); }
+	public virtual void SetValue(double value, long[] arguments)
+	{ throw new CodeEE(string.Format(trerror.CallNonFloatAsFloat.Text, varName)); }
 	public virtual void SetValue(long[] values, long[] arguments)
 	{ throw new CodeEE(string.Format(trerror.CallNDStrAsInt.Text, varName)); }
 	public virtual void SetValue(string[] values, long[] arguments)
 	{ throw new CodeEE(string.Format(trerror.CallNDIntAsStr.Text, varName)); }
+	public virtual void SetValue(double[] values, long[] arguments)
+	{ throw new CodeEE(string.Format(trerror.CallNonFloatArrayAsFloat.Text, varName)); }
 	public virtual void SetValueAll(long value, int start, int end, int charaPos)
 	{ throw new CodeEE(string.Format(trerror.CallNDStrAsInt.Text, varName)); }
 	public virtual void SetValueAll(string value, int start, int end, int charaPos)
 	{ throw new CodeEE(string.Format(trerror.CallNDIntAsStr.Text, varName)); }
+	public virtual void SetValueAll(double value, int start, int end, int charaPos)
+	{ throw new CodeEE(string.Format(trerror.CallNonFloatArrayAsFloat.Text, varName)); }
 	public virtual long PlusValue(long value, long[] arguments)
-	{ throw new CodeEE(string.Format(trerror.CallStrAsInt.Text, varName)); }
+	{ throw new CodeEE(string.Format(IsFloat ? trerror.CallFloatAsInt.Text : trerror.CallStrAsInt.Text, varName)); }
+	public virtual double PlusValue(double value, long[] arguments)
+	{ throw new CodeEE(string.Format(trerror.CallNonFloatAsFloat.Text, varName)); }
 	public virtual int GetLength()
 	{ throw new CodeEE(string.Format(trerror.GetSize0DVar.Text, varName)); }
 	public virtual int GetLength(int dimension)
@@ -166,18 +176,26 @@ internal abstract class VariableToken
 			return (Code & VariableCode.__CHARACTER_DATA__) == VariableCode.__CHARACTER_DATA__;
 		}
 	}
+	/// <summary>票 27：浮点变量唯一事实源——VariableType 为 double。Float 不参与 Integer/String 判定。</summary>
+	public bool IsFloat
+	{
+		get
+		{
+			return VariableType == typeof(double);
+		}
+	}
 	public bool IsInteger
 	{
 		get
 		{
-			return (Code & VariableCode.__INTEGER__) == VariableCode.__INTEGER__;
+			return !IsFloat && (Code & VariableCode.__INTEGER__) == VariableCode.__INTEGER__;
 		}
 	}
 	public bool IsString
 	{
 		get
 		{
-			return (Code & VariableCode.__STRING__) == VariableCode.__STRING__;
+			return !IsFloat && (Code & VariableCode.__STRING__) == VariableCode.__STRING__;
 		}
 	}
 	public bool IsArray1D
@@ -302,6 +320,8 @@ internal abstract class UserDefinedVariableToken : VariableToken
 		: base(varCode, null!)
 	{
 		varName = data.Name;
+		if (data.TypeIsFloat)
+			VariableType = typeof(double);
 		IsPrivate = data.Private;
 		isConst = data.Const;
 		sizes = data.Lengths;
@@ -1111,7 +1131,15 @@ internal sealed partial class VariableData
 		{ throw new CodeEE(string.Format(trerror.AssignToConst.Text, varName)); }
 		public override void SetValue(string[] values, long[] arguments)
 		{ throw new CodeEE(string.Format(trerror.AssignToConst.Text, varName)); }
+		public override void SetValue(double value, long[] arguments)
+		{ throw new CodeEE(string.Format(trerror.AssignToConst.Text, varName)); }
+		public override void SetValue(double[] values, long[] arguments)
+		{ throw new CodeEE(string.Format(trerror.AssignToConst.Text, varName)); }
+		public override void SetValueAll(double value, int start, int end, int charaPos)
+		{ throw new CodeEE(string.Format(trerror.AssignToConst.Text, varName)); }
 		public override long PlusValue(long value, long[] arguments)
+		{ throw new CodeEE(string.Format(trerror.AssignToConst.Text, varName)); }
+		public override double PlusValue(double value, long[] arguments)
 		{ throw new CodeEE(string.Format(trerror.AssignToConst.Text, varName)); }
 	}
 
@@ -1587,6 +1615,89 @@ internal sealed partial class VariableData
 		}
 	}
 
+	private sealed class LocalFloat1DVariableToken : LocalVariableToken
+	{
+		public LocalFloat1DVariableToken(VariableCode varCode, VariableData varData, string subId, int size)
+			: base(varCode, varData, subId, size)
+		{
+			VariableType = typeof(double);
+		}
+		double[] array = null!;
+
+		public override void SetDefault()
+		{
+			if (array != null)
+				Array.Clear(array, 0, size);
+		}
+
+		public override double GetFloatValue(ExpressionMediator exm, long[] arguments)
+		{
+			if (array == null)
+				array = new double[size];
+			return array[arguments[0]];
+		}
+
+		public override void SetValue(double value, long[] arguments)
+		{
+			if (array == null)
+				array = new double[size];
+			array[arguments[0]] = value;
+		}
+		public override void SetValue(long value, long[] arguments)
+		{
+			if (array == null)
+				array = new double[size];
+			array[arguments[0]] = value;
+		}
+
+		public override void SetValue(double[] values, long[] arguments)
+		{
+			if (array == null)
+				array = new double[size];
+			int start = (int)arguments[0];
+			int end = start + values.Length;
+			for (int i = start; i < end; i++)
+				array[i] = values[i - start];
+		}
+
+		public override void SetValueAll(double value, int start, int end, int charaPos)
+		{
+			if (array == null)
+				array = new double[size];
+			for (int i = start; i < end; i++)
+				array[i] = value;
+		}
+		public override void SetValueAll(long value, int start, int end, int charaPos)
+		{
+			SetValueAll((double)value, start, end, charaPos);
+		}
+
+		public override double PlusValue(double value, long[] arguments)
+		{
+			if (array == null)
+				array = new double[size];
+			array[arguments[0]] += value;
+			return array[arguments[0]];
+		}
+		public override long PlusValue(long value, long[] arguments)
+		{
+			return (long)PlusValue((double)value, arguments);
+		}
+
+		public override object GetArray()
+		{
+			if (array == null)
+				array = new double[size];
+			return array;
+		}
+
+		public override void resize(int newSize)
+		{
+			size = newSize;
+			array = null!;
+		}
+	}
+
 	private sealed class LocalStr1DVariableToken : LocalVariableToken
 	{
 		public LocalStr1DVariableToken(VariableCode varCode, VariableData varData, string subId, int size)
@@ -1732,6 +1843,98 @@ internal sealed partial class VariableData
 		public override void ScopeIn() { }
 		public override void ScopeOut() { }
 
+	}
+
+	private sealed class StaticFloat1DVariableToken : UserDefinedVariableToken
+	{
+		public StaticFloat1DVariableToken(UserDefinedVariableData data)
+			: base(VariableCode.VAR, data)
+		{
+			length = data.Lengths[0];
+			IsStatic = true;
+			defArray = data.DefaultFloat;
+		}
+		int length;
+		double[] array = null!;
+		double[] defArray = null!;
+
+		void IfNullInitArray()
+		{
+			if (array == null)
+			{
+				array = new double[length];
+				if (defArray != null)
+					Array.Copy(defArray, array, defArray.Length);
+			}
+		}
+
+		public override void SetDefault()
+		{
+			IfNullInitArray();
+			if (defArray == null)
+			{
+				Array.Clear(array, 0, totalSize);
+			}
+			else
+			{
+				Array.Copy(defArray, array, defArray.Length);
+			}
+		}
+		public override double GetFloatValue(ExpressionMediator exm, long[] arguments)
+		{
+			IfNullInitArray();
+			return array[arguments[0]];
+		}
+
+		public override void SetValue(double value, long[] arguments)
+		{
+			IfNullInitArray();
+			array[arguments[0]] = value;
+		}
+		// 票 27：Int → Float 隐式拓宽（Skia 对齐）。
+		public override void SetValue(long value, long[] arguments)
+		{
+			SetValue((double)value, arguments);
+		}
+
+		public override void SetValue(double[] values, long[] arguments)
+		{
+			IfNullInitArray();
+			int start = (int)arguments[0];
+			int end = start + values.Length;
+			for (int i = start; i < end; i++)
+				array[i] = values[i - start];
+		}
+
+		public override void SetValueAll(double value, int start, int end, int charaPos)
+		{
+			IfNullInitArray();
+			for (int i = start; i < end; i++)
+				array[i] = value;
+		}
+		public override void SetValueAll(long value, int start, int end, int charaPos)
+		{
+			SetValueAll((double)value, start, end, charaPos);
+		}
+
+		public override double PlusValue(double value, long[] arguments)
+		{
+			IfNullInitArray();
+			array[arguments[0]] += value;
+			return array[arguments[0]];
+		}
+		public override long PlusValue(long value, long[] arguments)
+		{
+			return (long)PlusValue((double)value, arguments);
+		}
+		public override object GetArray()
+		{
+			IfNullInitArray();
+			return array;
+		}
+
+		public override void ScopeIn() { }
+		public override void ScopeOut() { }
 	}
 
 	private sealed class StaticInt2DVariableToken : UserDefinedVariableToken
@@ -2143,6 +2346,83 @@ internal sealed partial class VariableData
 				array = null!;
 		}
 	}
+	private sealed class PrivateFloat1DVariableToken : UserDefinedVariableToken
+	{
+		public PrivateFloat1DVariableToken(UserDefinedVariableData data)
+			: base(VariableCode.VAR, data)
+		{
+			sizes = data.Lengths;
+			IsStatic = false;
+			arrayStack = [];
+			defArray = data.DefaultFloat;
+		}
+		readonly Stack<double[]> arrayStack;
+		double[] array = null!;
+		double[] defArray = null!;
+		public override void SetDefault()
+		{
+		}
+		public override double GetFloatValue(ExpressionMediator exm, long[] arguments)
+		{
+			return array[arguments[0]];
+		}
+
+		public override void SetValue(double value, long[] arguments)
+		{
+			array[arguments[0]] = value;
+		}
+		public override void SetValue(long value, long[] arguments)
+		{
+			array[arguments[0]] = value;
+		}
+
+		public override void SetValue(double[] values, long[] arguments)
+		{
+			int start = (int)arguments[0];
+			int end = start + values.Length;
+			for (int i = start; i < end; i++)
+				array[i] = values[i - start];
+		}
+
+		public override void SetValueAll(double value, int start, int end, int charaPos)
+		{
+			for (int i = start; i < end; i++)
+				array[i] = value;
+		}
+		public override void SetValueAll(long value, int start, int end, int charaPos)
+		{
+			SetValueAll((double)value, start, end, charaPos);
+		}
+		public override object GetArray() { return array; }
+		public override double PlusValue(double value, long[] arguments)
+		{
+			array[arguments[0]] += value;
+			return array[arguments[0]];
+		}
+		public override long PlusValue(long value, long[] arguments)
+		{
+			return (long)PlusValue((double)value, arguments);
+		}
+		public override void ScopeIn()
+		{
+			if (array != null)
+				arrayStack.Push(array);
+			array = new double[sizes[0]];
+			if (defArray != null)
+				Array.Copy(defArray, array, defArray.Length);
+		}
+
+		public override void ScopeOut()
+		{
+			if (arrayStack.Count > 0)
+			{
+				array = arrayStack.Pop();
+			}
+			else
+				array = null!;
+		}
+	}
+
 	private sealed class PrivateInt2DVariableToken : UserDefinedVariableToken
 	{
 		public PrivateInt2DVariableToken(UserDefinedVariableData data)

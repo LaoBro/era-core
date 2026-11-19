@@ -628,6 +628,22 @@ internal sealed partial class FunctionIdentifier
 						arg.VariableDest.SetValue(values, exm);
 					}
 				}
+				else if (arg.VariableDest.IsFloat)
+				{
+					if (arg.IsConst)
+						arg.VariableDest.SetValue(arg.ConstFloatList, exm);
+					else
+					{
+						double[] values = new double[arg.TermList.Count];
+						for (int i = 0; i < values.Length; i++)
+						{
+							values[i] = arg.TermList[i].GetOperandType() == typeof(double)
+								? arg.TermList[i].GetFloatValue(exm)
+								: arg.TermList[i].GetIntValue(exm);
+						}
+						arg.VariableDest.SetValue(values, exm);
+					}
+				}
 				else
 				{
 					if (arg.IsConst)
@@ -648,6 +664,15 @@ internal sealed partial class FunctionIdentifier
 			if (spsetarg.VariableDest.IsInteger)
 			{
 				long src = spsetarg.IsConst ? spsetarg.ConstInt : spsetarg.Term.GetIntValue(exm);
+				if (spsetarg.AddConst)
+					spsetarg.VariableDest.ChangeValue(src, exm);
+				else
+					spsetarg.VariableDest.SetValue(src, exm);
+			}
+			else if (spsetarg.VariableDest.IsFloat)
+			{
+				double src = spsetarg.IsConst ? spsetarg.ConstFloat
+					: spsetarg.Term.GetOperandType() == typeof(double) ? spsetarg.Term.GetFloatValue(exm) : spsetarg.Term.GetIntValue(exm);
 				if (spsetarg.AddConst)
 					spsetarg.VariableDest.ChangeValue(src, exm);
 				else

@@ -113,6 +113,13 @@ internal enum VariableCode
 
 	__COUNT_STRING_ARRAY__ = 0x07,
 
+	// 票 27：浮点局部变量（Skia 的独立类别）。
+	// 带 __INTEGER__ 只为满足既有「INTEGER/STRING 二选一」静态不变量；
+	// 运行期类型唯一事实源是 VariableToken.IsFloat（VariableType == typeof(double)）。
+	LOCALF = 0x00 | __INTEGER__ | __ARRAY_1D__ | __LOCAL__ | __EXTENDED__ | __CAN_FORBID__,
+	ARGF = 0x01 | __INTEGER__ | __ARRAY_1D__ | __LOCAL__ | __EXTENDED__ | __CAN_FORBID__,
+	__COUNT_FLOAT_ARRAY__ = 0x02,
+
 
 
 	SAVEDATA_TEXT = 0x00 | __STRING__ | __EXTENDED__, //セーブ時につかう文字列。PUTFORMで追加できるやつ

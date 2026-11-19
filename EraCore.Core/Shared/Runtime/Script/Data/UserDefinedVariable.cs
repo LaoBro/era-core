@@ -11,11 +11,13 @@ internal sealed class UserDefinedVariableData
 {
 	public string Name = null!;
 	public bool TypeIsStr;
+	public bool TypeIsFloat;
 	public bool Reference;
 	public int Dimension = 1;
 	public int[] Lengths = null!;
 	public long[] DefaultInt = null!;
 	public string[] DefaultStr = null!;
+	public double[] DefaultFloat = null!;
 	public bool Global;
 	public bool Save;
 	public bool Static = true;
@@ -26,15 +28,16 @@ internal sealed class UserDefinedVariableData
 	//1822 Privateの方もDIMだけ遅延させようとしたけどちょっと課題がおおいのでやめとく
 	public static UserDefinedVariableData Create(DimLineWC dimline)
 	{
-		return Create(dimline.WC, dimline.Dims, dimline.IsPrivate, dimline.SC);
+		return Create(dimline.WC, dimline.Dims, dimline.Dimf, dimline.IsPrivate, dimline.SC);
 	}
 
-	public static UserDefinedVariableData Create(WordCollection wc, bool dims, bool isPrivate, ScriptPosition? sc)
+	public static UserDefinedVariableData Create(WordCollection wc, bool dims, bool dimf, bool isPrivate, ScriptPosition? sc)
 	{
-		string dimtype = dims ? "#DIM" : "#DIMS";
+		string dimtype = dimf ? "#DIMF" : (dims ? "#DIMS" : "#DIM");
 		UserDefinedVariableData ret = new()
 		{
-			TypeIsStr = dims
+			TypeIsStr = dims,
+			TypeIsFloat = dimf
 		};
 
 		IdentifierWord? idw;
@@ -172,6 +175,13 @@ internal sealed class UserDefinedVariableData
 	whilebreak:
 		if (ret.Name == null)
 			throw new CodeEE(string.Format(trerror.NotVarAfterKeyword.Text, keyword), sc);
+		// 票 27（Skia 对齐）：浮点用户变量只实现 1D；CHARADATA / REF / SAVEDATA 明确报错。
+		if (dimf && ret.CharaData)
+			throw new CodeEE(string.Format(trerror.CanNotSpecifiedWith.Text, "#DIMF", "CHARADATA"), sc);
+		if (dimf && ret.Reference)
+			throw new CodeEE(string.Format(trerror.CanNotSpecifiedWith.Text, "#DIMF", "REF"), sc);
+		if (dimf && ret.Save)
+			throw new CodeEE(string.Format(trerror.CanNotSpecifiedWith.Text, "#DIMF", "SAVEDATA"), sc);
 		if (Config.Config.UseERD && Config.Config.CheckDuplicateIdentifier)
 			GlobalStatic.ConstantData.isDefinedErd(ret.Name, sc);
 		string errMes = "";
@@ -260,7 +270,9 @@ internal sealed class UserDefinedVariableData
 				if (ret.Const && terms.Count != size)
 					throw new CodeEE(trerror.ConstInitialValueDifferentArraySize.Text);
 			}
-			if (dims)
+			if (dimf)
+				ret.DefaultFloat = new double[terms.Count];
+			else if (dims)
 				ret.DefaultStr = new string[terms.Count];
 			else
 				ret.DefaultInt = new long[terms.Count];
@@ -272,9 +284,18 @@ internal sealed class UserDefinedVariableData
 				terms[i] = terms[i].Restructure(GlobalStatic.EMediator);
 				if (terms[i] is not SingleTerm sTerm)
 					throw new CodeEE(trerror.InitialValueOnlyConst.Text);
-				if (dims != sTerm.IsString)
+				if (dimf)
+				{
+					if (sTerm is SingleFloatTerm floatTerm)
+						ret.DefaultFloat[i] = floatTerm.Float;
+					else if (sTerm is SingleLongTerm longTerm)
+						ret.DefaultFloat[i] = longTerm.Int;
+					else
+						throw new CodeEE(trerror.NotMatchVarTypeAndInitialValue.Text);
+				}
+				else if (dims != sTerm.IsString)
 					throw new CodeEE(trerror.NotMatchVarTypeAndInitialValue.Text);
-				if (dims)
+				else if (dims)
 					ret.DefaultStr[i] = ((SingleStrTerm)sTerm).Str;
 				else
 					ret.DefaultInt[i] = ((SingleLongTerm)sTerm).Int;
@@ -290,6 +311,8 @@ internal sealed class UserDefinedVariableData
 
 		ret.Private = isPrivate;
 		ret.Dimension = sizeNum.Count;
+		if (dimf && ret.Dimension != 1)
+			throw new CodeEE(string.Format(trerror.CanNotSpecifiedWith.Text, "#DIMF", trerror.MultidimType.Text), sc);
 		if (ret.Const && ret.Dimension > 1)
 			throw new CodeEE(trerror.CanNotDeclareConstArray.Text);
 		if (ret.CharaData && ret.Dimension > 2)
@@ -321,12 +344,14 @@ internal sealed class DimLineWC
 {
 	public WordCollection WC;
 	public bool Dims;
+	public bool Dimf;
 	public bool IsPrivate;
 	public ScriptPosition? SC;
-	public DimLineWC(WordCollection wc, bool isString, bool isPrivate, ScriptPosition? position)
+	public DimLineWC(WordCollection wc, bool isString, bool isFloat, bool isPrivate, ScriptPosition? position)
 	{
 		WC = wc;
 		Dims = isString;
+		Dimf = isFloat;
 		IsPrivate = isPrivate;
 		SC = position;
 	}
