@@ -41,6 +41,10 @@
 | `GETVARF` | function | snake | 字符串求值 | Semantic | — |
 | `GET_SKIA_QUALITY` | function | snake | 渲染设置 | Semantic | — |
 | `GET_TEXT_DRAWING_MODE` | function | snake | 渲染设置 | Semantic | — |
+| `G_POLYGON_DRAW` | function | snake | 图像层 | AcceptedNoOp | 不绘制（图形已创建 → 1，否则 0） |
+| `G_POLYGON_FILL` | function | snake | 图像层 | AcceptedNoOp | 不绘制（图形已创建 → 1，否则 0） |
+| `G_POLYGON_POINT_ADD` | function | snake | 图像层 | AcceptedNoOp | 只校验图形 ID 与坐标范围；不累积顶点（图形已创建 → 1，否则 0） |
+| `G_POLYGON_POINT_CLEAR` | function | snake | 图像层 | AcceptedNoOp | 不维护顶点状态（图形已创建 → 1，否则 0） |
 | `HTML_PRINTC` | directive | snake | HTML 文本 | Semantic | 复用 HTML 管线，单元格右对齐（已知差异） |
 | `HTML_PRINTLC` | directive | snake | HTML 文本 | Semantic | 复用 HTML 管线，单元格左对齐（已知差异） |
 | `ISPLAYINGBGM` | function | snake | 音频 | AcceptedNoOp | era-core 音频为空实现：恒 0 |
@@ -61,6 +65,7 @@
 | `SET_TEXT_DRAWING_MODE` | directive | snake | 渲染设置 | Semantic | 仅 1/3 生效，写入 Config.TextDrawingMode（era-core 默认 1） |
 | `SIN` | function | snake | 数学 | Semantic | — |
 | `SOUNDCONTROL` | function | snake | 音频 | AcceptedNoOp | 不改变播放状态：通道非法 -1；动作合法 1、非法 -2 |
+| `SPRITECREATEFROMFILE` | function | snake | 图像层 | AcceptedNoOp | 无文件建精灵管线：空名 → 0，其余一律 0（同『文件不存在』）；不解析文件 |
 | `SQL_CONNECT` | function | snake | SQL | Semantic | — |
 | `SQL_CONNECTION_OPEN` | function | snake | SQL | Semantic | — |
 | `SQL_DISCONNECT` | function | snake | SQL | Semantic | — |

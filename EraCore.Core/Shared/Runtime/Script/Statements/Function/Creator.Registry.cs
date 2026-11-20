@@ -59,6 +59,12 @@ internal static partial class FunctionMethodCreator
 		new() { Name = "GETSOUNDORBGMINFO", CreateMethod = () => new GetSoundOrBgmInfoMethod(), Dialect = Dialect.Snake, Family = "音频", Status = PortStatus.AcceptedNoOp, Note = "无真实播放源：省略 info 写 RESULT:0..4 = 0 并返回 0" },
 		new() { Name = "SOUNDCONTROL", CreateMethod = () => new SoundControlMethod(), Dialect = Dialect.Snake, Family = "音频", Status = PortStatus.AcceptedNoOp, Note = "不改变播放状态：通道非法 -1；动作合法 1、非法 -2" },
 		new() { Name = "BGMCONTROL", CreateMethod = () => new BgmControlMethod(), Dialect = Dialect.Snake, Family = "音频", Status = PortStatus.AcceptedNoOp, Note = "不改变播放状态：动作合法 1、非法 -2" },
+		// 票 40（Skia 对齐）：多边形与动态精灵（no-op）。
+		new() { Name = "G_POLYGON_POINT_ADD", CreateMethod = () => new GraphicsPolygonPointAddMethod(), Dialect = Dialect.Snake, Family = "图像层", Status = PortStatus.AcceptedNoOp, Note = "只校验图形 ID 与坐标范围；不累积顶点（图形已创建 → 1，否则 0）" },
+		new() { Name = "G_POLYGON_POINT_CLEAR", CreateMethod = () => new GraphicsPolygonPointClearMethod(), Dialect = Dialect.Snake, Family = "图像层", Status = PortStatus.AcceptedNoOp, Note = "不维护顶点状态（图形已创建 → 1，否则 0）" },
+		new() { Name = "G_POLYGON_DRAW", CreateMethod = () => new GraphicsDrawPolygonMethod(), Dialect = Dialect.Snake, Family = "图像层", Status = PortStatus.AcceptedNoOp, Note = "不绘制（图形已创建 → 1，否则 0）" },
+		new() { Name = "G_POLYGON_FILL", CreateMethod = () => new GraphicsFillPolygonMethod(), Dialect = Dialect.Snake, Family = "图像层", Status = PortStatus.AcceptedNoOp, Note = "不绘制（图形已创建 → 1，否则 0）" },
+		new() { Name = "SPRITECREATEFROMFILE", CreateMethod = () => new SpriteCreateFromFileMethod(), Dialect = Dialect.Snake, Family = "图像层", Status = PortStatus.AcceptedNoOp, Note = "无文件建精灵管线：空名 → 0，其余一律 0（同『文件不存在』）；不解析文件" },
 		// 试点（自动分档 A 类）：STRFORMCHECK 复用 era-core 既有格式化字符串解析 API。
 		new() { Name = "STRFORMCHECK", CreateMethod = () => new StrFormCheckMethod(), Dialect = Dialect.Snake, Family = "字符串求值" },
 		// 试点（自动分档 B 类）：MATCHALL/MATCHALLEX 在变量区间内统计匹配值，参数规则需自定义校验。

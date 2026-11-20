@@ -670,4 +670,84 @@ internal static partial class FunctionMethodCreator
 
 
 	}
+
+	// ======== 票 40（Skia 对齐）：多边形与动态精灵 ========
+	// era-core 的 GraphicsImage 是 no-op 桩（无多边形顶点状态、无文件建精灵管线）：
+	// 这里只做参数校验与确定性返回 —— 图形已创建 → 1，否则 0；不产生绘制。
+
+	public sealed class GraphicsDrawPolygonMethod : FunctionMethod
+	{
+		public GraphicsDrawPolygonMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Int } }];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+			=> TryGetCreatedGraphics(Name, exm, arguments, 0) == null ? 0 : 1;
+	}
+
+	public sealed class GraphicsFillPolygonMethod : FunctionMethod
+	{
+		public GraphicsFillPolygonMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Int } }];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+			=> TryGetCreatedGraphics(Name, exm, arguments, 0) == null ? 0 : 1;
+	}
+
+	public sealed class GraphicsPolygonPointClearMethod : FunctionMethod
+	{
+		public GraphicsPolygonPointClearMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Int } }];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+			=> TryGetCreatedGraphics(Name, exm, arguments, 0) == null ? 0 : 1;
+	}
+
+	public sealed class GraphicsPolygonPointAddMethod : FunctionMethod
+	{
+		public GraphicsPolygonPointAddMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Int, ArgType.Int, ArgType.Int } }];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			if (TryGetCreatedGraphics(Name, exm, arguments, 0) == null)
+				return 0;
+			// 顶点坐标范围校验（与 Skia 的 ReadPoint 同口径），no-op 不保存。
+			ReadPoint(Name, exm, arguments, 1);
+			return 1;
+		}
+	}
+
+	/// <summary>
+	/// 票 40：从文件创建动态精灵。era-core 无该管线（no-op）：空名 → 0；其余一律 0
+	/// （与 Skia「文件不存在」同结果），不解析文件、不建精灵。
+	/// </summary>
+	public sealed class SpriteCreateFromFileMethod : FunctionMethod
+	{
+		public SpriteCreateFromFileMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.String, ArgType.String, ArgType.Int }, OmitStart = 2 }];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			// Skia：WINAPI 模式下直接报 GDIPLUSOnly。
+			RequireGDIPlus(Name);
+			if (string.IsNullOrEmpty(arguments[0].GetStrValue(exm)))
+				return 0;
+			return 0;
+		}
+	}
 }
