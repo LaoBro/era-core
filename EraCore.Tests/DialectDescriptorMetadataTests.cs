@@ -44,6 +44,7 @@ public sealed class DialectDescriptorMetadataTests
 		"SQL",
 		"渲染设置",
 		"数据表",
+		"模板反查",
 	};
 
 	[Fact]

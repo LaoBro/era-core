@@ -115,12 +115,96 @@ internal sealed class ConstantData
 	#endregion
 	private readonly Dictionary<string, int>[] nameToIntDics = new Dictionary<string, int>[(int)VariableCode.__COUNT_CSV_STRING_ARRAY_1D__];
 	private readonly Dictionary<string, int> relationDic = [];
+
+	// 票 37（Skia 对齐）：预置名槽位的来源追踪。-1 空 / 0 CSV / 1 ERD（ERD 预置名合并尚未移植，
+	// 故目前只会出现 -1 与 0）。下标与 names 的前 countNameCsv 槽一一对应。
+	private sbyte[][] presetNameSource = null!;
+	/// <summary>
+	/// 预置变量名 → names[] 槽位（与 Skia 同一张表）。CDFLAG 本体与角色模板名（NAME/CALLNAME 等）
+	/// 没有独立名字槽，不支持。
+	/// </summary>
+	private static readonly Dictionary<string, int> presetErdSlotByName = new(StringComparer.OrdinalIgnoreCase)
+	{
+		["ABL"] = ablIndex,
+		["EXP"] = expIndex,
+		["TALENT"] = talentIndex,
+		["PALAM"] = paramIndex,
+		["UP"] = paramIndex,
+		["DOWN"] = paramIndex,
+		["JUEL"] = paramIndex,
+		["GOTJUEL"] = paramIndex,
+		["CUP"] = paramIndex,
+		["CDOWN"] = paramIndex,
+		["TRAIN"] = trainIndex,
+		["TRAINNAME"] = trainIndex,
+		["MARK"] = markIndex,
+		["ITEM"] = itemIndex,
+		["ITEMSALES"] = itemIndex,
+		["ITEMPRICE"] = itemIndex,
+		["BASE"] = baseIndex,
+		["LOSEBASE"] = baseIndex,
+		["MAXBASE"] = baseIndex,
+		["DOWNBASE"] = baseIndex,
+		["SOURCE"] = sourceIndex,
+		["EX"] = exIndex,
+		["NOWEX"] = exIndex,
+		["STR"] = strIndex,
+		["EQUIP"] = equipIndex,
+		["TEQUIP"] = tequipIndex,
+		["FLAG"] = flagIndex,
+		["TFLAG"] = tflagIndex,
+		["CFLAG"] = cflagIndex,
+		["TCVAR"] = tcvarIndex,
+		["CSTR"] = cstrIndex,
+		["STAIN"] = stainIndex,
+		["CDFLAG1"] = cdflag1Index,
+		["CDFLAGNAME1"] = cdflag1Index,
+		["CDFLAG2"] = cdflag2Index,
+		["CDFLAGNAME2"] = cdflag2Index,
+		["STRNAME"] = strnameIndex,
+		["TSTR"] = tstrnameIndex,
+		["SAVESTR"] = savestrnameIndex,
+		["GLOBAL"] = globalIndex,
+		["GLOBALS"] = globalsIndex,
+		["DAY"] = dayIndex,
+		["TIME"] = timeIndex,
+		["MONEY"] = moneyIndex,
+	};
+	/// <summary>票 37（Skia 对齐）：指定预置变量在指定索引的名字是否由 CSV 提供。别名透明（查槽正名）。</summary>
+	public bool ExistPresetNameInCsv(string varName, int index)
+	{
+		return GetPresetNameSource(varName, index) == 0;
+	}
+	private sbyte GetPresetNameSource(string varName, int index)
+	{
+		if (string.IsNullOrEmpty(varName) || presetNameSource == null)
+			return -1;
+		if (!presetErdSlotByName.TryGetValue(varName, out int slot))
+			return -1;
+		if (slot < 0 || slot >= presetNameSource.Length)
+			return -1;
+		sbyte[] arr = presetNameSource[slot];
+		if (arr == null || (uint)index >= (uint)arr.Length)
+			return -1;
+		return arr[index];
+	}
+
 	public string[] GetCsvNameList(VariableCode code)
 	{
 		return names[(int)(code & VariableCode.__LOWERCASE__)];
 	}
 
 	public long[] ItemPrice = null!;
+
+	// 票 37（Skia 对齐）：角色模板四类名字 → No 的反查表，随加载一次性构建。
+	private readonly Dictionary<string, long> _nameToTemplateMap = [];
+	private readonly Dictionary<string, long> _nicknameToTemplateMap = [];
+	private readonly Dictionary<string, long> _callnameToTemplateMap = [];
+	private readonly Dictionary<string, long> _masternameToTemplateMap = [];
+	public IReadOnlyDictionary<string, long> NameToTemplateMap => _nameToTemplateMap;
+	public IReadOnlyDictionary<string, long> NicknameToTemplateMap => _nicknameToTemplateMap;
+	public IReadOnlyDictionary<string, long> CallnameToTemplateMap => _callnameToTemplateMap;
+	public IReadOnlyDictionary<string, long> MasternameToTemplateMap => _masternameToTemplateMap;
 
 	private readonly List<CharacterTemplate> CharacterTmplList;
 	// 3.1 CSV 查找优化：No/csvNo → 模板索引。加载完成后构建一次、运行期只读（CharacterTmplList 运行期零新增）。
@@ -648,6 +732,13 @@ internal sealed class ConstantData
 			nameToIntDics[i] = [];
 		}
 		ItemPrice = new long[MaxDataList[itemIndex]];
+		// 票 37：来源追踪必须在所有 loadDataTo 之前就绪（loadDataTo 内直接标记 CSV 来源）。
+		presetNameSource = new sbyte[countNameCsv][];
+		for (int i = 0; i < countNameCsv; i++)
+		{
+			presetNameSource[i] = new sbyte[MaxDataList[i]];
+			Array.Fill(presetNameSource[i], (sbyte)-1);
+		}
 		#region EE_ERD
 		loadDataTo(dirAccessor.CombinePath(csvDir, "ABL.CSV"), ablIndex, null!, disp, dirAccessor);
 		EmueraLog.Debug("diag-ld", "Step1 ABL");
@@ -1274,6 +1365,20 @@ internal sealed class ConstantData
 		for (int i = 0; i < csvPaths.Count; i++)
 			loadCharacterDataFile(csvPaths[i].Value, csvPaths[i].Key, disp);
 
+		// 票 37（Skia 对齐）：角色名反查表。倒序遍历使重名保留最小 No（后写覆盖先写）。
+		// 放在 useCompatiName 补名之前，与 Skia 构建时机一致（CALLNAME 补名不进入反查表）。
+		foreach (CharacterTemplate tmpl in ((IEnumerable<CharacterTemplate>)CharacterTmplList).Reverse())
+		{
+			if (!string.IsNullOrEmpty(tmpl.Name))
+				_nameToTemplateMap[tmpl.Name] = tmpl.No;
+			if (!string.IsNullOrEmpty(tmpl.Nickname))
+				_nicknameToTemplateMap[tmpl.Nickname] = tmpl.No;
+			if (!string.IsNullOrEmpty(tmpl.Callname))
+				_callnameToTemplateMap[tmpl.Callname] = tmpl.No;
+			if (!string.IsNullOrEmpty(tmpl.Mastername))
+				_masternameToTemplateMap[tmpl.Mastername] = tmpl.No;
+		}
+
 		if (useCompatiName)
 		{
 			foreach (CharacterTemplate tmpl in CharacterTmplList)
@@ -1783,6 +1888,11 @@ internal sealed class ConstantData
 				if (!defined.Add(index))
 					ParserMediator.Warn(string.Format(trerror.VarKeyAreadyDefined.Text, ros[dest[1]].ToString(), index.ToString()), position, 1);
 				target[index] = ros[dest[1]].ToString();
+				// 票 37：标记该槽的名字由 CSV 提供（ERD 预置名合并尚未移植，只会出现 CSV 标记）。
+				// UserDefineLoadData 也会走这里（其 targetIndex 超出 presetNameSource 范围），故需越界保护。
+				if (presetNameSource != null && targetIndex < presetNameSource.Length && presetNameSource[targetIndex] != null
+					&& (uint)index < (uint)presetNameSource[targetIndex].Length)
+					presetNameSource[targetIndex][index] = 0;
 				if (targetI != null && length >= 3)
 				{
 

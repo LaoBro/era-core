@@ -787,6 +787,65 @@ internal static partial class FunctionMethodCreator
 		}
 	}
 
+	// ======== 票 37（Skia 对齐）：CSV 名字反查 ========
+	// 正查（CSVNAME 等）按编号取名字；这里按名字反查编号 / 预置名槽位来源。
+	// EXIST_IN_ERD 依赖 ERD 预置名合并，见票 43。
+
+	private sealed class GetCsvNoMethod : FunctionMethod
+	{
+		private readonly CharacterStrData _type;
+		public GetCsvNoMethod(CharacterStrData data)
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.String } }];
+			CanRestructure = true;
+			_type = data;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			string str = arguments[0].GetStrValue(exm);
+			long ret;
+			ConstantData constant = exm.VEvaluator.Constant;
+			bool found = _type switch
+			{
+				CharacterStrData.NAME => constant.NameToTemplateMap.TryGetValue(str, out ret),
+				CharacterStrData.NICKNAME => constant.NicknameToTemplateMap.TryGetValue(str, out ret),
+				CharacterStrData.CALLNAME => constant.CallnameToTemplateMap.TryGetValue(str, out ret),
+				CharacterStrData.MASTERNAME => constant.MasternameToTemplateMap.TryGetValue(str, out ret),
+				_ => throw new ExeEE("error")
+			};
+			return found ? ret : -1;
+		}
+	}
+
+	/// <summary>
+	/// 票 37：预置变量在指定索引的名字来源探针。首参为预设变量名，第二参为整数索引。
+	/// 不支持的变量名 / 越界索引返回 0（探针语义：答不出即「不是」）。别名透明（查槽正名）。
+	/// </summary>
+	private abstract class PresetNameSourceMethod : FunctionMethod
+	{
+		protected PresetNameSourceMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.String, ArgType.Int } }];
+			CanRestructure = true;
+		}
+		protected abstract bool Check(ConstantData constant, string varName, int index);
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			string varName = arguments[0].GetStrValue(exm);
+			long rawIndex = arguments[1].GetIntValue(exm);
+			if (rawIndex < 0 || rawIndex > int.MaxValue)
+				return 0;
+			return Check(exm.VEvaluator.Constant, varName, (int)rawIndex) ? 1 : 0;
+		}
+	}
+	private sealed class ExistInCsvMethod : PresetNameSourceMethod
+	{
+		protected override bool Check(ConstantData constant, string varName, int index)
+			=> constant.ExistPresetNameInCsv(varName, index);
+	}
+
 /// <summary>
 /// 试点（自动分档 A 类）：STRFORMCHECK。判断格式化字符串能否展开——
 	/// 复用 era-core 既有 LexicalAnalyzer.AnalyseFormattedString + StrForm，

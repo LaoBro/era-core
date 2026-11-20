@@ -25,8 +25,13 @@
 | `EVAL` | function | snake | 字符串求值 | Semantic | — |
 | `EVALF` | function | snake | 字符串求值 | Semantic | — |
 | `EVALS` | function | snake | 字符串求值 | Semantic | — |
+| `EXIST_IN_CSV` | function | snake | 模板反查 | Semantic | — |
 | `FLOOR` | function | snake | 数学 | Semantic | — |
 | `GETANIMETIMER` | function | snake | 平台定时器 | Semantic | — |
+| `GETCSVNOBYCALLNAME` | function | snake | 模板反查 | Semantic | — |
+| `GETCSVNOBYMASTERNAME` | function | snake | 模板反查 | Semantic | — |
+| `GETCSVNOBYNAME` | function | snake | 模板反查 | Semantic | — |
+| `GETCSVNOBYNICKNAME` | function | snake | 模板反查 | Semantic | — |
 | `GETMETHF` | function | snake | 字符串求值 | Semantic | — |
 | `GETPLATFORM` | function | snake | 平台定时器 | Semantic | — |
 | `GETVARF` | function | snake | 字符串求值 | Semantic | — |

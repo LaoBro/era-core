@@ -1,3 +1,4 @@
+using MinorShift.Emuera.Runtime.Script.Data;
 using MinorShift.Emuera.Runtime.Script.Statements;
 using MinorShift.Emuera.Runtime.Script.Statements.Function;
 using System.Collections.Generic;
@@ -43,6 +44,12 @@ internal static partial class FunctionMethodCreator
 		new() { Name = "GETVARF", CreateMethod = () => new GetVarFMethod(), Dialect = Dialect.Snake, Family = "字符串求值" },
 		new() { Name = "GETMETHF", CreateMethod = () => new GetMethFMethod(), Dialect = Dialect.Snake, Family = "字符串求值" },
 		new() { Name = "DT_CELL_GETF", CreateMethod = () => new DataTableCellGetFloatMethod(), Dialect = Dialect.Snake, Family = "数据表" },
+		// 票 37（Skia 对齐）：CSV 名字反查（EXIST_IN_ERD 见票 43）。
+		new() { Name = "GETCSVNOBYNAME", CreateMethod = () => new GetCsvNoMethod(CharacterStrData.NAME), Dialect = Dialect.Snake, Family = "模板反查" },
+		new() { Name = "GETCSVNOBYNICKNAME", CreateMethod = () => new GetCsvNoMethod(CharacterStrData.NICKNAME), Dialect = Dialect.Snake, Family = "模板反查" },
+		new() { Name = "GETCSVNOBYCALLNAME", CreateMethod = () => new GetCsvNoMethod(CharacterStrData.CALLNAME), Dialect = Dialect.Snake, Family = "模板反查" },
+		new() { Name = "GETCSVNOBYMASTERNAME", CreateMethod = () => new GetCsvNoMethod(CharacterStrData.MASTERNAME), Dialect = Dialect.Snake, Family = "模板反查" },
+		new() { Name = "EXIST_IN_CSV", CreateMethod = () => new ExistInCsvMethod(), Dialect = Dialect.Snake, Family = "模板反查" },
 		// 试点（自动分档 A 类）：STRFORMCHECK 复用 era-core 既有格式化字符串解析 API。
 		new() { Name = "STRFORMCHECK", CreateMethod = () => new StrFormCheckMethod(), Dialect = Dialect.Snake, Family = "字符串求值" },
 		// 试点（自动分档 B 类）：MATCHALL/MATCHALLEX 在变量区间内统计匹配值，参数规则需自定义校验。
