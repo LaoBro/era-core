@@ -44,6 +44,19 @@ internal static partial class FunctionMethodCreator
 		}
 	}
 
+	/// <summary>票 27e：浮点变体的统一异常映射。</summary>
+	private static double SqlGuardFloat(string name, Func<double> op)
+	{
+		try
+		{
+			return op();
+		}
+		catch (SqlManagerException ex)
+		{
+			throw new CodeEE($"{name}: {ex.Message}");
+		}
+	}
+
 	/// <summary>收集 <c>SQL_P_*</c> 的第 3 参起变参（全部按 String 取），无参返回 null。</summary>
 	private static string[]? CollectSqlParams(ExpressionMediator exm, List<AExpression> arguments)
 	{
@@ -159,6 +172,19 @@ internal static partial class FunctionMethodCreator
 			=> SqlGuardStr(Name, () => SqlManager.ReaderGetString(arguments[0].GetIntValue(exm), (int)arguments[1].GetIntValue(exm)));
 	}
 
+	/// <summary>票 27e：REAL/INTEGER 列按 double 读取（NULL → 0.0）。</summary>
+	private sealed class SqlReaderGetFloatMethod : FunctionMethod
+	{
+		public SqlReaderGetFloatMethod()
+		{
+			ReturnType = typeof(double);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Int, ArgType.Int } }];
+			CanRestructure = false;
+		}
+		public override double GetFloatValue(ExpressionMediator exm, List<AExpression> arguments)
+			=> SqlGuardFloat(Name, () => SqlManager.ReaderGetFloat(arguments[0].GetIntValue(exm), (int)arguments[1].GetIntValue(exm)));
+	}
+
 	private sealed class SqlReaderIsNullMethod : FunctionMethod
 	{
 		public SqlReaderIsNullMethod()
@@ -207,6 +233,19 @@ internal static partial class FunctionMethodCreator
 		}
 		public override string GetStrValue(ExpressionMediator exm, List<AExpression> arguments)
 			=> SqlGuardStr(Name, () => SqlManager.ExecuteScalarString(arguments[0].GetStrValue(exm), arguments[1].GetStrValue(exm)));
+	}
+
+	/// <summary>票 27e：标量按 double 返回（NULL/空结果 → 0.0）。</summary>
+	private sealed class SqlExecuteScalarFloatMethod : FunctionMethod
+	{
+		public SqlExecuteScalarFloatMethod()
+		{
+			ReturnType = typeof(double);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.String, ArgType.String } }];
+			CanRestructure = false;
+		}
+		public override double GetFloatValue(ExpressionMediator exm, List<AExpression> arguments)
+			=> SqlGuardFloat(Name, () => SqlManager.ExecuteScalarFloat(arguments[0].GetStrValue(exm), arguments[1].GetStrValue(exm)));
 	}
 
 	// ===== 转义 =====
@@ -348,6 +387,22 @@ internal static partial class FunctionMethodCreator
 			string dbName = arguments[0].GetStrValue(exm);
 			string sql = arguments[1].GetStrValue(exm);
 			return SqlGuardStr(Name, () => SqlManager.ExecuteScalarString(dbName, sql, CollectSqlParams(exm, arguments)));
+		}
+	}
+
+	private sealed class SqlPExecuteScalarFloatMethod : FunctionMethod
+	{
+		public SqlPExecuteScalarFloatMethod()
+		{
+			ReturnType = typeof(double);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.String, ArgType.String, ArgType.VariadicString }, OmitStart = 2 }];
+			CanRestructure = false;
+		}
+		public override double GetFloatValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			string dbName = arguments[0].GetStrValue(exm);
+			string sql = arguments[1].GetStrValue(exm);
+			return SqlGuardFloat(Name, () => SqlManager.ExecuteScalarFloat(dbName, sql, CollectSqlParams(exm, arguments)));
 		}
 	}
 }

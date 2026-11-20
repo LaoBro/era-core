@@ -160,6 +160,10 @@ internal static class SqlManager
 	public static string ReaderGetString(long readerId, int columnIndex)
 		=> ReaderColumn(readerId, columnIndex, r => r.IsDBNull(columnIndex) ? "" : Convert.ToString(r.GetValue(columnIndex), CultureInfo.InvariantCulture) ?? "");
 
+	/// <summary>票 27e / Skia 对齐：REAL/INTEGER 列统一按 double 读取；NULL → 0.0。</summary>
+	public static double ReaderGetFloat(long readerId, int columnIndex)
+		=> ReaderColumn(readerId, columnIndex, r => r.IsDBNull(columnIndex) ? 0.0 : r.GetDouble(columnIndex));
+
 	public static long ReaderIsNull(long readerId, int columnIndex)
 		=> ReaderColumn(readerId, columnIndex, r => r.IsDBNull(columnIndex) ? 1L : 0L);
 
@@ -186,6 +190,13 @@ internal static class SqlManager
 	{
 		object? value = ExecuteScalar(dbName, sql, parameters);
 		return value == null || value == DBNull.Value ? "" : Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
+	}
+
+	/// <summary>票 27e / Skia 对齐：标量按 double 返回；NULL 或空结果 → 0.0。</summary>
+	public static double ExecuteScalarFloat(string dbName, string sql, string[]? parameters = null)
+	{
+		object? value = ExecuteScalar(dbName, sql, parameters);
+		return value == null || value == DBNull.Value ? 0.0 : Convert.ToDouble(value, CultureInfo.InvariantCulture);
 	}
 
 	// ===== 字符串转义 =====

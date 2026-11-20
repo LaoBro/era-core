@@ -47,6 +47,7 @@
 | `SQL_ESCAPE` | function | snake | SQL | Semantic | — |
 | `SQL_EXECUTE_NONQUERY` | function | snake | SQL | Semantic | — |
 | `SQL_EXECUTE_READER` | function | snake | SQL | Semantic | — |
+| `SQL_EXECUTE_SCALAR_FLOAT` | function | snake | SQL | Semantic | — |
 | `SQL_EXECUTE_SCALAR_LONG` | function | snake | SQL | Semantic | — |
 | `SQL_EXECUTE_SCALAR_STRING` | function | snake | SQL | Semantic | — |
 | `SQL_EXPORT_DT_XML` | function | snake | SQL | Semantic | — |
@@ -56,9 +57,11 @@
 | `SQL_IMPORT_XML_CUSTOM` | function | snake | SQL | Semantic | — |
 | `SQL_P_EXECUTE_NONQUERY` | function | snake | SQL | Semantic | — |
 | `SQL_P_EXECUTE_READER` | function | snake | SQL | Semantic | — |
+| `SQL_P_EXECUTE_SCALAR_FLOAT` | function | snake | SQL | Semantic | — |
 | `SQL_P_EXECUTE_SCALAR_LONG` | function | snake | SQL | Semantic | — |
 | `SQL_P_EXECUTE_SCALAR_STRING` | function | snake | SQL | Semantic | — |
 | `SQL_READER_CLOSE` | function | snake | SQL | Semantic | — |
+| `SQL_READER_GET_FLOAT` | function | snake | SQL | Semantic | — |
 | `SQL_READER_GET_LONG` | function | snake | SQL | Semantic | — |
 | `SQL_READER_GET_STRING` | function | snake | SQL | Semantic | — |
 | `SQL_READER_ISNULL` | function | snake | SQL | Semantic | — |

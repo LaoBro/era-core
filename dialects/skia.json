@@ -429,9 +429,7 @@
     {
       "name": "SQL_EXECUTE_SCALAR_FLOAT",
       "kind": "function",
-      "owner": "skia",
-      "status": "pending",
-      "note": "依赖浮点返回/浮点变量支持"
+      "owner": "skia"
     },
     {
       "name": "SQL_EXECUTE_SCALAR_LONG",
@@ -481,9 +479,7 @@
     {
       "name": "SQL_P_EXECUTE_SCALAR_FLOAT",
       "kind": "function",
-      "owner": "skia",
-      "status": "pending",
-      "note": "依赖浮点返回/浮点变量支持"
+      "owner": "skia"
     },
     {
       "name": "SQL_P_EXECUTE_SCALAR_LONG",
@@ -503,9 +499,7 @@
     {
       "name": "SQL_READER_GET_FLOAT",
       "kind": "function",
-      "owner": "skia",
-      "status": "pending",
-      "note": "依赖浮点返回/浮点变量支持"
+      "owner": "skia"
     },
     {
       "name": "SQL_READER_GET_LONG",

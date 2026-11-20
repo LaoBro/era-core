@@ -100,6 +100,28 @@ public sealed class P0SqlFunctionRegistryTests : IDisposable
 		Assert.Equal(omitStart, rules[0].OmitStart);
 	}
 
+	/// <summary>票 27e：3 个 Float 变体返回 double，参数形状与对应 Long 版一致。</summary>
+	[Fact]
+	public void Float_variants_return_double_with_long_equivalent_arguments()
+	{
+		(string Name, int[] ArgTypes, int OmitStart)[] expectations =
+		[
+			("SQL_READER_GET_FLOAT", [Int, Int], -1),
+			("SQL_EXECUTE_SCALAR_FLOAT", [Str, Str], -1),
+			("SQL_P_EXECUTE_SCALAR_FLOAT", [Str, Str, VariadicStr], 2),
+		];
+		foreach (var (name, argTypes, omitStart) in expectations)
+		{
+			FunctionMethod method = Method(name);
+			Assert.Equal(typeof(double), method.ReturnType);
+			Assert.False(method.CanRestructure);
+			var rules = ArgRules(method);
+			Assert.Single(rules);
+			Assert.Equal(argTypes, rules[0].ArgTypes);
+			Assert.Equal(omitStart, rules[0].OmitStart);
+		}
+	}
+
 	[Fact]
 	public void Dialect_functions_are_visible_only_when_snake_module_is_selected()
 	{
@@ -108,7 +130,8 @@ public sealed class P0SqlFunctionRegistryTests : IDisposable
 		var snake = DialectProjection.Filter(methods, DialectRegistry.Resolve(DialectRegistry.SnakeId));
 
 		foreach (string name in (string[])["SQL_CONNECT", "SQL_EXECUTE_READER", "SQL_P_EXECUTE_SCALAR_LONG",
-			"SQL_READER_GET_STRING", "SQL_IMPORT_MAP_XML", "SQL_EXPORT_DT_XML", "GETPLATFORM", "GETANIMETIMER"])
+			"SQL_READER_GET_STRING", "SQL_READER_GET_FLOAT", "SQL_EXECUTE_SCALAR_FLOAT", "SQL_P_EXECUTE_SCALAR_FLOAT",
+			"SQL_IMPORT_MAP_XML", "SQL_EXPORT_DT_XML", "GETPLATFORM", "GETANIMETIMER"])
 		{
 			Assert.False(v24.ContainsKey(name), name);
 			Assert.True(snake.ContainsKey(name), name);
@@ -141,6 +164,9 @@ public sealed class P0SqlFunctionIntegrationTests
 
 	private static string Str(string name, ExpressionMediator exm, params AExpression[] args)
 		=> Method(name).GetStrValue(exm, Args(args));
+
+	private static double Float(string name, ExpressionMediator exm, params AExpression[] args)
+		=> Method(name).GetFloatValue(exm, Args(args));
 
 	private static string SqlPath(LoaderTestHarness harness, string name)
 		=> "Data Source=" + Path.Combine(harness.TempRoot, name);
@@ -242,6 +268,35 @@ public sealed class P0SqlFunctionIntegrationTests
 		Assert.Equal(1, Int("SQL_DISCONNECT", exm, new SingleStrTerm("d")));
 		// reader 已随断开关闭（原版 Skia 会悬空）——此后读取返回 0 而非抛。
 		Assert.Equal(0, Int("SQL_READER_READ", exm, new SingleLongTerm(id)));
+	}
+
+	[Fact]
+	public async Task Float_scalar_and_reader_return_double_and_treat_null_as_zero()
+	{
+		using var harness = new LoaderTestHarness();
+		await harness.InitializeAsync();
+		var exm = harness.Exm;
+
+		Int("SQL_CONNECT", exm, new SingleStrTerm("f"), new SingleStrTerm(SqlPath(harness, "f.db")));
+		Int("SQL_EXECUTE_NONQUERY", exm, new SingleStrTerm("f"), new SingleStrTerm("CREATE TABLE t(v REAL, n INTEGER)"));
+		Int("SQL_EXECUTE_NONQUERY", exm, new SingleStrTerm("f"), new SingleStrTerm("INSERT INTO t VALUES(1.5, 3)"));
+
+		Assert.Equal(1.5, Float("SQL_EXECUTE_SCALAR_FLOAT", exm,
+			new SingleStrTerm("f"), new SingleStrTerm("SELECT v FROM t")), 10);
+		// INTEGER 列同样按 double 读取。
+		Assert.Equal(3.0, Float("SQL_EXECUTE_SCALAR_FLOAT", exm,
+			new SingleStrTerm("f"), new SingleStrTerm("SELECT n FROM t")), 10);
+		// 空结果 → 0.0。
+		Assert.Equal(0.0, Float("SQL_EXECUTE_SCALAR_FLOAT", exm,
+			new SingleStrTerm("f"), new SingleStrTerm("SELECT v FROM t WHERE 0")), 10);
+		Assert.Equal(2.25, Float("SQL_P_EXECUTE_SCALAR_FLOAT", exm, new SingleStrTerm("f"),
+			new SingleStrTerm("SELECT @0"), new SingleStrTerm("2.25")), 10);
+
+		long id = Int("SQL_EXECUTE_READER", exm, new SingleStrTerm("f"), new SingleStrTerm("SELECT v, n FROM t"));
+		Assert.Equal(1, Int("SQL_READER_READ", exm, new SingleLongTerm(id)));
+		Assert.Equal(1.5, Float("SQL_READER_GET_FLOAT", exm, new SingleLongTerm(id), new SingleLongTerm(0)), 10);
+		Assert.Equal(3.0, Float("SQL_READER_GET_FLOAT", exm, new SingleLongTerm(id), new SingleLongTerm(1)), 10);
+		Int("SQL_READER_CLOSE", exm, new SingleLongTerm(id));
 	}
 
 	[Fact]

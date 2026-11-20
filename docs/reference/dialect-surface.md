@@ -4,7 +4,7 @@
 
 机器可读真值：
 
-- 键索引（生成物，全部 639 键）：[`dialect-keys.md`](dialect-keys.md)
+- 键索引（生成物，全部 642 键）：[`dialect-keys.md`](dialect-keys.md)
 - 运行期可见面：`tools/dialect-inventory/surface.v24pure.txt` / `surface.snake.txt`（`eratw` 别名复用 snake 快照）
 - 上游 fork 增量：`dialects/skia.json` + `tools/dialect-inventory/skia-delta-inventory.txt`
 - 门禁：`EraCore.Tests/DialectSurfaceSnapshotTests.cs`、`EraCore.Tests/DialectKeyIndexTests.cs`、`EraCore.Tests/DialectDescriptorMetadataTests.cs`、`EraCore.Tests/DialectForkConsistencyTests.cs`、`EraCore.Tests/DialectProfileTests.cs`
@@ -18,9 +18,9 @@
 | 项 | 值 |
 |---|---|
 | `v24pure` 面 | 567 行（baseline） |
-| `snake` 面 | 639 行 |
-| 方言增量 | **72 键**（18 指令 + 54 函数） |
-| `snake` 模块声明键 | 72 |
+| `snake` 面 | 642 行 |
+| 方言增量 | **75 键**（18 指令 + 57 函数） |
+| `snake` 模块声明键 | 75 |
 | `eratw` 别名 | 复用 `snake`（无独立模块 / 快照） |
 
 `surface.*.txt` 每行 `name<TAB>kind`，按行序号排序，UTF-8 / LF。`kind` 只有 `directive` 与 `function` 两种。
@@ -39,9 +39,9 @@
 
 ---
 
-## 3. 函数（54）
+## 3. 函数（57）
 
-54 条函数的逐键元数据见 [`dialect-keys.md`](dialect-keys.md)。分组与实现：
+57 条函数的逐键元数据见 [`dialect-keys.md`](dialect-keys.md)。分组与实现：
 
 - 数学 / 取整 / 无检查算术（13）：`Creator.Method.Math.cs`
 - 位运算（4）：`Creator.Method.Array.cs` / `BitArrayManager.cs`
@@ -50,7 +50,7 @@
 - 数组搜索（2，`MATCHALL` / `MATCHALLEX`）：`Creator.Method.General.cs`
 - 集合 `MAP_*`（6）：`Creator.Method.Map.cs`
 - 平台 / 动画定时器（2）：`Creator.Method.System.cs`
-- SQL（22，桌面闭环）：`Creator.Method.Sql.cs` + `EraCore.Core/Shared/Runtime/Utils/Sql/SqlManager.cs`
+- SQL（25，桌面闭环）：`Creator.Method.Sql.cs` + `EraCore.Core/Shared/Runtime/Utils/Sql/SqlManager.cs`
 
 签名增量（票 27c，键名不变、面快照不新增）：`SUMARRAY` / `MAXARRAY` / `MINARRAY` / `MATCH` / `FINDELEMENT` / `FINDLASTELEMENT` 增加 `double[]` 分支；求和/最大/最小返回 Float，匹配/查找仍为 Integer。
 
@@ -60,17 +60,7 @@
 
 ## 4. 未实现 / 明确排除
 
-### 4.1 SQL Float 变体（3）
-
-| 键 | 原因 |
-|---|---|
-| `SQL_READER_GET_FLOAT` | 依赖浮点返回/浮点变量支持 |
-| `SQL_EXECUTE_SCALAR_FLOAT` | 同上 |
-| `SQL_P_EXECUTE_SCALAR_FLOAT` | 同上 |
-
-eraTW 实测未引用这三个键；其余 22 个非 Float 键已覆盖。
-
-### 4.2 Skia 渲染 / 性能层
+### 4.1 Skia 渲染 / 性能层
 
 以下键存在于 `dialects/skia.json` 的 fork delta，但**不属于本移植范围**：
 
@@ -91,7 +81,6 @@ eraTW 实测未引用这三个键；其余 22 个非 Float 键已覆盖。
 | 图像层 | `SETIMAGELAYER` `SETIMAGELAYERL` `CLEARIMAGELAYER` `CLEARIMAGELAYER_ALL` | 不渲染，仅参数解析校验（`AcceptedNoOp`） | `dialect-keys.md` |
 | 文本背景色 | `TEXT_BGC_ON` `TEXT_BGC_OFF` | 只存状态，渲染线未消费（`StateOnly`） | `dialect-keys.md` |
 | NF 输入族 | — | 无强制滚动步，与普通等待等价（真语义，Note 记录） | `dialect-keys.md` |
-| SQL Float | — | 3 个 Float 变体未实现 | §4.1 |
 | `EXISTVAR` 两参 | — | 向后兼容并入 baseline，`v24pure` 也获得 `mode≠0`；面快照无 diff | `Creator.Method.General.cs` |
 | eraTW 循环外 `CONTINUE` | — | 游戏数据缺陷，三份参考引擎同款告警 | `tests/games.json` 的 `knownLv2` |
 
