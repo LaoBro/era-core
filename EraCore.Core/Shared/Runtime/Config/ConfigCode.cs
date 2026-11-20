@@ -20,6 +20,9 @@ internal enum TextDrawingMode
 	GRAPHICS = 0,
 	TEXTRENDERER = 1,
 	WINAPI = 2,
+	/// <summary>票 35 / Skia 对齐：SkiaSharp 渲染后端。era-core 现有消费者只区分 WINAPI / GRAPHICS，
+	/// 该值按非 WINAPI 的文本渲染路径处理。</summary>
+	SKIASHARP = 3,
 }
 
 internal enum UseLanguage

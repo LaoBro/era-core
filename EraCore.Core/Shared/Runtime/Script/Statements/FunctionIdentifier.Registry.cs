@@ -171,5 +171,32 @@ internal sealed partial class FunctionIdentifier
 			Status = PortStatus.StateOnly,
 			Note = "仅清空 TextBackgroundColor，渲染线未消费",
 		},
+		// Skia 方言：渲染设置（实现票 35）。为后续 eraTW/fork 更新补齐全部剩余指令；eraTW 当前 0 命中。
+		new InstructionDescriptor
+		{
+			Name = "SET_TEXT_DRAWING_MODE",
+			CreateInstruction = () => new SET_TEXT_DRAWING_MODE_Instruction(),
+			Dialect = Dialect.Snake,
+			Family = "渲染设置",
+			Note = "仅 1/3 生效，写入 Config.TextDrawingMode（era-core 默认 1）",
+		},
+		new InstructionDescriptor
+		{
+			Name = "SET_SKIA_QUALITY",
+			CreateInstruction = () => new SET_SKIA_QUALITY_Instruction(),
+			Dialect = Dialect.Snake,
+			Family = "渲染设置",
+			Status = PortStatus.StateOnly,
+			Note = "保存图片质量/字体 hinting/edging，渲染线未消费",
+		},
+		new InstructionDescriptor
+		{
+			Name = "STRICT_FONT_FALLBACK",
+			CreateInstruction = () => new STRICT_FONT_FALLBACK_Instruction(),
+			Dialect = Dialect.Snake,
+			Family = "渲染设置",
+			Status = PortStatus.StateOnly,
+			Note = "保存严格回退开关，字形渲染线未消费",
+		},
 	];
 }

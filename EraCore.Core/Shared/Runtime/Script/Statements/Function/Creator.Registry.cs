@@ -53,6 +53,9 @@ internal static partial class FunctionMethodCreator
 		// Skia 方言 P0：平台 / 动画定时器（实现票 28，spec §5 追加 2）。
 		new() { Name = "GETPLATFORM", CreateMethod = () => new GetPlatformMethod(), Dialect = Dialect.Snake, Family = "平台定时器" },
 		new() { Name = "GETANIMETIMER", CreateMethod = () => new GetAnimeTimerMethod(), Dialect = Dialect.Snake, Family = "平台定时器" },
+		// Skia 方言：渲染设置 getter（实现票 35）。
+		new() { Name = "GET_TEXT_DRAWING_MODE", CreateMethod = () => new GetTextDrawingModeMethod(), Dialect = Dialect.Snake, Family = "渲染设置" },
+		new() { Name = "GET_SKIA_QUALITY", CreateMethod = () => new GetSkiaQualityMethod(), Dialect = Dialect.Snake, Family = "渲染设置" },
 		// Skia 方言 P0：SQL_* 函数族（实现票 28；Float 3 键由票 27e 补齐，共 25 键）。
 		new() { Name = "SQL_CONNECTION_OPEN", CreateMethod = () => new SqlConnectionOpenMethod(), Dialect = Dialect.Snake, Family = "SQL" },
 		new() { Name = "SQL_CONNECT", CreateMethod = () => new SqlConnectMethod(), Dialect = Dialect.Snake, Family = "SQL" },

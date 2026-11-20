@@ -26,6 +26,8 @@
 | `FLOOR` | function | snake | 数学 | Semantic | — |
 | `GETANIMETIMER` | function | snake | 平台定时器 | Semantic | — |
 | `GETPLATFORM` | function | snake | 平台定时器 | Semantic | — |
+| `GET_SKIA_QUALITY` | function | snake | 渲染设置 | Semantic | — |
+| `GET_TEXT_DRAWING_MODE` | function | snake | 渲染设置 | Semantic | — |
 | `HTML_PRINTC` | directive | snake | HTML 文本 | Semantic | 复用 HTML 管线，单元格右对齐（已知差异） |
 | `HTML_PRINTLC` | directive | snake | HTML 文本 | Semantic | 复用 HTML 管线，单元格左对齐（已知差异） |
 | `JUMPSTR` | directive | snake | 动态调用 | Semantic | — |
@@ -40,6 +42,8 @@
 | `ROUND` | function | snake | 数学 | Semantic | — |
 | `SETIMAGELAYER` | directive | snake | 图像层 | AcceptedNoOp | 参数解析 + ColorMatrix 5×5 校验；控制台 no-op |
 | `SETIMAGELAYERL` | directive | snake | 图像层 | AcceptedNoOp | 参数解析 + ColorMatrix 5×5 校验；followScroll 恒 true；no-op |
+| `SET_SKIA_QUALITY` | directive | snake | 渲染设置 | StateOnly | 保存图片质量/字体 hinting/edging，渲染线未消费 |
+| `SET_TEXT_DRAWING_MODE` | directive | snake | 渲染设置 | Semantic | 仅 1/3 生效，写入 Config.TextDrawingMode（era-core 默认 1） |
 | `SIN` | function | snake | 数学 | Semantic | — |
 | `SQL_CONNECT` | function | snake | SQL | Semantic | — |
 | `SQL_CONNECTION_OPEN` | function | snake | SQL | Semantic | — |
@@ -67,6 +71,7 @@
 | `SQL_READER_ISNULL` | function | snake | SQL | Semantic | — |
 | `SQL_READER_READ` | function | snake | SQL | Semantic | — |
 | `STRFORMCHECK` | function | snake | 字符串求值 | Semantic | — |
+| `STRICT_FONT_FALLBACK` | directive | snake | 渲染设置 | StateOnly | 保存严格回退开关，字形渲染线未消费 |
 | `TAN` | function | snake | 数学 | Semantic | — |
 | `TEXT_BGC_OFF` | directive | snake | HTML 文本 | StateOnly | 仅清空 TextBackgroundColor，渲染线未消费 |
 | `TEXT_BGC_ON` | directive | snake | HTML 文本 | StateOnly | 仅保存 TextBackgroundColor，渲染线未消费 |

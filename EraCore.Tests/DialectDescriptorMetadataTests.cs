@@ -42,6 +42,7 @@ public sealed class DialectDescriptorMetadataTests
 		"数组搜索",
 		"平台定时器",
 		"SQL",
+		"渲染设置",
 	};
 
 	[Fact]

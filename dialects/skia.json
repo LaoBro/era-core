@@ -64,23 +64,17 @@
     {
       "name": "SET_SKIA_QUALITY",
       "kind": "directive",
-      "owner": "skia",
-      "status": "out-of-scope",
-      "note": "渲染层（画质开关）；eraTW 未引用"
+      "owner": "skia"
     },
     {
       "name": "SET_TEXT_DRAWING_MODE",
       "kind": "directive",
-      "owner": "skia",
-      "status": "out-of-scope",
-      "note": "渲染层（文本绘制模式）；eraTW 未引用"
+      "owner": "skia"
     },
     {
       "name": "STRICT_FONT_FALLBACK",
       "kind": "directive",
-      "owner": "skia",
-      "status": "out-of-scope",
-      "note": "渲染层（字体回退）；eraTW 未引用"
+      "owner": "skia"
     },
     {
       "name": "TEXT_BGC_OFF",

@@ -280,6 +280,31 @@ internal sealed class EmueraConsole : IDisposable, IConsoleStateView, IButtonDis
         get => _state.textBackgroundColor;
         set => _state.textBackgroundColor = value;
     }
+    // --- 渲染设置（票 35，语义状态） ---
+    /// <summary>SET_SKIA_QUALITY 第 1 参（图片质量）。era-core 渲染线暂未消费 → 「已知差异」（spec §5）。</summary>
+    internal long ImageQuality
+    {
+        get => _state.imageQuality;
+        set => _state.imageQuality = value;
+    }
+    /// <summary>SET_SKIA_QUALITY 第 2 参（字体 hinting）。</summary>
+    internal long FontHinting
+    {
+        get => _state.fontHinting;
+        set => _state.fontHinting = value;
+    }
+    /// <summary>SET_SKIA_QUALITY 第 3 参（字体 edging）。</summary>
+    internal long FontEdging
+    {
+        get => _state.fontEdging;
+        set => _state.fontEdging = value;
+    }
+    /// <summary>STRICT_FONT_FALLBACK 状态（缺失字形是否严格回退）。</summary>
+    internal bool StrictFontFallback
+    {
+        get => _state.strictFontFallback;
+        set => _state.strictFontFallback = value;
+    }
     internal ConsoleDisplayLine[]? GetDisplayLines(long lineNo) => _printManager.GetDisplayLines(lineNo);
     internal ConsoleDisplayLine[]? PopDisplayingLines() => _printManager.PopDisplayingLines();
     internal ConsoleDisplayLine? PrintPlainwithSingleLine(string str) => _printManager.PrintPlainwithSingleLine(str);

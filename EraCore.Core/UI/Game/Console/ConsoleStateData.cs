@@ -116,6 +116,15 @@ internal sealed class ConsoleStateData
 	/// 记「已知差异」（spec §5）；此处仅保留语义状态供未来渲染路线/快照消费。
 	/// </summary>
 	internal EmuColor? textBackgroundColor;
+	// --- 渲染设置（票 35 / Skia 对齐） ---
+	/// <summary>SET_SKIA_QUALITY 第 1 参；默认 3 = High（对齐 Skia 配置默认值）。</summary>
+	internal long imageQuality = 3;
+	/// <summary>SET_SKIA_QUALITY 第 2 参；默认 0 = None。</summary>
+	internal long fontHinting;
+	/// <summary>SET_SKIA_QUALITY 第 3 参；默认 2 = SubpixelAntiAlias。</summary>
+	internal long fontEdging = 2;
+	/// <summary>STRICT_FONT_FALLBACK 状态；era-core 字形渲染线暂未消费（StateOnly）。</summary>
+	internal bool strictFontFallback;
 	/// <summary>
 	/// issue 02：背景图列表（SETBGIMAGE 落地）。WinForms 追加语义——同 src 可多份，
 	/// depth 决定 z 序（前端按 depth 排序渲染），opacity 0.0-1.0。状态由 DisplayState 读入快照/diff。

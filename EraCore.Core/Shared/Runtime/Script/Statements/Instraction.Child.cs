@@ -14,6 +14,7 @@ using MinorShift.Emuera.Runtime.Script.Statements.Variable;
 using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.Runtime.Utils.EvilMask;
 using MinorShift.Emuera.Runtime.Utils.PluginSystem;
+using MinorShift.Emuera.UI;
 using MinorShift.Emuera.UI.Game;
 using System;
 using System.Collections.Generic;
@@ -3973,6 +3974,63 @@ internal sealed partial class FunctionIdentifier
 		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
 		{
 			exm.Console.TextBackgroundColor = null;
+		}
+	}
+	#endregion
+
+	#region 渲染设置（票 35 / Skia 对齐）
+	// SET_TEXT_DRAWING_MODE：真语义——era-core 已有 Config.TextDrawingMode 消费者；仅 1/3 生效。
+	private sealed class SET_TEXT_DRAWING_MODE_Instruction : AInstruction
+	{
+		public SET_TEXT_DRAWING_MODE_Instruction()
+		{
+			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.INT_EXPRESSION);
+			flag = METHOD_SAFE | EXTENDED;
+		}
+
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
+		{
+			long mode = ((ExpressionArgument)func.Argument).Term.GetIntValue(exm);
+			if (mode == (long)TextDrawingMode.TEXTRENDERER || mode == (long)TextDrawingMode.SKIASHARP)
+				ConfigData.Current!.GetConfigItem(ConfigCode.TextDrawingMode).SetValue((TextDrawingMode)mode);
+		}
+	}
+
+	// SET_SKIA_QUALITY：StateOnly——三项质量设置无渲染消费面，仅保存状态并清字体缓存。
+	private sealed class SET_SKIA_QUALITY_Instruction : AInstruction
+	{
+		public SET_SKIA_QUALITY_Instruction()
+		{
+			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.INT_ANY);
+			flag = METHOD_SAFE | EXTENDED;
+		}
+
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
+		{
+			var arg = (ExpressionArrayArgument)func.Argument;
+			if (arg.TermList.Length > 0 && arg.TermList[0] != null)
+				exm.Console.ImageQuality = arg.TermList[0].GetIntValue(exm);
+			if (arg.TermList.Length > 1 && arg.TermList[1] != null)
+				exm.Console.FontHinting = arg.TermList[1].GetIntValue(exm);
+			if (arg.TermList.Length > 2 && arg.TermList[2] != null)
+				exm.Console.FontEdging = arg.TermList[2].GetIntValue(exm);
+			FontFactory.ClearFont();
+		}
+	}
+
+	// STRICT_FONT_FALLBACK：StateOnly——保存开关；era-core 字形渲染线暂未消费。
+	private sealed class STRICT_FONT_FALLBACK_Instruction : AInstruction
+	{
+		public STRICT_FONT_FALLBACK_Instruction()
+		{
+			ArgBuilder = ArgumentParser.GetArgumentBuilder(FunctionArgType.INT_EXPRESSION);
+			flag = METHOD_SAFE | EXTENDED;
+		}
+
+		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, IProcessState state)
+		{
+			long value = ((ExpressionArgument)func.Argument).Term.GetIntValue(exm);
+			exm.Console.StrictFontFallback = value != 0;
 		}
 	}
 	#endregion

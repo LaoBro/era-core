@@ -473,7 +473,7 @@ internal static partial class FunctionMethodCreator
 	}
 
 	/// <summary>
-	/// Skia 方言 P0：GETPLATFORM（实现票 28，spec §5 追加 2）。纯函数，平台编码：
+	/// Skia 方言：GETPLATFORM（实现票 28，spec §5 追加 2）。纯函数，平台编码：
 	/// 0=Windows / 1=Android / 2=iOS / 3=macOS / 4=Linux / 5=Unknown，可常量折叠。
 	/// </summary>
 	private sealed class GetPlatformMethod : FunctionMethod
@@ -492,6 +492,40 @@ internal static partial class FunctionMethodCreator
 			if (OperatingSystem.IsMacOS()) return 3;
 			if (OperatingSystem.IsLinux()) return 4;
 			return 5;
+		}
+	}
+
+	/// <summary>Skia 方言：GET_TEXT_DRAWING_MODE（实现票 35），返回当前 Config.TextDrawingMode。</summary>
+	private sealed class GetTextDrawingModeMethod : FunctionMethod
+	{
+		public GetTextDrawingModeMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList()];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+			=> (long)Config.TextDrawingMode;
+	}
+
+	/// <summary>Skia 方言：GET_SKIA_QUALITY（实现票 35）。type=0/1/2 返回质量三槽，其他 -1。</summary>
+	private sealed class GetSkiaQualityMethod : FunctionMethod
+	{
+		public GetSkiaQualityMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Int } }];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			return arguments[0].GetIntValue(exm) switch
+			{
+				0 => exm.Console.ImageQuality,
+				1 => exm.Console.FontHinting,
+				2 => exm.Console.FontEdging,
+				_ => -1,
+			};
 		}
 	}
 
