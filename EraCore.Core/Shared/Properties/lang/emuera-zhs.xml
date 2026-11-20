@@ -913,6 +913,7 @@ Emuera的历史版本有效的内容变得无效等等现象而设置的。
     <tr id="Error.IsNotVar"><![CDATA[{0}不是变量]]></tr>
     <tr id="Error.IsNotInt"><![CDATA[{0}不是整型]]></tr>
     <tr id="Error.IsNotStr"><![CDATA[{0}不是字符串型]]></tr>
+    <tr id="Error.IsNotFloat"><![CDATA[{0}不是浮点型]]></tr>
     <tr id="Error.SPCharacterFeatureDisabled"><![CDATA[不能在标准设置下使用SP角色相关功能(请打开兼容性选项「使用SP角色」)]]></tr>
     <tr id="Error.CharacterIndexOutOfRange"><![CDATA[{0}函数: 第{1}个参数({2})超出角色位置范围]]></tr>
     <tr id="Error.NotVariableName"><![CDATA[{0}函数: 第{1}个参数("{2}")不是变量名]]></tr>

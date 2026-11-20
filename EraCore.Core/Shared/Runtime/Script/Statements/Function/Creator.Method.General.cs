@@ -50,6 +50,36 @@ internal static partial class FunctionMethodCreator
 		}
 	}
 
+	// 票 36（Skia 对齐）：GETVAR 的浮点分支。
+	private sealed class GetVarFMethod : FunctionMethod
+	{
+		public GetVarFMethod()
+		{
+			ReturnType = typeof(double);
+			argumentTypeArrayEx = [new ArgTypeList{ ArgTypes = { ArgType.String, ArgType.Any }, OmitStart = 1 }];
+			CanRestructure = false;
+		}
+
+		public override double GetFloatValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			bool hasDefault = arguments.Count > 1 && arguments[1] != null;
+			double defaultValue = hasDefault ? arguments[1].GetFloatValue(exm) : 0.0;
+			string name = arguments[0].GetStrValue(exm);
+			WordCollection wc = LexicalAnalyzer.Analyse(new CharStream(name), LexEndWith.EoL, LexAnalyzeFlag.None);
+			AExpression term = ExpressionParser.ReduceExpressionTerm(wc, TermEndWith.EoL);
+
+			if (term is VariableTerm var)
+			{
+				if (var.Identifier == null)
+					return hasDefault ? defaultValue : throw new CodeEE(string.Format(trerror.IsNotVar.Text, name));
+				if (var.GetOperandType() != typeof(double))
+					return hasDefault ? defaultValue : throw new CodeEE(string.Format(trerror.IsNotFloat.Text, name));
+				return var.GetFloatValue(exm);
+			}
+			return hasDefault ? defaultValue : throw new CodeEE(string.Format(trerror.IsNotVar.Text, name));
+		}
+	}
+
 	private sealed class GetVarsMethod : FunctionMethod
 	{
 		public GetVarsMethod()
@@ -713,6 +743,42 @@ internal static partial class FunctionMethodCreator
 					return defaultValue;
 				term = term.Restructure(exm);
 				return term.GetOperandType() == typeof(string) ? term.GetStrValue(exm) : defaultValue;
+			}
+			catch (EmueraException)
+			{
+				return defaultValue;
+			}
+		}
+	}
+
+	// 票 36（Skia 对齐）：EVAL 的浮点分支。Integer 结果自动拓宽为 double。
+	private sealed class EvalFMethod : FunctionMethod
+	{
+		public EvalFMethod()
+		{
+			ReturnType = typeof(double);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.String, ArgType.Any }, OmitStart = 1 }];
+			CanRestructure = false;
+		}
+		public override double GetFloatValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			string expressionStr = arguments[0].GetStrValue(exm);
+			double defaultValue = arguments.Count > 1 && arguments[1] != null ? arguments[1].GetFloatValue(exm) : 0.0;
+			if (string.IsNullOrWhiteSpace(expressionStr))
+				return defaultValue;
+			try
+			{
+				CharStream st = new CharStream(expressionStr);
+				WordCollection wc = LexicalAnalyzer.Analyse(st, LexEndWith.EoL, LexAnalyzeFlag.None);
+				AExpression term = ExpressionParser.ReduceExpressionTerm(wc, TermEndWith.EoL);
+				if (term == null)
+					return defaultValue;
+				term = term.Restructure(exm);
+				if (term.GetOperandType() == typeof(double))
+					return term.GetFloatValue(exm);
+				if (term.GetOperandType() == typeof(long))
+					return term.GetIntValue(exm);
+				return defaultValue;
 			}
 			catch (EmueraException)
 			{

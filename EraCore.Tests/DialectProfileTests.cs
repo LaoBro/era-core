@@ -158,8 +158,9 @@ public sealed class DialectProfileTests
 
 		// 方言声明：snake 已登记 Skia P0 数学/取整/无检查/位/求值 19 键（票 18）+ 集合 MAP_* 6 键（票 19）
 		// + 动态调用指令 5 键（票 20）+ NF 输入指令 4 键（票 21）+ 图像层指令 4 键（票 22）+ HTML/文本指令 4 键（票 23）
-		// + SQL_* 22 键与 GETPLATFORM/GETANIMETIMER（票 28）+ TOFLOAT/TOSTRF（票 27c）。
-		Assert.Equal(80, DialectRegistry.Snake.DeclaredKeys.Count);
+		// + SQL_* 22 键与 GETPLATFORM/GETANIMETIMER（票 28）+ TOFLOAT/TOSTRF（票 27c）
+		// + 渲染设置 5 键（票 35）+ EVALF/GETVARF/GETMETHF/DT_CELL_GETF（票 36）。
+		Assert.Equal(84, DialectRegistry.Snake.DeclaredKeys.Count);
 
 		// baseline = 注册表全键 − 方言声明键：方言键不落入 v24pure，既有键仍在。
 		Assert.Contains("SIN", DialectRegistry.Snake.DeclaredKeys);

@@ -38,6 +38,11 @@ internal static partial class FunctionMethodCreator
 		// Skia 方言 P2a：字符串 ↔ 浮点（实现票 27c）。
 		new() { Name = "TOFLOAT", CreateMethod = () => new ToFloatMethod(), Dialect = Dialect.Snake, Family = "字符串求值" },
 		new() { Name = "TOSTRF", CreateMethod = () => new ToStrfMethod(), Dialect = Dialect.Snake, Family = "字符串求值" },
+		// Skia 方言 P2c（票 36）：浮点反射 / 动态求值 / DataTable 浮点读。
+		new() { Name = "EVALF", CreateMethod = () => new EvalFMethod(), Dialect = Dialect.Snake, Family = "字符串求值" },
+		new() { Name = "GETVARF", CreateMethod = () => new GetVarFMethod(), Dialect = Dialect.Snake, Family = "字符串求值" },
+		new() { Name = "GETMETHF", CreateMethod = () => new GetMethFMethod(), Dialect = Dialect.Snake, Family = "字符串求值" },
+		new() { Name = "DT_CELL_GETF", CreateMethod = () => new DataTableCellGetFloatMethod(), Dialect = Dialect.Snake, Family = "数据表" },
 		// 试点（自动分档 A 类）：STRFORMCHECK 复用 era-core 既有格式化字符串解析 API。
 		new() { Name = "STRFORMCHECK", CreateMethod = () => new StrFormCheckMethod(), Dialect = Dialect.Snake, Family = "字符串求值" },
 		// 试点（自动分档 B 类）：MATCHALL/MATCHALLEX 在变量区间内统计匹配值，参数规则需自定义校验。

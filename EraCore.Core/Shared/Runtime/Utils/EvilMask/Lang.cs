@@ -1152,6 +1152,7 @@ internal sealed partial class Lang
 		[Managed] public static TranslatableString IsNotVar { get; } = new TranslatableString("\"{0}\"が変数ではありません");
 		[Managed] public static TranslatableString IsNotInt { get; } = new TranslatableString("\"{0}\"が整数型ではありません");
 		[Managed] public static TranslatableString IsNotStr { get; } = new TranslatableString("\"{0}\"が文字列型ではありません");
+		[Managed] public static TranslatableString IsNotFloat { get; } = new TranslatableString("\"{0}\"が浮動小数点型ではありません");
 
 		[Managed] public static TranslatableString SPCharacterFeatureDisabled { get; } = new TranslatableString("SPキャラ関係の機能は標準では使用できません(互換性オプション「SPキャラを使用する」をONにしてください)");
 		[Managed] public static TranslatableString CharacterIndexOutOfRange { get; } = new TranslatableString("{0}関数: 第{1}引数({2})はキャラクタ位置の範囲外です");

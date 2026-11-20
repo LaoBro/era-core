@@ -106,6 +106,7 @@ DOTRAIN	directive
 DRAWLINE	directive
 DRAWLINEFORM	directive
 DT_CELL_GET	function
+DT_CELL_GETF	function
 DT_CELL_GETS	function
 DT_CELL_ISNULL	function
 DT_CELL_SET	function
@@ -152,6 +153,7 @@ ENUMVARWITH	function
 ERDNAME	function
 ESCAPE	function
 EVAL	function
+EVALF	function
 EVALS	function
 EXISTCSV	function
 EXISTFILE	function
@@ -210,6 +212,7 @@ GETKEYTRIGGERED	function
 GETLINESTR	function
 GETMEMORYUSAGE	function
 GETMETH	function
+GETMETHF	function
 GETMETHS	function
 GETMILLISECOND	function
 GETNUM	function
@@ -224,6 +227,7 @@ GETTIME	directive
 GETTIME	function
 GETTIMES	function
 GETVAR	function
+GETVARF	function
 GETVARS	function
 GET_SKIA_QUALITY	function
 GET_TEXT_DRAWING_MODE	function

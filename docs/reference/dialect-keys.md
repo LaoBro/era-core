@@ -21,11 +21,15 @@
 | `CLEARIMAGELAYER` | directive | snake | 图像层 | AcceptedNoOp | 参数解析；控制台 no-op |
 | `CLEARIMAGELAYER_ALL` | directive | snake | 图像层 | AcceptedNoOp | 控制台 no-op；不渲染图像层 |
 | `COS` | function | snake | 数学 | Semantic | — |
+| `DT_CELL_GETF` | function | snake | 数据表 | Semantic | — |
 | `EVAL` | function | snake | 字符串求值 | Semantic | — |
+| `EVALF` | function | snake | 字符串求值 | Semantic | — |
 | `EVALS` | function | snake | 字符串求值 | Semantic | — |
 | `FLOOR` | function | snake | 数学 | Semantic | — |
 | `GETANIMETIMER` | function | snake | 平台定时器 | Semantic | — |
+| `GETMETHF` | function | snake | 字符串求值 | Semantic | — |
 | `GETPLATFORM` | function | snake | 平台定时器 | Semantic | — |
+| `GETVARF` | function | snake | 字符串求值 | Semantic | — |
 | `GET_SKIA_QUALITY` | function | snake | 渲染设置 | Semantic | — |
 | `GET_TEXT_DRAWING_MODE` | function | snake | 渲染设置 | Semantic | — |
 | `HTML_PRINTC` | directive | snake | HTML 文本 | Semantic | 复用 HTML 管线，单元格右对齐（已知差异） |

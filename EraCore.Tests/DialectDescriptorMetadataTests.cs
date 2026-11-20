@@ -43,6 +43,7 @@ public sealed class DialectDescriptorMetadataTests
 		"平台定时器",
 		"SQL",
 		"渲染设置",
+		"数据表",
 	};
 
 	[Fact]

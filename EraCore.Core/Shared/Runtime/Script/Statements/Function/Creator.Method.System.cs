@@ -848,6 +848,38 @@ internal static partial class FunctionMethodCreator
 		}
 	}
 
+	// 票 36（Skia 对齐）：GETMETH 的浮点分支。
+	private sealed class GetMethFMethod : FunctionMethod
+	{
+		public GetMethFMethod()
+		{
+			ReturnType = typeof(double);
+			argumentTypeArrayEx = new ArgTypeList[] {
+					new ArgTypeList{ ArgTypes = { ArgType.String, ArgType.Any, ArgType.VariadicAny }, OmitStart = 1 },
+				};
+			CanRestructure = false;
+		}
+
+		public override double GetFloatValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			string name = arguments[0].GetStrValue(exm);
+			List<AExpression> methArgs = new List<AExpression>(arguments.Skip(2).ToArray());
+			var term = GlobalStatic.IdentifierDictionary.GetFunctionMethod(GlobalStatic.LabelDictionary, name, methArgs, true);
+
+			if (term == null)
+			{
+				if (arguments.Count < 2 || arguments[1] == null)
+					throw new CodeEE(string.Format(trerror.NotDefinedUserFunc.Text, name));
+				else
+					return arguments[1].GetFloatValue(exm);
+			}
+			else if (term.GetOperandType() != typeof(double))
+				throw new CodeEE(string.Format(trerror.IsNotFloat.Text, name));
+			else
+				return term.GetFloatValue(exm);
+		}
+	}
+
 	private sealed class ExistMethMethod : FunctionMethod
 	{
 		public ExistMethMethod()

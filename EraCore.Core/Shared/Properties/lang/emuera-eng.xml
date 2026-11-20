@@ -916,6 +916,7 @@ Error.AttributeCanNotInterpretNum	<{0}> tag has a {1}" attribute with a value th
     <tr id="Error.IsNotVar"><![CDATA[{0} is not variable]]></tr>
     <tr id="Error.IsNotInt"><![CDATA[{0} is not integer]]></tr>
     <tr id="Error.IsNotStr"><![CDATA[{0} is not string]]></tr>
+    <tr id="Error.IsNotFloat"><![CDATA[{0} is not float]]></tr>
     <tr id="Error.SPCharacterFeatureDisabled"><![CDATA[SP character-related features are not available by default (Turn on "Allow SP Characters" compatibility option)]]></tr>
     <tr id="Error.CharacterIndexOutOfRange"><![CDATA[{0}: The {1} argument ({2}) is out of range of array of character position]]></tr>
     <tr id="Error.NotVariableName"><![CDATA[{0}: The {1} argument ("{2}") is not variable name]]></tr>

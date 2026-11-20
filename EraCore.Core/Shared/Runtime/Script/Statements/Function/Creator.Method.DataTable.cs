@@ -404,6 +404,46 @@ internal static partial class FunctionMethodCreator
 		}
 	}
 
+	// 票 36（Skia 对齐）：DT_CELL_GET 的浮点分支，只做 Get。
+	private sealed class DataTableCellGetFloatMethod : FunctionMethod
+	{
+		public DataTableCellGetFloatMethod()
+		{
+			ReturnType = typeof(double);
+			argumentTypeArrayEx = [
+						new ArgTypeList{ ArgTypes = { ArgType.String, ArgType.Int, ArgType.String, ArgType.Int }, OmitStart = 3 },
+					];
+			CanRestructure = false;
+		}
+
+		public override double GetFloatValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			var key = arguments[0].GetStrValue(exm);
+			var dict = exm.VEvaluator.VariableData.DataDataTables;
+			if (!dict.TryGetValue(key, out var dt)) return 0.0;
+			bool asId = arguments.Count == 4 ? arguments[3].GetIntValue(exm) != 0 : false;
+			var idx = arguments[1].GetIntValue(exm);
+			var name = arguments[2].GetStrValue(exm);
+			if (asId)
+			{
+				if (dt.Rows.Find(idx) is DataRow row && dt.Columns.Contains(name))
+				{
+					var v = row[name];
+					return v == DBNull.Value ? 0.0 : Convert.ToDouble(v);
+				}
+			}
+			else
+			{
+				if (0 <= idx && idx < dt.Rows.Count && dt.Columns.Contains(name))
+				{
+					var v = dt.Rows[(int)idx][name];
+					return v == DBNull.Value ? 0.0 : Convert.ToDouble(v);
+				}
+			}
+			return 0.0;
+		}
+	}
+
 	private sealed class DataTableCellSetMethod : FunctionMethod
 	{
 		public DataTableCellSetMethod()
