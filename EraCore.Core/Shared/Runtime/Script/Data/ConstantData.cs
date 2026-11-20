@@ -116,9 +116,14 @@ internal sealed class ConstantData
 	private readonly Dictionary<string, int>[] nameToIntDics = new Dictionary<string, int>[(int)VariableCode.__COUNT_CSV_STRING_ARRAY_1D__];
 	private readonly Dictionary<string, int> relationDic = [];
 
-	// 票 37（Skia 对齐）：预置名槽位的来源追踪。-1 空 / 0 CSV / 1 ERD（ERD 预置名合并尚未移植，
-	// 故目前只会出现 -1 与 0）。下标与 names 的前 countNameCsv 槽一一对应。
+	// 票 37（Skia 对齐）：预置名槽位的来源追踪。-1 空 / 0 CSV / 1 ERD（ERD 预置名合并由票 43 补齐）。
+	// 下标与 names 的前 countNameCsv 槽一一对应。
 	private sbyte[][] presetNameSource = null!;
+	/// <summary>
+	/// 票 43（Skia 对齐）：ItemPrice 每个索引的价格来源标记（-1 未设 / 0 CSV / 1 ERD）。
+	/// <c>long</c> 默认 0 无法区分「未设置」与「显式为 0」，必须额外追踪，否则 CSV 显式 0 价会被 ERD 覆盖。
+	/// </summary>
+	private sbyte[] presetPriceSource = null!;
 	/// <summary>
 	/// 预置变量名 → names[] 槽位（与 Skia 同一张表）。CDFLAG 本体与角色模板名（NAME/CALLNAME 等）
 	/// 没有独立名字槽，不支持。
@@ -174,6 +179,11 @@ internal sealed class ConstantData
 	public bool ExistPresetNameInCsv(string varName, int index)
 	{
 		return GetPresetNameSource(varName, index) == 0;
+	}
+	/// <summary>票 43（Skia 对齐）：指定预置变量在指定索引的名字是否由 ERD 补入。见 <see cref="ExistPresetNameInCsv"/>。</summary>
+	public bool ExistPresetNameInErd(string varName, int index)
+	{
+		return GetPresetNameSource(varName, index) == 1;
 	}
 	private sbyte GetPresetNameSource(string varName, int index)
 	{
@@ -719,7 +729,7 @@ internal sealed class ConstantData
 	}
 
 
-	public void LoadData(string csvDir, IGameDirAccessor dirAccessor, EmueraConsole console, bool disp)
+	public void LoadData(string csvDir, string erbDir, IGameDirAccessor dirAccessor, EmueraConsole console, bool disp)
 	{
 		// T-027 降级：SAF 排障哨兵改走门面 Debug（画面不再显示，agent.log 全量可查）
 		EmueraLog.Debug("diag-ld", $"Step0 {csvDir}");
@@ -739,6 +749,9 @@ internal sealed class ConstantData
 			presetNameSource[i] = new sbyte[MaxDataList[i]];
 			Array.Fill(presetNameSource[i], (sbyte)-1);
 		}
+		// 票 43：ITEM 价格来源追踪，同样先于 CSV 加载。
+		presetPriceSource = new sbyte[MaxDataList[itemIndex]];
+		Array.Fill(presetPriceSource, (sbyte)-1);
 		#region EE_ERD
 		loadDataTo(dirAccessor.CombinePath(csvDir, "ABL.CSV"), ablIndex, null!, disp, dirAccessor);
 		EmueraLog.Debug("diag-ld", "Step1 ABL");
@@ -775,6 +788,10 @@ internal sealed class ConstantData
 		loadDataTo(dirAccessor.CombinePath(csvDir, "TIME.CSV"), timeIndex, null!, disp, dirAccessor);
 		loadDataTo(dirAccessor.CombinePath(csvDir, "MONEY.CSV"), moneyIndex, null!, disp, dirAccessor);
 		#endregion
+		// 票 43（Skia 对齐）：全部 CSV 载入后、逆引字典建立前合并 ERD——ERD 补入的名字同样进入逆引字典。
+		// UseERD 是全局开关（非方言开关），对 v24pure 会话同样生效。
+		if (Config.Config.UseERD)
+			mergePresetErdFromErbDir(erbDir, disp);
 		//逆引き辞書を作成
 		for (int i = 0; i < names.Length; i++)
 		{
@@ -824,6 +841,164 @@ internal sealed class ConstantData
 				relationDic.Add(tmpl.Mastername, (int)tmpl.No);
 		}
 	}
+
+	#region 票 43：ERD 预置名合并（Skia 对齐）
+	/// <summary>
+	/// 从 ERB 目录扫描与预设变量同名的 <c>*.erd</c>，合并进已加载的 CSV 名表。
+	/// 枚举走 <see cref="Preload.EnumerateFilesFromTree"/>（SAF / 大小写敏感盘语义一致），
+	/// 按全路径 <see cref="StringComparer.OrdinalIgnoreCase"/> 排序保证多文件确定性。
+	/// 合并规则：CSV 优先；ERD 只填 CSV 为空的槽；跨槽重名警告跳过；ITEM 价格仅 CSV 未设时填入。
+	/// </summary>
+	private void mergePresetErdFromErbDir(string erbDir, bool disp)
+	{
+		if (string.IsNullOrEmpty(erbDir) || presetNameSource == null || _dirAccessor == null)
+			return;
+		var files = Preload.EnumerateFilesFromTree(erbDir, _dirAccessor, ".erd");
+		if (files.Count == 0)
+			return;
+		files.Sort(static (a, b) => string.Compare(a.Value, b.Value, StringComparison.OrdinalIgnoreCase));
+		foreach (var pair in files)
+		{
+			string stem = SafPath.GetLogicalFileNameWithoutExtension(pair.Value);
+			if (string.IsNullOrEmpty(stem) || !presetErdSlotByName.TryGetValue(stem, out int slot))
+				continue;
+			mergePresetErdFile(pair.Value, slot, disp);
+		}
+	}
+
+	private void mergePresetErdFile(string erdPath, int slot, bool disp)
+	{
+		string[] target = names[slot];
+		sbyte[] source = presetNameSource[slot];
+		if (target == null || source == null)
+			return;
+		bool isItemSlot = slot == itemIndex;
+		using EraStreamReader eReader = new(false);
+		if (!eReader.Open(erdPath))
+		{
+			output?.PrintError(string.Format(trerror.FailedOpenFile.Text, eReader.Filename));
+			return;
+		}
+		ScriptPosition? position = null;
+		if ((disp || Program.AnalysisMode) && output != null)
+			output.PrintSystemLine(string.Format(trsl.LoadingFile.Text, eReader.Filename));
+		try
+		{
+			CharStream st = null!;
+			Span<Range> dest = stackalloc Range[5];
+			while ((st = eReader.ReadEnabledLine()) != null)
+			{
+				position = new ScriptPosition(eReader.Filename, eReader.LineNo);
+				var ros = st.SubstringROS();
+				var length = ros.Split(dest, [',']);
+				if (length < 2)
+				{
+					ParserMediator.Warn(trerror.MissingComma.Text, position, 1);
+					continue;
+				}
+				if (!int.TryParse(ros[dest[0]], out int index))
+				{
+					ParserMediator.Warn(trerror.FirstValueCanNotConvertToInt.Text, position, 1);
+					continue;
+				}
+				if (target.Length == 0)
+				{
+					ParserMediator.Warn(trerror.ProhibitedArrayName.Text, position, 2);
+					break;
+				}
+				if (index < 0 || target.Length <= index)
+				{
+					ParserMediator.Warn(string.Format(trerror.OoRArray.Text, index.ToString()), position, 1);
+					continue;
+				}
+				string erdName = ros[dest[1]].ToString();
+				string csvName = target[index];
+				if (string.IsNullOrEmpty(csvName))
+				{
+					// 跨槽重名检查：逆引字典先胜，后填的同名槽会「写后即失联」，警告并跳过。
+					if (!string.IsNullOrEmpty(erdName) && nameExistsInOtherSlot(slot, index, erdName))
+					{
+						ParserMediator.Warn(
+							string.Format(trerror.PresetErdDuplicateName.Text, eReader.Filename, index, erdName),
+							position, 1);
+						continue;
+					}
+					target[index] = erdName;
+					source[index] = 1;
+				}
+				else if (!string.Equals(csvName, erdName, StringComparison.Ordinal))
+				{
+					// CSV 已有值：CSV 优先，仅在名字不一致时警告（一致则静默通过）。
+					ParserMediator.Warn(
+						string.Format(trerror.PresetErdConflictWithCsv.Text, eReader.Filename, index, csvName, erdName),
+						position, 1);
+				}
+				// ITEM 第三列价格：仅 CSV 未设（含显式 0 即已设）时 ERD 填入；CSV 已设但不一致警告。
+				if (isItemSlot && length >= 3)
+				{
+					if (ItemPrice == null || presetPriceSource == null || index >= ItemPrice.Length)
+					{
+						ParserMediator.Warn(string.Format(trerror.OoRArray.Text, index.ToString()), position, 1);
+					}
+					else if (!long.TryParse(ros[dest[2]].TrimEnd(), out long erdPrice))
+					{
+						ParserMediator.Warn(trerror.CanNotReadAmountOfMoney.Text, position, 1);
+					}
+					else if (presetPriceSource[index] < 0)
+					{
+						ItemPrice[index] = erdPrice;
+						presetPriceSource[index] = 1;
+					}
+					else if (presetPriceSource[index] == 0 && ItemPrice[index] != erdPrice)
+					{
+						ParserMediator.Warn(
+							string.Format(trerror.PresetErdPriceConflictWithCsv.Text, eReader.Filename, index, ItemPrice[index], erdPrice),
+							position, 1);
+					}
+				}
+			}
+		}
+		catch
+		{
+#if !HEADLESS
+			System.Media.SystemSounds.Hand.Play();
+#endif
+			if (position != null)
+				ParserMediator.Warn(trerror.UnexpectedError.Text, position, 3);
+			else
+				output?.PrintError(trerror.UnexpectedError.Text);
+		}
+		finally
+		{
+			eReader.Close();
+		}
+	}
+
+	/// <summary>
+	/// 该名字是否已存在于其他槽（同槽同索引除外）。同槽顺序处理中先胜者已写入 target，
+	/// 故自查重名不会误报。
+	/// </summary>
+	private bool nameExistsInOtherSlot(int slot, int index, string name)
+	{
+		for (int i = 0; i < names.Length; i++)
+		{
+			if (i == ERD_NAMES_INDEX)
+				continue;
+			string[] arr = names[i];
+			if (arr == null)
+				continue;
+			for (int j = 0; j < arr.Length; j++)
+			{
+				if (i == slot && j == index)
+					continue;
+				if (string.Equals(arr[j], name, StringComparison.Ordinal))
+					return true;
+			}
+		}
+		return false;
+	}
+	#endregion
+
 	#region EE_ERD
 	private struct ErdDictInfo
 	{
@@ -1888,8 +2063,8 @@ internal sealed class ConstantData
 				if (!defined.Add(index))
 					ParserMediator.Warn(string.Format(trerror.VarKeyAreadyDefined.Text, ros[dest[1]].ToString(), index.ToString()), position, 1);
 				target[index] = ros[dest[1]].ToString();
-				// 票 37：标记该槽的名字由 CSV 提供（ERD 预置名合并尚未移植，只会出现 CSV 标记）。
-				// UserDefineLoadData 也会走这里（其 targetIndex 超出 presetNameSource 范围），故需越界保护。
+				// 票 37：标记该槽的名字由 CSV 提供。UserDefineLoadData 也会走这里
+				// （其 targetIndex 即 ERD_NAMES_INDEX，超出 presetNameSource 范围），故需越界保护。
 				if (presetNameSource != null && targetIndex < presetNameSource.Length && presetNameSource[targetIndex] != null
 					&& (uint)index < (uint)presetNameSource[targetIndex].Length)
 					presetNameSource[targetIndex][index] = 0;
@@ -1903,6 +2078,9 @@ internal sealed class ConstantData
 					}
 
 					targetI[index] = price;
+					// 票 43：CSV 显式写入价格即视为「已设」，ERD 合并不得覆盖。
+					if (presetPriceSource != null && (uint)index < (uint)presetPriceSource.Length)
+						presetPriceSource[index] = 0;
 				}
 			}
 		}

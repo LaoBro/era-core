@@ -682,7 +682,7 @@ internal sealed partial class Process(EmueraConsole view)
 			}
 			logWriter?.WriteLine($"Proc:Init:MainCSV:End {stopWatch.ElapsedMilliseconds}ms");
 
-			constantData.LoadData(env.CsvDir, env.DirAccessor, console, Config.DisplayReport);
+			constantData.LoadData(env.CsvDir, env.ErbDir, env.DirAccessor, console, Config.DisplayReport);
 			return true;
 		}
 

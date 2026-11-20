@@ -162,8 +162,8 @@ public sealed class DialectProfileTests
 		// + 渲染设置 5 键（票 35）+ EVALF/GETVARF/GETMETHF/DT_CELL_GETF（票 36）
 		// + GETCSVNOBY* 4 键与 EXIST_IN_CSV（票 37）+ EXISTSIMAGELAYER/GETLINEY（票 38）
 		// + 音频 5 键（票 39）+ 多边形/精灵 5 键（票 40）+ ARGLEN（票 41）
-		// + SEQUENCEINPUT / DISABLE_INPUT_MACRO / ENABLE_INPUT_MACRO（票 42）。
-		Assert.Equal(105, DialectRegistry.Snake.DeclaredKeys.Count);
+		// + SEQUENCEINPUT / DISABLE_INPUT_MACRO / ENABLE_INPUT_MACRO（票 42）+ EXIST_IN_ERD（票 43）。
+		Assert.Equal(106, DialectRegistry.Snake.DeclaredKeys.Count);
 
 		// baseline = 注册表全键 − 方言声明键：方言键不落入 v24pure，既有键仍在。
 		Assert.Contains("SIN", DialectRegistry.Snake.DeclaredKeys);

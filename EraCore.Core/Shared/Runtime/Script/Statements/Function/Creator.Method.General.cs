@@ -845,6 +845,12 @@ internal static partial class FunctionMethodCreator
 		protected override bool Check(ConstantData constant, string varName, int index)
 			=> constant.ExistPresetNameInCsv(varName, index);
 	}
+	/// <summary>票 43（Skia 对齐）：名字是否由 ERD 预置名合并补入。</summary>
+	private sealed class ExistInErdMethod : PresetNameSourceMethod
+	{
+		protected override bool Check(ConstantData constant, string varName, int index)
+			=> constant.ExistPresetNameInErd(varName, index);
+	}
 
 /// <summary>
 /// 试点（自动分档 A 类）：STRFORMCHECK。判断格式化字符串能否展开——

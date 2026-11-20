@@ -666,6 +666,11 @@ internal sealed partial class Lang
 		[Managed] public static TranslatableString FirstValueCanNotConvertToInt { get; } = new TranslatableString("一つ目の値を整数値に変換できません");
 		[Managed] public static TranslatableString ProhibitedArrayName { get; } = new TranslatableString("禁止設定された名前配列です");
 		[Managed] public static TranslatableString CanNotReadAmountOfMoney { get; } = new TranslatableString("金額が読み取れません");
+		#region 票 43：ERD 预置名合并告警
+		[Managed] public static TranslatableString PresetErdConflictWithCsv { get; } = new TranslatableString("プリセット変数ERDの拡張({0})で、インデックス{1}の名前がCSVと異なります(CSV=\"{2}\", ERD=\"{3}\");CSVを優先します");
+		[Managed] public static TranslatableString PresetErdPriceConflictWithCsv { get; } = new TranslatableString("プリセット変数ERDの拡張({0})で、インデックス{1}の価格がCSVと異なります(CSV={2}, ERD={3});CSVを優先します");
+		[Managed] public static TranslatableString PresetErdDuplicateName { get; } = new TranslatableString("プリセット変数ERDの拡張({0})で、インデックス{1}の名前\"{2}\"は既に他のスロットに存在します;スキップします");
+		#endregion
 		[Managed] public static TranslatableString SaveCodeIs0 { get; } = new TranslatableString("コード:0のセーブデータはいかなるコードのスクリプトからも読めるデータとして扱われます");
 		[Managed] public static TranslatableString CanNotReadVersion { get; } = new TranslatableString("バージョン指定を読み取れなかったので処理を省略します");
 		[Managed] public static TranslatableString RequireLaterEmuera { get; } = new TranslatableString("このバリアント動作させるにはVer.{0}以降のバージョンのEmueraが必要です");

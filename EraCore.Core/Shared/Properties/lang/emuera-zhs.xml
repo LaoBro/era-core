@@ -434,6 +434,9 @@ Emuera的历史版本有效的内容变得无效等等现象而设置的。
     <tr id="Error.FirstValueCanNotConvertToInt"><![CDATA[第一个值无法被转换为整型数值]]></tr>
     <tr id="Error.ProhibitedArrayName"><![CDATA[禁止使用的数组名]]></tr>
     <tr id="Error.CanNotReadAmountOfMoney"><![CDATA[无法读取MONEY数量]]></tr>
+    <tr id="Error.PresetErdConflictWithCsv"><![CDATA[预设变量ERD扩展({0})中，索引{1}的名称与CSV不同(CSV="{2}", ERD="{3}")；以CSV优先]]></tr>
+    <tr id="Error.PresetErdPriceConflictWithCsv"><![CDATA[预设变量ERD扩展({0})中，索引{1}的价格与CSV不同(CSV={2}, ERD={3})；以CSV优先]]></tr>
+    <tr id="Error.PresetErdDuplicateName"><![CDATA[预设变量ERD扩展({0})中，索引{1}的名称"{2}"已存在于其他槽位；跳过]]></tr>
     <tr id="Error.SaveCodeIs0"><![CDATA[0号存档数据可以被任何游戏脚本读取]]></tr>
     <tr id="Error.CanNotReadVersion"><![CDATA[读取指定版本失败，处理中止]]></tr>
     <tr id="Error.RequireLaterEmuera"><![CDATA[此游戏必须使用ver.{0}以上的Emuera版本]]></tr>

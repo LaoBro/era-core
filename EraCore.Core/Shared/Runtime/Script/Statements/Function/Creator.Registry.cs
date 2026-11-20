@@ -50,6 +50,8 @@ internal static partial class FunctionMethodCreator
 		new() { Name = "GETCSVNOBYCALLNAME", CreateMethod = () => new GetCsvNoMethod(CharacterStrData.CALLNAME), Dialect = Dialect.Snake, Family = "模板反查" },
 		new() { Name = "GETCSVNOBYMASTERNAME", CreateMethod = () => new GetCsvNoMethod(CharacterStrData.MASTERNAME), Dialect = Dialect.Snake, Family = "模板反查" },
 		new() { Name = "EXIST_IN_CSV", CreateMethod = () => new ExistInCsvMethod(), Dialect = Dialect.Snake, Family = "模板反查" },
+		// 票 43（Skia 对齐）：ERD 预置名合并后的来源探针。
+		new() { Name = "EXIST_IN_ERD", CreateMethod = () => new ExistInErdMethod(), Dialect = Dialect.Snake, Family = "模板反查" },
 		// 票 38（Skia 对齐）：图像层查询。
 		new() { Name = "EXISTSIMAGELAYER", CreateMethod = () => new ExistsImageLayerMethod(), Dialect = Dialect.Snake, Family = "图像层", Note = "只查 SETIMAGELAYER 记录的深度状态；不校验精灵是否存在（era-core 无精灵注册表）" },
 		new() { Name = "GETLINEY", CreateMethod = () => new GetLineYMethod(), Dialect = Dialect.Snake, Family = "图像层" },

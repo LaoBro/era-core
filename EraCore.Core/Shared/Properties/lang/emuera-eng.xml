@@ -437,6 +437,9 @@ Settings apply only at start]]></tr>
     <tr id="Error.FirstValueCanNotConvertToInt"><![CDATA[The first value cannot be converted to an integer value]]></tr>
     <tr id="Error.ProhibitedArrayName"><![CDATA[Prohibited set name array]]></tr>
     <tr id="Error.CanNotReadAmountOfMoney"><![CDATA[Couldn't read amount of money]]></tr>
+    <tr id="Error.PresetErdConflictWithCsv"><![CDATA[Preset variable ERD extension ({0}): the name at index {1} differs from CSV (CSV="{2}", ERD="{3}"); CSV takes priority]]></tr>
+    <tr id="Error.PresetErdPriceConflictWithCsv"><![CDATA[Preset variable ERD extension ({0}): the price at index {1} differs from CSV (CSV={2}, ERD={3}); CSV takes priority]]></tr>
+    <tr id="Error.PresetErdDuplicateName"><![CDATA[Preset variable ERD extension ({0}): the name "{2}" at index {1} already exists in another slot; skipped]]></tr>
     <tr id="Error.SaveCodeIs0"><![CDATA[Code 0 save data is treated as readable data from any game variant code script]]></tr>
     <tr id="Error.CanNotReadVersion"><![CDATA[Processing is terminated due to being unable to read version specification]]></tr>
     <tr id="Error.RequireLaterEmuera"><![CDATA[This game variant operates with ver.{0} which requires later Emuera version]]></tr>

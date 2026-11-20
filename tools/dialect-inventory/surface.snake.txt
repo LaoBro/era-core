@@ -167,6 +167,7 @@ EXISTSIMAGELAYER	function
 EXISTSOUND	function
 EXISTVAR	function
 EXIST_IN_CSV	function
+EXIST_IN_ERD	function
 EXPONENT	function
 FINDCHARA	function
 FINDELEMENT	function
