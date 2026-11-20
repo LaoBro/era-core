@@ -47,6 +47,7 @@ public sealed class DialectDescriptorMetadataTests
 		"模板反查",
 		"音频",
 		"变参",
+		"输入宏",
 	};
 
 	[Fact]

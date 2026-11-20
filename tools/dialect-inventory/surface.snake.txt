@@ -103,6 +103,7 @@ DEBUGPRINTL	directive
 DELALLCHARA	directive
 DELCHARA	directive
 DELDATA	directive
+DISABLE_INPUT_MACRO	function
 DO	directive
 DOTRAIN	directive
 DRAWLINE	directive
@@ -133,6 +134,7 @@ DT_TOXML	function
 DUMPRAND	directive
 ELSE	directive
 ELSEIF	directive
+ENABLE_INPUT_MACRO	function
 ENCODETOUNI	directive
 ENCODETOUNI	function
 ENDCATCH	directive
@@ -495,6 +497,7 @@ SAVENOS	function
 SAVETEXT	function
 SAVEVAR	directive
 SELECTCASE	directive
+SEQUENCEINPUT	function
 SETANIMETIMER	function
 SETBGCOLOR	directive
 SETBGCOLORBYNAME	directive

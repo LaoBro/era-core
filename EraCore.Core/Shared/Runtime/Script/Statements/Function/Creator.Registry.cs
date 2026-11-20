@@ -55,6 +55,10 @@ internal static partial class FunctionMethodCreator
 		new() { Name = "GETLINEY", CreateMethod = () => new GetLineYMethod(), Dialect = Dialect.Snake, Family = "图像层" },
 		// 票 41（Skia 对齐）：变参协议配套的实参个数查询。
 		new() { Name = "ARGLEN", CreateMethod = () => new ArgLengthMethod(), Dialect = Dialect.Snake, Family = "变参" },
+		// 票 42（Skia 对齐）：输入宏 / 序列输入（会话级状态，真语义）。
+		new() { Name = "SEQUENCEINPUT", CreateMethod = () => new SequenceInputMethod(), Dialect = Dialect.Snake, Family = "输入宏" },
+		new() { Name = "DISABLE_INPUT_MACRO", CreateMethod = () => new DisableInputMacroMethod(), Dialect = Dialect.Snake, Family = "输入宏" },
+		new() { Name = "ENABLE_INPUT_MACRO", CreateMethod = () => new EnableInputMacroMethod(), Dialect = Dialect.Snake, Family = "输入宏" },
 		// 票 39（Skia 对齐）：音频查询 / 控制（确定性 no-op）。
 		new() { Name = "ISPLAYINGSOUND", CreateMethod = () => new IsPlayingSoundMethod(), Dialect = Dialect.Snake, Family = "音频", Status = PortStatus.AcceptedNoOp, Note = "era-core 音频为空实现：通道非法 -1，合法也无播放 → -1" },
 		new() { Name = "ISPLAYINGBGM", CreateMethod = () => new IsPlayingBgmMethod(), Dialect = Dialect.Snake, Family = "音频", Status = PortStatus.AcceptedNoOp, Note = "era-core 音频为空实现：恒 0" },

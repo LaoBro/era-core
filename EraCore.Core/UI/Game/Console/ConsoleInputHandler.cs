@@ -35,6 +35,13 @@ internal sealed class ConsoleInputHandler
 
     public void WaitInput(InputRequest req)
     {
+        // 票 42（Skia 对齐）：SEQUENCEINPUT 排队的输入优先于宿主输入被消费。
+        // 与 Skia 一致：清空标志后按一次真实回车同步喂入，故提前 return，不装定时器。
+        if (_state.process?.executionState.hasSequenceInput == true)
+        {
+            SimulatePressEnter(req);
+            return;
+        }
         if (Config.CBUseClipboard)
             _state.CBProc?.Check(ClipboardProcessor.CBTriggers.InputWait);
         _state.State = ConsoleState.WaitInput;
@@ -45,6 +52,22 @@ internal sealed class ConsoleInputHandler
                 _ui.UpdateLastInput();
             _console._timer.PresetTimer();
         }
+    }
+
+    /// <summary>
+    /// 票 42（Skia 对齐）：把 SEQUENCEINPUT 排队的整段字符串当作一次「用户按回车」提交。
+    /// <see cref="PressEnterKey"/> 内部照常做宏展开 / 分隔符拆分 / <c>\e</c> 处理。
+    /// 置位顺序与 Skia 相同：先清标志再进入等待，避免重入时重复消费同一段输入。
+    /// </summary>
+    private void SimulatePressEnter(InputRequest req)
+    {
+        var exec = _state.process!.executionState;
+        string raw = exec.sequenceInputValue ?? "";
+        exec.hasSequenceInput = false;
+        exec.sequenceInputValue = null;
+        _state.State = ConsoleState.WaitInput;
+        _state.inputReq = req;
+        PressEnterKey(false, raw, false);
     }
 
     public void ReadAnyKey(bool anykey = false, bool stopMesskip = false)
@@ -92,10 +115,12 @@ internal sealed class ConsoleInputHandler
             throw new ExeEE("");
 #endif
         _state.KillMacro = false;
+        // 票 42（Skia 对齐）：宏关闭时按字面整段喂入，不解析 @ 系统命令 / () 宏 / 分隔符 / \e。
+        bool inputMacroEnabled = _state.process?.executionState.inputMacroEnabled ?? true;
         try
         {
             string[] text;
-            if (changedByMouse)
+            if (changedByMouse || !inputMacroEnabled)
             { text = [input]; }
             else
             {
@@ -115,44 +140,52 @@ internal sealed class ConsoleInputHandler
             }
 
             _state.inProcess = true;
-            for (int i = 0; i < text.Length; i++)
+            if (!inputMacroEnabled)
             {
-                string inputs = text[i];
-                if (inputs.Contains("\\e", StringComparison.Ordinal))
-                {
-                    inputs = inputs.Replace("\\e", "", StringComparison.Ordinal);
-                    _state.MesSkip = true;
-                }
-                if (_state.inputReq!.OneInput && (!_ui.Created || !changedByMouse) && inputs.Length > 1)
-                    inputs = inputs.Remove(1);
-                if (_state.inputReq!.InputType == InputType.Void)
-                {
-                    i--;
-                    inputs = "";
-                }
-                _console.RunEmueraProgram(inputs);
+                _console.RunEmueraProgram(input);
                 _console.RefreshStrings(false);
-                while (_state.MesSkip && _state.State == ConsoleState.WaitInput)
+            }
+            else
+            {
+                for (int i = 0; i < text.Length; i++)
                 {
-                    if (_state.inputReq!.NeedValue)
-                        break;
-                    if (_state.inputReq!.StopMesskip)
-                        break;
-                    _console.RunEmueraProgram("");
+                    string inputs = text[i];
+                    if (inputs.Contains("\\e", StringComparison.Ordinal))
+                    {
+                        inputs = inputs.Replace("\\e", "", StringComparison.Ordinal);
+                        _state.MesSkip = true;
+                    }
+                    if (_state.inputReq!.OneInput && (!_ui.Created || !changedByMouse) && inputs.Length > 1)
+                        inputs = inputs.Remove(1);
+                    if (_state.inputReq!.InputType == InputType.Void)
+                    {
+                        i--;
+                        inputs = "";
+                    }
+                    _console.RunEmueraProgram(inputs);
                     _console.RefreshStrings(false);
-                }
-                _state.MesSkip = false;
-                if (_state.State != ConsoleState.WaitInput)
-                    break;
-                _ui.ProcessEvents();
+                    while (_state.MesSkip && _state.State == ConsoleState.WaitInput)
+                    {
+                        if (_state.inputReq!.NeedValue)
+                            break;
+                        if (_state.inputReq!.StopMesskip)
+                            break;
+                        _console.RunEmueraProgram("");
+                        _console.RefreshStrings(false);
+                    }
+                    _state.MesSkip = false;
+                    if (_state.State != ConsoleState.WaitInput)
+                        break;
+                    _ui.ProcessEvents();
 #if DEBUG
-                if (_state.State != ConsoleState.WaitInput || _state.inputReq == null)
-                    throw new ExeEE("");
+                    if (_state.State != ConsoleState.WaitInput || _state.inputReq == null)
+                        throw new ExeEE("");
 #endif
-                if (_state.KillMacro)
-                {
-                    EndMacro();
-                    return;
+                    if (_state.KillMacro)
+                    {
+                        EndMacro();
+                        return;
+                    }
                 }
             }
         }

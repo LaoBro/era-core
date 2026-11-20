@@ -23,7 +23,9 @@
 | `CLEARIMAGELAYER` | directive | snake | 图像层 | AcceptedNoOp | 参数解析；控制台 no-op |
 | `CLEARIMAGELAYER_ALL` | directive | snake | 图像层 | AcceptedNoOp | 控制台 no-op；不渲染图像层 |
 | `COS` | function | snake | 数学 | Semantic | — |
+| `DISABLE_INPUT_MACRO` | function | snake | 输入宏 | Semantic | — |
 | `DT_CELL_GETF` | function | snake | 数据表 | Semantic | — |
+| `ENABLE_INPUT_MACRO` | function | snake | 输入宏 | Semantic | — |
 | `EVAL` | function | snake | 字符串求值 | Semantic | — |
 | `EVALF` | function | snake | 字符串求值 | Semantic | — |
 | `EVALS` | function | snake | 字符串求值 | Semantic | — |
@@ -60,6 +62,7 @@
 | `MATCHALL` | function | snake | 数组搜索 | Semantic | — |
 | `MATCHALLEX` | function | snake | 数组搜索 | Semantic | — |
 | `ROUND` | function | snake | 数学 | Semantic | — |
+| `SEQUENCEINPUT` | function | snake | 输入宏 | Semantic | — |
 | `SETIMAGELAYER` | directive | snake | 图像层 | AcceptedNoOp | 参数解析 + ColorMatrix 5×5 校验；控制台 no-op |
 | `SETIMAGELAYERL` | directive | snake | 图像层 | AcceptedNoOp | 参数解析 + ColorMatrix 5×5 校验；followScroll 恒 true；no-op |
 | `SET_SKIA_QUALITY` | directive | snake | 渲染设置 | StateOnly | 保存图片质量/字体 hinting/edging，渲染线未消费 |

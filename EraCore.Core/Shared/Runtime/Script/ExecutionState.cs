@@ -19,6 +19,16 @@ internal sealed class ExecutionState
 	public string flowinputDefString { get; set; } = "";
 	public bool flowinputString { get; set; }
 	public bool flowinputForceSkip { get; set; }
+	/// <summary>
+	/// 票 42（Skia 对齐）：输入宏（<c>()</c> 重复宏 / <c>\e</c> MesSkip / 分隔符拆分）是否解析。
+	/// 会话级，不入存档；DISABLE_INPUT_MACRO / ENABLE_INPUT_MACRO 写入，
+	/// <c>ConsoleInputHandler.PressEnterKey</c> 消费。
+	/// </summary>
+	public bool inputMacroEnabled { get; set; } = true;
+	/// <summary>票 42（Skia 对齐）：SEQUENCEINPUT 预置的下一段待消费输入；多次调用只保留最后一次。</summary>
+	public string? sequenceInputValue { get; set; }
+	/// <summary>票 42（Skia 对齐）：是否有待消费的序列输入。</summary>
+	public bool hasSequenceInput { get; set; }
 	/// <summary>shared: read by SystemProc.beginTitle to check load errors</summary>
 	public bool noError { get; set; }
 	public IProcessState CurrentState { get; set; } = null!;

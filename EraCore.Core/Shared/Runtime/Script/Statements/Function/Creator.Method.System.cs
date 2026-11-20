@@ -577,6 +577,58 @@ internal static partial class FunctionMethodCreator
 			=> exm.Process.getCurrentState.CurrentVariadicArgCount;
 	}
 
+	// ======== 票 42（Skia 对齐）：输入宏 / 序列输入 ========
+	// 状态保存在会话级 ExecutionState（不入存档），由 ConsoleInputHandler 消费。
+
+	/// <summary>票 42：预置下一段待消费输入（恒返回 0）；多次调用只保留最后一次。</summary>
+	private sealed class SequenceInputMethod : FunctionMethod
+	{
+		public SequenceInputMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.String } }];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			exm.Process.executionState.sequenceInputValue = arguments[0].GetStrValue(exm);
+			exm.Process.executionState.hasSequenceInput = true;
+			return 0;
+		}
+	}
+
+	/// <summary>票 42：关闭输入宏解析（<c>()</c> 重复宏 / <c>\e</c> / 分隔符拆分），恒返回 0。</summary>
+	private sealed class DisableInputMacroMethod : FunctionMethod
+	{
+		public DisableInputMacroMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList()];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			exm.Process.executionState.inputMacroEnabled = false;
+			return 0;
+		}
+	}
+
+	/// <summary>票 42：恢复输入宏解析（默认行为），恒返回 0。</summary>
+	private sealed class EnableInputMacroMethod : FunctionMethod
+	{
+		public EnableInputMacroMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList()];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			exm.Process.executionState.inputMacroEnabled = true;
+			return 0;
+		}
+	}
+
 	// ======== 票 39（Skia 对齐）：音频查询 / 控制 ========
 	// era-core 音频为空实现（Sound.isPlaying() 恒 false），故返回值按 Skia 约定做**确定性 no-op**：
 	// 不产生声音、不维护影子播放状态；签名与返回码与 Skia 一致，未来接真实后端时只换数据源。

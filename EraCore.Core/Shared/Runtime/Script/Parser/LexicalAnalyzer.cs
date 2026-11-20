@@ -514,6 +514,8 @@ internal static partial class LexicalAnalyzer
 							case 'S': buffer.Append('　'); break;
 							case 't': buffer.Append('\t'); break;
 							case 'n': buffer.Append('\n'); break;
+							// 票 42（对齐 Skia）：\e 保留为 2 字符，让 SEQUENCEINPUT 路径能识别为 MesSkip。
+							case 'e': buffer.Append('\\'); buffer.Append('e'); break;
 							default: buffer.Append(st.Current); break;
 						}
 						st.ShiftNext();//\の次の文字を読み飛ばす
