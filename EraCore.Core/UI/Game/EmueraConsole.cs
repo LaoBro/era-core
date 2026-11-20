@@ -263,12 +263,39 @@ internal sealed class EmueraConsole : IDisposable, IConsoleStateView, IButtonDis
     // 日后消费；当前实现为 no-op。观感差异属「已知差异清单」（spec §5），不在本 effort 追平。
     internal void SetImageLayer(string spriteName, long depth, int x, int y, int width, int height, int opacity, float[][]? colorMatrix, bool followScroll)
     {
+        // 票 38：记录深度状态供 EXISTSIMAGELAYER 查询（仍不渲染）。
+        // 与 Skia 的差异：Skia 在精灵不存在时直接 return（不记录），era-core 无精灵注册表，故不做该校验。
+        _state.activeImageLayers.Add(depth);
     }
     internal void ClearImageLayer(long depth)
     {
+        _state.activeImageLayers.Remove(depth);
     }
     internal void ClearImageLayerAll()
     {
+        _state.activeImageLayers.Clear();
+    }
+    /// <summary>票 38：该深度是否有已设置的图像层。</summary>
+    internal bool ExistsImageLayer(long depth) => _state.activeImageLayers.Contains(depth);
+    /// <summary>
+    /// 票 38（Skia 对齐）：返回显示行 <paramref name="lineNo"/> 在「左下原点、相对底行」坐标系下的 Y。
+    /// <para>
+    /// 该坐标即 <c>SETIMAGELAYER</c> 使用的坐标系：<c>y=0</c> 为底行基线，负数向上。
+    /// 底行号由 <see cref="IViewportProvider.ScrollOffset"/>（距底行数）换算：
+    /// <c>bottomLineNo = count - ScrollOffset - 1</c>（clamp 到 <c>count-1</c>）。
+    /// 当视口高度等于 Skia 的 RenderHeight 时，与原版 <c>GETLINEY</c> 逐值等价。
+    /// </para>
+    /// 超出当前行数不截断（与 Skia 一致，返回正 Y）。
+    /// </summary>
+    internal int GetLinePointY(int lineNo)
+    {
+        IViewportProvider viewport = _uiAdapter.Viewport;
+        int lineHeight = viewport.LineHeight > 0 ? viewport.LineHeight : Config.LineHeight;
+        int lineCount = _state.displayLineList.Count;
+        int bottomLineNo = lineCount - viewport.ScrollOffset - 1;
+        if (lineCount - 1 < bottomLineNo)
+            bottomLineNo = lineCount - 1;
+        return (lineNo - bottomLineNo) * lineHeight;
     }
     // --- 文本背景色（实现票 23，语义接受） ---
     /// <summary>

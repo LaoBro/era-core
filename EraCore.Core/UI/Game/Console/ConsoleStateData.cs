@@ -130,6 +130,11 @@ internal sealed class ConsoleStateData
 	/// depth 决定 z 序（前端按 depth 排序渲染），opacity 0.0-1.0。状态由 DisplayState 读入快照/diff。
 	/// </summary>
 	internal List<BgImageState> bgImages = [];
+	/// <summary>
+	/// 票 38：SETIMAGELAYER 已设置的图层深度集合（只记状态、不渲染）。
+	/// 供 EXISTSIMAGELAYER 查询，使 set/clear/exists 三者自洽。
+	/// </summary>
+	internal HashSet<long> activeImageLayers = [];
 	internal bool UseUserStyle;
 	internal bool UseSetColorStyle;
 	internal string? stBar;

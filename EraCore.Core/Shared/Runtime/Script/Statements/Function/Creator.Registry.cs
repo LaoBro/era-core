@@ -50,6 +50,9 @@ internal static partial class FunctionMethodCreator
 		new() { Name = "GETCSVNOBYCALLNAME", CreateMethod = () => new GetCsvNoMethod(CharacterStrData.CALLNAME), Dialect = Dialect.Snake, Family = "模板反查" },
 		new() { Name = "GETCSVNOBYMASTERNAME", CreateMethod = () => new GetCsvNoMethod(CharacterStrData.MASTERNAME), Dialect = Dialect.Snake, Family = "模板反查" },
 		new() { Name = "EXIST_IN_CSV", CreateMethod = () => new ExistInCsvMethod(), Dialect = Dialect.Snake, Family = "模板反查" },
+		// 票 38（Skia 对齐）：图像层查询。
+		new() { Name = "EXISTSIMAGELAYER", CreateMethod = () => new ExistsImageLayerMethod(), Dialect = Dialect.Snake, Family = "图像层", Note = "只查 SETIMAGELAYER 记录的深度状态；不校验精灵是否存在（era-core 无精灵注册表）" },
+		new() { Name = "GETLINEY", CreateMethod = () => new GetLineYMethod(), Dialect = Dialect.Snake, Family = "图像层" },
 		// 试点（自动分档 A 类）：STRFORMCHECK 复用 era-core 既有格式化字符串解析 API。
 		new() { Name = "STRFORMCHECK", CreateMethod = () => new StrFormCheckMethod(), Dialect = Dialect.Snake, Family = "字符串求值" },
 		// 试点（自动分档 B 类）：MATCHALL/MATCHALLEX 在变量区间内统计匹配值，参数规则需自定义校验。

@@ -159,6 +159,7 @@ EXISTCSV	function
 EXISTFILE	function
 EXISTFUNCTION	function
 EXISTMETH	function
+EXISTSIMAGELAYER	function
 EXISTSOUND	function
 EXISTVAR	function
 EXIST_IN_CSV	function
@@ -215,6 +216,7 @@ GETFONT	function
 GETKEY	function
 GETKEYTRIGGERED	function
 GETLINESTR	function
+GETLINEY	function
 GETMEMORYUSAGE	function
 GETMETH	function
 GETMETHF	function

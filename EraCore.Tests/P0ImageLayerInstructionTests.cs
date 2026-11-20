@@ -193,6 +193,27 @@ RETURN
 			Assert.Equal(3, arg.Term.GetIntValue(h.Exm));
 			return Task.CompletedTask;
 		});
+
+	// ---------- 票 38：set/clear 与 EXISTSIMAGELAYER 状态自洽 ----------
+
+	[Fact]
+	public Task Executing_set_and_clear_updates_image_layer_state()
+		=> WithFunctionAsync("ENTRY", (h, lines) =>
+		{
+			Run(h, Line(lines, "SETIMAGELAYER"));    // depth 0
+			Assert.True(h.Console.ExistsImageLayer(0));
+
+			Run(h, Line(lines, "SETIMAGELAYERL"));   // depth 1
+			Assert.True(h.Console.ExistsImageLayer(1));
+
+			Run(h, Line(lines, "CLEARIMAGELAYER"));  // depth 3：未设置，不影响 0/1
+			Assert.True(h.Console.ExistsImageLayer(0));
+			Assert.True(h.Console.ExistsImageLayer(1));
+
+			Run(h, Line(lines, "CLEARIMAGELAYER_ALL"));
+			Assert.Empty(h.Console._state.activeImageLayers);
+			return Task.CompletedTask;
+		});
 }
 
 /// <summary>

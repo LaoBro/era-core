@@ -529,6 +529,40 @@ internal static partial class FunctionMethodCreator
 		}
 	}
 
+	/// <summary>票 38（Skia 对齐）：该深度是否有已设置的图像层。</summary>
+	private sealed class ExistsImageLayerMethod : FunctionMethod
+	{
+		public ExistsImageLayerMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Int } }];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+			=> exm.Console.ExistsImageLayer(arguments[0].GetIntValue(exm)) ? 1 : 0;
+	}
+
+	/// <summary>
+	/// 票 38（Skia 对齐）：返回显示行号的物理 Y（左下原点、相对底行，即 SETIMAGELAYER 坐标系）。
+	/// 负行号抛 <see cref="trerror.ArgIsNegative"/>；超出当前行数不截断。
+	/// </summary>
+	private sealed class GetLineYMethod : FunctionMethod
+	{
+		public GetLineYMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Int } }];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			long lineNo = arguments[0].GetIntValue(exm);
+			if (lineNo < 0)
+				throw new CodeEE(string.Format(trerror.ArgIsNegative.Text, Name, 1, lineNo));
+			return exm.Console.GetLinePointY((int)lineNo);
+		}
+	}
+
 	private sealed class ExistSoundMethod : FunctionMethod
 	{
 		public ExistSoundMethod()

@@ -25,6 +25,7 @@
 | `EVAL` | function | snake | 字符串求值 | Semantic | — |
 | `EVALF` | function | snake | 字符串求值 | Semantic | — |
 | `EVALS` | function | snake | 字符串求值 | Semantic | — |
+| `EXISTSIMAGELAYER` | function | snake | 图像层 | Semantic | 只查 SETIMAGELAYER 记录的深度状态；不校验精灵是否存在（era-core 无精灵注册表） |
 | `EXIST_IN_CSV` | function | snake | 模板反查 | Semantic | — |
 | `FLOOR` | function | snake | 数学 | Semantic | — |
 | `GETANIMETIMER` | function | snake | 平台定时器 | Semantic | — |
@@ -32,6 +33,7 @@
 | `GETCSVNOBYMASTERNAME` | function | snake | 模板反查 | Semantic | — |
 | `GETCSVNOBYNAME` | function | snake | 模板反查 | Semantic | — |
 | `GETCSVNOBYNICKNAME` | function | snake | 模板反查 | Semantic | — |
+| `GETLINEY` | function | snake | 图像层 | Semantic | — |
 | `GETMETHF` | function | snake | 字符串求值 | Semantic | — |
 | `GETPLATFORM` | function | snake | 平台定时器 | Semantic | — |
 | `GETVARF` | function | snake | 字符串求值 | Semantic | — |
