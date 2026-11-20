@@ -25,6 +25,11 @@ public enum EraSaveDataType : byte
 	IntArray = 0x01,
 	IntArray2D = 0x02,
 	IntArray3D = 0x03,
+	// 27b（Skia 对齐）：0x04-0x07 为浮点数据，字节值必须与上游一致。
+	Float = 0x04,
+	FloatArray = 0x05,
+	FloatArray2D = 0x06,
+	FloatArray3D = 0x07,
 	Str = 0x10,
 	StrArray = 0x11,
 	StrArray2D = 0x12,
@@ -189,6 +194,11 @@ internal abstract class EraBinaryDataReader : IDisposable
 	#endregion
 	public abstract string ReadString();
 	public abstract long ReadInt();
+	// 27b：浮点数据（raw IEEE754 double，长度前缀数组）
+	public abstract double ReadDouble();
+	public abstract void ReadDoubleArray(double[] refArray, bool needInit);
+	public abstract void ReadDoubleArray2D(double[,] refArray, bool needInit);
+	public abstract void ReadDoubleArray3D(double[,,] refArray, bool needInit);
 	public abstract void ReadIntArray(long[] refArray, bool needInit);
 	public abstract void ReadIntArray2D(long[,] refArray, bool needInit);
 	public abstract void ReadIntArray3D(long[,,] refArray, bool needInit);
@@ -307,6 +317,95 @@ internal abstract class EraBinaryDataReader : IDisposable
 		public override string ReadString()
 		{
 			return reader.ReadString();
+		}
+
+		// 27b（Skia 对齐）：浮点数据按 raw IEEE754 double 读取，数组为「长度 + 原始 double」。
+		public override double ReadDouble()
+		{
+			return reader.ReadDouble();
+		}
+
+		public override void ReadDoubleArray(double[] refArray, bool needInit)
+		{
+			int saveLength0 = reader.ReadInt32();
+			if (refArray == null)//読み捨て
+			{
+				for (int i = 0; i < saveLength0; i++)
+					reader.ReadDouble();
+				return;
+			}
+			int length0 = refArray.Length;
+			int count = Math.Min(length0, saveLength0);
+			for (int i = 0; i < count; i++)
+				refArray[i] = reader.ReadDouble();
+			for (int i = count; i < saveLength0; i++)
+				reader.ReadDouble();
+			if (needInit)
+				for (int i = count; i < length0; i++)
+					refArray[i] = 0;
+		}
+
+		public override void ReadDoubleArray2D(double[,] refArray, bool needInit)
+		{
+			int saveLength0 = reader.ReadInt32();
+			int saveLength1 = reader.ReadInt32();
+			if (refArray == null)
+			{
+				int count = saveLength0 * saveLength1;
+				for (int i = 0; i < count; i++)
+					reader.ReadDouble();
+				return;
+			}
+			int length0 = refArray.GetLength(0);
+			int length1 = refArray.GetLength(1);
+			int countX = Math.Min(length0, saveLength0);
+			int countY = Math.Min(length1, saveLength1);
+			for (int x = 0; x < saveLength0; x++)
+				for (int y = 0; y < saveLength1; y++)
+				{
+					double value = reader.ReadDouble();
+					if (x < countX && y < countY)
+						refArray[x, y] = value;
+				}
+			if (needInit)
+				for (int x = 0; x < length0; x++)
+					for (int y = 0; y < length1; y++)
+						if (x >= countX || y >= countY)
+							refArray[x, y] = 0;
+		}
+
+		public override void ReadDoubleArray3D(double[,,] refArray, bool needInit)
+		{
+			int saveLength0 = reader.ReadInt32();
+			int saveLength1 = reader.ReadInt32();
+			int saveLength2 = reader.ReadInt32();
+			if (refArray == null)
+			{
+				int count = saveLength0 * saveLength1 * saveLength2;
+				for (int i = 0; i < count; i++)
+					reader.ReadDouble();
+				return;
+			}
+			int length0 = refArray.GetLength(0);
+			int length1 = refArray.GetLength(1);
+			int length2 = refArray.GetLength(2);
+			int countX = Math.Min(length0, saveLength0);
+			int countY = Math.Min(length1, saveLength1);
+			int countZ = Math.Min(length2, saveLength2);
+			for (int x = 0; x < saveLength0; x++)
+				for (int y = 0; y < saveLength1; y++)
+					for (int z = 0; z < saveLength2; z++)
+					{
+						double value = reader.ReadDouble();
+						if (x < countX && y < countY && z < countZ)
+							refArray[x, y, z] = value;
+					}
+			if (needInit)
+				for (int x = 0; x < length0; x++)
+					for (int y = 0; y < length1; y++)
+						for (int z = 0; z < length2; z++)
+							if (x >= countX || y >= countY || z >= countZ)
+								refArray[x, y, z] = 0;
 		}
 
 		public override void ReadIntArray(long[] refArray, bool needInit)

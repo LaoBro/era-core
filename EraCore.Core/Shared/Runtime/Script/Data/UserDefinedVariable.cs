@@ -175,13 +175,12 @@ internal sealed class UserDefinedVariableData
 	whilebreak:
 		if (ret.Name == null)
 			throw new CodeEE(string.Format(trerror.NotVarAfterKeyword.Text, keyword), sc);
-		// 票 27（Skia 对齐）：浮点用户变量只实现 1D；CHARADATA / REF / SAVEDATA 明确报错。
+		// 票 27（Skia 对齐）：浮点用户变量只实现 1D；CHARADATA / REF 明确报错。
+		// SAVEDATA 自 27b 起支持 1D 浮点持久化（文本 + 二进制）。
 		if (dimf && ret.CharaData)
 			throw new CodeEE(string.Format(trerror.CanNotSpecifiedWith.Text, "#DIMF", "CHARADATA"), sc);
 		if (dimf && ret.Reference)
 			throw new CodeEE(string.Format(trerror.CanNotSpecifiedWith.Text, "#DIMF", "REF"), sc);
-		if (dimf && ret.Save)
-			throw new CodeEE(string.Format(trerror.CanNotSpecifiedWith.Text, "#DIMF", "SAVEDATA"), sc);
 		if (Config.Config.UseERD && Config.Config.CheckDuplicateIdentifier)
 			GlobalStatic.ConstantData.isDefinedErd(ret.Name, sc);
 		string errMes = "";

@@ -135,6 +135,30 @@ internal sealed class EraBinaryDataWriter : IDisposable
 			writer.Write(key);
 			writeData((long[,,])v);
 		}
+		else if (v is double)
+		{
+			writer.Write((byte)EraSaveDataType.Float);
+			writer.Write(key);
+			writeData((double)v);
+		}
+		else if (v is double[])
+		{
+			writer.Write((byte)EraSaveDataType.FloatArray);
+			writer.Write(key);
+			writeData((double[])v);
+		}
+		else if (v is double[,])
+		{
+			writer.Write((byte)EraSaveDataType.FloatArray2D);
+			writer.Write(key);
+			writeData((double[,])v);
+		}
+		else if (v is double[,,])
+		{
+			writer.Write((byte)EraSaveDataType.FloatArray3D);
+			writer.Write(key);
+			writeData((double[,,])v);
+		}
 		else if (v is string)
 		{
 			writer.Write((byte)EraSaveDataType.Str);
@@ -221,6 +245,44 @@ internal sealed class EraBinaryDataWriter : IDisposable
 	private void writeData(long v)
 	{
 		m_WriteInt(v);
+	}
+
+	// 27b（Skia 对齐）：浮点数据用 raw IEEE754 double，数组为「长度 + 原始 double」。
+	private void writeData(double v)
+	{
+		writer.Write(v);
+	}
+
+	private void writeData(double[] array)
+	{
+		writer.Write(array.Length);
+		for (int i = 0; i < array.Length; i++)
+			writer.Write(array[i]);
+	}
+
+	private void writeData(double[,] array)
+	{
+		int length0 = array.GetLength(0);
+		int length1 = array.GetLength(1);
+		writer.Write(length0);
+		writer.Write(length1);
+		for (int x = 0; x < length0; x++)
+			for (int y = 0; y < length1; y++)
+				writer.Write(array[x, y]);
+	}
+
+	private void writeData(double[,,] array)
+	{
+		int length0 = array.GetLength(0);
+		int length1 = array.GetLength(1);
+		int length2 = array.GetLength(2);
+		writer.Write(length0);
+		writer.Write(length1);
+		writer.Write(length2);
+		for (int x = 0; x < length0; x++)
+			for (int y = 0; y < length1; y++)
+				for (int z = 0; z < length2; z++)
+					writer.Write(array[x, y, z]);
 	}
 
 	private void writeData(long[] array)

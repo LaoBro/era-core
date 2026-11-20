@@ -83,12 +83,13 @@ internal sealed partial class VariableData : IDisposable
 	List<UserDefinedVariableToken> userDefinedGlobalVarList = [];
 	/// <summary>
 	/// ユーザー広域変数のうちセーブされるもの。グローバル、キャラクタ変数は除く。
+	/// 27b（Skia 对齐）：9 类 = (次元-1)*3 + (0:string / 1:integer / 2:float)。
 	/// </summary>
-	List<UserDefinedVariableToken>[] userDefinedSaveVarList = new List<UserDefinedVariableToken>[6];
+	List<UserDefinedVariableToken>[] userDefinedSaveVarList = new List<UserDefinedVariableToken>[9];
 	/// <summary>
 	/// ユーザー広域変数のうち、グローバルかつセーブされるもの。
 	/// </summary>
-	List<UserDefinedVariableToken>[] userDefinedGlobalSaveVarList = new List<UserDefinedVariableToken>[6];
+	List<UserDefinedVariableToken>[] userDefinedGlobalSaveVarList = new List<UserDefinedVariableToken>[9];
 	/// <summary>
 	/// ユーザー広域変数のうち、キャラクタ変数であるもの。初期化やセーブされるかどうかはCharacterDataの方で判断。
 	/// </summary>
@@ -151,7 +152,7 @@ internal sealed partial class VariableData : IDisposable
 			int length3 = (int)(length64 & 0xFFFFF);
 			dataStringArray3D[i] = new string[length, length2, length3];
 		}
-		for (int i = 0; i < 6; i++)
+		for (int i = 0; i < 9; i++)
 		{
 			userDefinedSaveVarList[i] = [];
 			userDefinedGlobalSaveVarList[i] = [];
@@ -459,9 +460,8 @@ internal sealed partial class VariableData : IDisposable
 			userDefinedStaticVarList.Add(ret);
 		if (ret.IsSavedata)
 		{
-			int type = ret.Dimension * 2 - 2;
-			if (!ret.IsString)
-				type++;
+			int type = (ret.Dimension - 1) * 3;
+			type += ret.IsString ? 0 : ret.IsInteger ? 1 : 2;
 			if (ret.IsGlobal)
 				userDefinedGlobalSaveVarList[type].Add(ret);
 			else
@@ -806,22 +806,48 @@ internal sealed partial class VariableData : IDisposable
 			writer.WriteExtended(code.ToString(), dataIntegerArray3D[(int)VariableCode.__LOWERCASE__ & (int)code]);
 		writer.EmuSeparete();
 
-		for (int i = 0; i < 6; i++)
+		// 27b（Skia 对齐）：用户变量按 9 类登记，但文本存档前 6 段保持旧的
+		// 1D/2D/3D × string/integer 顺序，确保旧存档（6 段）仍可读。
+		foreach (int type in userDefinedSaveLegacyOrder)
 		{
-			foreach (UserDefinedVariableToken var in userDefinedSaveVarList[i])
-			{
-				//if (!var.IsSavedata) continue;
-				switch (i)
-				{
-					case 0: writer.WriteExtended(var.Name, (string[])var.GetArray()); break;
-					case 1: writer.WriteExtended(var.Name, (long[])var.GetArray()); break;
-					case 2: writer.WriteExtended(var.Name, (string[,])var.GetArray()); break;
-					case 3: writer.WriteExtended(var.Name, (long[,])var.GetArray()); break;
-					case 4: writer.WriteExtended(var.Name, (string[,,])var.GetArray()); break;
-					case 5: writer.WriteExtended(var.Name, (long[,,])var.GetArray()); break;
-				}
-			}
+			foreach (UserDefinedVariableToken var in userDefinedSaveVarList[type])
+				WriteUserDefinedVarText(writer, type, var);
 			writer.EmuSeparete();
+		}
+
+		// 浮点段仅在存在浮点 SAVEDATA 变量时追加，旧 reader 读完 6 段即停。
+		if (HasFloatSaveVar(userDefinedSaveVarList))
+		{
+			writer.EmuFloatStart();
+			for (int dim = 0; dim < 3; dim++)
+			{
+				int type = dim * 3 + 2;
+				foreach (UserDefinedVariableToken var in userDefinedSaveVarList[type])
+					WriteUserDefinedVarText(writer, type, var);
+				writer.EmuSeparete();
+			}
+		}
+	}
+
+	/// <summary>文本存档中 6 个旧用户变量段的类型索引（1D/2D/3D × string/integer）。</summary>
+	private static readonly int[] userDefinedSaveLegacyOrder = [0, 1, 3, 4, 6, 7];
+
+	private static bool HasFloatSaveVar(List<UserDefinedVariableToken>[] lists)
+		=> lists[2].Count > 0 || lists[5].Count > 0 || lists[8].Count > 0;
+
+	private static void WriteUserDefinedVarText(EraDataWriter writer, int type, UserDefinedVariableToken var)
+	{
+		switch (type)
+		{
+			case 0: writer.WriteExtended(var.Name, (string[])var.GetArray()); break;
+			case 1: writer.WriteExtended(var.Name, (long[])var.GetArray()); break;
+			case 2: writer.WriteExtended(var.Name, (double[])var.GetArray()); break;
+			case 3: writer.WriteExtended(var.Name, (string[,])var.GetArray()); break;
+			case 4: writer.WriteExtended(var.Name, (long[,])var.GetArray()); break;
+			case 5: writer.WriteExtended(var.Name, (double[,])var.GetArray()); break;
+			case 6: writer.WriteExtended(var.Name, (string[,,])var.GetArray()); break;
+			case 7: writer.WriteExtended(var.Name, (long[,,])var.GetArray()); break;
+			case 8: writer.WriteExtended(var.Name, (double[,,])var.GetArray()); break;
 		}
 	}
 
@@ -882,44 +908,56 @@ internal sealed partial class VariableData : IDisposable
 		if (version < 1808)//ユーザー定義変数の保存の実装前
 			return;
 
+		// 27b：前 6 段仍是旧的 1D/2D/3D × string/integer 顺序；浮点段在 marker 之后。
 		strListDic = reader.ReadStringArrayExtended();
 		intListDic = reader.ReadInt64ArrayExtended();
 		str2DListDic = reader.ReadStringArray2DExtended();
 		int2DListDic = reader.ReadInt64Array2DExtended();
 		str3DListDic = reader.ReadStringArray3DExtended();
 		int3DListDic = reader.ReadInt64Array3DExtended();
-		List<UserDefinedVariableToken> varList;
 
-		int i = 0;
-		varList = userDefinedSaveVarList[i]; i++;
-		foreach (UserDefinedVariableToken var in varList)
+		foreach (UserDefinedVariableToken var in userDefinedSaveVarList[0])
 			if (strListDic.TryGetValue(var.Name, out List<string>? value))
-			copyListToArray(value!, (string[])var.GetArray());
+				copyListToArray(value!, (string[])var.GetArray());
 
-		varList = userDefinedSaveVarList[i]; i++;
-		foreach (UserDefinedVariableToken var in varList)
+		foreach (UserDefinedVariableToken var in userDefinedSaveVarList[1])
 			if (intListDic.TryGetValue(var.Name, out List<long>? value))
-			copyListToArray(value!, (long[])var.GetArray());
+				copyListToArray(value!, (long[])var.GetArray());
 
-		varList = userDefinedSaveVarList[i]; i++;
-		foreach (UserDefinedVariableToken var in varList)
+		foreach (UserDefinedVariableToken var in userDefinedSaveVarList[3])
 			if (str2DListDic.TryGetValue(var.Name, out List<string[]>? value))
-			copyListToArray2D(value!, (string[,])var.GetArray());
+				copyListToArray2D(value!, (string[,])var.GetArray());
 
-		varList = userDefinedSaveVarList[i]; i++;
-		foreach (UserDefinedVariableToken var in varList)
+		foreach (UserDefinedVariableToken var in userDefinedSaveVarList[4])
 			if (int2DListDic.TryGetValue(var.Name, out List<long[]>? value))
-			copyListToArray2D(value!, (long[,])var.GetArray());
+				copyListToArray2D(value!, (long[,])var.GetArray());
 
-		varList = userDefinedSaveVarList[i]; i++;
-		foreach (UserDefinedVariableToken var in varList)
+		foreach (UserDefinedVariableToken var in userDefinedSaveVarList[6])
 			if (str3DListDic.TryGetValue(var.Name, out List<List<string[]>>? value))
-			copyListToArray3D(value!, (string[,,])var.GetArray());
+				copyListToArray3D(value!, (string[,,])var.GetArray());
 
-		varList = userDefinedSaveVarList[i];// i++;
-		foreach (UserDefinedVariableToken var in varList)
+		foreach (UserDefinedVariableToken var in userDefinedSaveVarList[7])
 			if (int3DListDic.TryGetValue(var.Name, out List<List<long[]>>? value))
-			copyListToArray3D(value!, (long[,,])var.GetArray());
+				copyListToArray3D(value!, (long[,,])var.GetArray());
+
+		if (!reader.TryReadFloatStart())
+			return;
+
+		Dictionary<string, List<double>> dblListDic = reader.ReadDoubleArrayExtended();
+		Dictionary<string, List<double[]>> dbl2DListDic = reader.ReadDoubleArray2DExtended();
+		Dictionary<string, List<List<double[]>>> dbl3DListDic = reader.ReadDoubleArray3DExtended();
+
+		foreach (UserDefinedVariableToken var in userDefinedSaveVarList[2])
+			if (dblListDic.TryGetValue(var.Name, out List<double>? value))
+				copyListToArray(value!, (double[])var.GetArray());
+
+		foreach (UserDefinedVariableToken var in userDefinedSaveVarList[5])
+			if (dbl2DListDic.TryGetValue(var.Name, out List<double[]>? value))
+				copyListToArray2D(value!, (double[,])var.GetArray());
+
+		foreach (UserDefinedVariableToken var in userDefinedSaveVarList[8])
+			if (dbl3DListDic.TryGetValue(var.Name, out List<List<double[]>>? value))
+				copyListToArray3D(value!, (double[,,])var.GetArray());
 	}
 
 	private static void copyListToArray<T>(List<T> srcList, T[] destArray)
@@ -981,22 +1019,23 @@ internal sealed partial class VariableData : IDisposable
 
 	public void SaveGlobalToStream1808(EraDataWriter writer)
 	{
-		for (int i = 0; i < 6; i++)
+		foreach (int type in userDefinedSaveLegacyOrder)
 		{
-			foreach (UserDefinedVariableToken var in userDefinedGlobalSaveVarList[i])
-			{
-				//if (!var.IsSavedata) continue;
-				switch (i)
-				{
-					case 0: writer.WriteExtended(var.Name, (string[])var.GetArray()); break;
-					case 1: writer.WriteExtended(var.Name, (long[])var.GetArray()); break;
-					case 2: writer.WriteExtended(var.Name, (string[,])var.GetArray()); break;
-					case 3: writer.WriteExtended(var.Name, (long[,])var.GetArray()); break;
-					case 4: writer.WriteExtended(var.Name, (string[,,])var.GetArray()); break;
-					case 5: writer.WriteExtended(var.Name, (long[,,])var.GetArray()); break;
-				}
-			}
+			foreach (UserDefinedVariableToken var in userDefinedGlobalSaveVarList[type])
+				WriteUserDefinedVarText(writer, type, var);
 			writer.EmuSeparete();
+		}
+
+		if (HasFloatSaveVar(userDefinedGlobalSaveVarList))
+		{
+			writer.EmuFloatStart();
+			for (int dim = 0; dim < 3; dim++)
+			{
+				int type = dim * 3 + 2;
+				foreach (UserDefinedVariableToken var in userDefinedGlobalSaveVarList[type])
+					WriteUserDefinedVarText(writer, type, var);
+				writer.EmuSeparete();
+			}
 		}
 	}
 
@@ -1009,38 +1048,48 @@ internal sealed partial class VariableData : IDisposable
 		Dictionary<string, List<List<string[]>>> str3DListDic = reader.ReadStringArray3DExtended();
 		Dictionary<string, List<List<long[]>>> int3DListDic = reader.ReadInt64Array3DExtended();
 
-		List<UserDefinedVariableToken> varList;
-
-		int i = 0;
-		varList = userDefinedGlobalSaveVarList[i]; i++;
-		foreach (UserDefinedVariableToken var in varList)
+		foreach (UserDefinedVariableToken var in userDefinedGlobalSaveVarList[0])
 			if (strListDic.TryGetValue(var.Name, out List<string>? value))
-			copyListToArray(value!, (string[])var.GetArray());
+				copyListToArray(value!, (string[])var.GetArray());
 
-		varList = userDefinedGlobalSaveVarList[i]; i++;
-		foreach (UserDefinedVariableToken var in varList)
+		foreach (UserDefinedVariableToken var in userDefinedGlobalSaveVarList[1])
 			if (intListDic.TryGetValue(var.Name, out List<long>? value))
-			copyListToArray(value!, (long[])var.GetArray());
+				copyListToArray(value!, (long[])var.GetArray());
 
-		varList = userDefinedGlobalSaveVarList[i]; i++;
-		foreach (UserDefinedVariableToken var in varList)
+		foreach (UserDefinedVariableToken var in userDefinedGlobalSaveVarList[3])
 			if (str2DListDic.TryGetValue(var.Name, out List<string[]>? value))
-			copyListToArray2D(value!, (string[,])var.GetArray());
+				copyListToArray2D(value!, (string[,])var.GetArray());
 
-		varList = userDefinedGlobalSaveVarList[i]; i++;
-		foreach (UserDefinedVariableToken var in varList)
+		foreach (UserDefinedVariableToken var in userDefinedGlobalSaveVarList[4])
 			if (int2DListDic.TryGetValue(var.Name, out List<long[]>? value))
-			copyListToArray2D(value!, (long[,])var.GetArray());
+				copyListToArray2D(value!, (long[,])var.GetArray());
 
-		varList = userDefinedGlobalSaveVarList[i]; i++;
-		foreach (UserDefinedVariableToken var in varList)
+		foreach (UserDefinedVariableToken var in userDefinedGlobalSaveVarList[6])
 			if (str3DListDic.TryGetValue(var.Name, out List<List<string[]>>? value))
-			copyListToArray3D(value!, (string[,,])var.GetArray());
+				copyListToArray3D(value!, (string[,,])var.GetArray());
 
-		varList = userDefinedGlobalSaveVarList[i];// i++;
-		foreach (UserDefinedVariableToken var in varList)
+		foreach (UserDefinedVariableToken var in userDefinedGlobalSaveVarList[7])
 			if (int3DListDic.TryGetValue(var.Name, out List<List<long[]>>? value))
-			copyListToArray3D(value!, (long[,,])var.GetArray());
+				copyListToArray3D(value!, (long[,,])var.GetArray());
+
+		if (!reader.TryReadFloatStart())
+			return;
+
+		Dictionary<string, List<double>> dblListDic = reader.ReadDoubleArrayExtended();
+		Dictionary<string, List<double[]>> dbl2DListDic = reader.ReadDoubleArray2DExtended();
+		Dictionary<string, List<List<double[]>>> dbl3DListDic = reader.ReadDoubleArray3DExtended();
+
+		foreach (UserDefinedVariableToken var in userDefinedGlobalSaveVarList[2])
+			if (dblListDic.TryGetValue(var.Name, out List<double>? value))
+				copyListToArray(value!, (double[])var.GetArray());
+
+		foreach (UserDefinedVariableToken var in userDefinedGlobalSaveVarList[5])
+			if (dbl2DListDic.TryGetValue(var.Name, out List<double[]>? value))
+				copyListToArray2D(value!, (double[,])var.GetArray());
+
+		foreach (UserDefinedVariableToken var in userDefinedGlobalSaveVarList[8])
+			if (dbl3DListDic.TryGetValue(var.Name, out List<List<double[]>>? value))
+				copyListToArray3D(value!, (double[,,])var.GetArray());
 	}
 
 	#region EM_私家版_セーブ拡張
@@ -1295,6 +1344,30 @@ internal sealed partial class VariableData : IDisposable
 					reader.ReadStrArray3D(null!, true);
 				else
 					reader.ReadStrArray3D((string[,,])vToken.GetArray(), true);
+				break;
+			case EraSaveDataType.Float:
+				if (vToken == null || !vToken.IsFloat || vToken.Dimension != 0)
+					reader.ReadDouble();
+				else
+					vToken.SetValue(reader.ReadDouble(), null!);
+				break;
+			case EraSaveDataType.FloatArray:
+				if (vToken == null || !vToken.IsFloat || vToken.Dimension != 1)
+					reader.ReadDoubleArray(null!, true);
+				else
+					reader.ReadDoubleArray((double[])vToken.GetArray(), true);
+				break;
+			case EraSaveDataType.FloatArray2D:
+				if (vToken == null || !vToken.IsFloat || vToken.Dimension != 2)
+					reader.ReadDoubleArray2D(null!, true);
+				else
+					reader.ReadDoubleArray2D((double[,])vToken.GetArray(), true);
+				break;
+			case EraSaveDataType.FloatArray3D:
+				if (vToken == null || !vToken.IsFloat || vToken.Dimension != 3)
+					reader.ReadDoubleArray3D(null!, true);
+				else
+					reader.ReadDoubleArray3D((double[,,])vToken.GetArray(), true);
 				break;
 			default:
 				throw new FileEE(trerror.AbnormalData.Text);

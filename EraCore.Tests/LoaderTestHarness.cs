@@ -69,7 +69,7 @@ internal sealed class LoaderTestHarness : IDisposable
 	/// 可选：注入视口真相源（ADR-0031 决策 4 / M3）。null = <see cref="HeadlessConsole"/> 自身
 	/// （由内部 ScrollBar 派生，与 M3 前行为等价）。M3 起几何命中测试经此驱动。
 	/// </param>
-	public LoaderTestHarness(string? gameDir = null, DialectProfile? dialectProfile = null, IInputHost? inputHost = null, IViewportProvider? viewport = null)
+	public LoaderTestHarness(string? gameDir = null, DialectProfile? dialectProfile = null, IInputHost? inputHost = null, IViewportProvider? viewport = null, string? dialectProfileId = null)
 	{
 		_ownsTempRoot = gameDir == null;
 		TempRoot = gameDir ?? Path.Combine(Path.GetTempPath(), "emuera-loader-test-" + Guid.NewGuid().ToString("N"));
@@ -86,7 +86,10 @@ internal sealed class LoaderTestHarness : IDisposable
 		_rootScope = new RootScope(TempRoot, new FileSystemGameDirAccessor());
 
 		// Config scope 在测试方法的 async 流内开启——AsyncLocal 才能下渗到后续 await Task.Run。
-		_scope = GlobalStatic.OpenScope(new ConfigData(_rootScope.Paths), dialectProfile);
+		// 按 id 绑定时延迟到 scope 内首次访问才解析 surface（避免 FunctionIdentifier 在 Config ambient 之外初始化）。
+		_scope = dialectProfileId == null
+			? GlobalStatic.OpenScope(new ConfigData(_rootScope.Paths), dialectProfile)
+			: GlobalStatic.OpenScope(new ConfigData(_rootScope.Paths), dialectProfileId);
 		EnsureEnginePreInit();
 
 		var ui = new HeadlessConsole(inputHost);
