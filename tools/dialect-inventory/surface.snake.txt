@@ -21,6 +21,7 @@ BAR	directive
 BARL	directive
 BARSTR	function
 BEGIN	directive
+BGMCONTROL	function
 BINPUT	directive
 BINPUTS	directive
 BITGET	function
@@ -227,6 +228,7 @@ GETNUMB	function
 GETPALAMLV	function
 GETPLATFORM	function
 GETSECOND	function
+GETSOUNDORBGMINFO	function
 GETSPCHARA	function
 GETSTYLE	function
 GETTEXTBOX	function
@@ -286,6 +288,8 @@ INVERTBIT	directive
 ISACTIVE	function
 ISDEFINED	function
 ISNUMERIC	function
+ISPLAYINGBGM	function
+ISPLAYINGSOUND	function
 ISSKIP	function
 JUMP	directive
 JUMPFORM	directive
@@ -508,6 +512,7 @@ SIN	function
 SKIPDISP	directive
 SKIPLOG	directive
 SORTCHARA	directive
+SOUNDCONTROL	function
 SPLIT	directive
 SPRITEANIMEADDFRAME	function
 SPRITEANIMECREATE	function

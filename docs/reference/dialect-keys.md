@@ -12,6 +12,7 @@
 | `ACOS` | function | snake | 数学 | Semantic | — |
 | `ASIN` | function | snake | 数学 | Semantic | — |
 | `ATAN` | function | snake | 数学 | Semantic | — |
+| `BGMCONTROL` | function | snake | 音频 | AcceptedNoOp | 不改变播放状态：动作合法 1、非法 -2 |
 | `BITGET` | function | snake | 位运算 | Semantic | — |
 | `BITINDEXOFFIRST` | function | snake | 位运算 | Semantic | — |
 | `BITSET` | function | snake | 位运算 | Semantic | — |
@@ -36,11 +37,14 @@
 | `GETLINEY` | function | snake | 图像层 | Semantic | — |
 | `GETMETHF` | function | snake | 字符串求值 | Semantic | — |
 | `GETPLATFORM` | function | snake | 平台定时器 | Semantic | — |
+| `GETSOUNDORBGMINFO` | function | snake | 音频 | AcceptedNoOp | 无真实播放源：省略 info 写 RESULT:0..4 = 0 并返回 0 |
 | `GETVARF` | function | snake | 字符串求值 | Semantic | — |
 | `GET_SKIA_QUALITY` | function | snake | 渲染设置 | Semantic | — |
 | `GET_TEXT_DRAWING_MODE` | function | snake | 渲染设置 | Semantic | — |
 | `HTML_PRINTC` | directive | snake | HTML 文本 | Semantic | 复用 HTML 管线，单元格右对齐（已知差异） |
 | `HTML_PRINTLC` | directive | snake | HTML 文本 | Semantic | 复用 HTML 管线，单元格左对齐（已知差异） |
+| `ISPLAYINGBGM` | function | snake | 音频 | AcceptedNoOp | era-core 音频为空实现：恒 0 |
+| `ISPLAYINGSOUND` | function | snake | 音频 | AcceptedNoOp | era-core 音频为空实现：通道非法 -1，合法也无播放 → -1 |
 | `JUMPSTR` | directive | snake | 动态调用 | Semantic | — |
 | `MAP_FINDKEY` | function | snake | MAP | Semantic | — |
 | `MAP_FROMSTRING` | function | snake | MAP | Semantic | — |
@@ -56,6 +60,7 @@
 | `SET_SKIA_QUALITY` | directive | snake | 渲染设置 | StateOnly | 保存图片质量/字体 hinting/edging，渲染线未消费 |
 | `SET_TEXT_DRAWING_MODE` | directive | snake | 渲染设置 | Semantic | 仅 1/3 生效，写入 Config.TextDrawingMode（era-core 默认 1） |
 | `SIN` | function | snake | 数学 | Semantic | — |
+| `SOUNDCONTROL` | function | snake | 音频 | AcceptedNoOp | 不改变播放状态：通道非法 -1；动作合法 1、非法 -2 |
 | `SQL_CONNECT` | function | snake | SQL | Semantic | — |
 | `SQL_CONNECTION_OPEN` | function | snake | SQL | Semantic | — |
 | `SQL_DISCONNECT` | function | snake | SQL | Semantic | — |

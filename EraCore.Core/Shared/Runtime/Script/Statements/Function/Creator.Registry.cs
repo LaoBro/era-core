@@ -53,6 +53,12 @@ internal static partial class FunctionMethodCreator
 		// 票 38（Skia 对齐）：图像层查询。
 		new() { Name = "EXISTSIMAGELAYER", CreateMethod = () => new ExistsImageLayerMethod(), Dialect = Dialect.Snake, Family = "图像层", Note = "只查 SETIMAGELAYER 记录的深度状态；不校验精灵是否存在（era-core 无精灵注册表）" },
 		new() { Name = "GETLINEY", CreateMethod = () => new GetLineYMethod(), Dialect = Dialect.Snake, Family = "图像层" },
+		// 票 39（Skia 对齐）：音频查询 / 控制（确定性 no-op）。
+		new() { Name = "ISPLAYINGSOUND", CreateMethod = () => new IsPlayingSoundMethod(), Dialect = Dialect.Snake, Family = "音频", Status = PortStatus.AcceptedNoOp, Note = "era-core 音频为空实现：通道非法 -1，合法也无播放 → -1" },
+		new() { Name = "ISPLAYINGBGM", CreateMethod = () => new IsPlayingBgmMethod(), Dialect = Dialect.Snake, Family = "音频", Status = PortStatus.AcceptedNoOp, Note = "era-core 音频为空实现：恒 0" },
+		new() { Name = "GETSOUNDORBGMINFO", CreateMethod = () => new GetSoundOrBgmInfoMethod(), Dialect = Dialect.Snake, Family = "音频", Status = PortStatus.AcceptedNoOp, Note = "无真实播放源：省略 info 写 RESULT:0..4 = 0 并返回 0" },
+		new() { Name = "SOUNDCONTROL", CreateMethod = () => new SoundControlMethod(), Dialect = Dialect.Snake, Family = "音频", Status = PortStatus.AcceptedNoOp, Note = "不改变播放状态：通道非法 -1；动作合法 1、非法 -2" },
+		new() { Name = "BGMCONTROL", CreateMethod = () => new BgmControlMethod(), Dialect = Dialect.Snake, Family = "音频", Status = PortStatus.AcceptedNoOp, Note = "不改变播放状态：动作合法 1、非法 -2" },
 		// 试点（自动分档 A 类）：STRFORMCHECK 复用 era-core 既有格式化字符串解析 API。
 		new() { Name = "STRFORMCHECK", CreateMethod = () => new StrFormCheckMethod(), Dialect = Dialect.Snake, Family = "字符串求值" },
 		// 试点（自动分档 B 类）：MATCHALL/MATCHALLEX 在变量区间内统计匹配值，参数规则需自定义校验。

@@ -1,4 +1,5 @@
 using MinorShift.Emuera.GameData.Variable;
+using MinorShift.Emuera.GameProc.Function;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Input;
 
@@ -560,6 +561,113 @@ internal static partial class FunctionMethodCreator
 			if (lineNo < 0)
 				throw new CodeEE(string.Format(trerror.ArgIsNegative.Text, Name, 1, lineNo));
 			return exm.Console.GetLinePointY((int)lineNo);
+		}
+	}
+
+	// ======== 票 39（Skia 对齐）：音频查询 / 控制 ========
+	// era-core 音频为空实现（Sound.isPlaying() 恒 false），故返回值按 Skia 约定做**确定性 no-op**：
+	// 不产生声音、不维护影子播放状态；签名与返回码与 Skia 一致，未来接真实后端时只换数据源。
+
+	/// <summary>票 39：在播返回通道号，否则 -1（无真实播放 → 恒 -1）。</summary>
+	private sealed class IsPlayingSoundMethod : FunctionMethod
+	{
+		public IsPlayingSoundMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Int } }];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			int channelId = (int)arguments[0].GetIntValue(exm);
+			if (channelId < 0 || channelId >= FunctionIdentifier.sound.Length)
+				return -1;
+			Sound? sound = FunctionIdentifier.sound[channelId];
+			return sound != null && sound.isPlaying() ? channelId : -1;
+		}
+	}
+
+	/// <summary>票 39：BGM 在播 1，否则 0（无真实播放 → 恒 0）。</summary>
+	private sealed class IsPlayingBgmMethod : FunctionMethod
+	{
+		public IsPlayingBgmMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList()];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+			=> FunctionIdentifier.bgm != null && FunctionIdentifier.bgm.isPlaying() ? 1 : 0;
+	}
+
+	/// <summary>
+	/// 票 39：音频信息。省略 info 时把总长/当前/状态/音量/倍速写入 RESULT:0..4 并返回总长；
+	/// 无真实播放源 → 全 0。
+	/// </summary>
+	private sealed class GetSoundOrBgmInfoMethod : FunctionMethod
+	{
+		public GetSoundOrBgmInfoMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.Int, ArgType.Int }, OmitStart = 1 }];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			if (arguments.Count < 2 || arguments[1] == null)
+			{
+				long[] result = exm.VEvaluator.RESULT_ARRAY;
+				for (int i = 0; i < 5; i++)
+					result[i] = 0;
+				return 0;
+			}
+			// 指定 info（1..5）及其他值一律 0。
+			return 0;
+		}
+	}
+
+	/// <summary>票 39：声音通道控制。通道非法 -1；2 参形态 0/1/2 → 1，4 参形态 3 → 1；其他 -2。</summary>
+	private sealed class SoundControlMethod : FunctionMethod
+	{
+		public SoundControlMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [
+					new ArgTypeList { ArgTypes = { ArgType.Int, ArgType.Int } },
+					new ArgTypeList { ArgTypes = { ArgType.Int, ArgType.Int, ArgType.Int, ArgType.Int }, OmitStart = 3 },
+				];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			int channelId = (int)arguments[0].GetIntValue(exm);
+			int action = (int)arguments[1].GetIntValue(exm);
+			if (channelId < 0 || channelId >= FunctionIdentifier.sound.Length)
+				return -1;
+			if (arguments.Count == 2)
+				return action is 0 or 1 or 2 ? 1 : -2;
+			return action == 3 ? 1 : -2;
+		}
+	}
+
+	/// <summary>票 39：BGM 控制。1 参形态 0/1/2 → 1，3 参形态 3 → 1；其他 -2。</summary>
+	private sealed class BgmControlMethod : FunctionMethod
+	{
+		public BgmControlMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [
+					new ArgTypeList { ArgTypes = { ArgType.Int } },
+					new ArgTypeList { ArgTypes = { ArgType.Int, ArgType.Int, ArgType.Int }, OmitStart = 2 },
+				];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			int action = (int)arguments[0].GetIntValue(exm);
+			if (arguments.Count == 1)
+				return action is 0 or 1 or 2 ? 1 : -2;
+			return action == 3 ? 1 : -2;
 		}
 	}
 
