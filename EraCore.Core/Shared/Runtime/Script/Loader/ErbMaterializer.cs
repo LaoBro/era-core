@@ -375,6 +375,8 @@ internal sealed class ErbMaterializer
 						idDic.resizeLocalVars("ARG", label.LabelName, label.ArgLength);
 					if (label.ArgsLength > 0)
 						idDic.resizeLocalVars("ARGS", label.LabelName, label.ArgsLength);
+					if (label.ArgFloatLength > 0 && GlobalStatic.LanguageCapabilities.HasFlag(LanguageCapability.Float))
+						idDic.resizeLocalVars("ARGF", label.LabelName, label.ArgFloatLength);
 				}
 				if (mdiag != null)
 				{
@@ -526,6 +528,8 @@ internal sealed class ErbMaterializer
 						idDic.resizeLocalVars("ARG", stub.LabelName, stub.ArgLength);
 					if (stub.ArgsLength > 0)
 						idDic.resizeLocalVars("ARGS", stub.LabelName, stub.ArgsLength);
+					if (stub.ArgFloatLength > 0 && GlobalStatic.LanguageCapabilities.HasFlag(LanguageCapability.Float))
+						idDic.resizeLocalVars("ARGF", stub.LabelName, stub.ArgFloatLength);
 				}
 			}
 			finally

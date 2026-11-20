@@ -168,7 +168,8 @@ internal static class LogicalLineParser
 					}
 					break;
 				case var s when s.Equals("FUNCTION", Config.Config.StringComparison) ||
-								s.Equals("FUNCTIONS", Config.Config.StringComparison):
+								s.Equals("FUNCTIONS", Config.Config.StringComparison) ||
+								s.Equals("FUNCTIONF", Config.Config.StringComparison) && GlobalStatic.LanguageCapabilities.HasFlag(LanguageCapability.Float):
 					if (!string.IsNullOrEmpty(label.LabelName) && char.IsDigit(label.LabelName[0]))
 					{
 						ParserMediator.Warn(string.Format(trerror.CanNotDeclaredBeginNumberFunction.Text, token.ToString()), position, 1);
@@ -178,7 +179,7 @@ internal static class LogicalLineParser
 					}
 					if (label.IsMethod)
 					{
-						if (label.MethodType == typeof(long) && token.SequenceEqual("FUNCTION") || label.MethodType == typeof(string) && token.SequenceEqual("FUNCTIONS"))
+						if (label.MethodType == typeof(long) && token.SequenceEqual("FUNCTION") || label.MethodType == typeof(string) && token.SequenceEqual("FUNCTIONS") || label.MethodType == typeof(double) && token.SequenceEqual("FUNCTIONF"))
 						{
 							ParserMediator.Warn(string.Format(trerror.AlreadySharpDeclared.Text, label.LabelName, token.ToString()), position, 1);
 							return false;
@@ -187,6 +188,10 @@ internal static class LogicalLineParser
 							ParserMediator.Warn(string.Format(trerror.AlreadyDeclaredSharpFunction.Text, label.LabelName), position, 2);
 						else if (label.MethodType == typeof(string) && token.SequenceEqual("FUNCTION"))
 							ParserMediator.Warn(string.Format(trerror.AlreadyDeclaredSharpFunctions.Text, label.LabelName), position, 2);
+						else if (label.MethodType == typeof(long) && token.SequenceEqual("FUNCTIONF"))
+							ParserMediator.Warn(string.Format(trerror.AlreadyDeclaredSharpFunction.Text, label.LabelName), position, 2);
+						else if (label.MethodType == typeof(double) && token.SequenceEqual("FUNCTION"))
+							ParserMediator.Warn(string.Format(trerror.AlreadyDeclaredSharpFunction.Text, label.LabelName), position, 2);
 						return false;
 					}
 					if (label.Depth == 0)
@@ -198,6 +203,8 @@ internal static class LogicalLineParser
 					label.Depth = 0;
 					if (token.Equals("FUNCTIONS", Config.Config.StringComparison))
 						label.MethodType = typeof(string);
+					else if (token.Equals("FUNCTIONF", Config.Config.StringComparison))
+						label.MethodType = typeof(double);
 					else
 						label.MethodType = typeof(long);
 					if (label.IsPri)

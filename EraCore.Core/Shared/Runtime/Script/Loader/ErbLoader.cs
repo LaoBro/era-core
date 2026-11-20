@@ -530,6 +530,7 @@ internal sealed class ErbLoader
 		SingleTerm[] defs = [];
 		int maxArg = -1;
 		int maxArgs = -1;
+		int maxArgF = -1;
 		//1807 非イベント関数のシステム関数については警告レベル低下＆エラー解除＆引数を設定するように。
 		if (label.IsEvent)
 		{
@@ -540,6 +541,7 @@ internal sealed class ErbLoader
 			label.Def = defs;
 			label.ArgLength = -1;
 			label.ArgsLength = -1;
+			label.ArgFloatLength = -1;
 			return;
 		}
 
@@ -614,7 +616,12 @@ internal sealed class ErbLoader
 						if (maxArgs < vTerm.getEl1forArg + 1)
 							maxArgs = vTerm.getEl1forArg + 1;
 					}
-					bool canDef = vTerm.Identifier.Code == VariableCode.ARG || vTerm.Identifier.Code == VariableCode.ARGS || vTerm.Identifier.IsPrivate;
+					else if (vTerm.Identifier.Code == VariableCode.ARGF)
+					{
+						if (maxArgF < vTerm.getEl1forArg + 1)
+							maxArgF = vTerm.getEl1forArg + 1;
+					}
+					bool canDef = vTerm.Identifier.Code == VariableCode.ARG || vTerm.Identifier.Code == VariableCode.ARGS || vTerm.Identifier.Code == VariableCode.ARGF || vTerm.Identifier.IsPrivate;
 					term = argsRow[i * 2 + 1];
 					if (term is NullTerm)
 					{
@@ -622,6 +629,8 @@ internal sealed class ErbLoader
 						{
 							if (vTerm.GetOperandType() == typeof(long))
 								def = new SingleLongTerm(0);
+							else if (vTerm.GetOperandType() == typeof(double))
+								def = new SingleFloatTerm(0.0);
 							else
 								def = new SingleStrTerm("");
 						}
@@ -652,6 +661,7 @@ internal sealed class ErbLoader
 		label.Def = defs;
 		label.ArgLength = maxArg;
 		label.ArgsLength = maxArgs;
+		label.ArgFloatLength = maxArgF;
 		return;
 	err:
 		ParserMediator.Warn(string.Format(trerror.FuncArgError.Text, label.LabelName, errMes), label, 2, true, false);

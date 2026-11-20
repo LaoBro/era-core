@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using MinorShift.Emuera;
 using MinorShift.Emuera.GameData.Function;
 using MinorShift.Emuera.GameData.Variable;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Runtime.Script.Loader;
 using MinorShift.Emuera.Runtime.Script.Statements;
 using MinorShift.Emuera.Runtime.Script.Statements.Expression;
 using MinorShift.Emuera.Runtime.Script.Statements.Function;
@@ -150,5 +152,118 @@ public sealed class FloatSurfaceTests
 		Assert.Equal(6, Method("SUMARRAY").GetIntValue(h.Exm, Args(vTerm)));
 		Assert.Equal(3, Method("MAXARRAY").GetIntValue(h.Exm, Args(vTerm)));
 		Assert.Equal(1, Method("MATCH").GetIntValue(h.Exm, Args(vTerm, new SingleLongTerm(2))));
+	}
+
+	// ---------- #FUNCTIONF / ARGF / RETURNF（27d）----------
+
+	private static async Task LoadErbAsync(LoaderTestHarness h, string content)
+	{
+		h.WriteErb("func.ERB", content);
+		await h.PreloadAsync();
+		var loader = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		bool ok = await loader.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic);
+		Assert.True(ok, string.Join(" | ", h.Console.DisplayLineList.Select(l => l?.ToString() ?? "")));
+	}
+
+	private const string FloatFuncErb = """
+@FLT(ARGF:0, ARGF:1 = 2.5)
+#FUNCTIONF
+	RETURNF ARGF:0 + ARGF:1
+""";
+
+	[Fact]
+	public async Task Functionf_declares_float_return_and_argf_signature()
+	{
+		using var h = new LoaderTestHarness(dialectProfileId: DialectRegistry.SnakeId);
+		await h.InitializeAsync();
+		await LoadErbAsync(h, FloatFuncErb);
+
+		var func = h.LabelDic.GetNonEventLabel("FLT");
+		Assert.NotNull(func);
+		Assert.True(func.IsMethod);
+		Assert.Equal(typeof(double), func.MethodType);
+		Assert.Equal(2, func.ArgFloatLength);
+		Assert.Equal(2, func.Arg.Length);
+		Assert.Equal(0.0, Assert.IsType<SingleFloatTerm>(func.Def[0]).Float, 10);
+		Assert.Equal(2.5, Assert.IsType<SingleFloatTerm>(func.Def[1]).Float, 10);
+	}
+
+	[Fact]
+	public async Task Functionf_call_returns_float_and_widens_integer_argument()
+	{
+		using var h = new LoaderTestHarness(dialectProfileId: DialectRegistry.SnakeId);
+		await h.InitializeAsync();
+		await LoadErbAsync(h, FloatFuncErb);
+
+		var func = h.LabelDic.GetNonEventLabel("FLT");
+		// Float 实参 + 缺省值
+		var floatCall = UserDefinedMethodTerm.Create(func, [new SingleFloatTerm(1.25)], out var errMes);
+		Assert.True(floatCall != null, errMes);
+		Assert.Equal(3.75, floatCall!.GetFloatValue(h.Exm), 10);
+		Assert.Equal(3.75, Assert.IsType<SingleFloatTerm>(h.Exm.Process.GetValue(floatCall)).Float, 10);
+
+		// Int → Float 隐式拓宽
+		var intCall = UserDefinedMethodTerm.Create(func, [new SingleLongTerm(3)], out errMes);
+		Assert.True(intCall != null, errMes);
+		Assert.Equal(5.5, intCall!.GetFloatValue(h.Exm), 10);
+	}
+
+	[Fact]
+	public async Task Float_argument_to_integer_parameter_is_rejected()
+	{
+		using var h = new LoaderTestHarness(dialectProfileId: DialectRegistry.SnakeId);
+		await h.InitializeAsync();
+		await LoadErbAsync(h, """
+@INTF(ARG:0)
+#FUNCTION
+	RETURNF ARG:0
+""");
+
+		var func = h.LabelDic.GetNonEventLabel("INTF");
+		var call = UserDefinedMethodTerm.Create(func, [new SingleFloatTerm(1.5)], out var errMes);
+		Assert.Null(call);
+		Assert.Contains("INTF", errMes);
+	}
+
+	[Fact]
+	public async Task Functionf_and_argf_are_invisible_without_float_capability()
+	{
+		using var h = new LoaderTestHarness();
+		await h.InitializeAsync();
+		await LoadErbAsync(h, FloatFuncErb);
+
+		Assert.Null(h.IdDic.GetVariableToken("ARGF", null, false));
+		var func = h.LabelDic.GetNonEventLabel("FLT");
+		Assert.NotNull(func);
+		Assert.False(func.IsMethod);
+	}
+
+	[Fact]
+	public async Task Functionf_survives_lazy_ir_materialization()
+	{
+		using var h = new LoaderTestHarness(dialectProfileId: DialectRegistry.SnakeId);
+		await h.InitializeAsync();
+		ConfigData.Current!.GetConfigItem(ConfigCode.LazyFunctionLoad).SetValue(true);
+		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelErbLoad).SetValue(false);
+		ConfigData.Current!.GetConfigItem(ConfigCode.ParallelParseScript).SetValue(false);
+		ConfigData.Current!.GetConfigItem(ConfigCode.IrDiskCacheLoad).SetValue(true);
+
+		h.WriteErb("func.ERB", FloatFuncErb);
+		await h.PreloadAsync();
+		var loader1 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		Assert.True(await loader1.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic));
+		h.Console.DisplayLineList.Clear();
+
+		// 第二轮命中磁盘 IR：签名（含 ArgFloatLength）从 blob 重建。
+		var loader2 = new ErbLoader(h.Console, h.Exm, h.IdDic, h.Env, line => h.Process.scaningLine = line);
+		Assert.True(await loader2.LoadErbDir(h.ErbDir, displayReport: false, h.LabelDic));
+
+		var func = h.LabelDic.GetNonEventLabel("FLT");
+		Assert.NotNull(func);
+		Assert.True(func.IsStub && func.IrBacked);
+		var call = UserDefinedMethodTerm.Create(func, [new SingleFloatTerm(1.25)], out var errMes);
+		Assert.True(call != null, errMes);
+		Assert.Equal(3.75, call!.GetFloatValue(h.Exm), 10);
+		Assert.Equal(2, func.ArgFloatLength);
 	}
 }

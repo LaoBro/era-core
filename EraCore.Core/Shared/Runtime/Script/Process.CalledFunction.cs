@@ -22,6 +22,7 @@ internal sealed class UserDefinedFunctionArgument
 		Arguments = srcArgs;
 		TransporterInt = new long[Arguments.Length];
 		TransporterStr = new string[Arguments.Length];
+		TransporterFloat = new double[Arguments.Length];
 		TransporterRef = new Array[Arguments.Length];
 		isRef = new bool[Arguments.Length];
 		for (int i = 0; i < Arguments.Length; i++)
@@ -32,6 +33,7 @@ internal sealed class UserDefinedFunctionArgument
 	public readonly AExpression[] Arguments;
 	public readonly long[] TransporterInt;
 	public readonly string[] TransporterStr;
+	public readonly double[] TransporterFloat;
 	public readonly Array[] TransporterRef;
 	public readonly bool[] isRef;
 	public void SetTransporter(ExpressionMediator exm)
@@ -56,6 +58,8 @@ internal sealed class UserDefinedFunctionArgument
 			}
 			else if (Arguments[i].GetOperandType() == typeof(long))
 				TransporterInt[i] = Arguments[i].GetIntValue(exm);
+			else if (Arguments[i].GetOperandType() == typeof(double))
+				TransporterFloat[i] = Arguments[i].GetFloatValue(exm);
 			else
 				TransporterStr[i] = Arguments[i].GetStrValue(exm);
 		}
@@ -223,6 +227,15 @@ internal sealed class CalledFunction
 				if (term.GetOperandType() == typeof(string))
 				{
 					errMes = string.Format(trerror.CanNotConvertStrToInt.Text, func.LabelName, (i + 1).ToString());
+					return null!;
+				}
+				else if (destArg.GetOperandType() == typeof(double) && term.GetOperandType() == typeof(long))
+				{
+					// 票 27d / Skia 对齐：Int → Float 隐式拓宽。
+				}
+				else if (destArg.GetOperandType() == typeof(long) && term.GetOperandType() == typeof(double))
+				{
+					errMes = string.Format(trerror.CanNotConvertFloatToInt.Text, func.LabelName, (i + 1).ToString());
 					return null!;
 				}
 				else

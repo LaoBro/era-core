@@ -27,6 +27,12 @@ internal abstract class SuperUserDefinedMethodTerm : AExpression
 			return "";
 		return term.Str;
 	}
+	public override double GetFloatValue(ExpressionMediator exm)
+	{
+		if (exm.Process.GetValue(this) is not SingleFloatTerm term)
+			return 0.0;
+		return term.Float;
+	}
 	public override SingleTerm GetValue(ExpressionMediator exm)
 	{
 		SingleTerm term = exm.Process.GetValue(this);
@@ -34,6 +40,8 @@ internal abstract class SuperUserDefinedMethodTerm : AExpression
 		{
 			if (GetOperandType() == typeof(long))
 				return new SingleLongTerm(0);
+			else if (GetOperandType() == typeof(double))
+				return new SingleFloatTerm(0.0);
 			else
 				return new SingleStrTerm("");
 		}

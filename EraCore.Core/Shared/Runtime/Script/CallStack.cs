@@ -160,6 +160,10 @@ internal sealed class CallStack
 				{
 					if (call.TopLabel.Arg[i].Identifier.IsReference)
 						((ReferenceToken)call.TopLabel.Arg[i].Identifier).SetRef(srcArgs.TransporterRef[i]);
+					else if (call.TopLabel.Arg[i].Identifier.VariableType == typeof(double))
+						call.TopLabel.Arg[i].SetValue(srcArgs.Arguments[i].GetOperandType() == typeof(double)
+							? srcArgs.TransporterFloat[i]
+							: (double)srcArgs.TransporterInt[i], exm!);
 					else if (srcArgs.Arguments[i].GetOperandType() == typeof(long))
 						call.TopLabel.Arg[i].SetValue(srcArgs.TransporterInt[i], exm!);
 					else

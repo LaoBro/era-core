@@ -234,6 +234,7 @@ internal class FunctionLabelLine : LogicalLine, IComparable<FunctionLabelLine>
 		LocalFloatLength = 0;
 		ArgLength = 0;
 		ArgsLength = 0;
+		ArgFloatLength = 0;
 		IsMethod = false;
 		MethodType = typeof(void);
 		this.wc = wc;
@@ -264,6 +265,8 @@ internal class FunctionLabelLine : LogicalLine, IComparable<FunctionLabelLine>
 	public int LocalFloatLength { get; set; }
 	public int ArgLength { get; set; }
 	public int ArgsLength { get; set; }
+	/// <summary>票 27d：浮点形参（<c>ARGF</c>）最大下标 + 1；-1 = 未声明。事件函数固定 -1。</summary>
+	public int ArgFloatLength { get; set; }
 
 	//public bool ArgOptional { get; set; }
 	//public bool ArgAutoConvert { get; set; }

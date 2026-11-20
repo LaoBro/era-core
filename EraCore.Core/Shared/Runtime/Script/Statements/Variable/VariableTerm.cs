@@ -325,7 +325,7 @@ internal class VariableTerm : AExpression
 			{
 				//キャラクターデータの第1引数はこの時点でチェックしても意味がないのと
 				//ARG系は限界超えてても必要な数に拡張されるのでチェックしなくていい
-				if (i == 0 && Identifier.IsCharacterData || Identifier.Name == "ARG" || Identifier.Name == "ARGS")
+				if (i == 0 && Identifier.IsCharacterData || Identifier.Name == "ARG" || Identifier.Name == "ARGS" || Identifier.Name == "ARGF")
 					canCheck[i] = false;
 				else
 					canCheck[i] = true;

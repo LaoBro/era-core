@@ -375,6 +375,8 @@ internal sealed partial class VariableData : IDisposable
 		{
 			size = constant.VariableFloatArrayLength[(int)(VariableCode.__LOWERCASE__ & VariableCode.LOCALF)];
 			localvarTokenDic.Add("LOCALF", new VariableLocal(VariableCode.LOCALF, size, CreateLocalFloat));
+			size = constant.VariableFloatArrayLength[(int)(VariableCode.__LOWERCASE__ & VariableCode.ARGF)];
+			localvarTokenDic.Add("ARGF", new VariableLocal(VariableCode.ARGF, size, CreateLocalFloat));
 		}
 
 	}

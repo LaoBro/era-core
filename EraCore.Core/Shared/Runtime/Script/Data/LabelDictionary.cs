@@ -81,6 +81,9 @@ internal sealed class LabelDictionary
 				noneventLabelDic.Add(key, list[0]);
 				GlobalStatic.IdentifierDictionary.resizeLocalVars("ARG", list[0].LabelName, list[0].ArgLength);
 				GlobalStatic.IdentifierDictionary.resizeLocalVars("ARGS", list[0].LabelName, list[0].ArgsLength);
+				// 票 27d：ARGF 仅在浮点能力开启（snake，v24pure）时注册，未注册时不能 resize。
+				if (GlobalStatic.LanguageCapabilities.HasFlag(LanguageCapability.Float))
+					GlobalStatic.IdentifierDictionary.resizeLocalVars("ARGF", list[0].LabelName, list[0].ArgFloatLength);
 				continue;
 			}
 			//1810alpha010 オプションによりイベント関数をイベント関数でないかのように呼び出すことを許可
