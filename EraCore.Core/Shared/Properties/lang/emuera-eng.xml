@@ -917,6 +917,9 @@ Error.AttributeCanNotInterpretNum	<{0}> tag has a {1}" attribute with a value th
     <tr id="Error.IsNotInt"><![CDATA[{0} is not integer]]></tr>
     <tr id="Error.IsNotStr"><![CDATA[{0} is not string]]></tr>
     <tr id="Error.IsNotFloat"><![CDATA[{0} is not float]]></tr>
+    <tr id="Error.VariadicArgMustBeLast"><![CDATA[VARIADIC must be the last parameter ({0})]]></tr>
+    <tr id="Error.VariadicArgDuplicated"><![CDATA[{0} declared as VARIADIC cannot appear in earlier fixed parameters (parameter {1}: {2}); use a private variable instead]]></tr>
+    <tr id="Error.VariadicArgNotAllowed"><![CDATA[VARIADIC can only modify ARG, ARGS or ARGF, not {0}]]></tr>
     <tr id="Error.SPCharacterFeatureDisabled"><![CDATA[SP character-related features are not available by default (Turn on "Allow SP Characters" compatibility option)]]></tr>
     <tr id="Error.CharacterIndexOutOfRange"><![CDATA[{0}: The {1} argument ({2}) is out of range of array of character position]]></tr>
     <tr id="Error.NotVariableName"><![CDATA[{0}: The {1} argument ("{2}") is not variable name]]></tr>

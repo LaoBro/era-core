@@ -1153,6 +1153,9 @@ internal sealed partial class Lang
 		[Managed] public static TranslatableString IsNotInt { get; } = new TranslatableString("\"{0}\"が整数型ではありません");
 		[Managed] public static TranslatableString IsNotStr { get; } = new TranslatableString("\"{0}\"が文字列型ではありません");
 		[Managed] public static TranslatableString IsNotFloat { get; } = new TranslatableString("\"{0}\"が浮動小数点型ではありません");
+		[Managed] public static TranslatableString VariadicArgMustBeLast { get; } = new TranslatableString("VARIADICパラメータは最後のパラメータ位置にのみ指定できます（{0}）");
+		[Managed] public static TranslatableString VariadicArgDuplicated { get; } = new TranslatableString("VARIADICで宣言された{0}は前方の固定パラメータに指定できません（パラメータ{1}：{2}）。私有変数を使用してください");
+		[Managed] public static TranslatableString VariadicArgNotAllowed { get; } = new TranslatableString("VARIADICはARG、ARGS、ARGFのみ修飾できます（{0}は不可）");
 
 		[Managed] public static TranslatableString SPCharacterFeatureDisabled { get; } = new TranslatableString("SPキャラ関係の機能は標準では使用できません(互換性オプション「SPキャラを使用する」をONにしてください)");
 		[Managed] public static TranslatableString CharacterIndexOutOfRange { get; } = new TranslatableString("{0}関数: 第{1}引数({2})はキャラクタ位置の範囲外です");

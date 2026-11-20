@@ -141,6 +141,9 @@ internal sealed class ProcessState : IProcessState
 	//1755a 呼び出し元消滅
 	//public bool Sequential { get { return sequential; } }
 	public CalledFunction CurrentCalled => callStack.CurrentCalled;
+
+	/// <summary>票 41：当前调用帧收到的变参实参个数。</summary>
+	public int CurrentVariadicArgCount => callStack.CurrentVariadicArgCount;
 	public SystemStateCode SystemState
 	{
 		get { return sysStateCode; }

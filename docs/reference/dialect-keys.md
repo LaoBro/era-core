@@ -10,6 +10,7 @@
 | 键 | kind | 模块 | 家族 | 状态 | 说明 |
 |---|---|---|---|---|---|
 | `ACOS` | function | snake | 数学 | Semantic | — |
+| `ARGLEN` | function | snake | 变参 | Semantic | — |
 | `ASIN` | function | snake | 数学 | Semantic | — |
 | `ATAN` | function | snake | 数学 | Semantic | — |
 | `BGMCONTROL` | function | snake | 音频 | AcceptedNoOp | 不改变播放状态：动作合法 1、非法 -2 |

@@ -23,6 +23,8 @@ internal interface IProcessState
 	bool isBegun { get; }
 	bool calledWhenNormal { get; set; }
 	CalledFunction CurrentCalled { get; }
+	/// <summary>票 41：当前调用帧收到的变参实参个数（非变参函数 / 空栈为 0）。</summary>
+	int CurrentVariadicArgCount { get; }
 	void ShiftNextLine();
 	void JumpTo(LogicalLine line);
 	void Return(long ret);

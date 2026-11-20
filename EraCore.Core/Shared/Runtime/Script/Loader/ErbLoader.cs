@@ -531,6 +531,28 @@ internal sealed class ErbLoader
 		int maxArg = -1;
 		int maxArgs = -1;
 		int maxArgF = -1;
+		label.VariadicArgIndex = -1;
+		// 票 41（Skia 对齐）：先扫出 VARIADIC 修饰的位置并把它从参数流里摘除，
+		// 之后的 ReduceArguments 才能按普通形参解析。
+		bool hasVariadic = false;
+		int variadicCommaIndex = -1;
+		int commaCount = 0;
+		wc.PointerReset();
+		while (!wc.EOL)
+		{
+			if (wc.Current is IdentifierWord idw && idw.Code.Equals("VARIADIC", Config.Config.StringComparison))
+			{
+				hasVariadic = true;
+				variadicCommaIndex = commaCount;
+				wc.Remove();
+				continue;
+			}
+			if (wc.Current is SymbolWord symComma && symComma.Type == ',')
+				commaCount++;
+			wc.ShiftNext();
+		}
+		wc.PointerReset();
+		wc.ShiftNext();
 		//1807 非イベント関数のシステム関数については警告レベル低下＆エラー解除＆引数を設定するように。
 		if (label.IsEvent)
 		{
@@ -655,6 +677,37 @@ internal sealed class ErbLoader
 		}
 		if (!wc.EOL)
 		{ errMes = trerror.WrongArgFormat.Text; goto err; }
+
+		// 票 41（Skia 对齐）：VARIADIC 只能修饰最后一位的 ARG / ARGS / ARGF。
+		if (hasVariadic && args.Length > 0)
+		{
+			if (variadicCommaIndex >= 0 && variadicCommaIndex != args.Length - 1)
+			{
+				ParserMediator.Warn(string.Format(trerror.VariadicArgMustBeLast.Text, label.LabelName), label, 2, true, false);
+				return;
+			}
+			label.VariadicArgIndex = args.Length - 1;
+			VariableCode variadicCode = args[^1].Identifier.Code;
+			if (variadicCode == VariableCode.ARG || variadicCode == VariableCode.ARGS || variadicCode == VariableCode.ARGF)
+			{
+				for (int i = 0; i < args.Length - 1; i++)
+				{
+					if (args[i].Identifier.Code == variadicCode)
+					{
+						ParserMediator.Warn(string.Format(trerror.VariadicArgDuplicated.Text,
+							variadicCode == VariableCode.ARG ? "ARG"
+								: variadicCode == VariableCode.ARGS ? "ARGS" : "ARGF",
+							i + 1, args[i].GetFullString()), label, 2, true, false);
+						return;
+					}
+				}
+			}
+			else
+			{
+				ParserMediator.Warn(string.Format(trerror.VariadicArgNotAllowed.Text, args[^1].Identifier.Name), label, 2, true, false);
+				return;
+			}
+		}
 
 		//label.SubNames = subNames;
 		label.Arg = args;

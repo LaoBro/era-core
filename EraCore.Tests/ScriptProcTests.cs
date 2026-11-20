@@ -27,6 +27,7 @@ public sealed class ScriptProcTests
         public bool isBegun { get; set; }
         public bool calledWhenNormal { get; set; }
         public CalledFunction CurrentCalled { get; set; } = null!;
+        public int CurrentVariadicArgCount { get; set; }
         public int lineCount { get; set; }
         // 候选 4 · 第 3 刀：接口推广到指令层后补上的 3 个成员
         public string Scope { get; set; } = null!;

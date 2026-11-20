@@ -113,6 +113,7 @@ BEGIN TRAIN
 		public bool isBegun { get; set; }
 		public bool calledWhenNormal { get; set; }
 		public CalledFunction CurrentCalled { get; set; } = null!;
+		public int CurrentVariadicArgCount { get; set; }
 		public int lineCount { get; set; }
 		public string Scope { get; set; } = "";
 

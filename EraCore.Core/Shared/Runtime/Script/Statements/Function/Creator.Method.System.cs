@@ -564,6 +564,19 @@ internal static partial class FunctionMethodCreator
 		}
 	}
 
+	/// <summary>票 41（Skia 对齐）：当前用户函数收到的变参实参个数；非变参函数返回 0。</summary>
+	private sealed class ArgLengthMethod : FunctionMethod
+	{
+		public ArgLengthMethod()
+		{
+			ReturnType = typeof(long);
+			argumentTypeArrayEx = [new ArgTypeList()];
+			CanRestructure = false;
+		}
+		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
+			=> exm.Process.getCurrentState.CurrentVariadicArgCount;
+	}
+
 	// ======== 票 39（Skia 对齐）：音频查询 / 控制 ========
 	// era-core 音频为空实现（Sound.isPlaying() 恒 false），故返回值按 Skia 约定做**确定性 no-op**：
 	// 不产生声音、不维护影子播放状态；签名与返回码与 Skia 一致，未来接真实后端时只换数据源。

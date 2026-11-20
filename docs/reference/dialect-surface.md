@@ -4,7 +4,7 @@
 
 机器可读真值：
 
-- 键索引（生成物，全部 668 键）：[`dialect-keys.md`](dialect-keys.md)
+- 键索引（生成物，全部 669 键）：[`dialect-keys.md`](dialect-keys.md)
 - 运行期可见面：`tools/dialect-inventory/surface.v24pure.txt` / `surface.snake.txt`（`eratw` 别名复用 snake 快照）
 - 上游 fork 增量：`dialects/skia.json` + `tools/dialect-inventory/skia-delta-inventory.txt`
 - 门禁：`EraCore.Tests/DialectSurfaceSnapshotTests.cs`、`EraCore.Tests/DialectKeyIndexTests.cs`、`EraCore.Tests/DialectDescriptorMetadataTests.cs`、`EraCore.Tests/DialectForkConsistencyTests.cs`、`EraCore.Tests/DialectProfileTests.cs`
@@ -18,9 +18,9 @@
 | 项 | 值 |
 |---|---|
 | `v24pure` 面 | 567 行（baseline） |
-| `snake` 面 | 668 行 |
-| 方言增量 | **101 键**（21 指令 + 80 函数） |
-| `snake` 模块声明键 | 101 |
+| `snake` 面 | 669 行 |
+| 方言增量 | **102 键**（21 指令 + 81 函数） |
+| `snake` 模块声明键 | 102 |
 | `eratw` 别名 | 复用 `snake`（无独立模块 / 快照） |
 
 `surface.*.txt` 每行 `name<TAB>kind`，按行序号排序，UTF-8 / LF。`kind` 只有 `directive` 与 `function` 两种。
@@ -39,9 +39,9 @@
 
 ---
 
-## 3. 函数（80）
+## 3. 函数（81）
 
-80 条函数的逐键元数据见 [`dialect-keys.md`](dialect-keys.md)。分组与实现：
+81 条函数的逐键元数据见 [`dialect-keys.md`](dialect-keys.md)。分组与实现：
 
 - 数学 / 取整 / 无检查算术（13）：`Creator.Method.Math.cs`
 - 位运算（4）：`Creator.Method.Array.cs` / `BitArrayManager.cs`
@@ -56,11 +56,12 @@
 - 图像层查询（2，`EXISTSIMAGELAYER` / `GETLINEY`，票 38）：`Creator.Method.System.cs` + `EmueraConsole`
 - 音频查询 / 控制（5，票 39，确定性 no-op）：`Creator.Method.System.cs`
 - 多边形 / 动态精灵（5，票 40，no-op）：`Creator.Method.Graphics.cs`
+- 变参（1，`ARGLEN`，票 41）：`Creator.Method.System.cs` + `ErbLoader` / `CallStack`
 - SQL（25，桌面闭环）：`Creator.Method.Sql.cs` + `EraCore.Core/Shared/Runtime/Utils/Sql/SqlManager.cs`
 
 签名增量（票 27c，键名不变、面快照不新增）：`SUMARRAY` / `MAXARRAY` / `MINARRAY` / `MATCH` / `FINDELEMENT` / `FINDLASTELEMENT` 增加 `double[]` 分支；求和/最大/最小返回 Float，匹配/查找仍为 Integer。
 
-测试：`P0MathBitEvalFunctionTests`、`P0EvalFunctionTests`、`P0MapCollectionFunctionTests`、`P0SqlFunctionTests`（含平台定时器两键）、`P0FloatReflectionFunctionTests`（票 36 四键）、`P0CsvReverseLookupFunctionTests`（票 37 五键）、`P0ImageLayerQueryFunctionTests`（票 38 两键）、`P0AudioControlFunctionTests`（票 39 五键）、`P0GraphicsPolygonFunctionTests`（票 40 五键）、`P0PilotAutomationTests`（含 `STRFORMCHECK` / `MATCHALL` / `MATCHALLEX`）。
+测试：`P0MathBitEvalFunctionTests`、`P0EvalFunctionTests`、`P0MapCollectionFunctionTests`、`P0SqlFunctionTests`（含平台定时器两键）、`P0FloatReflectionFunctionTests`（票 36 四键）、`P0CsvReverseLookupFunctionTests`（票 37 五键）、`P0ImageLayerQueryFunctionTests`（票 38 两键）、`P0AudioControlFunctionTests`（票 39 五键）、`P0GraphicsPolygonFunctionTests`（票 40 五键）、`P0VariadicArgFunctionTests`（票 41）、`P0PilotAutomationTests`（含 `STRFORMCHECK` / `MATCHALL` / `MATCHALLEX`）。
 
 ---
 

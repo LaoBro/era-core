@@ -65,6 +65,9 @@ internal sealed class CallStack
 
 	public CalledFunction CurrentCalled => functionList[^1];
 
+	/// <summary>票 41：当前调用帧收到的变参实参个数（空栈 0；非变参函数 0）。</summary>
+	public int CurrentVariadicArgCount => functionList.Count == 0 ? 0 : functionList[^1].VariadicArgCount;
+
 	public bool IsFunctionMethod => functionList[CurrentMin].TopLabel.IsMethod;
 
 	/// <summary>式中函数返回值。与 functionList 同生命周期（Clone 历来不复制）。</summary>
@@ -160,6 +163,31 @@ internal sealed class CallStack
 				{
 					if (call.TopLabel.Arg[i].Identifier.IsReference)
 						((ReferenceToken)call.TopLabel.Arg[i].Identifier).SetRef(srcArgs.TransporterRef[i]);
+					else if (srcArgs.Arguments[i] is VariadicArgTerm variadic)
+					{
+						// 票 41：变参槽按声明下标起依次写入，并把本次个数记到调用帧。
+						VariableToken destToken = call.TopLabel.Arg[i].Identifier;
+						int baseIdx = call.TopLabel.Arg[i].getEl1forArg;
+						call.VariadicArgCount = variadic.Count;
+						int requiredSize = baseIdx + variadic.Count;
+						if (requiredSize > destToken.GetLength())
+							((LocalVariableToken)destToken).resize(requiredSize);
+						bool destIsFloat = destToken.VariableType == typeof(double);
+						for (int j = 0; j < variadic.Count; j++)
+						{
+							AExpression arg = variadic[j];
+							if (arg == null)
+								continue;
+							if (destIsFloat)
+								destToken.SetValue(arg.GetOperandType() == typeof(double)
+									? arg.GetFloatValue(exm!)
+									: (double)arg.GetIntValue(exm!), [baseIdx + j]);
+							else if (arg.GetOperandType() == typeof(long))
+								destToken.SetValue(arg.GetIntValue(exm!), [baseIdx + j]);
+							else
+								destToken.SetValue(arg.GetStrValue(exm!), [baseIdx + j]);
+						}
+					}
 					else if (call.TopLabel.Arg[i].Identifier.VariableType == typeof(double))
 						call.TopLabel.Arg[i].SetValue(srcArgs.Arguments[i].GetOperandType() == typeof(double)
 							? srcArgs.TransporterFloat[i]

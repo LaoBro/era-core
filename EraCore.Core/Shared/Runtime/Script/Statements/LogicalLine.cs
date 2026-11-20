@@ -267,6 +267,8 @@ internal class FunctionLabelLine : LogicalLine, IComparable<FunctionLabelLine>
 	public int ArgsLength { get; set; }
 	/// <summary>票 27d：浮点形参（<c>ARGF</c>）最大下标 + 1；-1 = 未声明。事件函数固定 -1。</summary>
 	public int ArgFloatLength { get; set; }
+	/// <summary>票 41：最后一个形参是否为 <c>VARIADIC</c> 变参；-1 = 非变参（默认，行为逐位不变）。</summary>
+	public int VariadicArgIndex { get; set; } = -1;
 
 	//public bool ArgOptional { get; set; }
 	//public bool ArgAutoConvert { get; set; }

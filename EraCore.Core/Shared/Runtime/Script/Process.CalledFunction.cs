@@ -56,6 +56,8 @@ internal sealed class UserDefinedFunctionArgument
 					TransporterRef[i] = (Array)vTerm.Identifier.GetArray();
 
 			}
+			else if (Arguments[i] is VariadicArgTerm)
+				continue; // 票 41：变参槽由 IntoFunction 逐个写入，不走单值转运。
 			else if (Arguments[i].GetOperandType() == typeof(long))
 				TransporterInt[i] = Arguments[i].GetIntValue(exm);
 			else if (Arguments[i].GetOperandType() == typeof(double))
@@ -176,8 +178,11 @@ internal sealed class CalledFunction
 		// b2-irdiskcache：arg 转换读 func.Arg——IR 桩签名延后，必须先做非递归「签名物化」（否则 func.Arg 为 null → NRE）。
 		// 幂等：已解析（Arg != null）或非桩 → no-op；签名物化不动函数体、不跑 setJumpTo → 无递归。
 		ErbLoader.EnsureCalleeSignature(func);
+		// 票 41：变参函数的多余实参打包进最后一个形参，故「实参过多」检查对它不适用。
+		int variadicIndex = func.VariadicArgIndex;
+		int fixedArgCount = variadicIndex >= 0 ? variadicIndex : func.Arg.Length;
 		AExpression[] convertedArg = new AExpression[func.Arg.Length];
-		if (convertedArg.Length < srcArgs.Count)
+		if (variadicIndex < 0 && convertedArg.Length < srcArgs.Count)
 		{
 			errMes = string.Format(trerror.TooManyFuncArgs.Text, func.LabelName);
 			return null!;
@@ -185,7 +190,7 @@ internal sealed class CalledFunction
 		AExpression term;
 		VariableTerm destArg;
 		//bool isString = false;
-		for (int i = 0; i < func.Arg.Length; i++)
+		for (int i = 0; i < fixedArgCount; i++)
 		{
 			term = i < srcArgs.Count ? srcArgs[i] : null!;
 			destArg = func.Arg[i];
@@ -222,37 +227,65 @@ internal sealed class CalledFunction
 					return null!;
 				}
 			}
-			else if (term.GetOperandType() != destArg.GetOperandType())
+			else
 			{
-				if (term.GetOperandType() == typeof(string))
-				{
-					errMes = string.Format(trerror.CanNotConvertStrToInt.Text, func.LabelName, (i + 1).ToString());
+				term = AdaptArgTerm(term, destArg, func.LabelName, i + 1, ref errMes);
+				if (term == null)
 					return null!;
-				}
-				else if (destArg.GetOperandType() == typeof(double) && term.GetOperandType() == typeof(long))
-				{
-					// 票 27d / Skia 对齐：Int → Float 隐式拓宽。
-				}
-				else if (destArg.GetOperandType() == typeof(long) && term.GetOperandType() == typeof(double))
-				{
-					errMes = string.Format(trerror.CanNotConvertFloatToInt.Text, func.LabelName, (i + 1).ToString());
-					return null!;
-				}
-				else
-				{
-					if (!Config.Config.CompatiFuncArgAutoConvert)
-					{
-						errMes = string.Format(trerror.CanNotConvertIntToStr.Text, func.LabelName, (i + 1).ToString(), Config.Config.GetConfigName(ConfigCode.CompatiFuncArgAutoConvert));
-						return null!;
-					}
-					if (tostrMethod == null)
-						tostrMethod = FunctionMethodCreator.GetMethodList()["TOSTR"];
-					term = new FunctionMethodTerm(tostrMethod, [term]);
-				}
 			}
 			convertedArg[i] = term!;
 		}
+		if (variadicIndex >= 0)
+		{
+			destArg = func.Arg[variadicIndex];
+			List<AExpression> variadicArgs = [];
+			for (int i = variadicIndex; i < srcArgs.Count; i++)
+			{
+				AExpression adapted = AdaptArgTerm(srcArgs[i], destArg, func.LabelName, i + 1, ref errMes);
+				if (adapted == null)
+					return null!;
+				variadicArgs.Add(adapted);
+			}
+			convertedArg[variadicIndex] = new VariadicArgTerm(variadicArgs, destArg.Identifier.VariableType);
+		}
 		return new UserDefinedFunctionArgument(convertedArg, func.Arg);
+	}
+
+	/// <summary>
+	/// 票 41：实参 → 形参类型适配（固定形参与变参共用）。类型一致原样返回；
+	/// Str → Int 直接报错；Int → Float 隐式拓宽；Float → Int 报错；Int → Str 按兼容开关走 TOSTR。
+	/// 失败时写 <paramref name="errMes"/> 并返回 null。
+	/// </summary>
+	private static AExpression AdaptArgTerm(AExpression term, VariableTerm destArg, string funcName, int argNo, ref string errMes)
+	{
+		if (term.GetOperandType() == destArg.GetOperandType())
+			return term;
+		if (term.GetOperandType() == typeof(string))
+		{
+			errMes = string.Format(trerror.CanNotConvertStrToInt.Text, funcName, argNo.ToString());
+			return null!;
+		}
+		else if (destArg.GetOperandType() == typeof(double) && term.GetOperandType() == typeof(long))
+		{
+			// 票 27d / Skia 对齐：Int → Float 隐式拓宽。
+		}
+		else if (destArg.GetOperandType() == typeof(long) && term.GetOperandType() == typeof(double))
+		{
+			errMes = string.Format(trerror.CanNotConvertFloatToInt.Text, funcName, argNo.ToString());
+			return null!;
+		}
+		else
+		{
+			if (!Config.Config.CompatiFuncArgAutoConvert)
+			{
+				errMes = string.Format(trerror.CanNotConvertIntToStr.Text, funcName, argNo.ToString(), Config.Config.GetConfigName(ConfigCode.CompatiFuncArgAutoConvert));
+				return null!;
+			}
+			if (tostrMethod == null)
+				tostrMethod = FunctionMethodCreator.GetMethodList()["TOSTR"];
+			term = new FunctionMethodTerm(tostrMethod, [term]);
+		}
+		return term;
 	}
 
 	public LogicalLine CallLabel(LabelDictionary labelDic, string label)
@@ -295,6 +328,9 @@ internal sealed class CalledFunction
 		get { return returnAddress; }
 	}
 	public bool IsEvent { get; private set; }
+
+	/// <summary>票 41：本次调用收到的变参实参个数（0 = 非变参函数或未传多余实参）。</summary>
+	public int VariadicArgCount { get; set; }
 
 	public bool HasSingleFlag
 	{
