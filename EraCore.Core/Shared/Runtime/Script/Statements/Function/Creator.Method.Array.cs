@@ -224,10 +224,11 @@ internal static partial class FunctionMethodCreator
 		{
 			ReturnType = typeof(long);
 			argumentTypeArrayEx = [
-					new ArgTypeList{ ArgTypes = { ArgType.RefIntArray, ArgType.Int, ArgType.Int }, OmitStart = 1 },
+					new ArgTypeList{ ArgTypes = { ArgType.RefIntArray | ArgType.Float, ArgType.Int, ArgType.Int }, OmitStart = 1 },
 				];
 			isCharaRange = false;
 			CanRestructure = false;
+			CanReturnFloat = true;
 		}
 		public SumArrayMethod(bool isChara)
 		{
@@ -237,6 +238,7 @@ internal static partial class FunctionMethodCreator
 				];
 			isCharaRange = isChara;
 			CanRestructure = false;
+			CanReturnFloat = true;
 		}
 		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
 		{
@@ -258,6 +260,27 @@ internal static partial class FunctionMethodCreator
 				return VariableEvaluator.GetArraySumChara(p, index1, index2);
 			}
 		}
+
+		public override double GetFloatValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			VariableTerm varTerm = (VariableTerm)arguments[0];
+			long index1 = (arguments.Count >= 2 && arguments[1] != null) ? arguments[1].GetIntValue(exm) : 0;
+			long index2 = (arguments.Count == 3 && arguments[2] != null) ? arguments[2].GetIntValue(exm) : (isCharaRange ? exm.VEvaluator.CHARANUM : varTerm.GetLastLength());
+
+			FixedVariableTerm p = varTerm.GetFixedVariableTerm(exm);
+			if (!isCharaRange)
+			{
+				p.IsArrayRangeValid(index1, index2, "SUMARRAY", 2L, 3L);
+				return VariableEvaluator.GetArraySumDouble(p, index1, index2);
+			}
+			else
+			{
+				long charaNum = exm.VEvaluator.CHARANUM;
+				if (index1 >= charaNum || index1 < 0 || index2 > charaNum || index2 < 0)
+					throw new CodeEE(string.Format(trerror.CharacterRangeInvalid.Text, Name, index1, index2));
+				return VariableEvaluator.GetArraySumCharaDouble(p, index1, index2);
+			}
+		}
 	}
 
 	private sealed class MaxArrayMethod : FunctionMethod
@@ -269,12 +292,13 @@ internal static partial class FunctionMethodCreator
 		{
 			ReturnType = typeof(long);
 			argumentTypeArrayEx = [
-					new ArgTypeList{ ArgTypes = { ArgType.RefInt1D | ArgType.AllowConstRef, ArgType.Int, ArgType.Int }, OmitStart = 1 },
+					new ArgTypeList{ ArgTypes = { ArgType.RefInt1D | ArgType.Float | ArgType.AllowConstRef, ArgType.Int, ArgType.Int }, OmitStart = 1 },
 				];
 			isCharaRange = false;
 			isMax = true;
 			funcName = "MAXARRAY";
 			CanRestructure = false;
+			CanReturnFloat = true;
 		}
 		public MaxArrayMethod(bool isChara)
 		{
@@ -289,6 +313,7 @@ internal static partial class FunctionMethodCreator
 			else
 				funcName = "MAXARRAY";
 			CanRestructure = false;
+			CanReturnFloat = true;
 		}
 		public MaxArrayMethod(bool isChara, bool isMaxFunc)
 		{
@@ -298,12 +323,13 @@ internal static partial class FunctionMethodCreator
 						new ArgTypeList{ ArgTypes = { ArgType.CharacterData | ArgType.RefInt1D | ArgType.AllowConstRef, ArgType.Int, ArgType.Int }, OmitStart = 1 },
 				]
 				: [
-						new ArgTypeList{ ArgTypes = { ArgType.RefInt1D | ArgType.AllowConstRef, ArgType.Int, ArgType.Int }, OmitStart = 1 },
+						new ArgTypeList{ ArgTypes = { ArgType.RefInt1D | ArgType.Float | ArgType.AllowConstRef, ArgType.Int, ArgType.Int }, OmitStart = 1 },
 				];
 			isCharaRange = isChara;
 			isMax = isMaxFunc;
 			funcName = (isMax ? "MAX" : "MIN") + (isCharaRange ? "C" : "") + "ARRAY";
 			CanRestructure = false;
+			CanReturnFloat = true;
 		}
 		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
 		{
@@ -322,6 +348,26 @@ internal static partial class FunctionMethodCreator
 				if (start >= charaNum || start < 0 || end > charaNum || end < 0)
 					throw new CodeEE(string.Format(trerror.CharacterRangeInvalid.Text, funcName, start, end));
 				return VariableEvaluator.GetMaxArrayChara(p, start, end, isMax);
+			}
+		}
+
+		public override double GetFloatValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			VariableTerm vTerm = (VariableTerm)arguments[0];
+			long start = (arguments.Count > 1 && arguments[1] != null) ? arguments[1].GetIntValue(exm) : 0;
+			long end = (arguments.Count > 2 && arguments[2] != null) ? arguments[2].GetIntValue(exm) : (isCharaRange ? exm.VEvaluator.CHARANUM : vTerm.GetLength());
+			FixedVariableTerm p = vTerm.GetFixedVariableTerm(exm);
+			if (!isCharaRange)
+			{
+				p.IsArrayRangeValid(start, end, funcName, 2L, 3L);
+				return VariableEvaluator.GetMaxArrayDouble(p, start, end, isMax);
+			}
+			else
+			{
+				long charaNum = exm.VEvaluator.CHARANUM;
+				if (start >= charaNum || start < 0 || end > charaNum || end < 0)
+					throw new CodeEE(string.Format(trerror.CharacterRangeInvalid.Text, funcName, start, end));
+				return VariableEvaluator.GetMaxArrayCharaDouble(p, start, end, isMax);
 			}
 		}
 	}
@@ -359,6 +405,11 @@ internal static partial class FunctionMethodCreator
 			if (arguments[0].GetOperandType() == typeof(long))
 			{
 				long targetValue = arguments[1].GetIntValue(exm);
+				return VariableEvaluator.FindElement(p, targetValue, start, end, isExact, isLast);
+			}
+			else if (arguments[0].GetOperandType() == typeof(double))
+			{
+				double targetValue = arguments[1].GetFloatValue(exm);
 				return VariableEvaluator.FindElement(p, targetValue, start, end, isExact, isLast);
 			}
 			else

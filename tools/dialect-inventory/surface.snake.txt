@@ -561,6 +561,7 @@ TINPUT	directive
 TINPUTNF	directive
 TINPUTS	directive
 TINPUTSNF	directive
+TOFLOAT	function
 TOFULL	function
 TOHALF	function
 TOINT	function
@@ -578,6 +579,7 @@ TOOLTIP_SETDURATION	directive
 TOOLTIP_SETFONT	directive
 TOOLTIP_SETFONTSIZE	directive
 TOSTR	function
+TOSTRF	function
 TOUPPER	function
 TRYCALL	directive
 TRYCALLF	directive

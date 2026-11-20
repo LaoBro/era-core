@@ -354,6 +354,57 @@ internal static partial class FunctionMethodCreator
 		}
 	}
 
+	/// <summary>27c（Skia 对齐）：字符串 → 浮点。空串/含全角字符/解析失败返回 0.0。</summary>
+	private sealed class ToFloatMethod : FunctionMethod
+	{
+		public ToFloatMethod()
+		{
+			ReturnType = typeof(double);
+			argumentTypeArrayEx = [new ArgTypeList { ArgTypes = { ArgType.String | ArgType.DisallowVoid } }];
+			CanRestructure = true;
+		}
+
+		public override double GetFloatValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			string str = arguments[0].GetStrValue(exm);
+			if (string.IsNullOrEmpty(str))
+				return 0.0;
+			// 全角文字が入ってるなら無条件で0を返す（TOINT と同口径）
+			if (str.Length < LangManager.GetStrlenLang(str))
+				return 0.0;
+			return double.TryParse(str, out double value) ? value : 0.0;
+		}
+	}
+
+	/// <summary>27c（Skia 对齐）：浮点 → 字符串，可选格式化字符串。</summary>
+	private sealed class ToStrfMethod : FunctionMethod
+	{
+		public ToStrfMethod()
+		{
+			ReturnType = typeof(string);
+			argumentTypeArrayEx = [
+					new ArgTypeList{ ArgTypes = { ArgType.Float | ArgType.DisallowVoid, ArgType.String }, OmitStart = 1 }
+				];
+			CanRestructure = true;
+		}
+
+		public override string GetStrValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			double value = arguments[0].GetFloatValue(exm);
+			if ((arguments.Count < 2) || (arguments[1] == null))
+				return value.ToString();
+			string format = arguments[1].GetStrValue(exm);
+			try
+			{
+				return value.ToString(format);
+			}
+			catch (FormatException)
+			{
+				throw new CodeEE(string.Format(trerror.InvalidFormat.Text, Name, 2));
+			}
+		}
+	}
+
 	enum StrFormType
 	{
 		Upper = 0,
@@ -361,7 +412,6 @@ internal static partial class FunctionMethodCreator
 		Half = 2,
 		Full = 3,
 	};
-
 	private sealed class StrChangeStyleMethod : FunctionMethod
 	{
 		readonly StrFormType strType;

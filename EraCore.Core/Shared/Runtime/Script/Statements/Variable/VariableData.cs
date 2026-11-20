@@ -23,6 +23,7 @@ internal sealed partial class VariableData : IDisposable
 	#endregion
 	readonly long[] dataInteger;
 	readonly string[] dataString;
+	readonly double[] dataFloat;
 	readonly long[][] dataIntegerArray;
 	readonly string[][] dataStringArray;
 	readonly long[][,] dataIntegerArray2D;
@@ -36,6 +37,7 @@ internal sealed partial class VariableData : IDisposable
 	readonly List<CharacterData> characterList;
 	public long[] DataInteger { get { return dataInteger; } }
 	public string[] DataString { get { return dataString; } }
+	public double[] DataFloat { get { return dataFloat; } }
 	public long[][] DataIntegerArray { get { return dataIntegerArray; } }
 	public string[][] DataStringArray { get { return dataStringArray; } }
 	public long[][,] DataIntegerArray2D { get { return dataIntegerArray2D; } }
@@ -111,6 +113,8 @@ internal sealed partial class VariableData : IDisposable
 			dataIntegerArray[i] = new long[constant.VariableIntArrayLength[i]];
 
 		dataString = new string[(int)VariableCode.__COUNT_STRING__];
+		// 27c：浮点标量（RESULTF 等），与 Skia 一样按 __COUNT_STRING__ 分配。
+		dataFloat = new double[(int)VariableCode.__COUNT_STRING__];
 
 		dataStringArray = new string[(int)VariableCode.__COUNT_STRING_ARRAY__][];
 
@@ -173,6 +177,8 @@ internal sealed partial class VariableData : IDisposable
 		varTokenDic.Add("EJAC", new Int1DVariableToken(VariableCode.EJAC, this));
 		varTokenDic.Add("DOWN", new Int1DVariableToken(VariableCode.DOWN, this));
 		varTokenDic.Add("RESULT", new Int1DVariableToken(VariableCode.RESULT, this));
+		if (GlobalStatic.LanguageCapabilities.HasFlag(LanguageCapability.Float))
+			varTokenDic.Add("RESULTF", new FloatScalarVariableToken(VariableCode.RESULTF, this));
 		varTokenDic.Add("COUNT", new Int1DVariableToken(VariableCode.COUNT, this));
 		varTokenDic.Add("TARGET", new Int1DVariableToken(VariableCode.TARGET, this));
 		varTokenDic.Add("ASSI", new Int1DVariableToken(VariableCode.ASSI, this));
@@ -430,7 +436,14 @@ internal sealed partial class VariableData : IDisposable
 	public UserDefinedVariableToken CreateUserDefVariable(UserDefinedVariableData data, DimLineWC dimline)
 	{
 		UserDefinedVariableToken ret;
-		if (data.TypeIsFloat)
+		if (data.Reference)
+		{
+			if (data.TypeIsFloat)
+				ret = new ReferenceFloatScalarToken(data);
+			else
+				throw new ExeEE(trerror.AbnormalVarDeclaration.Text);
+		}
+		else if (data.TypeIsFloat)
 			switch (data.Dimension)
 			{
 				case 1: ret = new StaticFloat1DVariableToken(data); break;
@@ -475,7 +488,11 @@ internal sealed partial class VariableData : IDisposable
 		UserDefinedVariableToken ret;
 		if (data.Reference)//参照型
 		{//すべて非Staticなはず
-			if (data.TypeIsStr)
+			if (data.TypeIsFloat)
+			{
+				ret = new ReferenceFloatScalarToken(data);
+			}
+			else if (data.TypeIsStr)
 			{
 				switch (data.Dimension)
 				{
@@ -620,6 +637,9 @@ internal sealed partial class VariableData : IDisposable
 
 		for (int i = 0; i < dataString.Length; i++)
 			dataString[i] = null!;
+
+		for (int i = 0; i < dataFloat.Length; i++)
+			dataFloat[i] = 0.0;
 
 		for (int i = 0; i < dataStringArray.Length; i++)
 		{

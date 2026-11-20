@@ -4,7 +4,7 @@
 
 机器可读真值：
 
-- 键索引（生成物，全部 637 键）：[`dialect-keys.md`](dialect-keys.md)
+- 键索引（生成物，全部 639 键）：[`dialect-keys.md`](dialect-keys.md)
 - 运行期可见面：`tools/dialect-inventory/surface.v24pure.txt` / `surface.snake.txt`（`eratw` 别名复用 snake 快照）
 - 上游 fork 增量：`dialects/skia.json` + `tools/dialect-inventory/skia-delta-inventory.txt`
 - 门禁：`EraCore.Tests/DialectSurfaceSnapshotTests.cs`、`EraCore.Tests/DialectKeyIndexTests.cs`、`EraCore.Tests/DialectDescriptorMetadataTests.cs`、`EraCore.Tests/DialectForkConsistencyTests.cs`、`EraCore.Tests/DialectProfileTests.cs`
@@ -18,9 +18,9 @@
 | 项 | 值 |
 |---|---|
 | `v24pure` 面 | 567 行（baseline） |
-| `snake` 面 | 637 行 |
-| 方言增量 | **70 键**（18 指令 + 52 函数） |
-| `snake` 模块声明键 | 70 |
+| `snake` 面 | 639 行 |
+| 方言增量 | **72 键**（18 指令 + 54 函数） |
+| `snake` 模块声明键 | 72 |
 | `eratw` 别名 | 复用 `snake`（无独立模块 / 快照） |
 
 `surface.*.txt` 每行 `name<TAB>kind`，按行序号排序，UTF-8 / LF。`kind` 只有 `directive` 与 `function` 两种。
@@ -39,17 +39,20 @@
 
 ---
 
-## 3. 函数（52）
+## 3. 函数（54）
 
-52 条函数的逐键元数据见 [`dialect-keys.md`](dialect-keys.md)。分组与实现：
+54 条函数的逐键元数据见 [`dialect-keys.md`](dialect-keys.md)。分组与实现：
 
 - 数学 / 取整 / 无检查算术（13）：`Creator.Method.Math.cs`
 - 位运算（4）：`Creator.Method.Array.cs` / `BitArrayManager.cs`
 - 字符串动态求值（3，含 `STRFORMCHECK`）：`Creator.Method.General.cs`
+- 字符串 ↔ 浮点（2，`TOFLOAT` / `TOSTRF`，票 27c）：`Creator.Method.String.cs`
 - 数组搜索（2，`MATCHALL` / `MATCHALLEX`）：`Creator.Method.General.cs`
 - 集合 `MAP_*`（6）：`Creator.Method.Map.cs`
 - 平台 / 动画定时器（2）：`Creator.Method.System.cs`
 - SQL（22，桌面闭环）：`Creator.Method.Sql.cs` + `EraCore.Core/Shared/Runtime/Utils/Sql/SqlManager.cs`
+
+签名增量（票 27c，键名不变、面快照不新增）：`SUMARRAY` / `MAXARRAY` / `MINARRAY` / `MATCH` / `FINDELEMENT` / `FINDLASTELEMENT` 增加 `double[]` 分支；求和/最大/最小返回 Float，匹配/查找仍为 Integer。
 
 测试：`P0MathBitEvalFunctionTests`、`P0EvalFunctionTests`、`P0MapCollectionFunctionTests`、`P0SqlFunctionTests`（含平台定时器两键）、`P0PilotAutomationTests`（含 `STRFORMCHECK` / `MATCHALL` / `MATCHALLEX`）。
 

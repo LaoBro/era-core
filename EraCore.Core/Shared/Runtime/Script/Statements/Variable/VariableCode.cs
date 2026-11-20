@@ -123,8 +123,9 @@ internal enum VariableCode
 
 
 	SAVEDATA_TEXT = 0x00 | __STRING__ | __EXTENDED__, //セーブ時につかう文字列。PUTFORMで追加できるやつ
+	RESULTF = 0x01 | __INTEGER__ | __EXTENDED__, //浮動小数点型の戻り値（27c；実行期型は VariableToken.IsFloat）
 	__COUNT_SAVE_STRING__ = 0x00,
-	__COUNT_STRING__ = 0x01,
+	__COUNT_STRING__ = 0x02,
 
 
 
@@ -283,6 +284,7 @@ internal enum VariableCode
 																				   //CVARS3D = 0xFC | __STRING__ | __ARRAY_3D__ | __EXTENDED__,//ユーザー定義変数
 	REF = 0xFD | __INTEGER__ | __ARRAY_1D__ | __EXTENDED__,//参照型
 	REFS = 0xFD | __STRING__ | __ARRAY_1D__ | __EXTENDED__,
+	REFF = 0xFD | __INTEGER__ | __ARRAY_1D__ | __EXTENDED__,//愛称: 浮動小数点型スカラー参照（27c）
 	REF2D = 0xFD | __INTEGER__ | __ARRAY_2D__ | __EXTENDED__,
 	REFS2D = 0xFD | __STRING__ | __ARRAY_2D__ | __EXTENDED__,
 	REF3D = 0xFD | __INTEGER__ | __ARRAY_3D__ | __EXTENDED__,

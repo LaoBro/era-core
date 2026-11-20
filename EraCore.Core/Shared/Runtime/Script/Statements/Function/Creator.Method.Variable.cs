@@ -59,6 +59,11 @@ internal static partial class FunctionMethodCreator
 					long targetValue = arguments[1].GetIntValue(exm);
 					return VariableEvaluator.GetMatch(p, targetValue, start, end);
 				}
+				else if (arguments[0].GetOperandType() == typeof(double))
+				{
+					double targetValue = arguments[1].GetFloatValue(exm);
+					return VariableEvaluator.GetMatch(p, targetValue, start, end);
+				}
 				else
 				{
 					string targetStr = arguments[1].GetStrValue(exm);
@@ -73,6 +78,11 @@ internal static partial class FunctionMethodCreator
 				if (arguments[0].GetOperandType() == typeof(long))
 				{
 					long targetValue = arguments[1].GetIntValue(exm);
+					return VariableEvaluator.GetMatchChara(p, targetValue, start, end);
+				}
+				else if (arguments[0].GetOperandType() == typeof(double))
+				{
+					double targetValue = arguments[1].GetFloatValue(exm);
 					return VariableEvaluator.GetMatchChara(p, targetValue, start, end);
 				}
 				else

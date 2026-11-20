@@ -25,6 +25,45 @@ internal sealed class UserDefinedVariableData
 	public bool CharaData;
 	public bool Const;
 
+	/// <summary>
+	/// 27c（Skia 对齐）：`#REFF`——浮点标量引用（Dimension = 0，不能带尺寸/关键字）。
+	/// </summary>
+	public static UserDefinedVariableData CreateRefScalar(WordCollection wc, bool isStr, bool isFloat, bool isPrivate, ScriptPosition? sc)
+	{
+		UserDefinedVariableData ret = new()
+		{
+			TypeIsStr = isStr,
+			TypeIsFloat = isFloat,
+			Reference = true,
+			Static = false,
+			Private = isPrivate,
+			Dimension = 0,
+			Lengths = [1]
+		};
+		string keyword = isStr ? "#REFS" : isFloat ? "#REFF" : "#REF";
+		if (wc.EOL)
+			throw new CodeEE(string.Format(trerror.NotVarAfterKeyword.Text, keyword), sc);
+		if (wc.Current is not IdentifierWord idw)
+			throw new CodeEE(string.Format(trerror.NotVarAfterKeyword.Text, keyword), sc);
+		wc.ShiftNext();
+		ret.Name = idw.Code;
+		if (!wc.EOL)
+			throw new CodeEE(trerror.CanNotSizedRef.Text, sc);
+		string errMes = "";
+		int errLevel = -1;
+		if (isPrivate)
+			GlobalStatic.IdentifierDictionary.CheckUserPrivateVarName(ref errMes, ref errLevel, ret.Name);
+		else
+			GlobalStatic.IdentifierDictionary.CheckUserVarName(ref errMes, ref errLevel, ret.Name);
+		if (errLevel >= 0)
+		{
+			if (errLevel >= 2)
+				throw new CodeEE(errMes, sc);
+			ParserMediator.Warn(errMes, sc, errLevel);
+		}
+		return ret;
+	}
+
 	//1822 Privateの方もDIMだけ遅延させようとしたけどちょっと課題がおおいのでやめとく
 	public static UserDefinedVariableData Create(DimLineWC dimline)
 	{

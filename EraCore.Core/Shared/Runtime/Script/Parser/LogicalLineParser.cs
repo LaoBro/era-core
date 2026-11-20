@@ -306,6 +306,19 @@ internal static class LogicalLineParser
 							ParserMediator.Warn(trerror.ExtraCharacterAfterSharp.Text, position, 1);
 						break;
 					}
+				case var s when s.Equals("REFF", Config.Config.StringComparison) && GlobalStatic.LanguageCapabilities.HasFlag(LanguageCapability.Float):
+					{
+						var wc = LexicalAnalyzer.Analyse(st, LexEndWith.EoL, LexAnalyzeFlag.AllowAssignment);
+						UserDefinedVariableData data = UserDefinedVariableData.CreateRefScalar(wc, false, true, true, position);
+						if (!label.AddPrivateVariable(data))
+						{
+							ParserMediator.Warn(string.Format(trerror.VarNameAlreadyUsed.Text, data.Name), position, 2);
+							return false;
+						}
+						if (!wc.EOL)
+							ParserMediator.Warn(trerror.ExtraCharacterAfterSharp.Text, position, 1);
+						break;
+					}
 				default:
 					ParserMediator.Warn(trerror.CanNotInterpretSharpLine.Text, position, 1);
 					break;

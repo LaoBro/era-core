@@ -551,6 +551,8 @@ internal abstract class ReferenceToken : UserDefinedVariableToken
 		//{ errMes = "ローカル変数は参照できません"; return false; }
 		if (rother.IsCharacterData && !allowChara)
 		{ errMes = trerror.CanNotRefCharaVar.Text; return false; }
+		if (IsFloat != rother.IsFloat)
+		{ errMes = trerror.CanNotRefDifferentType.Text; return false; }
 		if (IsInteger != rother.IsInteger)
 		{ errMes = trerror.CanNotRefDifferentType.Text; return false; }
 		if (Dimension != rother.Dimension)
@@ -605,6 +607,34 @@ internal abstract class LocalVariableToken : VariableToken
 internal sealed partial class VariableData
 {
 	#region 変数
+	/// <summary>27c（Skia 对齐）：浮点标量系统变量（RESULTF），按 VarCodeInt 索引 dataFloat。</summary>
+	private sealed class FloatScalarVariableToken : VariableToken
+	{
+		readonly double[] array;
+		public FloatScalarVariableToken(VariableCode varCode, VariableData varData)
+			: base(varCode, varData)
+		{
+			CanRestructure = false;
+			VariableType = typeof(double);
+			array = varData.DataFloat;
+			IsForbid = array.Length == 0;
+		}
+		public override double GetFloatValue(ExpressionMediator exm, long[] arguments)
+		{
+			return array[VarCodeInt];
+		}
+
+		public override void SetValue(double value, long[] arguments)
+		{
+			array[VarCodeInt] = value;
+		}
+
+		public override void SetValueAll(double value, int start, int end, int charaPos)
+		{
+			array[VarCodeInt] = value;
+		}
+	}
+
 	private sealed class Int1DVariableToken : VariableToken
 	{
 		public Int1DVariableToken(VariableCode varCode, VariableData varData)
@@ -3048,6 +3078,49 @@ internal sealed partial class VariableData
 						((string[,,])array)[i, j, k] = value;
 		}
 
+	}
+
+	/// <summary>27c（Skia 对齐）：`#REFF` 浮点标量引用（Dimension = 0，指向 double 数组首元素）。</summary>
+	private sealed class ReferenceFloatScalarToken : ReferenceToken
+	{
+		public ReferenceFloatScalarToken(UserDefinedVariableData data)
+			: base(VariableCode.REFF, data)
+		{
+			CanRestructure = false;
+			IsStatic = !data.Private;
+			Dimension = 0;
+		}
+
+		public override double GetFloatValue(ExpressionMediator exm, long[] arguments)
+		{
+			if (array == null)
+				throw new CodeEE(string.Format(trerror.EmptyRefVar.Text, varName));
+			return ((double[])array)[0];
+		}
+
+		public override long GetIntValue(ExpressionMediator exm, long[] arguments)
+			=> (long)GetFloatValue(exm, arguments);
+
+		public override void SetValue(double value, long[] arguments)
+		{
+			if (array == null)
+				throw new CodeEE(string.Format(trerror.EmptyRefVar.Text, varName));
+			((double[])array)[0] = value;
+		}
+
+		public override void SetValue(long value, long[] arguments)
+			=> SetValue((double)value, arguments);
+
+		public override void SetValueAll(double value, int start, int end, int charaPos)
+			=> SetValue(value, null!);
+
+		public override double PlusValue(double value, long[] arguments)
+		{
+			if (array == null)
+				throw new CodeEE(string.Format(trerror.EmptyRefVar.Text, varName));
+			((double[])array)[0] += value;
+			return ((double[])array)[0];
+		}
 	}
 	#endregion
 	#region chara (広域のみ)

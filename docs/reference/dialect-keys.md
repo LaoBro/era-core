@@ -69,8 +69,10 @@
 | `TEXT_BGC_ON` | directive | snake | HTML 文本 | StateOnly | 仅保存 TextBackgroundColor，渲染线未消费 |
 | `TINPUTNF` | directive | snake | NF 输入 | Semantic | 无强制滚动步，与普通等待等价（已知差异） |
 | `TINPUTSNF` | directive | snake | NF 输入 | Semantic | 无强制滚动步，与普通等待等价（已知差异） |
+| `TOFLOAT` | function | snake | 字符串求值 | Semantic | — |
 | `TONEINPUTNF` | directive | snake | NF 输入 | Semantic | 无强制滚动步，与普通等待等价（已知差异） |
 | `TONEINPUTSNF` | directive | snake | NF 输入 | Semantic | 无强制滚动步，与普通等待等价（已知差异） |
+| `TOSTRF` | function | snake | 字符串求值 | Semantic | — |
 | `TRYCALLSTR` | directive | snake | 动态调用 | Semantic | — |
 | `TRYCCALLSTR` | directive | snake | 动态调用 | Semantic | — |
 | `TRYCJUMPSTR` | directive | snake | 动态调用 | Semantic | — |

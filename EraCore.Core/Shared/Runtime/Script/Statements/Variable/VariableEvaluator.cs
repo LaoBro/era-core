@@ -274,6 +274,54 @@ internal sealed class VariableEvaluator : IVariableEvaluator, IDisposable
 		return sum;
 	}
 
+	/// <summary>27c：浮点数组求和（SUMARRAY）。</summary>
+	public static double GetArraySumDouble(FixedVariableTerm p, long index1, long index2)
+	{
+		double sum = 0;
+
+		if (p.Identifier.IsCharacterData)
+		{
+			if (p.Identifier.IsArray1D)
+			{
+				for (int i = (int)index1; i < (int)index2; i++)
+					sum += p.Identifier.GetFloatValue(GlobalStatic.EMediator, [p.Index1, i]);
+			}
+			else
+			{
+				for (int i = (int)index1; i < (int)index2; i++)
+					sum += p.Identifier.GetFloatValue(GlobalStatic.EMediator, [p.Index1, p.Index2, i]);
+			}
+		}
+		else
+		{
+			if (p.Identifier.IsArray1D)
+			{
+				for (int i = (int)index1; i < (int)index2; i++)
+					sum += p.Identifier.GetFloatValue(GlobalStatic.EMediator, [i]);
+			}
+			else if (p.Identifier.IsArray2D)
+			{
+				for (int i = (int)index1; i < (int)index2; i++)
+					sum += p.Identifier.GetFloatValue(GlobalStatic.EMediator, [p.Index1, i]);
+			}
+			else
+			{
+				for (int i = (int)index1; i < (int)index2; i++)
+					sum += p.Identifier.GetFloatValue(GlobalStatic.EMediator, [p.Index1, p.Index2, i]);
+			}
+		}
+
+		return sum;
+	}
+
+	public static double GetArraySumCharaDouble(FixedVariableTerm p, long index1, long index2)
+	{
+		double sum = 0;
+		for (int i = (int)index1; i < (int)index2; i++)
+			sum += p.Identifier.GetFloatValue(GlobalStatic.EMediator, [i, p.Index2]);
+		return sum;
+	}
+
 	public static string GetJoinedStr(FixedVariableTerm p, string delimiter, long index1, long length)
 	{
 		if (p.IsString && p.Identifier.IsArray1D)
@@ -358,6 +406,57 @@ internal sealed class VariableEvaluator : IVariableEvaluator, IDisposable
 		}
 
 		return ret;
+	}
+
+	/// <summary>27c：浮点数组匹配计数（MATCH/CMATCH 的 Float 分支）。</summary>
+	public static long GetMatch(FixedVariableTerm p, double target, long start, long end)
+	{
+		long ret = 0;
+		for (int i = (int)start; i < (int)end; i++)
+			if (p.Identifier.GetFloatValue(GlobalStatic.EMediator, p.Identifier.IsCharacterData ? [p.Index1, i] : [i]) == target)
+				ret++;
+		return ret;
+	}
+
+	public static long GetMatchChara(FixedVariableTerm p, double target, long start, long end)
+	{
+		long ret = 0;
+		for (int i = (int)start; i < (int)end; i++)
+			if (p.Identifier.GetFloatValue(GlobalStatic.EMediator, [i, p.Index2, p.Index3]) == target)
+				ret++;
+		return ret;
+	}
+
+	/// <summary>27c：浮点数组元素查找（FINDELEMENT/FINDLASTELEMENT 的 Float 分支）。</summary>
+	public static long FindElement(FixedVariableTerm p, double target, long start, long end, bool isExact, bool isLast)
+	{
+		double[] array;
+
+		if (start >= end)
+			return -1;
+
+		if (p.Identifier.IsCharacterData)
+			array = (double[])p.Identifier.GetArrayChara((int)p.Index1);
+		else
+			array = (double[])p.Identifier.GetArray();
+
+		if (isLast)
+		{
+			for (int i = (int)end - 1; i >= (int)start; i--)
+			{
+				if (target == array[i])
+					return i;
+			}
+		}
+		else
+		{
+			for (int i = (int)start; i < (int)end; i++)
+			{
+				if (target == array[i])
+					return i;
+			}
+		}
+		return -1;
 	}
 
 	public static long FindElement(FixedVariableTerm p, long target, long start, long end, bool isExact, bool isLast)
@@ -493,6 +592,49 @@ internal sealed class VariableEvaluator : IVariableEvaluator, IDisposable
 			}
 		}
 
+		return ret;
+	}
+
+	/// <summary>27c：浮点数组最大/最小（MAXARRAY/MINARRAY）。</summary>
+	public static double GetMaxArrayDouble(FixedVariableTerm p, long start, long end, bool isMax)
+	{
+		double value;
+		double ret = p.Identifier.GetFloatValue(GlobalStatic.EMediator, p.Identifier.IsCharacterData ? [p.Index1, start] : [start]);
+		for (int i = (int)start + 1; i < (int)end; i++)
+		{
+			value = p.Identifier.GetFloatValue(GlobalStatic.EMediator, p.Identifier.IsCharacterData ? [p.Index1, i] : [i]);
+			if (isMax)
+			{
+				if (value > ret)
+					ret = value;
+			}
+			else
+			{
+				if (value < ret)
+					ret = value;
+			}
+		}
+		return ret;
+	}
+
+	public static double GetMaxArrayCharaDouble(FixedVariableTerm p, long start, long end, bool isMax)
+	{
+		double value;
+		double ret = p.Identifier.GetFloatValue(GlobalStatic.EMediator, [start, p.Index2, p.Index3]);
+		for (int i = (int)start + 1; i < (int)end; i++)
+		{
+			value = p.Identifier.GetFloatValue(GlobalStatic.EMediator, [i, p.Index2, p.Index3]);
+			if (isMax)
+			{
+				if (value > ret)
+					ret = value;
+			}
+			else
+			{
+				if (value < ret)
+					ret = value;
+			}
+		}
 		return ret;
 	}
 
@@ -2553,6 +2695,11 @@ internal sealed class VariableEvaluator : IVariableEvaluator, IDisposable
 	{
 		get { return varData.DataIntegerArray[(int)(VariableCode.RESULT & VariableCode.__LOWERCASE__)][0]; }
 		set { varData.DataIntegerArray[(int)(VariableCode.RESULT & VariableCode.__LOWERCASE__)][0] = value; }
+	}
+	public double RESULTF
+	{
+		get { return varData.DataFloat[(int)(VariableCode.RESULTF & VariableCode.__LOWERCASE__)]; }
+		set { varData.DataFloat[(int)(VariableCode.RESULTF & VariableCode.__LOWERCASE__)] = value; }
 	}
 	public long COUNT
 	{
