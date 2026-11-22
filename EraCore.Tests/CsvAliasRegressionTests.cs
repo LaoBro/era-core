@@ -1,6 +1,8 @@
 using MinorShift.Emuera.Files;
+using System.Linq;
 using System.Threading.Tasks;
 using MinorShift.Emuera;
+using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Script.Statements.Variable;
 using Xunit;
 
@@ -82,5 +84,34 @@ public sealed class CsvAliasRegressionTests
 		Assert.NotNull(dic);
 		Assert.Equal(1, dic["既成事实"]);
 		Assert.Equal(2, dic["信赖度"]);
+	}
+
+	/// <summary>
+	/// 票 49（Skia 9dc1841）：`.als` 口径对齐——重复 index 不再告警（多名一索引合法），
+	/// 别名名首尾空白被 trim，只有重复名字才提示「别名"X"已被定义」后跳过。
+	/// </summary>
+	[Fact]
+	public async Task Alias_file_aligns_with_skia_leniency()
+	{
+		using var h = new LoaderTestHarness();
+		h.WriteCsv("CFLAG.CSV", "1,既成事実\n");
+		h.WriteCsv("CFLAG.als",
+			"1,既成事实\n" +
+			"1,  既成事實  \n" +   // 重复 index：允许，且不再告警
+			"1,既成事实\n" +        // 重复名字：提示后跳过
+			"2, 信赖度 \n");        // 首尾空白：trim 后可解析
+
+		await h.InitializeAsync();
+
+		var dic = GlobalStatic.ConstantData.GetKeywordDictionary(out _, VariableCode.CFLAG, -1, null!);
+
+		Assert.NotNull(dic);
+		Assert.Equal(1, dic["既成事实"]);
+		Assert.Equal(1, dic["既成事實"]);
+		Assert.Equal(2, dic["信赖度"]);
+
+		string screen = string.Join("\n", h.Console.DisplayLineList.Select(line => line?.ToString() ?? ""));
+		Assert.DoesNotContain("元素已经被定义", screen);
+		Assert.Contains("别名\"既成事实\"已被定义", screen);
 	}
 }
