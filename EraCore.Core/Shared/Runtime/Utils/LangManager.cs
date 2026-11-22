@@ -6,11 +6,40 @@ namespace MinorShift.Emuera.Runtime.Utils;
 internal static class LangManager
 {
 	static Encoding lang = null!;
+	static Encoding japanese = null!;
 
 	public static void setEncode(int code)
 	{
 		Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 		lang = Encoding.GetEncoding(code);
+		japanese = Encoding.GetEncoding(932);
+	}
+
+	/// <summary>
+	/// 票 45（Skia 12.1.0）：非日文编码下逐字符取字节数。
+	/// 当前编码往返失败（如 CJK 字符落到 '?'）时回退 CP932，两者都失败才用当前编码字节数。
+	/// </summary>
+	private static int GetByteCountLang(string str)
+	{
+		int length = 0;
+		foreach (char c in str)
+		{
+			string value = c.ToString();
+			byte[] bytes = lang.GetBytes(value);
+			if (lang.GetString(bytes) == value)
+			{
+				length += bytes.Length;
+				continue;
+			}
+			byte[] japaneseBytes = japanese.GetBytes(value);
+			if (japanese.GetString(japaneseBytes) == value)
+			{
+				length += japaneseBytes.Length;
+				continue;
+			}
+			length += bytes.Length;
+		}
+		return length;
 	}
 
 	public static int GetStrlenLang(string str)
@@ -19,7 +48,7 @@ internal static class LangManager
 		{
 			return str.Length;
 		}
-		return lang.GetByteCount(str);
+		return GetByteCountLang(str);
 	}
 	public static int GetUFTIndex(string str, int LangIndex)
 	{
@@ -32,7 +61,7 @@ internal static class LangManager
 		int JIScnt = 0;
 		for (int i = 0; i < str.Length; i++)
 		{
-			JIScnt += lang.GetByteCount(str[UTFcnt].ToString());
+			JIScnt += GetByteCountLang(str[UTFcnt].ToString());
 			UTFcnt++;
 			if (JIScnt >= LangIndex)
 				break;
@@ -61,7 +90,7 @@ internal static class LangManager
 		{
 			for (int i = 0; i < str.Length; i++)
 			{
-				JIScnt += lang.GetByteCount(str[UTFcnt].ToString());
+				JIScnt += GetByteCountLang(str[UTFcnt].ToString());
 				UTFcnt++;
 				if (JIScnt >= startindex)
 					break;
@@ -74,7 +103,7 @@ internal static class LangManager
 		while (true)
 		{
 			ret.Append(str[UTFcnt]);
-			JIScnt += lang.GetByteCount(str[UTFcnt].ToString());
+			JIScnt += GetByteCountLang(str[UTFcnt].ToString());
 			UTFcnt++;
 			if (JIScnt >= length)
 				break;

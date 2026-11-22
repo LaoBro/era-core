@@ -1313,6 +1313,9 @@ internal sealed partial class VariableData
 
 	private sealed class RandToken : PseudoVariableToken
 	{
+		// 票 45（Skia 12.2.0）：RAND:0 及负数不再抛 CodeEE 中断，钳制为返回 0；
+		// 仅提示一次避免刷屏（静态标志跨会话，与 Skia 一致）。
+		private static bool clampedWarned;
 		public RandToken(VariableCode varCode, VariableData varData)
 			: base(varCode, varData)
 		{
@@ -1321,7 +1324,15 @@ internal sealed partial class VariableData
 		{
 			long i = arguments[0];
 			if (i <= 0)
-				throw new CodeEE(string.Format(trerror.RandArgIsNegative.Text, i.ToString()));
+			{
+				if (!clampedWarned)
+				{
+					clampedWarned = true;
+					exm.Console.PrintError(string.Format(trerror.RandArgIsNegative.Text, i.ToString())
+						+ string.Format(trerror.RandClamped.Text, "0"));
+				}
+				return 0L;
+			}
 			return exm.VEvaluator.GetNextRand(i);
 		}
 	}

@@ -13,6 +13,7 @@ using MinorShift.Emuera.UI.Game;
 using MinorShift.Emuera.UI.Game.Image;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using trerror = MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.Error;
 
@@ -117,11 +118,15 @@ internal static partial class FunctionMethodCreator
 
 	private sealed class RandMethod : FunctionMethod
 	{
+		// 票 45（Skia 12.2.0）：RAND(min,max) 的 max <= min 不再抛 CodeEE 中断，
+		// 钳制为返回下界 min；仅提示一次（int / float 共用同一标志）。
+		private static bool clampedWarned;
 		public RandMethod()
 		{
 			ReturnType = typeof(long);
+			CanReturnFloat = true;
 			argumentTypeArrayEx = [
-					new ArgTypeList{ ArgTypes = { ArgType.Int, ArgType.Int}, OmitStart = 1 }
+					new ArgTypeList{ ArgTypes = { ArgType.Any, ArgType.Any}, OmitStart = 1 }
 				];
 			CanRestructure = false;
 		}
@@ -140,12 +145,39 @@ internal static partial class FunctionMethodCreator
 			}
 			if (max <= min)
 			{
-				if (min == 0)
-					throw new CodeEE(string.Format(trerror.NegativeMaximum.Text, Name, max));
-				else
-					throw new CodeEE(string.Format(trerror.MaximumLowerThanMinimum.Text, Name, max));
+				WarnClamped(exm, max, min.ToString(CultureInfo.InvariantCulture));
+				return min;
 			}
 			return exm.VEvaluator.GetNextRand(max - min) + min;
+		}
+
+		public override double GetFloatValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			double min = 0.0;
+			double max;
+			if (arguments.Count == 1)
+				max = ToDouble(arguments[0], exm);
+			else
+			{
+				if (arguments[0] != null)
+					min = ToDouble(arguments[0], exm);
+				max = ToDouble(arguments[1], exm);
+			}
+			if (max <= min)
+			{
+				WarnClamped(exm, max, min.ToString(CultureInfo.InvariantCulture));
+				return min;
+			}
+			return exm.VEvaluator.GetNextRandDouble() * (max - min) + min;
+		}
+
+		private void WarnClamped(ExpressionMediator exm, double max, string minText)
+		{
+			if (clampedWarned)
+				return;
+			clampedWarned = true;
+			exm.Console.PrintError(string.Format(trerror.MaximumLowerThanMinimum.Text, Name, max)
+				+ string.Format(trerror.RandClamped.Text, minText));
 		}
 	}
 

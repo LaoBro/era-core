@@ -405,6 +405,8 @@ internal static partial class FunctionMethodCreator
 				throw new CodeEE(string.Format(trerror.ArgIsTooLarge.Text, Name, 1, target));
 			EraDataResult result = exm.VEvaluator.CheckData((int)target, type);
 			exm.VEvaluator.RESULTS = result.DataMes;
+			// 票 45（Skia 12.1.0）：CHKDATA 通过 RESULT:1 暴露存档版本（仅 int 变体，与 Skia 一致）。
+			exm.VEvaluator.RESULT_ARRAY[1] = result.Version;
 			return (long)result.State;
 		}
 	}

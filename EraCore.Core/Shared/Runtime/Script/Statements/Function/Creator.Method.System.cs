@@ -923,12 +923,25 @@ internal static partial class FunctionMethodCreator
 		}
 		public override string GetStrValue(ExpressionMediator exm, List<AExpression> arguments)
 		{
-			//修正に失敗したので差し戻す
+			// 票 45（Skia 6.2.0）：负数从最下面数，-1 = 最后一行；正数行为保持不变。
 			long num = arguments[0].GetIntValue(exm);
-			if (num < 0 || num >= exm.Console.DisplayLineList.Count)
+			int count = exm.Console.DisplayLineList.Count;
+			if (count == 0)
 				return "";
+			int index;
+			if (num >= 0)
+			{
+				if (num >= count)
+					return "";
+				index = (int)num;
+			}
 			else
-				return exm.Console.DisplayLineList[(int)num].ToString();
+			{
+				if (num == long.MinValue || -num > count)
+					return "";
+				index = count + (int)num;
+			}
+			return exm.Console.DisplayLineList[index].ToString();
 		}
 	}
 

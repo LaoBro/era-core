@@ -380,6 +380,7 @@ Emuera的历史版本有效的内容变得无效等等现象而设置的。
     <tr id="Error.GetSizePseudoVar"><![CDATA[试图获取伪变量"{0}"的长度]]></tr>
     <tr id="Error.GetDimPseudoVar"><![CDATA[试图获取伪变量"{0}"的数组数据]]></tr>
     <tr id="Error.RandArgIsNegative"><![CDATA[RAND不能指定0以下的值({0})]]></tr>
+    <tr id="Error.RandClamped"><![CDATA[（已钳制为 {0}，不再中断运行）]]></tr>
     <tr id="Error.SpriteNameAlreadyUsed"><![CDATA[同名的资源文件已经存在:{0}]]></tr>
     <tr id="Error.NotDeclaredAnimationSpriteSize"><![CDATA[动画sprite的大小尚未定义]]></tr>
     <tr id="Error.InvalidAnimationSpriteSize"><![CDATA[动画sprite的大小无效]]></tr>

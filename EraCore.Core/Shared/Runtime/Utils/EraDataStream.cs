@@ -21,6 +21,8 @@ internal sealed class EraDataResult
 {
 	public EraDataState State = EraDataState.OK;
 	public string DataMes = "";
+	// 票 45（Skia 12.1.0）：CHKDATA 通过 RESULT:1 暴露存档版本；仅 OK / VIRSION_ERROR 有值。
+	public long Version;
 }
 
 /// <summary>

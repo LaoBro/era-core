@@ -610,6 +610,7 @@ internal sealed partial class Lang
 		[Managed] public static TranslatableString GetSizePseudoVar { get; } = new TranslatableString("擬似変数\"{0}\"の長さを取得しようとしました");
 		[Managed] public static TranslatableString GetDimPseudoVar { get; } = new TranslatableString("擬似変数\"{0}\"の配列を取得しようとしました");
 		[Managed] public static TranslatableString RandArgIsNegative { get; } = new TranslatableString("RANDの引数に0以下の値({0})が指定されました");
+		[Managed] public static TranslatableString RandClamped { get; } = new TranslatableString("（{0}に補正しました。処理は中断しません）");
 		[Managed] public static TranslatableString SpriteNameAlreadyUsed { get; } = new TranslatableString("同名のリソースがすでに作成されています:{0}");
 		[Managed] public static TranslatableString NotDeclaredAnimationSpriteSize { get; } = new TranslatableString("アニメーションスプライトのサイズが宣言されていません");
 		[Managed] public static TranslatableString InvalidAnimationSpriteSize { get; } = new TranslatableString("アニメーションスプライトのサイズの指定が適切ではありません");

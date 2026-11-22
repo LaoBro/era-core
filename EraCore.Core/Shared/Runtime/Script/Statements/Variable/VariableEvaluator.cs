@@ -66,6 +66,19 @@ internal sealed class VariableEvaluator : IVariableEvaluator, IDisposable
 		}
 	}
 
+	/// <summary>票 45（Skia 12.2.0）：浮点 RAND 用 [0,1) 双精度随机数。</summary>
+	public double GetNextRandDouble()
+	{
+		if (JSONConfig.Data.UseNewRandom)
+		{
+			return _newRand.NextDouble();
+		}
+		else
+		{
+			return rand.NextDouble();
+		}
+	}
+
 	public long getPalamLv(long pl, long maxlv)
 	{
 		for (int i = 0; i < (int)maxlv; i++)
@@ -2050,10 +2063,12 @@ internal sealed class VariableEvaluator : IVariableEvaluator, IDisposable
 				{
 					result.State = EraDataState.VIRSION_ERROR;
 					result.DataMes = trerror.DifferentVersion.Text;
+					result.Version = version;
 					return result;
 				}
 				result.State = EraDataState.OK;
 				result.DataMes = reader.ReadString();
+				result.Version = version;
 				return result;
 				//result.State = EraDataState.ETC_ERROR;
 				//result.DataMes = "セーブデータが壊れています";
@@ -2077,10 +2092,12 @@ internal sealed class VariableEvaluator : IVariableEvaluator, IDisposable
 			{
 				result.State = EraDataState.VIRSION_ERROR;
 				result.DataMes = trerror.DifferentVersion.Text;
+				result.Version = version;
 				return result;
 			}
 			result.State = EraDataState.OK;
 			result.DataMes = bReader.ReadString();
+			result.Version = version;
 			return result;
 		}
 		catch (FileEE fee)

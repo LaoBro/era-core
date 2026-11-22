@@ -383,6 +383,7 @@ Settings apply only at start]]></tr>
     <tr id="Error.GetSizePseudoVar"><![CDATA[Attempted to get the size of a pseudo variable "{0}"]]></tr>
     <tr id="Error.GetDimPseudoVar"><![CDATA[Attempted to get the array data of a pseudo variable "{0}"]]></tr>
     <tr id="Error.RandArgIsNegative"><![CDATA[RAND was specified with a value less than or equal to 0 ({0})]]></tr>
+    <tr id="Error.RandClamped"><![CDATA[ (clamped to {0}; execution continues)]]></tr>
     <tr id="Error.SpriteNameAlreadyUsed"><![CDATA[A resource file with the same name already exists:{0}]]></tr>
     <tr id="Error.NotDeclaredAnimationSpriteSize"><![CDATA[The size of the animation sprite was not declared]]></tr>
     <tr id="Error.InvalidAnimationSpriteSize"><![CDATA[The size of the animation sprite is invalid]]></tr>
