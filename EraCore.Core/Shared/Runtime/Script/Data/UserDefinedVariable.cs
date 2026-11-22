@@ -387,9 +387,9 @@ internal sealed class UserDefinedVariableData
 
 		ret.Private = isPrivate;
 		ret.Dimension = sizeNum.Count;
-		// 票 47：常数表一维先落地；二维布局（@1/@2）由票 48 实现。
-		if (ret.ConstTable && ret.Dimension > 1)
-			throw new CodeEE("常数表当前只支持一维数组（二维见后续票）：" + ret.Name, sc);
+		// 票 48（Skia 18.0.0）：常数表支持一维（三列表）与二维（@1/@2 布局）。
+		if (ret.ConstTable && ret.Dimension > 2)
+			throw new CodeEE("常数表只支持一维与二维数组", sc);
 		// 票 46（Skia 18.0.0）：#DIMF 与 #DIM/#DIMS 一样支持一至三维。
 		if (ret.Const && !ret.ConstTable && ret.Dimension > 1)
 			throw new CodeEE(trerror.CanNotDeclareConstArray.Text);

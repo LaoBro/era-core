@@ -148,7 +148,7 @@ public sealed class P0ConstTable1DTests
 		Assert.Contains("ERH", DeclareError(h, "CONSTTABLE MYTAB, 3", isPrivate: true).Message);
 		Assert.Contains("尺寸", DeclareError(h, "CONSTTABLE MYTAB", isPrivate: false).Message);
 		Assert.Contains("内联初始值", DeclareError(h, "CONSTTABLE MYTAB, 3 = 1,2,3", isPrivate: false).Message);
-		Assert.Contains("一维", DeclareError(h, "CONSTTABLE MYTAB, 2, 2", isPrivate: false).Message);
+		Assert.Contains("一维与二维", DeclareError(h, "CONSTTABLE MYTAB, 2, 2, 2", isPrivate: false).Message);
 		Assert.Contains("CONSTTABLE", DeclareError(h, "CONST CONSTTABLE MYTAB, 3", isPrivate: false).Message);
 	}
 

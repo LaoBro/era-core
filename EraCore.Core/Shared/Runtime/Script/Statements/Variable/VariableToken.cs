@@ -2183,19 +2183,36 @@ internal sealed partial class VariableData
 			size.x = data.Lengths[0];
 			size.y = data.Lengths[1];
 			IsStatic = true;
-			//array = new Int64[sizes[0], sizes[1]];
+			// 票 48：常数表（二维）的默认值按行优先展开。
+			defArray = data.DefaultInt;
 		}
 		(int x, int y) size = (0, 0);
 		long[,] array = null!;
+		long[] defArray = null!;
 
 		void IfNullInitArray()
 		{
-			array ??= new long[sizes[0], sizes[1]];
+			if (array == null)
+			{
+				array = new long[sizes[0], sizes[1]];
+				RestoreDefault();
+			}
+		}
+		void RestoreDefault()
+		{
+			Array.Clear(array, 0, totalSize);
+			if (defArray == null)
+				return;
+			int n = Math.Min(defArray.Length, totalSize);
+			for (int k = 0; k < n; k++)
+				array[k / sizes[1], k % sizes[1]] = defArray[k];
 		}
 		public override void SetDefault()
 		{
-			IfNullInitArray();
-			Array.Clear(array, 0, totalSize);
+			if (array == null)
+				IfNullInitArray();
+			else
+				RestoreDefault();
 		}
 		public override long GetIntValue(ExpressionMediator exm, long[] arguments)
 		{
@@ -2392,23 +2409,37 @@ internal sealed partial class VariableData
 			size.x = data.Lengths[0];
 			size.y = data.Lengths[1];
 			IsStatic = true;
-			//array = new string[sizes[0], sizes[1]];
+			// 票 48：常数表（二维）的默认值按行优先展开。
+			defArray = data.DefaultStr;
 		}
 		string[,] array = null!;
 		(int x, int y) size;
+		string[] defArray = null!;
 
 		void IfNullInitArray()
 		{
 			if (array == null)
 			{
 				array = new string[size.x, size.y];
+				RestoreDefault();
 			}
+		}
+		void RestoreDefault()
+		{
+			Array.Clear(array, 0, totalSize);
+			if (defArray == null)
+				return;
+			int n = Math.Min(defArray.Length, totalSize);
+			for (int k = 0; k < n; k++)
+				array[k / sizes[1], k % sizes[1]] = defArray[k];
 		}
 
 		public override void SetDefault()
 		{
-			IfNullInitArray();
-			Array.Clear(array, 0, totalSize);
+			if (array == null)
+				IfNullInitArray();
+			else
+				RestoreDefault();
 		}
 		public override string GetStrValue(ExpressionMediator exm, long[] arguments)
 		{
