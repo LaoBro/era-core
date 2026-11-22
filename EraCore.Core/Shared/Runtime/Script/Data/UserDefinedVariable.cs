@@ -349,8 +349,7 @@ internal sealed class UserDefinedVariableData
 
 		ret.Private = isPrivate;
 		ret.Dimension = sizeNum.Count;
-		if (dimf && ret.Dimension != 1)
-			throw new CodeEE(string.Format(trerror.CanNotSpecifiedWith.Text, "#DIMF", trerror.MultidimType.Text), sc);
+		// 票 46（Skia 18.0.0）：#DIMF 与 #DIM/#DIMS 一样支持一至三维。
 		if (ret.Const && ret.Dimension > 1)
 			throw new CodeEE(trerror.CanNotDeclareConstArray.Text);
 		if (ret.CharaData && ret.Dimension > 2)

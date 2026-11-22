@@ -95,6 +95,7 @@
 | 多边形 / 动态精灵 | `G_POLYGON_POINT_ADD` `G_POLYGON_POINT_CLEAR` `G_POLYGON_DRAW` `G_POLYGON_FILL` `SPRITECREATEFROMFILE` | `GraphicsImage` 为 no-op 桩：只做参数校验与确定性返回（已创建 1 / 否则 0；精灵恒 0），不绘制、不建精灵（`AcceptedNoOp`） | `dialect-keys.md` |
 | NF 输入族 | — | 无强制滚动步，与普通等待等价（真语义，Note 记录） | `dialect-keys.md` |
 | `EXISTVAR` 两参 | — | 向后兼容并入 baseline，`v24pure` 也获得 `mode≠0`；面快照无 diff | `Creator.Method.General.cs` |
+| `#DIMF` 多维 | — | 票 46 起与 `#DIM/#DIMS` 一致支持一至三维（普通 / `SAVEDATA` / `GLOBAL` / 函数内 `STATIC`·`DYNAMIC`）；`#DIMF CHARADATA` 仍拒绝、`#REFF` 仍为标量引用 | `UserDefinedVariable.cs` / `VariableData.cs` |
 | eraTW 循环外 `CONTINUE` | — | 游戏数据缺陷，三份参考引擎同款告警 | `tests/games.json` 的 `knownLv2` |
 
 ---

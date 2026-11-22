@@ -449,6 +449,8 @@ internal sealed partial class VariableData : IDisposable
 			switch (data.Dimension)
 			{
 				case 1: ret = new StaticFloat1DVariableToken(data); break;
+				case 2: ret = new StaticFloat2DVariableToken(data); break;
+				case 3: ret = new StaticFloat3DVariableToken(data); break;
 				default: throw new ExeEE(trerror.AbnormalVarDeclaration.Text);
 			}
 		else if (data.TypeIsStr)
@@ -522,6 +524,8 @@ internal sealed partial class VariableData : IDisposable
 				switch (data.Dimension)
 				{
 					case 1: ret = new StaticFloat1DVariableToken(data); break;
+					case 2: ret = new StaticFloat2DVariableToken(data); break;
+					case 3: ret = new StaticFloat3DVariableToken(data); break;
 					default: throw new ExeEE(trerror.AbnormalVarDeclaration.Text);
 				}
 			}
@@ -556,6 +560,8 @@ internal sealed partial class VariableData : IDisposable
 				switch (data.Dimension)
 				{
 					case 1: ret = new PrivateFloat1DVariableToken(data); break;
+					case 2: ret = new PrivateFloat2DVariableToken(data); break;
+					case 3: ret = new PrivateFloat3DVariableToken(data); break;
 					default: throw new ExeEE(trerror.AbnormalVarDeclaration.Text);
 				}
 			}
