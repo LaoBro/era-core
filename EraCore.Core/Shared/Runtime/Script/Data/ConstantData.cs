@@ -1041,6 +1041,21 @@ internal sealed class ConstantData
 		foreach (var pair in preDict)
 			dict.Add(pair.Key, pair.Value.num);
 		erdNameToIntDics.Add(varname, dict);
+
+		// 票 44（Skia 16.1.0 / 8.0.0）：用户变量同样支持同名 .als 别名，且必须写进
+		// **该变量自己的**逆引字典。此前这些别名被 loadDataTo 灌进 aliases[ERD_NAMES_INDEX]
+		// （一张从不被读取的全局表），别名静默不可解析、跨变量同名时还会互相顶掉。
+		// 2D/3D 变量在这里的 varname 是 `名称@N`，filepath 也是 `名称@N.CSV`，
+		// 按 filepath 派生 .als 即可与 EE_ERD 的 `名称@N.als` 惯例一致。
+		var dirAccessor = _dirAccessor ?? Program.DirAccessor;
+		foreach (var filepath in filepaths)
+		{
+			var aliasName = SafPath.GetLogicalFileNameWithoutExtension(filepath) + ".als";
+			var aliasParent = dirAccessor.GetParentPath(filepath);
+			var aliasPath = dirAccessor.CombinePath(aliasParent, aliasName);
+			if (SafCompat.FileExists(aliasPath))
+				loadAliasesForUserDefined(aliasPath, dict, varlength);
+		}
 	}
 
 	#region EE_重複定義の確認
@@ -2100,6 +2115,12 @@ internal sealed class ConstantData
 			eReader.Close();
 		}
 
+		// 票 44（Skia 16.1.0）：用户变量（ERD_NAMES_INDEX）的 .als 不由这里加载——
+		// 它必须写进该变量自己的字典，见 UserDefineLoadData → loadAliasesForUserDefined。
+		// 继续灌进 aliases[ERD_NAMES_INDEX] 只会得到一张从不被读取的表。
+		if (targetIndex == ERD_NAMES_INDEX)
+			return;
+
 		var aliasName = SafPath.GetLogicalFileNameWithoutExtension(csvPath) + ".als";
 		var aliasParent = dirAccessor!.GetParentPath(csvPath);
 		var aliasPath = dirAccessor.CombinePath(aliasParent, aliasName);
@@ -2174,6 +2195,65 @@ internal sealed class ConstantData
 		}
 
 
+	}
+
+	/// <summary>
+	/// 票 44（Skia 16.1.0）：把用户变量同名 .als 的别名注入**该变量自己的**逆引字典。
+	/// 与 <see cref="loadAliases"/> 的差异：正式名优先（别名不覆盖已登记的键），
+	/// 且越界索引给 Lv1 警告后跳过该行（用户变量长度由声明决定，别名越界必然无法解析）。
+	/// </summary>
+	private void loadAliasesForUserDefined(string aliasPath, Dictionary<string, int> targetDict, int length)
+	{
+		EraStreamReader eReader = new(false);
+		if (!eReader.Open(aliasPath) && output != null)
+		{
+			output.PrintError(string.Format(trerror.FailedOpenFile.Text, eReader.Filename));
+			return;
+		}
+		ScriptPosition? position = null;
+		try
+		{
+			CharStream st = null!;
+			while ((st = eReader.ReadEnabledLine()) != null)
+			{
+				position = new ScriptPosition(eReader.Filename, eReader.LineNo);
+				string[] tokens = st.Substring().Split(',');
+				if (tokens.Length < 2)
+				{
+					ParserMediator.Warn(trerror.MissingComma.Text, position, 1);
+					continue;
+				}
+				if (!int.TryParse(tokens[0], out int index))
+				{
+					ParserMediator.Warn(trerror.FirstValueCanNotConvertToInt.Text, position, 1);
+					continue;
+				}
+				if (index < 0 || length <= index)
+				{
+					ParserMediator.Warn(string.Format(trerror.OoRArray.Text, index.ToString()), position, 1);
+					continue;
+				}
+				string alias = tokens[1].Trim();
+				if (string.IsNullOrEmpty(alias))
+					continue;
+				// 正式名优先：CSV/ERD 已登记的键不被别名覆盖。
+				targetDict.TryAdd(alias, index);
+			}
+		}
+		catch
+		{
+#if !HEADLESS
+			System.Media.SystemSounds.Hand.Play();
+#endif
+			if (position != null)
+				ParserMediator.Warn(trerror.UnexpectedError.Text, position, 3);
+			else
+				output!.PrintError(trerror.UnexpectedError.Text);
+		}
+		finally
+		{
+			eReader.Close();
+		}
 	}
 }
 
