@@ -42,6 +42,9 @@ internal sealed class ErhLoader
 	/// <returns></returns>
 	public bool LoadHeaderFiles(string headerDir, bool displayReport)
 	{
+		// 票 47：常数表声明只在 ERH 里读；重新解析 ERH 时文件索引必须失效，
+		// 否则新增/改名的表文件会被旧索引挡住。
+		ConstArrayTable.ClearFileIndex();
 		List<KeyValuePair<string, string>>? headerFiles = Preload.GetFilesFromCache(headerDir, ".ERH", "ErhLoader");
 		if (headerFiles == null)
 			headerFiles = Preload.EnumerateFilesFromTree(headerDir, env.DirAccessor, ".ERH");
@@ -327,7 +330,9 @@ internal sealed class ErhLoader
 							key = data.Name.ToUpper();
 							if (erdFileNames.TryGetValue(key, out var info))
 							{
-								GlobalStatic.ConstantData.UserDefineLoadData(info, data.Name, data.Lengths[0], Config.Config.DisplayReport, dimline.SC);
+								var files = WithoutConstTable(info, data.ConstTableConsumed);
+								if (files != null)
+									GlobalStatic.ConstantData.UserDefineLoadData(files, data.Name, data.Lengths[0], Config.Config.DisplayReport, dimline.SC);
 							}
 #if HEADLESS
 							// 无头模式下无需处理 UI 消息队列
@@ -342,7 +347,9 @@ internal sealed class ErhLoader
 								key = data.Name.ToUpper() + "@" + dim;
 								if (erdFileNames.TryGetValue(key, out var info))
 								{
-									GlobalStatic.ConstantData.UserDefineLoadData(info, data.Name + "@" + dim, data.Lengths[dim - 1], Config.Config.DisplayReport, dimline.SC);
+									var files = WithoutConstTable(info, data.ConstTableConsumed);
+									if (files != null)
+										GlobalStatic.ConstantData.UserDefineLoadData(files, data.Name + "@" + dim, data.Lengths[dim - 1], Config.Config.DisplayReport, dimline.SC);
 								}
 #if HEADLESS
 								// 无头模式下无需处理 UI 消息队列
@@ -358,7 +365,9 @@ internal sealed class ErhLoader
 								key = data.Name.ToUpper() + "@" + dim;
 								if (erdFileNames.TryGetValue(key, out var info))
 								{
-									GlobalStatic.ConstantData.UserDefineLoadData(info, data.Name + "@" + dim, data.Lengths[dim - 1], Config.Config.DisplayReport, dimline.SC);
+									var files = WithoutConstTable(info, data.ConstTableConsumed);
+									if (files != null)
+										GlobalStatic.ConstantData.UserDefineLoadData(files, data.Name + "@" + dim, data.Lengths[dim - 1], Config.Config.DisplayReport, dimline.SC);
 								}
 #if HEADLESS
 								// 无头模式下无需处理 UI 消息队列
@@ -369,6 +378,16 @@ internal sealed class ErhLoader
 						}
 					}
 					#endregion
+					if (data.ConstTableNames != null)
+					{
+						// 补充表的冲突与坏格在 Load 里已按主表优先判定，这里统一以 Lv1 报告。
+						if (data.ConstTableWarnings != null)
+							foreach (string nameWarning in data.ConstTableWarnings)
+								ParserMediator.Warn(nameWarning, dimline.SC, 1);
+						GlobalStatic.ConstantData.RegisterConstArrayNames(data.Name, data.Dimension, data.ConstTableNames);
+						if (Config.Config.DisplayReport && data.ConstTablePath != null)
+							output.PrintSystemLine(string.Format(trsl.LoadingFile.Text, data.ConstTablePath));
+					}
 
 				}
 				catch (IdentifierNotFoundCodeEE e)
@@ -397,6 +416,19 @@ internal sealed class ErhLoader
 		return noError;
 	}
 	#region EE_ERD
+
+	/// <summary>票 47：剔除常数表已解析的文件，EE_ERD 侧不再重复解析。</summary>
+	private static List<string>? WithoutConstTable(List<string>? list, List<string>? consumed)
+	{
+		if (list == null || consumed == null || consumed.Count == 0)
+			return list;
+		var used = new HashSet<string>(consumed, StringComparer.OrdinalIgnoreCase);
+		var ret = new List<string>();
+		foreach (string path in list)
+			if (!used.Contains(path))
+				ret.Add(path);
+		return ret.Count == 0 ? null : ret;
+	}
 
 	private Dictionary<string, List<string>> erdFileNames = null!;
 

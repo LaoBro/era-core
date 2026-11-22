@@ -61,7 +61,8 @@ internal sealed class VariableStrArgTerm : AExpression
 		if (dic == null)
 			#region EE_ERD
 			// dic = exm.VEvaluator.Constant.GetKeywordDictionary(out errPos, parentCode, index);
-			dic = exm.VEvaluator.Constant.GetKeywordDictionary(out errPos, parentCode, index, null!);
+			// 票 47：名称下标必须带上所属变量名，常数表名称不依赖 USE ERD，靠 varname 才能查到。
+			dic = exm.VEvaluator.Constant.GetKeywordDictionary(out errPos, parentCode, index, varname);
 		#endregion
 
 		strTerm = strTerm.Restructure(exm);

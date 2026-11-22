@@ -24,6 +24,12 @@ internal sealed class UserDefinedVariableData
 	public bool Private;
 	public bool CharaData;
 	public bool Const;
+	// 票 47（Skia 18.0.0）：CONSTTABLE 常数表。
+	public bool ConstTable;
+	public string? ConstTablePath;
+	public Dictionary<string, int>[]? ConstTableNames;
+	public List<string>? ConstTableWarnings;
+	public List<string>? ConstTableConsumed;
 
 	/// <summary>
 	/// 27c（Skia 对齐）：`#REFF`——浮点标量引用（Dimension = 0，不能带尺寸/关键字）。
@@ -92,7 +98,29 @@ internal sealed class UserDefinedVariableData
 			//TODO ifの数があたまわるい なんとかしたい
 			switch (keyword)
 			{
+				case var s when s.Equals("CONSTTABLE", cmp) || s.Equals("常数表", cmp) || s.Equals("常数数组", cmp):
+					// 名称下标在 ErhLoader 注册；函数内声明没有对应注册路径。
+					if (isPrivate)
+						throw new CodeEE(keyword + " 只能在 ERH 中声明，不能在函数内使用", sc);
+					if (ret.CharaData)
+						throw new CodeEE(string.Format(trerror.CanNotSpecifiedWith.Text, keyword, "CHARADATA"), sc);
+					if (ret.Global)
+						throw new CodeEE(string.Format(trerror.CanNotSpecifiedWith.Text, keyword, "GLOBAL"), sc);
+					if (ret.Save)
+						throw new CodeEE(string.Format(trerror.CanNotSpecifiedWith.Text, keyword, "SAVEDATA"), sc);
+					if (ret.Reference)
+						throw new CodeEE(string.Format(trerror.CanNotSpecifiedWith.Text, keyword, "REF"), sc);
+					if (staticDefined && !ret.Static)
+						throw new CodeEE(string.Format(trerror.CanNotSpecifiedWith.Text, keyword, "DYNAMIC"), sc);
+					if (ret.Const)
+						throw new CodeEE(string.Format(trerror.DuplicateKeyword.Text, keyword), sc);
+					ret.ConstTable = true;
+					ret.Const = true;
+					ret.Static = true;
+					break;
 				case var s when s.Equals("CONST", cmp):
+					if (ret.ConstTable)
+						throw new CodeEE(string.Format(trerror.CanNotSpecifiedWith.Text, keyword, "CONSTTABLE"), sc);
 					if (ret.CharaData)
 						throw new CodeEE(string.Format(trerror.CanNotSpecifiedWith.Text, keyword, "CHARADATA"), sc);
 					if (ret.Global)
@@ -239,9 +267,11 @@ internal sealed class UserDefinedVariableData
 		List<int> sizeNum = [];
 		if (wc.EOL)//サイズ省略
 		{
-			if (ret.Const)
+			// 常数表必须写明尺寸（由下方统一报错），不走 CONST 的“缺初值”与默认 1。
+			if (ret.Const && !ret.ConstTable)
 				throw new CodeEE(trerror.ConstHasNotInitialValue.Text);
-			sizeNum.Add(1);
+			if (!ret.ConstTable)
+				sizeNum.Add(1);
 		}
 		else if (wc.Current.Type == ',')//サイズ指定
 		{
@@ -281,11 +311,15 @@ internal sealed class UserDefinedVariableData
 
 		if (wc.Current.Type != '=')//初期値指定なし
 		{
-			if (ret.Const)
+			// 常数表的值来自同名表，不走 CONST 的内联初值要求。
+			if (ret.Const && !ret.ConstTable)
 				throw new CodeEE(trerror.ConstHasNotInitialValue.Text);
 		}
 		else//初期値指定あり
 		{
+			// 常数表的值只来自同名表；允许内联初始值会造成「写了却不生效」的静默覆盖。
+			if (ret.ConstTable)
+				throw new CodeEE("常数表的值来自同名表，不能写内联初始值：" + ret.Name, sc);
 			if (((OperatorWord)wc.Current).Code != OperatorCode.Assignment)
 				throw new CodeEE(trerror.UnexpectedOp.Text);
 			if (ret.Reference)
@@ -345,12 +379,19 @@ internal sealed class UserDefinedVariableData
 			throw new CodeEE(trerror.WrongFormat.Text, sc);
 
 		if (sizeNum.Count == 0)
+		{
+			if (ret.ConstTable)
+				throw new CodeEE("常数表声明必须写明尺寸：" + ret.Name, sc);
 			sizeNum.Add(1);
+		}
 
 		ret.Private = isPrivate;
 		ret.Dimension = sizeNum.Count;
+		// 票 47：常数表一维先落地；二维布局（@1/@2）由票 48 实现。
+		if (ret.ConstTable && ret.Dimension > 1)
+			throw new CodeEE("常数表当前只支持一维数组（二维见后续票）：" + ret.Name, sc);
 		// 票 46（Skia 18.0.0）：#DIMF 与 #DIM/#DIMS 一样支持一至三维。
-		if (ret.Const && ret.Dimension > 1)
+		if (ret.Const && !ret.ConstTable && ret.Dimension > 1)
 			throw new CodeEE(trerror.CanNotDeclareConstArray.Text);
 		if (ret.CharaData && ret.Dimension > 2)
 			throw new CodeEE(trerror.CharaVarCanNotDeclareMoreThan3D.Text, sc);
@@ -367,6 +408,23 @@ internal sealed class UserDefinedVariableData
 		}
 		if (totalBytes <= 0 || totalBytes > 1000000)
 			throw new CodeEE(trerror.OoRDefinable.Text, sc);
+		if (ret.ConstTable)
+		{
+			int valueKind = dimf ? ConstArrayTable.KindFloat : dims ? ConstArrayTable.KindStr : ConstArrayTable.KindInt;
+			ConstArrayTable.Result? table = ConstArrayTable.Load(ret.Name, ret.Lengths, valueKind, out string tableError);
+			if (table == null)
+				throw new CodeEE("常数表声明 " + ret.Name + " 不可用：" + tableError, sc);
+			ret.ConstTablePath = table.Path;
+			ret.ConstTableNames = table.Names;
+			ret.ConstTableWarnings = table.Warnings;
+			ret.ConstTableConsumed = table.ConsumedPaths;
+			if (table.Values is long[] intValues)
+				ret.DefaultInt = intValues;
+			else if (table.Values is string[] strValues)
+				ret.DefaultStr = strValues;
+			else
+				ret.DefaultFloat = (double[])table.Values;
+		}
 		if (!isPrivate && ret.Save && !Config.Config.SystemSaveInBinary)
 		{
 			if (dims && ret.Dimension > 1)

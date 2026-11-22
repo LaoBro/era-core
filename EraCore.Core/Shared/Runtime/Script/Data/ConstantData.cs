@@ -112,6 +112,8 @@ internal sealed class ConstantData
 	private readonly string[][] names = new string[(int)VariableCode.__COUNT_CSV_STRING_ARRAY_1D__ + 1][]; // 元より1増やす
 	private readonly Dictionary<string, int>[] aliases = new Dictionary<string, int>[(int)VariableCode.__COUNT_CSV_STRING_ARRAY_1D__ + 1];
 	private readonly Dictionary<string, Dictionary<string, int>> erdNameToIntDics = [];
+	// 票 47（Skia 18.0.0）：已声明 CONSTTABLE 的变量名；名称下标不依赖 USE ERD。
+	private readonly HashSet<string> constArrayVarNames = new(Config.Config.StrComper);
 	#endregion
 	private readonly Dictionary<string, int>[] nameToIntDics = new Dictionary<string, int>[(int)VariableCode.__COUNT_CSV_STRING_ARRAY_1D__];
 	private readonly Dictionary<string, int> relationDic = [];
@@ -1058,6 +1060,30 @@ internal sealed class ConstantData
 		}
 	}
 
+	/// <summary>
+	/// 票 47（Skia 18.0.0）：注册常数表解析出的维度名称。与 ERD 共用逆引字典。
+	/// 注册前先清空该键：EE_ERD 可能已按 [编号,名称] 塞过一份，不清会留下「同一索引两个名字」。
+	/// </summary>
+	public void RegisterConstArrayNames(string varname, int dimension, Dictionary<string, int>[] namesByDim)
+	{
+		constArrayVarNames.Add(varname);
+		for (int d = 0; d < dimension; d++)
+		{
+			string key = dimension == 1 ? varname : varname + "@" + (d + 1);
+			if (namesByDim == null || namesByDim[d] == null)
+				continue;
+			if (!erdNameToIntDics.TryGetValue(key, out Dictionary<string, int>? dic))
+			{
+				dic = [];
+				erdNameToIntDics.Add(key, dic);
+			}
+			else
+				dic.Clear();
+			foreach (KeyValuePair<string, int> pair in namesByDim[d])
+				dic[pair.Key] = pair.Value;
+		}
+	}
+
 	#region EE_重複定義の確認
 	public void isDefinedErd(string varname, ScriptPosition? sc)
 	{
@@ -1401,7 +1427,9 @@ internal sealed class ConstantData
 		}
 
 		#region EE_ERD
-		if (ret == null && Config.Config.UseERD)
+		// 票 47（Skia 18.0.0）：已声明 CONSTTABLE 的变量名不依赖 USE ERD 即可用名称下标。
+		if (ret == null && (Config.Config.UseERD
+			|| (!string.IsNullOrEmpty(varname) && constArrayVarNames.Contains(varname))))
 		{
 			if (string.IsNullOrEmpty(varname))
 				return ret!;
