@@ -588,13 +588,17 @@ internal sealed class ErbMaterializer
 	/// 失败路径三态（源打不开 / 桩行已不在文件中 → ReparseFunction 返回 null）降级为占位报错：
 	/// 标记 IsError+ErrMes、清桩标记（停止重试），不抛新异常——该函数按「已定义但解析不可得」处理。
 	/// </summary>
-	// MISTBELL_LAZY_MATERIALIZE_WORKLIST：
-	// 运行期惰性物化用「线程内 Worklist」扁平化，杜绝重新入栈式递归。
-	//   1) 互递归（A 物化 → CALL B → 物化 B → CALL A）：A 仍在物化中（IsStub 未清），
-	//      嵌套调用只补签名 + 入队，不再压栈，死循环被彻底打断；
-	//   2) 超长单向链（A→B→C→…）：嵌套只入队，等外层退栈后由顶层 while 挨个物化，
-	//      物化栈深恒为 1。
-	// 仅本文件内状态，不改 FunctionLabelLine / ErbLoader，也不影响加载期 eager 路径。
+	/// <remarks>
+	/// b2-irdiskcache：运行期物化会被「ReparseFunction → setJumpTo → CALL → CallFunction → MaterializeOnRuntime」
+	/// 嵌套触发（互递归 A⇄B、自递归、超长单向链）。故物化统一走「线程内 Worklist」扁平化：
+	/// <list type="bullet">
+	/// <item>嵌套调用只补签名 + 入队，不再压栈——A 的 <c>IsStub</c> 未清期间的死循环被打断；</item>
+	/// <item>顶层 <c>while</c> 逐个 <see cref="MaterializeLabelCore"/>，物化栈深恒为 1。</item>
+	/// </list>
+	/// 队列是类级 <see cref="ThreadStaticAttribute"/> 状态：假定同线程只有一个运行时 loader
+	/// （<c>GlobalStatic.Process.RuntimeLoader</c>），嵌套调用必回到同一实例，故 <c>this</c> 的
+	/// env / idDic / labelDic 与桩一致。将来若出现「多 loader 同线程嵌套物化」，须改为实例级队列。
+	/// </remarks>
 	[ThreadStatic]
 	private static Queue<FunctionLabelLine>? _materializeQueue;
 
@@ -610,7 +614,10 @@ internal sealed class ErbMaterializer
 		// 只保证被调桩的签名可用，函数体物化排到队尾，稍后在栈深 1 的顶层循环里做。
 		if (_materializeQueue != null && _materializeQueued != null)
 		{
-			if (stub.IrBacked && stub.Arg == null)
+			// 签名是嵌套返回前唯一的硬前置：调用方 CALL 的 ConvertArg 会立刻读 Arg/Def，
+			// Arg == null 会在 func.Arg.Length 处 NRE。B1 源后背桩生成期已有签名 → no-op；
+			// IR 桩在此补算（只读 @/# 行、非递归）。
+			if (stub.Arg == null)
 			{
 				try
 				{
@@ -618,7 +625,14 @@ internal sealed class ErbMaterializer
 				}
 				catch
 				{
-					// 签名计算失败不在此抛：留给队尾 MaterializeLabelCore 走三态降级
+					// 签名计算失败不在此抛：走下面的占位降级
+				}
+				if (stub.Arg == null)
+				{
+					// 连签名都读不出来（blob 损坏且源不可读 / 非法标签桩）：立即降级占位，
+					// 与「先全量物化再降级」的旧行为一致，避免调用方 ConvertArg 解引用 null。
+					DegradeToPlaceholderError(stub);
+					return;
 				}
 			}
 			if (_materializeQueued.Add(stub))
@@ -649,7 +663,7 @@ internal sealed class ErbMaterializer
 	}
 
 	/// <summary>
-	/// MISTBELL_LAZY_MATERIALIZE_WORKLIST：单函数物化（原 <c>MaterializeLabel</c> 主体）。
+	/// lazy-function-load / b2-irdiskcache：单函数物化（原 <c>MaterializeLabel</c> 主体）。
 	/// 只允许由 <see cref="MaterializeLabel"/> 的顶层队列循环调用；内部再被嵌套触发的物化会被排队。
 	/// </summary>
 	private void MaterializeLabelCore(FunctionLabelLine stub)

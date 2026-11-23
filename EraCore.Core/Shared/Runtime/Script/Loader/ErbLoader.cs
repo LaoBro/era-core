@@ -1099,9 +1099,10 @@ internal sealed class ErbLoader
 	/// lazy-function-load：运行时物化接缝入口（<see cref="CalledFunction"/> 命中桩时调用）。
 	/// 复用会话主加载保留的 <see cref="GlobalStatic.Process.RuntimeLoader"/>（含物理路径映射 / env / scanLine）。
 	/// eager（无桩）下恒 no-op，运行期路径零侵入。
-	/// 注：仅运行时（RuntimeLoader 非空）走全量物化；加载期由 CALL_Instruction.SetJumpTo 显式调
-	/// <see cref="EnsureCalleeSignature"/>（签名级、非递归），不可在此全量物化 —— 否则 A 物化→setJumpTo→CALL B→物化 B→
-	/// setJumpTo→CALL C→… 无界递归栈溢出（eraTW 递归调用链）。
+	/// 注：仅运行时（RuntimeLoader 非空）走全量物化；加载期 RuntimeLoader 为 null，由 CALL_Instruction.SetJumpTo
+	/// 显式调 <see cref="EnsureCalleeSignature"/>（签名级、非递归）代替全量物化。
+	/// 运行期的嵌套物化（A→CALL B→物化 B→CALL A）由 <see cref="ErbMaterializer"/> 的线程内 Worklist 扁平化，
+	/// 物化栈深恒为 1，不再有「A 物化→B 物化→A 再物化」的无界递归。
 	/// </summary>
 	internal static void MaterializeOnRuntime(FunctionLabelLine label)
 	{
