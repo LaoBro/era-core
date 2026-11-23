@@ -588,7 +588,71 @@ internal sealed class ErbMaterializer
 	/// 失败路径三态（源打不开 / 桩行已不在文件中 → ReparseFunction 返回 null）降级为占位报错：
 	/// 标记 IsError+ErrMes、清桩标记（停止重试），不抛新异常——该函数按「已定义但解析不可得」处理。
 	/// </summary>
+	// MISTBELL_LAZY_MATERIALIZE_WORKLIST：
+	// 运行期惰性物化用「线程内 Worklist」扁平化，杜绝重新入栈式递归。
+	//   1) 互递归（A 物化 → CALL B → 物化 B → CALL A）：A 仍在物化中（IsStub 未清），
+	//      嵌套调用只补签名 + 入队，不再压栈，死循环被彻底打断；
+	//   2) 超长单向链（A→B→C→…）：嵌套只入队，等外层退栈后由顶层 while 挨个物化，
+	//      物化栈深恒为 1。
+	// 仅本文件内状态，不改 FunctionLabelLine / ErbLoader，也不影响加载期 eager 路径。
+	[ThreadStatic]
+	private static Queue<FunctionLabelLine>? _materializeQueue;
+
+	[ThreadStatic]
+	private static HashSet<FunctionLabelLine>? _materializeQueued;
+
 	internal void MaterializeLabel(FunctionLabelLine stub)
+	{
+		if (stub == null || !stub.IsStub)
+			return; // 幂等
+
+		// 已处于物化过程中（由 ReparseFunction → setJumpTo → CallFunction 嵌套进来）：
+		// 只保证被调桩的签名可用，函数体物化排到队尾，稍后在栈深 1 的顶层循环里做。
+		if (_materializeQueue != null && _materializeQueued != null)
+		{
+			if (stub.IrBacked && stub.Arg == null)
+			{
+				try
+				{
+					ComputeSignature(stub);
+				}
+				catch
+				{
+					// 签名计算失败不在此抛：留给队尾 MaterializeLabelCore 走三态降级
+				}
+			}
+			if (_materializeQueued.Add(stub))
+				_materializeQueue.Enqueue(stub);
+			return;
+		}
+
+		var queue = new Queue<FunctionLabelLine>();
+		var queued = new HashSet<FunctionLabelLine>(ReferenceEqualityComparer.Instance);
+		_materializeQueue = queue;
+		_materializeQueued = queued;
+		try
+		{
+			queued.Add(stub);
+			queue.Enqueue(stub);
+			while (queue.TryDequeue(out FunctionLabelLine? current))
+			{
+				if (current == null || !current.IsStub)
+					continue;
+				MaterializeLabelCore(current);
+			}
+		}
+		finally
+		{
+			_materializeQueue = null;
+			_materializeQueued = null;
+		}
+	}
+
+	/// <summary>
+	/// MISTBELL_LAZY_MATERIALIZE_WORKLIST：单函数物化（原 <c>MaterializeLabel</c> 主体）。
+	/// 只允许由 <see cref="MaterializeLabel"/> 的顶层队列循环调用；内部再被嵌套触发的物化会被排队。
+	/// </summary>
+	private void MaterializeLabelCore(FunctionLabelLine stub)
 	{
 		if (!stub.IsStub)
 			return; // 幂等
